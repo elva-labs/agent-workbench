@@ -322,9 +322,11 @@ and skills most of all, is copied or linked in by hand.
 Under the list, Which account is chosen the way live updates are: one
 account for every project, and a fold of project overrides where a project
 can name an account of its own, or Default, whatever the rest. A session
-runs under its project's account: it starts with the agent's directory set,
-its past sessions are read from there, and the tools the hooks bring are
-registered there too, as [hooks](hooks.md) describes. What a project's row
+runs under its project's account unless another is chosen for it. Under an
+account it starts with the agent's directory set to the account's, its
+past sessions are read from there, and the tools the hooks bring are
+registered there too, as [hooks](hooks.md) describes; an account with no
+directory for the agent runs it on the agent's own. What a project's row
 shows, and how one session can go another way, is in
 [sessions](sessions.md#accounts).
 

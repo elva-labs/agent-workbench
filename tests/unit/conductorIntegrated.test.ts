@@ -11,12 +11,14 @@ import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { resetSenders, senderOf } from "$lib/senders.svelte";
 import { OUTCOME_ASK } from "$lib/instructions";
+import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 
 // The orchestrator's tools with a session that runs integrated: it is
 // started, sent to, read, waited on and stopped as a terminal one is, with
 // its state and words from the core's events.
 
 const A = "/home/ada/dev/one";
+const B = "/home/ada/dev/two";
 
 let fake: FakeIntegrated;
 let stop = () => {};
@@ -48,6 +50,7 @@ beforeEach(async () => {
   resetAgent();
   localStorage.clear();
   resetSenders();
+  resetAccounts();
   applyDetect(
     { id: "claude-code", path: "/usr/local/bin/claude", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
     true,
@@ -223,6 +226,71 @@ describe("the orchestrator's tools with an integrated session", () => {
     flushSync();
     await waited;
     expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: All done.`);
+  });
+
+  describe("the account it runs under", () => {
+    beforeEach(() => {
+      accounts.list = {
+        Work: { claude: "~/.claude-work", codex: null },
+        Home: { claude: "~/.claude-home", codex: "~/.codex-home" },
+      };
+      workspace.open.push({ path: B, name: "two", repository: B, isGit: true });
+      setKind("claude-code", "integrated");
+    });
+
+    /** A start from the caller the user allows, once its session is up:
+        what the user was told of the account, the row, the directory the
+        agent was started on and the answer. */
+    async function startFrom(session: string | null, project: string) {
+      const request = { ...call("start", { project, prompt: "Fix it" }), session };
+      const answering = handle(request);
+      const named = conductor.asking?.named ?? null;
+      if (conductor.asking !== null) allow();
+      await settle();
+      const row = forProject(project).at(-1)!;
+      await launch(row.key);
+      flushSync();
+      await answering;
+      const begun = fake.calls.filter((made) => made.method === "start").at(-1);
+      return {
+        named,
+        row: byKey(row.key)!,
+        configDir: begun?.method === "start" ? begun.options.configDir : undefined,
+        answer: answerTo(request)!,
+      };
+    }
+
+    it("is the account chosen for a terminal caller, handed on as to a terminal session", async () => {
+      // The project runs under the agents' own, and the caller was started
+      // under another account.
+      const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "terminal");
+      started(caller.key, "pty-caller", "caller-1");
+      const { named, row, configDir, answer } = await startFrom("caller-1", A);
+      expect(named).toMatchObject({ label: "Work", projects: false, bare: null });
+      expect(row.kind).toBe("integrated");
+      expect(row.account).toBe("Work");
+      expect(configDir).toBe("~/.claude-work");
+      expect(answer.content).toContain(`in ${A}, under the Work account. It has the prompt.`);
+    });
+
+    it("is the account chosen for an integrated caller, placed by its id", async () => {
+      const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "integrated");
+      await launch(caller.key);
+      const { row, configDir } = await startFrom(byKey(caller.key)!.id!, A);
+      expect(row.account).toBe("Work");
+      expect(configDir).toBe("~/.claude-work");
+    });
+
+    it("is the project's own when the caller runs under its project's", async () => {
+      accounts.overrides[B] = "Home";
+      const caller = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
+      await launch(caller.key);
+      const { named, row, configDir, answer } = await startFrom(byKey(caller.key)!.id!, B);
+      expect(named).toBeNull();
+      expect(row.account).toBe("Home");
+      expect(configDir).toBe("~/.claude-home");
+      expect(answer.content).toContain(`in ${B}. It has the prompt.`);
+    });
   });
 
   it("stops the session, and refuses a message to one that is not running by saying it is integrated", async () => {

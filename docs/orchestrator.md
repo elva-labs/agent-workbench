@@ -88,10 +88,32 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
-A start can name an account as well, by the name it has in the settings,
-for work under a login other than the project's own; one that names an
-account there is not is refused with the names there are. A session
-resumed comes back under the account it ran under.
+A start can name an account, by the name it has in the settings, for work
+the user asked to have done under a particular login; one that names an
+account there is not is refused with the names there are. A start that
+names none runs under the account of the session that started it when that
+account was chosen for the starter itself, which is when it is not the
+account of the starter's project; the agents' own, chosen that way, is
+handed on like any other. A starter that runs under its project's account,
+or under the one for every project, hands nothing on, and the session runs
+under the account of the project it starts in. The project's account is
+used as well when the starter's chosen account cannot be handed on: when
+the project is on another machine than the starter, where the starter's
+login may not be, and when the account is no longer in the settings. An
+account handed on that keeps no directory for the agent being started runs
+that agent on its own directory, as a blank directory does anywhere. A
+session resumed comes back under the account it ran under.
+
+The starter is the session whose id the call carries. An agent that was not
+told its id calls without one, as a Codex session that has not been
+resumed does, since its id is learned after its tools have started; it is
+taken to be the one session running where the call comes from that was not
+told its id, as under [following a workflow](#following-a-workflow). An
+agent run outside the workbench that calls from such a directory is taken
+for that session too, and its starts get that session's account. Where no
+such session runs or several do, or the call names a session the window
+does not have, the starter cannot be placed and the session runs under the
+project's account.
 
 ## Following a workflow
 
@@ -190,26 +212,26 @@ and no question at all.
 
 ## What is remembered
 
-What a session started is written down by session id, with the project,
-the worktree, the agent and the name, and kept between runs beside the
-sessions the app knows as its own. Under a workflow, so are the step and
-round of each, and the rounds each piece has had; those go with the
-orchestrator once it is gone from its project's past sessions. An orchestrator closed and resumed
-keeps its id, so the sessions it started are still its own: the ones
-still running answer to its tools as before, and a row with one of its
-ids, resumed from the pane by hand, hangs under it all the same. When
-the app itself was closed, the orchestrator comes back with the other
-sessions that were open, and the sessions it started do not. `sessions`
-then lists them as stopped, after the running ones, and `start` with one
-of those ids in place of a project and prompt brings it back where it ran,
-in its worktree with its conversation. A prompt given with it is what the
-session goes on with; without one it comes up waiting for a line. The cap
-and the one-level rule apply, and a session whose worktree has since been
-cleaned up, or whose project is no longer open, is refused with the
-reason. A session the orchestrator
-stopped itself is not offered back: the stop said it was done with. The
-record lives with the window's other memory, so a wiped local storage
-forgets it, which only means the orchestrator starts afresh.
+What a session started is written down by session id, with the project, the
+worktree, the agent, the name and the account, and kept between runs beside
+the sessions the app knows as its own. Under a workflow, so are the step
+and round of each, and the rounds each piece has had; those go with the
+orchestrator once it is gone from its project's past sessions. An
+orchestrator closed and resumed keeps its id, so the sessions it started
+are still its own: the ones still running answer to its tools as before,
+and a row with one of its ids, resumed from the pane by hand, hangs under
+it all the same. When the app itself was closed, the orchestrator comes
+back with the other sessions that were open, and the sessions it started do
+not. `sessions` then lists them as stopped, after the running ones, and
+`start` with one of those ids in place of a project and prompt brings it
+back where it ran, in its worktree with its conversation. A prompt given
+with it is what the session goes on with; without one it comes up waiting
+for a line. The cap and the one-level rule apply, and a session whose
+worktree has since been cleaned up, or whose project is no longer open, is
+refused with the reason. A session the orchestrator stopped itself is not
+offered back: the stop said it was done with. The record lives with the
+window's other memory, so a wiped local storage forgets it, which only
+means the orchestrator starts afresh.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
@@ -226,14 +248,29 @@ The first time a session asks to start another in a project, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. A round of
 review past a workflow's limit is asked about every time, however the
-project was allowed. It names the review and the work by the names the user
-sees, "Review has run twice on Fix the cache, as many times as the workflow
-allows. Allow another round?", with Allow one more round or Stop at the
-limit. An allowed
-caller is remembered for that project for as long as the app runs. A
-refusal is an answer the agent reads, not an error. Bringing back a
-session it already started is never asked about: the consent was given
-when the session was, and the resumed session is that one going on.
+project was allowed. It says the project the round runs in, then names the
+review and the work by the names the user sees, "Review has run twice on
+Fix the cache, as many times as the workflow allows. Allow another round?",
+with Allow one more round or Stop at the limit. An allowed caller is
+remembered for that project and what the session ran on, for as long as the
+app runs: the account, and the agent too where the account keeps no
+directory for it, since that agent then runs on its own. A later start
+there under another account, or under the same account by an agent it keeps
+no directory for, is asked about again. A refusal is an answer the agent
+reads, not an error. Bringing back a session it already started is never
+asked about: the consent was given when the session was, and the resumed
+session is that one going on.
+
+Once there are accounts to tell apart, the question names the account the
+session would run under when it is not the project's own, when the starter
+could not be placed, when the starter's chosen account could not be handed
+on, and when an account handed on keeps no directory for the agent being
+started. When the account it names keeps no directory for that agent, it
+says the agent uses its own. A round of review that would start a session
+names the account in the same cases, after the project. The answer the
+caller gets to its start names the account in the same cases and says when
+the agent uses its own directory, for a start for a step of a workflow as
+well as any other.
 
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time.
@@ -265,10 +302,12 @@ The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
 started on and when it last changed. A session started for a step of its
 starter's workflow shows its step there instead of the model, since the
-step chose the model; a review's round is in the agent pane's header. One that runs in another project than
-its starter names that project after its own name. Short of room, the
-project is cut first, then the model is left out and the project with it,
-and the name is cut last; the time always stands. The line speaks
+step chose the model; a review's round is in the agent pane's header. One
+that runs under another account than its project's names the account after
+its own name, as in `as Work`, and one that runs in another project than
+its starter names that project next. Short of room, the project is cut
+first, then the model is left out and the project with it, then the
+account, and the name is cut last; the time always stands. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
 a permission, which only you can grant. Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the

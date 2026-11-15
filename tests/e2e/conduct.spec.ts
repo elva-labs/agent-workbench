@@ -156,6 +156,9 @@ test.describe("the conductor", () => {
     await expect(ask).toBeVisible();
     await expect(ask).toContainText(PROJECT);
     await expect(ask).toContainText("Fix the flaky test");
+    // The session would run under the project's own account, so none is
+    // named.
+    await expect(ask.getByTestId("conduct-account")).toHaveCount(0);
     // The question sits over the agent pane, where the session it is about
     // will appear.
     const card = (await ask.boundingBox())!;
@@ -706,5 +709,72 @@ test.describe("a round of review past the workflow's limit", () => {
     expect((await answerTo(page, "c-5"))!.error).toContain("the user did not allow another");
     // The user's own answer is not put back to them as a refused start.
     await expect(page.getByTestId("workflow-refused")).toHaveCount(0);
+  });
+
+  test("says where it would start and under which account", async ({ page }) => {
+    const OTHER = "/home/ada/dev/other-project";
+    const once = structuredClone(WITH_WORKFLOW);
+    const review = once.workflows.list[0].steps[1] as { limit: number };
+    review.limit = 1;
+    await installFakeCore(page, {
+      open: [PROJECT, OTHER],
+      settings: {
+        ...once,
+        accounts: {
+          list: { Work: { claude: "~/.claude-work", codex: null } },
+          everywhere: null,
+          overrides: {},
+        },
+      },
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    // The orchestrator, started under Work in a project that follows the
+    // agents' own.
+    await page
+      .locator(`[data-row="project:${PROJECT}"]`)
+      .getByTestId("project-new-session")
+      .click();
+    await page.locator("[data-testid='account-option'][data-account='Work']").click();
+    await page.getByTestId("workflow-option").click();
+    await expect(rows(page)).toHaveCount(1);
+
+    const start = async (id: string, args: Record<string, unknown>) => {
+      await push(page, {
+        id,
+        tool: "start",
+        arguments: { project: PROJECT, prompt: "Go", ...args },
+        session: "session-1",
+      });
+    };
+    await start("c-1", { step: "Work", name: "Fix the cache" });
+    await expect(page.getByTestId("conduct-account")).toHaveText(
+      "Under the Work account, not the project's own.",
+    );
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
+    for (const id of ["c-2", "c-3"]) {
+      await start(id, { step: "Review", work: "session-2" });
+      await expect.poll(() => answerTo(page, id)).not.toBeNull();
+      expect((await answerTo(page, id))!.error).toBeNull();
+    }
+
+    // The round past the limit would start in another project, under an
+    // account that is not that project's: the card says both before it
+    // asks for the round.
+    await start("c-4", { step: "Review", work: "session-2", project: OTHER });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toContainText("wants another round of Review");
+    await expect(ask).toContainText(
+      `In ${OTHER}. Under the Work account, not the project's own. Review has run twice on Fix the cache, as many times as the workflow allows. Allow another round?`,
+    );
+    const where = (await page.getByTestId("conduct-account").boundingBox())!;
+    const question = (await page.getByTestId("conduct-round").boundingBox())!;
+    expect(where.y).toBeLessThanOrEqual(question.y);
+    await page.getByTestId("conduct-allow-round").click();
+    await expect.poll(() => answerTo(page, "c-4")).not.toBeNull();
+    expect((await answerTo(page, "c-4"))!.content).toContain(
+      `for step "Review" round 3, reviewing session session-2 in ${OTHER}, under the Work account.`,
+    );
   });
 });
