@@ -21,6 +21,7 @@ const ALSO_ISOLATED: &[&str] = &[
     "GIT_COMMITTER_EMAIL",
     "GIT_COMMITTER_DATE",
     "CLAUDE_CONFIG_DIR",
+    "CODEX_HOME",
 ];
 
 fn is_isolated(name: &str) -> bool {

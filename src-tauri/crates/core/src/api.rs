@@ -449,7 +449,7 @@ impl Core {
         let codex_activity = (agent == "codex")
             .then(|| {
                 self.home.as_ref().map(|home| {
-                    let home = account::codex_home(home, config_dir);
+                    let home = account::codex_home(home, config_dir, &env::environment().vars);
                     let activity = codex::Activity::new(&home, session_id.clone());
                     (home, activity)
                 })
@@ -771,7 +771,10 @@ impl Core {
                 &account::claude_dir(home, config_dir, &env::environment().vars),
                 project,
             ),
-            "codex" => codex::list(&account::codex_home(home, config_dir), project),
+            "codex" => codex::list(
+                &account::codex_home(home, config_dir, &env::environment().vars),
+                project,
+            ),
             _ => Vec::new(),
         }
     }
@@ -792,7 +795,10 @@ impl Core {
                 &account::claude_dir(home, config_dir, &env::environment().vars),
                 projects,
             ),
-            "codex" => codex::list_many(&account::codex_home(home, config_dir), projects),
+            "codex" => codex::list_many(
+                &account::codex_home(home, config_dir, &env::environment().vars),
+                projects,
+            ),
             _ => vec![Vec::new(); projects.len()],
         }
     }
@@ -802,7 +808,10 @@ impl Core {
     pub fn session_title(&self, agent: &str, id: &str, config_dir: Option<&str>) -> Option<String> {
         let home = self.home.as_ref()?;
         match agent {
-            "codex" => codex::title_of(&account::codex_home(home, config_dir), id),
+            "codex" => codex::title_of(
+                &account::codex_home(home, config_dir, &env::environment().vars),
+                id,
+            ),
             _ => None,
         }
     }

@@ -136,8 +136,12 @@ trusted.
 Codex keeps the same answer in its configuration, as a `trust_level` for
 a folder in the `config.toml` of its home. That is the account's home, or
 for a session under no account the one Codex itself runs with: the
-`CODEX_HOME` of the environment the Codex process starts with, else
-`.codex` in the user's home. A Codex start reads the answer the way Codex
+absolute `CODEX_HOME` of the environment the Codex process starts with,
+else `.codex` in the user's home. That one home is also where the history
+list, a past session's title, the watching of a terminal Codex session and
+the trust copied to a new worktree are read and written, so they agree with
+the home the agent runs with when the app was launched from the Dock. A
+Codex start reads the answer the way Codex
 does. The folder's own record decides when there is one, and only
 `trusted` is a yes. A folder with no record of its own takes the record of
 its repository's root, and a folder between the two counts for nothing.
