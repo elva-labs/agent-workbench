@@ -138,6 +138,13 @@ test.describe("the session on screen", () => {
     const figures = (await page.getByTestId("limits-readout").boundingBox())!;
     expect(waiting.x).toBeGreaterThan(figures.x + figures.width + 100);
     expect(foot.x + foot.width - (waiting.x + waiting.width)).toBeLessThan(40);
+    // A word in passing stands just before what waits, which stays put.
+    await page.keyboard.press("ControlOrMeta+=");
+    await expect(page.getByTestId("flash-readout")).not.toHaveText("");
+    const word = (await page.getByTestId("flash-readout").boundingBox())!;
+    expect(word.x + word.width).toBeLessThanOrEqual(waiting.x);
+    expect(waiting.x - (word.x + word.width)).toBeLessThan(20);
+    expect((await page.getByTestId("waiting-readout").boundingBox())!.x).toBe(waiting.x);
     // Without accounts named the figures stand alone.
     await expect(page.getByTestId("account-readout")).toHaveCount(0);
     await expect(page.getByTestId("limit-figure")).toHaveCount(3);
@@ -379,6 +386,49 @@ test.describe("a narrow window", () => {
     expect(await bar(page).evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
     // And back again as the window grows.
     await page.setViewportSize({ width: 1440, height: 800 });
+    await expect(bar(page)).toHaveAttribute("data-fit", "");
+  });
+
+  test("takes no step for a word in passing, which is drawn over the parts before it", async ({ page }) => {
+    await open(page, { accounts: WORK });
+    await report(page, [
+      { kind: "session", percent: 38, resetsAt: 3 * HOUR },
+      { kind: "weekly", percent: 100, resetsAt: 3 * 24 * HOUR, severity: "reached" },
+    ]);
+    const fit = async (width: number) => {
+      await settled(page, width);
+      return (await bar(page).getAttribute("data-fit")) ?? "";
+    };
+    // The narrowest window where nothing has given way: a pixel less and
+    // the focus and the mode go.
+    let [low, high] = [400, 1440];
+    expect(await fit(low)).not.toBe("");
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if ((await fit(middle)) === "") high = middle;
+      else low = middle;
+    }
+    expect(await fit(high)).toBe("");
+    const before = await Promise.all(
+      ["focus-readout", "model-readout", "account-group"].map(async (id) => (await page.getByTestId(id).boundingBox())!.x),
+    );
+    await page.keyboard.press("ControlOrMeta+=");
+    const word = page.getByTestId("flash-readout");
+    await expect(word).not.toHaveText("");
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    await expect(bar(page)).toHaveAttribute("data-fit", "");
+    const after = await Promise.all(
+      ["focus-readout", "model-readout", "account-group"].map(async (id) => (await page.getByTestId(id).boundingBox())!.x),
+    );
+    expect(after).toEqual(before);
+    // There is no room for it, so it covers the end of the figures, whole
+    // and on the bar's own background.
+    expect(await whole(page, "flash-readout")).toBe(true);
+    const box = (await word.boundingBox())!;
+    const figures = (await page.getByTestId("limits-readout").boundingBox())!;
+    expect(box.x).toBeLessThan(figures.x + figures.width);
+    expect(await style(word, "background-color")).toBe(await style(bar(page), "background-color"));
+    await expect(word).toHaveText("");
     await expect(bar(page)).toHaveAttribute("data-fit", "");
   });
 

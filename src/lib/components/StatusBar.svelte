@@ -41,7 +41,10 @@
    * Short of room, the bar lets its parts go in order: the focus and the
    * mode, then the word "account:", then every figure but the one nearest
    * its end, then that figure's reset time. Only after that is the model or
-   * the account's name cut short; what waits for you never is.
+   * the account's name cut short; what waits for you never is. A word in
+   * passing takes no room: it stands in the space before what waits, and
+   * where that space is too short it is drawn over the parts before it
+   * while it shows, so nothing moves for it.
    */
 
   /** What gives way, first to last. */
@@ -358,11 +361,12 @@
     {/if}
   {/if}
 
-  <span class="grow"></span>
+  <span class="grow">
+    <span class="flash" class:on={(flash.text ?? "") !== ""} role="status" data-testid="flash-readout">{flash.text ?? ""}</span>
+  </span>
   {#if unreadCount() > 0}
     <span class="waiting" data-testid="waiting-readout">{unreadCount()} waiting for you</span>
   {/if}
-  <span class="flash" role="status" data-testid="flash-readout">{flash.text ?? ""}</span>
 
   <div class="layer" bind:this={layer}>
     {#if open === "model" && conversation !== null}
@@ -476,8 +480,28 @@
   }
 
   .grow {
+    position: relative;
+    align-self: stretch;
     flex: 1 1 0;
     min-width: 0;
+  }
+
+  /* A word in passing stands at the end of the space before what waits,
+     out of the row's measure, and covers what it overlaps where the space
+     is too short. */
+  .flash {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    background: var(--status-bg);
+    pointer-events: none;
+  }
+
+  .flash.on {
+    padding-left: 14px;
   }
 
   .div {
