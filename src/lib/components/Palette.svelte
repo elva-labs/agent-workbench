@@ -598,4 +598,11 @@
   .foot kbd {
     margin: 0;
   }
+
+  /* A session's name and its last line are the agent's or a caller's text:
+     set apart, so nothing in them turns the row around. */
+  .label,
+  .detail {
+    unicode-bidi: isolate;
+  }
 </style>

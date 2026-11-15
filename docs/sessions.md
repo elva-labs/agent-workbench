@@ -1,7 +1,10 @@
 # Sessions
 
-A session is one agent process in one project, in a pty of its own with its
-own terminal and scrollback. A project holds as many as you start, several
+A session is one agent process in one project. In a terminal session it runs
+in a pty of its own with its own terminal and scrollback; an integrated
+session has no terminal, and the window draws its conversation instead, as
+[integrated sessions](#integrated-sessions) describes. A project holds as
+many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
 unmounted, and hidden in a way that keeps their box in layout, so a
@@ -303,6 +306,169 @@ are the ones to review. Switching to another session switches back. This
 relies on the agent changing its process directory when it enters a
 worktree.
 
+## Integrated sessions
+
+How an agent's sessions run is a setting per agent, a terminal to begin
+with; see [settings](settings.md#sessions). An agent runs integrated only
+where the core says it can drive it in messages, and the rest run in a
+terminal. A session under a
+[workflow](orchestrator.md#following-a-workflow) runs in a terminal
+whatever the setting, since its orchestrator is told the workflow as its
+process starts, and so does a resumed one that was ever told one, with it
+or without it now; the settings say so beside the choice. A single new
+session can be started the other way from New session's, for the agent the
+project used last: from the project's ⋯ menu, under its New session; from
+the palette, beside New session in the project on screen; and, with no
+session on screen, from the agent pane beside its New session button.
+Where the project's workflow makes New session a terminal, that is an
+integrated session. Started the other way, a session is a pick, as an
+agent picked is, and runs alone whatever the project follows. The + and
+New session start the agent's own way, or the project's workflow, so
+nothing is asked of someone who never changes it. An integrated session is
+driven through the core in messages, as [integrated](integrated.md)
+describes, and is a row like any other: it is listed, stopped with its ×,
+brought back after a restart and resumed the same way.
+
+The agent pane's header names the session, its project and the branch the
+folder has checked out, and what the session is doing: working, idle,
+asking the user or waiting for a permission. A session another session
+started is named by the name its start gave, or by the first line of its
+prompt; a name that reads as You, in any case or with anything unseen
+around it, is never taken, since the thread says You for the user alone,
+and nor is a name another live session has, ignoring case, spaces,
+accents, anything unseen and letters of other scripts that look like Latin
+ones, or a name whose letters mix scripts, so no message or row can pass for another session's; the start
+tool says which it was to its caller, and the session is named by its
+prompt instead. Under it is the thread. The user's words sit to the right in a
+tinted bubble under You. What another session sent, the prompt it started
+the session with or a message it sent later, sits there in a plain bubble
+under that session's name, with a way to go to it. A message is known as
+another session's by the id it was sent under, never by its words, so the
+user's own message reads as theirs whatever another session sent; the sentence the
+workbench adds to a started session's prompt, asking it to call notify, is
+never shown as part of it, only behind a fold of its own. The agent's run
+on the left under the model it ran on, or the agent's own name where that is
+not known, with the time, down a quiet line at the side. What the session
+shows is chosen by the kind of each call and the shape of what it carries,
+the same for every agent. What the agent wrote is drawn as
+Markdown, its code and tables included, and grows in place while it streams,
+with a caret where the next words come. An image the agent names by an
+address is shown as a link to it rather than fetched. The thread stays at
+its foot while new content comes, and where the user scrolled to otherwise,
+with a button back down; only the user's own scrolling stops it following,
+and sending a message takes it to its foot.
+
+What the agent did between two things it said folds into one line, such as
+Worked for 3m, changed 3 files, ran 1 command, which opens into the steps:
+each tool call with what it did to what, its input, a command's output as it
+came, the files it changed as diffs, and a subagent's own run under the call
+that started it. The changes pane stays the place to review changes. While a
+turn runs, a line at its foot says what the agent is doing now: running a
+command, reading a file, thinking, waiting for an answer. A plan is drawn
+where it came and changed in place, a question the user answered with the
+answer, a secret one without it, and a compaction, a notice or an error
+where it happened. The sessions an agent started with the workbench's start
+tool show under its run as rows, each with its state, name and model and a
+way to open it.
+
+A permission the agent asks for docks over the composer rather than in the
+thread: who asks, the agent or one of its subagents, and what for, with the
+choices the core offers. It says the agent asks to run a command only for a
+call known to be one; otherwise it names the tool. A command of several
+lines is shown whole from the start. A path is read against the folder the
+request runs in, and is taken as inside the project only when it plainly
+resolves into it: one that climbs out, or a folder the request runs in that
+is elsewhere, is marked outside, and one that starts at a home folder,
+names a variable or a glob is marked as not plainly in the project. The
+mark comes before the path, as in "asks to write a path outside the
+project: ~/.ssh/authorized_keys", so no path can push it out of sight.
+Whenever any path of a request lies outside the project or not plainly in
+it, the line itself says so and how many, and those paths are listed before
+the description the agent wrote, which is cut like other long text. A link
+inside the project that leads out of it cannot be seen from the window. A command, path or address
+longer than the line holds is cut, with its whole a fold away that opens
+in place, and the line says in the warning colour how many characters the
+cut leaves out, a subagent's description included. A request the core cut
+before it reached the window, as it does past what a connection should
+carry, says so on its line in the warning colour, that it is longer than
+the workbench can show and its end is hidden; its folds say they show it as
+far as it came, never whole, and a step whose input was cut says so on its
+row. An address is read
+after trimming, whatever its slashes, and the line names the host it really
+goes to, since its start can look like another; where a client such as curl
+would read another host from it, as with a backslash before an `@`, it
+names that one too, and it says in the warning colour when the address
+names a user before its host, holds a backslash, or has a host that mixes
+scripts. The whole request, with the tool it names, is a fold away
+wherever the line does not say all of it. What the request holds scrolls
+between its line and its choices, which stay in sight whatever it holds.
+The first allows the call once and remembers
+nothing; the others allow it for the session or always, saying what each
+keeps, deny it, with words for the agent if the user wants, or deny it and
+stop the turn. A line under the choices says what the one in focus or under
+the pointer does. A question docks the same way with its options, answered by
+picking one where one is all it takes, with room for the user's own words
+where it takes them; a secret answer is typed hidden. Requests are answered
+one at a time, the oldest first, and the dock says how many more wait. A
+permission the agent withdraws before it is answered says so on the step
+that asked for it, or where no step is known in a note that says what it
+was for, as a question that settles itself does. When the dock goes by
+itself while it has the keyboard, the keyboard goes back to the composer.
+
+Every text that comes from an agent, a tool or a server is drawn by one
+rule, in the conversation and outside it: a command, a path, a URL, a
+tool's or a server's name, a subagent's description, a task, a question and
+its options, a note, an error, a field's name, a line of a change, and a
+session's or a model's name in the sessions pane, the palette, the header,
+a notification and an orchestrator's question. It is set apart left to
+right, so it cannot turn the words around it, and any character that
+changes how it reads without being seen shows as a marker such as
+⟨U+202E⟩. Those characters are taken from Unicode's own categories:
+controls, format characters and every character Unicode says is drawn as
+nothing, line breaks and tabs aside.
+
+The composer under the dock takes several lines, images dropped, pasted or
+picked, and any other dropped file as its path in the text; a message sent
+while an image is still being read waits for it. It shows the model the
+session runs on, which a click changes: the agent's default is named once
+the agent has said which model that is, and a model chosen during a turn is
+said to be used from the next. It shows the mode the session runs in, which
+a click changes among the modes the agent offers; a session starts in the
+agent's safe mode, which asks before it acts, whatever the agent's own
+configuration says, and a mode taken from that configuration is shown as it
+is. It shows how much of the context window the conversation takes. While
+the agent works its Send button is a Stop button, and a message sent
+meanwhile stands under the thread, marked as waiting, until the turn that
+takes it. While the agent waits on an answer the composer says Up reaches
+it, and a lone digit sent then goes only on a second Enter, so it is not
+sent as a message by surprise. A message that was not delivered, refused by
+the agent or never sent, can be put back in the composer. What is being written
+stays with its session while another is on screen. The keys are in
+[focus](focus-model.md#an-integrated-session).
+
+The row's id is the conversation's id as the agent says it once ready, so
+the agent's own tools find the row. Its state, working, asking or idle,
+comes from the session's events, never from the hooks or from output; the
+hooks still fire for it and are left alone. When it stops working or asking
+while nobody looks, the line under its name is the first line of what the
+agent last said, unless the agent left a line of its own. A row with no name
+yet takes the first line of its first message.
+
+Before a session can run it may need the user. In a folder the agent has
+not been told to trust, the pane asks whether to trust it, and on a yes the
+trust is recorded where the agent's own question records it and the session
+starts. Under an account that is not signed in, the pane says so and gives
+the command to sign in with in a terminal; the workbench never signs in. A
+session that ended or could not start says why, and Resume starts it again
+on the same conversation, the thread drawn so far staying above what comes.
+A resumed session's earlier messages are in its transcript and are not drawn.
+A window reloaded while the core still runs a session takes it up where it
+is, its open requests and waiting messages included, with its own name,
+who sent each message and when; it says it has earlier messages only when it was
+spoken to. That holds for an orchestrator's sessions and for an integrated
+session another session started, which comes back under its starter, as
+after a restart, when it waits to be resumed like any other.
+
 ## Dropping files
 
 A file dropped on a terminal is its path, typed there with spaces and shell
@@ -311,7 +477,9 @@ the window, it goes to the terminal the keyboard is in. Claude Code reads a
 pasted path and shows an image file as an attachment, so a screenshot
 dragged in arrives the way it would in a plain terminal. The webview never
 sees the drag: the window takes it and reports paths with a position, and
-the terminal under a drag shows an accent inset while it lasts.
+the terminal under a drag shows an accent inset while it lasts. Dropped on
+an integrated session, an image goes with the next message and any other
+file is its path in the text.
 
 ## Past sessions
 

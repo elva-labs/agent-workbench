@@ -2,6 +2,7 @@
   import { coversBrowser } from "$lib/browser.svelte";
   import { allow, conductor, once, refuse, roundQuestion } from "$lib/conductor.svelte";
   import { returnFocus } from "$lib/layout.svelte";
+  import Plain from "$lib/components/conversation/Plain.svelte";
 
   let ask = $derived(conductor.asking);
 
@@ -31,7 +32,7 @@
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
     </p>
-    <p class="prompt">{ask.prompt}</p>
+    <p class="prompt"><Plain text={ask.prompt} /></p>
     <div class="actions">
       <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
       <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>

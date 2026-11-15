@@ -104,6 +104,11 @@ export async function installFakeCore(
     styles?: string;
     /** The agents the machine has, Claude Code alone unless said. */
     agents?: string[];
+    /** The agents the core can drive in messages, Claude Code alone unless
+        said. */
+    integrable?: string[];
+    /** Keeps the integrated sessions across a reload, as the core does. */
+    keepIntegrated?: boolean;
     /** Past Claude Code sessions the core reports for the first project,
         each from the agent's own directory unless it names an account's. */
     transcripts?: {
@@ -127,10 +132,10 @@ export async function installFakeCore(
   // The scripted integrated session, as `window.__integrated`, for a test
   // to drive with `page.evaluate`.
   await page.addInitScript(
-    `window.__integrated = (${fakeIntegrated.toString()})();`,
+    `window.__integrated = (${fakeIntegrated.toString()})(${options.keepIntegrated ? '{ keep: "fake.integrated" }' : ""});`,
   );
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, active, used, held, buildAndReview }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable, active, used, held, buildAndReview }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -507,6 +512,7 @@ export async function installFakeCore(
         // A fresh install: the shipped workflow, followed by nothing.
         workflows: { list: [buildAndReview], default: null, overrides: {} },
         pastSessions: "forever",
+        integrated: [],
         inactiveAfter: "week",
         themes: {},
         userStyles: false,
@@ -541,7 +547,7 @@ export async function installFakeCore(
         detect: async (agent: string) => ({
           id: agent,
           path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
-          caps: null,
+          caps: { resumable: true, titles: true, acp: false, integrated: integrable.includes(agent) },
           fromLoginShell: true,
         }),
         pickProject: async () => null,
@@ -553,6 +559,7 @@ export async function installFakeCore(
             name: path.split("/").filter(Boolean).pop() ?? path,
             repository: path,
             isGit: true,
+            branch: "main",
           };
         },
         setWindowTitle: async () => {},
@@ -1480,6 +1487,9 @@ export async function installFakeCore(
             } else if (field in allowed) {
               if (!allowed[field].includes(value as string))
                 throw new Error(`${field} is one of ${allowed[field].join(", ")}`);
+            } else if (field === "integrated") {
+              if (!Array.isArray(value) || value.some((agent) => !integrable.includes(agent)))
+                throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
@@ -1543,6 +1553,7 @@ export async function installFakeCore(
       stylesFile: STYLES_FILE,
       transcripts: options.transcripts ?? [],
       agents: options.agents ?? ["claude-code"],
+      integrable: options.integrable ?? ["claude-code"],
       active: options.active ?? null,
       used: options.used ?? null,
       held: options.held ?? [],

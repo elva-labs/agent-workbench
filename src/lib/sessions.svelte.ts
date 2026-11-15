@@ -26,6 +26,8 @@ import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
+import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { bareName, mixesScripts, readsAsYou, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -53,6 +55,9 @@ export interface Session {
   project: string;
   /** Which agent is running in it. */
   agent: AgentId;
+  /** How it runs: the agent's own interface in a pty, or integrated, the
+      conversation drawn by the window. */
+  kind: SessionKind;
   ptyId: string | null;
   status: SessionStatus;
   /** The Claude Code session id. Known from the start when resuming, and from
@@ -456,6 +461,21 @@ export function defaultAgent(project: string): AgentId {
   return installed()[0] ?? "claude-code";
 }
 
+/** How New session in the project runs: in a terminal under the project's
+    workflow, otherwise the way the agent's setting says. */
+export function newSessionKind(project: string): SessionKind {
+  return workflowOf(project) !== null ? "terminal" : kindFor(defaultAgent(project));
+}
+
+/** The other way to start one session in the project, for the agent New
+    session starts with: integrated where New session runs in a terminal,
+    a terminal where it runs integrated. Null for an agent that runs only
+    one way. Started this way it runs alone, whatever the project follows. */
+export function otherWay(project: string): SessionKind | null {
+  if (!canIntegrate(defaultAgent(project))) return null;
+  return newSessionKind(project) === "integrated" ? "terminal" : "integrated";
+}
+
 function prefer(project: string, agent: AgentId) {
   if (sessions.preferred[project] === agent) return;
   sessions.preferred[project] = agent;
@@ -472,7 +492,7 @@ export function isMine(project: string, id: string): boolean {
 
 /** Records a session as ours. Resuming one from outside counts: from then on
     it is a session of this workbench. */
-function adopt(project: string, id: string) {
+export function adopt(project: string, id: string) {
   if (isMine(project, id)) return;
   sessions.mine[project] = [...(sessions.mine[project] ?? []), id];
   try {
@@ -742,9 +762,9 @@ export function outsideFor(
  */
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
-  if (known !== undefined) return known;
-  if (transcript.title !== null && transcript.title !== "")
-    return transcript.title;
+  if (known !== undefined && !readsAsYou(known)) return shown(known);
+  if (transcript.title !== null && transcript.title !== "" && !readsAsYou(transcript.title))
+    return shown(transcript.title);
   return `session from ${ago(transcript.modified)}`;
 }
 
@@ -865,11 +885,26 @@ export function liveCount(project: string): number {
   return forProject(project).filter(isLive).length;
 }
 
-/** A short label for the row: the resumed id, or its number in the project. */
+/** A short label for the row: its name, the resumed id, or its number in
+    the project. A name is the agent's or a caller's text, so what it holds
+    that cannot be seen is written out; and a name that reads as "You",
+    which is the user's alone, is not taken. */
 export function label(session: Session): string {
-  if (session.title !== null) return session.title;
+  if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
+}
+
+/** Whether a name reads as the name of another live session, `except`
+    aside, or mixes scripts, as a name made to pass for another's often
+    does: a session never takes one, so no message or row can pass for
+    another session's. */
+export function nameTaken(name: string, except: string | null = null): boolean {
+  if (mixesScripts(name)) return true;
+  const bare = bareName(name);
+  return sessions.all.some(
+    (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,
+  );
 }
 
 /**
@@ -1029,8 +1064,14 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  * Left out, a resumed session follows the workflow it followed before, and a
  * new one follows its project's workflow when nothing was picked: the agent
  * left out, or nothing there to pick between, one agent installed and no
- * accounts. An agent picked from several starts alone. A workflow whose
- * orchestrator runs on an agent that is not installed is refused on the row.
+ * accounts. An agent picked from several starts alone, and so does one
+ * started integrated by name. A workflow whose orchestrator runs on an agent
+ * that is not installed is refused on the row.
+ *
+ * It runs the way the agent's setting says, unless started the other way. A
+ * session under a workflow runs in a terminal, the one way its orchestrator
+ * is told the workflow, and so does a resumed one that was ever told one,
+ * with or without it now.
  */
 export function create(
   project: string,
@@ -1041,14 +1082,19 @@ export function create(
   model: string | null = null,
   account: string | null = accountOf(project),
   workflow?: Workflow | null,
+  kind?: SessionKind,
 ): Session {
-  // A resumed session left to follow what it followed before finds out
-  // what that is when it starts, once the window has the workflows.
-  const resolving = workflow === undefined && resumedFrom !== null;
+  // A resumed session that was ever told a workflow runs in a terminal: it
+  // follows one again, is asked about one that is gone, or is told to let
+  // go of the instructions it recorded, and only a terminal session's start
+  // carries any of that.
+  const followed = resumedFrom !== null && sessions.workflows[resumedFrom] !== undefined;
+  // Started integrated by name is a pick, as an agent picked is: it runs
+  // alone, whatever the project follows.
   const following =
     workflow !== undefined
       ? workflow
-      : resumedFrom !== null
+      : resumedFrom !== null || kind === "integrated"
         ? null
         : agent === undefined || nothingToPick()
           ? workflowOf(project)
@@ -1059,6 +1105,12 @@ export function create(
     if (model === null && runs === following.orchestrator.agent)
       model = orchestratorModel(following);
   }
+  // An orchestrator is told its workflow as its process starts, which only
+  // a terminal session's start carries.
+  const runsAs: SessionKind = following !== null || followed ? "terminal" : (kind ?? kindFor(runs));
+  // A resumed terminal session left to follow what it followed before finds
+  // out what that is when it starts, once the window has the workflows.
+  const resolving = workflow === undefined && resumedFrom !== null && runsAs === "terminal";
   const missing =
     following !== null && resumedFrom === null && !installed().includes(runs)
       ? `The workflow "${following.name}" runs its orchestrator on ${agentLabel(runs)}, which is not installed here. Pick an agent to start one alone, or choose another workflow for this project in the settings.`
@@ -1075,6 +1127,7 @@ export function create(
       account,
       missing === null ? "starting" : "failed",
       following,
+      runsAs,
     ),
   );
   if (missing !== null) live.error = missing;
@@ -1146,13 +1199,16 @@ export function reopened(
   startIn: string | null,
   model: string | null,
   account: string | null,
+  kind: SessionKind = "terminal",
   workflow: Workflow | null = null,
   resolve = true,
 ): Session {
   const live = added(
-    row(project, id, agent, startIn, null, model, account, "dormant", workflow),
+    row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind),
   );
-  if (resolve) pending.add(live.key);
+  // Only a terminal session is told a workflow, so only one finds out what
+  // it follows.
+  if (resolve && kind === "terminal") pending.add(live.key);
   return live;
 }
 
@@ -1175,12 +1231,14 @@ function row(
   account: string | null,
   status: SessionStatus,
   workflow: Workflow | null = null,
+  kind: SessionKind = "terminal",
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
     key: `s${++counter}`,
     project,
     agent,
+    kind,
     ptyId: null,
     status,
     id: resumedFrom,
@@ -1383,9 +1441,17 @@ export function ownerGone(owner: string) {
   goneHandler?.(owner);
 }
 
+/** What stops an integrated session's agent, which has no pty to kill. */
+let stopIntegrated: (session: Session) => void = () => {};
+
+export function onIntegratedClose(handler: (session: Session) => void) {
+  stopIntegrated = handler;
+}
+
 export function close(key: string) {
   const session = byKey(key);
   if (session === null) return;
+  if (session.kind === "integrated") stopIntegrated(session);
 
   if (session.ptyId !== null) {
     // A kill that fails is a process that is already gone.
@@ -1685,7 +1751,7 @@ export function viewed(key: string) {
 export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null) return;
-  session.note = text;
+  session.note = shown(text);
   unseen(session);
 }
 
@@ -1710,6 +1776,10 @@ export function exact(
   kind: SessionEvent["kind"],
   note: string | null = null,
 ) {
+  // An integrated session's state comes from its own events, and the
+  // hooks that fire for it are left alone.
+  if (sessions.all.some((candidate) => candidate.id === sessionId && candidate.kind === "integrated"))
+    return;
   const session = sessions.all.find(
     (candidate) =>
       candidate.id === sessionId &&
@@ -1745,7 +1815,7 @@ export function exact(
       session.needs = null;
       session.delegated = false;
       changed(session);
-      if (session.note === null && note !== null) session.note = note;
+      if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
       break;
     case "delegated": {
@@ -1757,7 +1827,7 @@ export function exact(
       session.needs = null;
       session.delegated = true;
       if (idle) changed(session);
-      if (session.note === null && note !== null) session.note = note;
+      if (session.note === null && note !== null) session.note = shown(note);
       break;
     }
     case "permission": {

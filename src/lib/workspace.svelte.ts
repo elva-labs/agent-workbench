@@ -1,3 +1,4 @@
+import type { SessionKind } from "$lib/sessionKind.svelte";
 import { untrack } from "svelte";
 import { core, type AgentId, type ProjectInfo, type Workflow } from "$lib/core";
 import { closeOwner } from "$lib/browser.svelte";
@@ -198,13 +199,14 @@ export function goTo(key: string): boolean {
     keyboard. A workflow named starts under it; an agent named, with no
     workflow, starts alone; with neither, the session runs the way a plain
     new session does. The account is the one the project runs under unless
-    named. Starting one is the user using the project, so it counts as
-    used. */
+    named. It runs the way the agent's setting says, unless started the other
+    way. Starting one is the user using the project, so it counts as used. */
 export function startSession(
   path: string,
   agent?: AgentId,
   account: string | null = accountOf(path),
   workflow?: Workflow | null,
+  kind?: SessionKind,
 ) {
   if (workspace.active !== path) activate(path);
   touch(path);
@@ -217,6 +219,7 @@ export function startSession(
     null,
     account,
     workflow !== undefined ? workflow : agent === undefined ? undefined : null,
+    kind,
   );
   focusPane("agent");
 }

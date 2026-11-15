@@ -202,15 +202,55 @@ renderer.image = ({ href, title, text }) => {
   return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}"${named}>`;
 };
 
+/** The renderer for what an agent says in a conversation: the same, except
+    that an image is loaded only from the text itself. One from anywhere
+    else would be fetched the moment the words arrive, which would tell
+    whoever serves it whatever the agent put in its address. */
+const said = new marked.Renderer();
+said.link = ({ href, title, tokens }) => {
+  const text = said.parser.parseInline(tokens);
+  if (!LINK.test(href)) return text;
+  const named = title ? ` title="${escapeAttribute(title)}"` : "";
+  return `<a href="${escapeAttribute(href)}"${named} rel="noopener noreferrer">${text}</a>`;
+};
+said.image = ({ href, title, text }) => {
+  if (/^data:image\//i.test(href)) {
+    const named = title ? ` title="${escapeAttribute(title)}"` : "";
+    return `<img src="${escapeAttribute(href)}" alt="${escapeAttribute(text)}"${named}>`;
+  }
+  if (!/^https?:/i.test(href)) return escapeText(text);
+  return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
+};
+
+/** Raw HTML in a document is shown as the text it is, never drawn. Text is
+    always escaped here: marked leaves text unescaped once it believes a raw
+    block such as `<code>` has opened, and since raw HTML is never drawn, no
+    such block ever has. Code is escaped by marked itself. */
+renderer.html = ({ text }) => escapeText(text);
+said.html = ({ text }) => escapeText(text);
+renderer.text = (token) =>
+  "tokens" in token && token.tokens ? renderer.parser.parseInline(token.tokens) : escapeText(token.text);
+said.text = (token) =>
+  "tokens" in token && token.tokens ? said.parser.parseInline(token.tokens) : escapeText(token.text);
+
+/** Text as HTML that draws it as text: `<` and `>` always escaped, and
+    `&` escaped unless it starts an entity, which then draws as its
+    character, as Markdown means it to. An entity can only ever be text: it
+    is decoded after the markup is read, so `&lt;b&gt;` is the letters,
+    never a tag. */
 function escapeText(text: string): string {
   return text
-    .replace(/&/g, "&amp;")
+    .replace(/&(?!(?:#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});)/gi, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
 function escapeAttribute(text: string): string {
-  return escapeText(text).replace(/"/g, "&quot;");
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 /** Markdown rendered for the viewer. Raw HTML in the document is shown as
@@ -218,8 +258,13 @@ function escapeAttribute(text: string): string {
     `IMAGE` allow, since the document is the agent's and the window is the
     app's. */
 export function render(markdown: string): string {
-  const escaped = markdown.replace(/</g, "&lt;");
-  return marked.parse(escaped, { async: false, gfm: true, renderer }) as string;
+  return marked.parse(markdown, { async: false, gfm: true, renderer }) as string;
+}
+
+/** Markdown an agent wrote in a conversation, rendered as `render` does,
+    with an image from anywhere but the text itself shown as a link. */
+export function renderSaid(markdown: string): string {
+  return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
 }
 
 function decode(base64: string): string {

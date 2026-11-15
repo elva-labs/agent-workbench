@@ -10,8 +10,42 @@ import type { AgentId, DetectReport } from "$lib/core";
 /** Every agent the workbench can drive, in the order they are offered. */
 export const AGENTS: AgentId[] = ["claude-code", "codex"];
 
+/** What the window says of an agent, in one place: what it is called as a
+    product and as the one speaking in a conversation, how the user signs
+    in to it in a terminal, the variable that names its account's
+    directory, and the mode a session of it starts in unless the user picks
+    another, the one that asks before it acts. */
+export interface AgentProfile {
+  product: string;
+  name: string;
+  signIn: string;
+  configVar: string;
+  safeMode: string;
+}
+
+const PROFILES: Record<AgentId, AgentProfile> = {
+  "claude-code": {
+    product: "Claude Code",
+    name: "Claude",
+    signIn: "claude",
+    configVar: "CLAUDE_CONFIG_DIR",
+    safeMode: "default",
+  },
+  codex: {
+    product: "Codex",
+    name: "Codex",
+    signIn: "codex login",
+    configVar: "CODEX_HOME",
+    safeMode: "read-only",
+  },
+};
+
+export function agentProfile(id: AgentId): AgentProfile {
+  return PROFILES[id];
+}
+
 export function agentLabel(id: AgentId): string {
-  return id === "codex" ? "Codex" : "Claude Code";
+  return PROFILES[id].product;
 }
 
 /** The short form for a tag beside a row. */
@@ -33,6 +67,8 @@ export const agent = $state({
   asked: [] as AgentId[],
   /** Where each binary was found. */
   paths: {} as Partial<Record<AgentId, string>>,
+  /** The agents the core can drive in messages, as it said when asked. */
+  integrable: [] as AgentId[],
   /** False when the login shell could not be read, which changes what a
       missing binary means. */
   fromLoginShell: false,
@@ -44,6 +80,11 @@ export function applyDetect(report: DetectReport, hasCore: boolean) {
   if (!agent.asked.includes(id)) agent.asked.push(id);
   agent.fromLoginShell = agent.fromLoginShell || report.fromLoginShell;
   agent.error = null;
+  const integrable = report.caps?.integrated === true;
+  if (integrable !== agent.integrable.includes(id))
+    agent.integrable = integrable
+      ? AGENTS.filter((known) => known === id || agent.integrable.includes(known))
+      : agent.integrable.filter((known) => known !== id);
   if (report.path !== null) {
     agent.paths[id] = report.path;
     if (!agent.installed.includes(id)) {
@@ -106,6 +147,7 @@ export function resetAgent() {
   agent.installed = [];
   agent.asked = [];
   agent.paths = {};
+  agent.integrable = [];
   agent.fromLoginShell = false;
   agent.error = null;
 }

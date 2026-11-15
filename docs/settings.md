@@ -101,6 +101,17 @@ tools they bring the agent, is in [hooks](hooks.md).
 
 ## Sessions
 
+How each agent's sessions run: in a terminal, the agent's own interface,
+or integrated, the conversation drawn by the window, a terminal to begin
+with. An agent the core says it can drive in messages offers the choice,
+and the tab says an agent that runs only in a terminal does. Beneath the
+choice it says that a session following a workflow runs in a terminal
+whichever is chosen. A session that is running keeps the way it started,
+and a single new one can be started the other way from a project's ⋯ menu,
+the palette or the agent pane. What an integrated session is like is in
+[sessions](sessions.md#integrated-sessions). It is the user's to change,
+and an agent's settings tools refuse it.
+
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
 under its project, one line with its time, ready to resume, as [sessions](sessions.md#past-sessions)

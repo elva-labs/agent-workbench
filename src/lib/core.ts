@@ -883,6 +883,9 @@ export interface ProjectInfo {
   name: string;
   repository: string | null;
   isGit: boolean;
+  /** The branch checked out, short; null outside a repository and on a
+      detached HEAD. */
+  branch?: string | null;
 }
 
 export interface ChangedFile {
@@ -1078,6 +1081,9 @@ export interface Settings {
   /** How long a past session stays listed under its project before it
       goes behind the fold with the rest of the history. */
   pastSessions: PastSessions;
+  /** The agents whose sessions run integrated, drawn by the window; the
+      others run in a terminal. Missing reads as none. */
+  integrated?: AgentId[];
   /** How long a project goes unused before it folds under Inactive. */
   inactiveAfter: InactiveAfter;
   /** The user's own themes, by name. A palette may name one. */

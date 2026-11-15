@@ -58,6 +58,8 @@
   } from "$lib/accounts.svelte";
   import { workspace, projectLabel } from "$lib/workspace.svelte";
   import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
+  import { canIntegrate, kindFor, setKind } from "$lib/sessionKind.svelte";
+  import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
   import { INACTIVE_AFTER, projects, setInactiveAfter } from "$lib/projects.svelte";
   import {
     INTERFACE_FONTS,
@@ -640,6 +642,47 @@
           </section>
         {:else if tab === "sessions"}
           <section data-testid="settings-sessions">
+            <h3>How sessions run</h3>
+            <p class="note">
+              In a terminal, a session is the agent's own interface. Integrated, the workbench draws
+              the conversation and the agent works behind it, with the same login, settings, hooks
+              and tools. An agent the workbench can drive this way offers the choice. A session that
+              is running keeps the way it started, and a single new one can be started the other way
+              from the agent pane, the palette or the project's menu.
+            </p>
+            <div class="projects kinds">
+              {#each installed().length > 0 ? installed() : AGENTS as id (id)}
+                <div class="project" data-testid="session-kind" data-agent={id}>
+                  <span class="project-name">{agentLabel(id)}</span>
+                  {#if canIntegrate(id)}
+                    <div class="seg" role="radiogroup" aria-label="How {agentLabel(id)} sessions run">
+                      <button
+                        role="radio"
+                        aria-checked={kindFor(id) === "terminal"}
+                        class:on={kindFor(id) === "terminal"}
+                        onclick={() => setKind(id, "terminal")}
+                        data-testid="session-kind-terminal">In a terminal</button
+                      >
+                      <button
+                        role="radio"
+                        aria-checked={kindFor(id) === "integrated"}
+                        class:on={kindFor(id) === "integrated"}
+                        onclick={() => setKind(id, "integrated")}
+                        data-testid="session-kind-integrated">Integrated</button
+                      >
+                    </div>
+                  {:else}
+                    <span class="note quiet only" data-testid="session-kind-only"
+                      >{agentLabel(id)} sessions run in a terminal.</span
+                    >
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <p class="note" data-testid="session-kind-workflow">
+              A session that follows a workflow runs in a terminal, whichever is chosen here, since
+              that is how its orchestrator is told the workflow.
+            </p>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">
@@ -1251,6 +1294,15 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
+  }
+
+  .kinds {
+    margin-bottom: 10px;
+  }
+
+  .note.only {
+    margin: 0;
+    text-align: right;
   }
 
   .project-name {

@@ -231,6 +231,23 @@ describe("Escape", () => {
   it("is the agent's by default", () => {
     expect(resolveAction({ key: "Escape" })).toBeNull();
   });
+
+  // An integrated session's composer takes Escape to stop a running turn,
+  // and lets it through when none runs: then it is the app's.
+  it("closes the viewer from an integrated session, and does nothing else there", () => {
+    expect(
+      resolveAction({ key: "Escape" }, { focus: "agent", reviewing: true, integrated: true }),
+    ).toEqual({ type: "exitReview" });
+    expect(
+      resolveAction({ key: "Escape" }, { focus: "agent", reviewing: false, integrated: true }),
+    ).toBeNull();
+  });
+
+  it("leaves the find chord free in an integrated session", () => {
+    expect(
+      resolveAction({ key: "f", metaKey: true }, { focus: "agent", reviewing: false, integrated: true, mac: true }),
+    ).toBeNull();
+  });
 });
 
 describe("editor mode", () => {

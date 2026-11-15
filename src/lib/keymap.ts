@@ -35,6 +35,10 @@ export { isMac };
  * next occurrence there. Find there is find in the file. Save and close tab
  * are editor mode's, from anywhere but a terminal, where on Windows and
  * Linux the same Ctrl chords are the process's.
+ *
+ * An integrated session has no terminal: its composer stops a running turn
+ * on Escape and lets the key through when none runs, and then it closes the
+ * viewer while reviewing and does nothing else.
  */
 
 export type Action =
@@ -89,6 +93,9 @@ export interface KeyContext {
   editing?: boolean;
   /** The editor has the keyboard. */
   inEditor?: boolean;
+  /** Whether the agent pane holds an integrated session, which has no
+      terminal to own the keyboard. */
+  integrated?: boolean;
   /** Whether Cmd is the modifier. Defaults to what the browser reports. */
   mac?: boolean;
 }
@@ -159,6 +166,9 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
     if (e.key === "Escape" && !isTerminal(ctx.focus)) {
       if (ctx.editing) return ctx.inEditor ? null : { type: "toEditor" };
       return ctx.reviewing ? { type: "exitReview" } : { type: "focus", pane: "agent" };
+    }
+    if (e.key === "Escape" && ctx.focus === "agent" && ctx.integrated && ctx.reviewing) {
+      return { type: "exitReview" };
     }
     return null;
   }

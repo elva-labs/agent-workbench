@@ -209,6 +209,9 @@ pub struct Settings {
     pub workflows: Workflows,
     /// How long a past session stays listed under its project.
     pub past_sessions: String,
+    /// The agents whose sessions run integrated, drawn by the window; the
+    /// others run in a terminal.
+    pub integrated: Vec<String>,
     /// How long a project goes unused before the sessions pane folds it.
     pub inactive_after: String,
     /// The user's own themes, by name. A palette may name one.
@@ -241,6 +244,7 @@ impl Default for Settings {
             accounts: Accounts::default(),
             workflows: Workflows::default(),
             past_sessions: "forever".into(),
+            integrated: Vec::new(),
             inactive_after: "week".into(),
             themes: BTreeMap::new(),
             user_styles: false,
@@ -764,6 +768,32 @@ fn themes_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<Stri
     themes
 }
 
+/// The agents a value names as running integrated, each once, in the order
+/// the adapters list them, or why it will not do. Which agents can is the
+/// adapters' to say.
+fn integrated(value: &Value) -> Result<Vec<String>, String> {
+    let named = value
+        .as_array()
+        .ok_or("integrated is a list of the agents whose sessions run integrated")?;
+    let able = crate::adapter::integrated_agents();
+    for agent in named {
+        match agent.as_str() {
+            Some(agent) if able.contains(&agent) => {}
+            _ => {
+                return Err(format!(
+                    "only {} can run integrated, not {agent}",
+                    able.join(", ")
+                ))
+            }
+        }
+    }
+    Ok(able
+        .iter()
+        .filter(|known| named.iter().any(|agent| agent.as_str() == Some(known)))
+        .map(|known| known.to_string())
+        .collect())
+}
+
 /// Sets one field from a value, or says why the value will not do. A name
 /// the settings do not have is refused too, so a misspelling is not lost.
 /// A palette is checked against the themes the settings hold, so it is set
@@ -822,6 +852,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             mend(&before, settings, "workflows");
         }
         "pastSessions" => settings.past_sessions = one_of(field, value, PAST_SESSIONS)?,
+        "integrated" => settings.integrated = integrated(value)?,
         "inactiveAfter" => settings.inactive_after = one_of(field, value, INACTIVE_AFTER)?,
         other => return Err(format!("there is no setting called {other}")),
     }
@@ -1837,6 +1868,48 @@ mod tests {
         assert_eq!(
             parse(r#"{ "pastSessions": 7 }"#).unwrap().past_sessions,
             "forever"
+        );
+    }
+
+    #[test]
+    fn only_an_agent_that_can_run_integrated_is_taken() {
+        let settings = Settings::default();
+        assert!(settings.integrated.is_empty());
+        let next = apply(
+            &settings,
+            &json!({ "integrated": ["claude-code", "claude-code"] }),
+        )
+        .unwrap();
+        assert_eq!(next.integrated, vec!["claude-code".to_string()]);
+        let back = apply(&next, &json!({ "integrated": [] })).unwrap();
+        assert!(back.integrated.is_empty());
+        // Codex runs integrated as its adapter says, and the order is the
+        // adapters'.
+        let both = apply(
+            &settings,
+            &json!({ "integrated": ["codex", "claude-code"] }),
+        )
+        .unwrap();
+        assert_eq!(
+            both.integrated,
+            vec!["claude-code".to_string(), "codex".to_string()]
+        );
+        let error = apply(&settings, &json!({ "integrated": ["gemini"] })).unwrap_err();
+        assert!(error.contains("only claude-code, codex"), "{error}");
+        assert!(apply(&settings, &json!({ "integrated": "claude-code" })).is_err());
+        assert_eq!(
+            parse(r#"{ "integrated": ["codex"] }"#).unwrap().integrated,
+            vec!["codex".to_string()]
+        );
+        assert!(parse(r#"{ "integrated": ["gemini"] }"#)
+            .unwrap()
+            .integrated
+            .is_empty());
+        assert_eq!(
+            parse(r#"{ "integrated": ["claude-code"] }"#)
+                .unwrap()
+                .integrated,
+            vec!["claude-code".to_string()]
         );
     }
 

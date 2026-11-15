@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { shown } from "$lib/thread";
   import HooksNotice from "$lib/components/HooksNotice.svelte";
   import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
   import { onMount, tick, untrack } from "svelte";
@@ -6,6 +7,8 @@
 
   import Pane from "$lib/components/Pane.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
+  import ConversationView from "$lib/components/conversation/ConversationView.svelte";
+  import Icon from "$lib/components/conversation/Icon.svelte";
   import { core, type AgentId } from "$lib/core";
   import {
     AGENTS,
@@ -20,6 +23,9 @@
   import {
     activeSession,
     create,
+    defaultAgent,
+    label,
+    otherWay,
     launch,
     rang,
     sessions,
@@ -30,8 +36,11 @@
     wake,
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
+  import type { SessionKind } from "$lib/sessionKind.svelte";
+  import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
+  import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
-  import { workspace } from "$lib/workspace.svelte";
+  import { projectLabel, workspace } from "$lib/workspace.svelte";
   import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
@@ -52,7 +61,55 @@
     }
   }
 
-  let title = $derived(current === null ? "Agent" : `Agent · ${agentLabel(current.agent)}`);
+  let integrated = $derived(current?.kind === "integrated");
+
+  // An integrated session's header names it, its project and its branch.
+  let title = $derived(
+    current === null
+      ? "Agent"
+      : integrated
+        ? shown(label(current))
+        : `Agent · ${agentLabel(current.agent)}`,
+  );
+
+  /** What the header says of the session: for an integrated one waiting
+      on the user before it can run, what it waits for. */
+  let meta = $derived.by(() => {
+    if (current !== null && current.kind === "integrated") {
+      const link = linkFor(current.key);
+      if (link.untrusted) return "asks to trust the folder";
+      if (link.conversation.notLoggedIn) return "not signed in";
+      // What the session is doing, from its own events: what it waits on
+      // when it waits on the user, else working or idle.
+      if (current.status === "running") {
+        const open = link.conversation.open[0];
+        if (open !== undefined) return open.asked.type === "questionAsked" ? "asks you" : "waits for permission";
+        return link.conversation.working ? "working" : "idle";
+      }
+    }
+    return statusLabel(current);
+  });
+
+  let branch = $state<string | null>(null);
+  $effect(() => {
+    if (current === null || current.kind !== "integrated") return;
+    const dir = current.worktree ?? current.startIn ?? current.project;
+    // Read again when a turn ends, since the agent may have switched it.
+    void current.working;
+    let stale = false;
+    core()
+      .projectInfo(dir)
+      .then((info) => {
+        if (!stale) branch = info.branch ?? null;
+      })
+      .catch(() => {
+        if (!stale) branch = null;
+      });
+    return () => {
+      stale = true;
+    };
+  });
+
   /** The workflow the session on screen is part of, and its place in it. */
   let tag = $derived(current === null ? null : workflowTag(current));
   let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
@@ -61,6 +118,18 @@
   // this pane shows.
   $effect(() => {
     if (current?.status === "dormant") wake(current.key);
+  });
+
+  // An integrated session starts as soon as its row is starting, as a
+  // terminal session starts when its terminal mounts.
+  $effect(() => {
+    for (const session of sessions.all) {
+      if (session.kind !== "integrated" || session.status !== "starting") continue;
+      const key = session.key;
+      untrack(() => {
+        if (handleOf(key) === null) void launchIntegrated(key);
+      });
+    }
   });
 
   /** Whether the new-session button has opened into the choice of agent. */
@@ -117,6 +186,20 @@
     create(workspace.active, null, id);
   }
 
+  /** The agent a new session here starts with, and the other way it can
+      run, when it has one. */
+  let firstAgent = $derived(workspace.active === null ? null : defaultAgent(workspace.active));
+  let other = $derived(workspace.active === null ? null : otherWay(workspace.active));
+
+  /** One session started the other way from New session, alone. */
+  function startOther(kind: SessionKind) {
+    choosing = false;
+    const project = workspace.active;
+    if (project === null || firstAgent === null) return;
+    touch(project);
+    create(project, null, firstAgent, null, null, null, accountOf(project), null, kind);
+  }
+
   /** Escape backs out of the choice while one of its buttons has focus.
       From the terminal it is the agent's. */
   function onChoiceKey(e: KeyboardEvent) {
@@ -145,6 +228,11 @@
         data-testid="start-agent-cancel">×</button
       >
     {:else}
+      {#if other !== null && firstAgent !== null}
+        <button class="quiet" onclick={() => startOther(other!)} data-testid="start-other"
+          >{other === "integrated" ? "New integrated session" : "New session in a terminal"}</button
+        >
+      {/if}
       <button onclick={startAnother} data-testid="start-agent">New session</button>
     {/if}
   </div>
@@ -154,9 +242,17 @@
   {#if tag !== null}
     <WorkflowTagButton {tag} />
   {/if}
+  {#if current !== null && integrated}
+    <span class="crumb" title={current.project} data-testid="conversation-project"
+      ><Icon name="folder" size={13} />{projectLabel(current.project)}</span
+    >
+    {#if branch !== null}
+      <span class="crumb" data-testid="conversation-branch"><Icon name="branch" size={13} />{branch}</span>
+    {/if}
+  {/if}
 {/snippet}
 
-<Pane id="agent" {title} meta={statusLabel(current)} head={tag === null ? undefined : head}>
+<Pane id="agent" {title} {meta} head={tag !== null || integrated ? head : undefined}>
   <div class="wrap" bind:this={wrap}>
     {#if refusal !== null && current !== null}
       <!-- What the workflow refused the agent, said to the user too. -->
@@ -176,7 +272,7 @@
          is visible, so its PTY keeps its size and coming back to it costs
          no reflow. -->
     {#each sessions.all as session (session.key)}
-      {#if session.status !== "dormant"}
+      {#if session.status !== "dormant" && session.kind === "terminal"}
         <TerminalView
           id={session.key}
           ptyId={session.ptyId}
@@ -190,6 +286,8 @@
           fontSize={sizeOf(session.key, session.id)}
           newlineOnShiftEnter
         />
+      {:else if session.status !== "dormant"}
+        <ConversationView {session} active={session.key === sessions.active} />
       {/if}
     {/each}
 
@@ -209,6 +307,8 @@
         <p class="message">No session open. Resume a past one from the list, or start a new one.</p>
         {@render starters()}
       </div>
+    {:else if current.kind === "integrated"}
+      <!-- The conversation says itself how it stands. -->
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
@@ -234,6 +334,25 @@
     min-height: 0;
     padding: var(--term-air);
     background: var(--surface);
+  }
+
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-family: var(--chrome);
+    font-size: var(--meta-size);
+    letter-spacing: var(--label-track);
+    text-transform: var(--label-case);
+    color: var(--ink-2);
+  }
+
+  .crumb + .crumb {
+    margin-left: 6px;
   }
 
   /* Sits over the terminal rather than replacing it: the buffer of a stopped
@@ -323,6 +442,16 @@
     background: var(--accent-soft);
     color: var(--accent);
     cursor: pointer;
+  }
+
+  button.quiet {
+    border-color: transparent;
+    background: none;
+    color: var(--ink-2);
+  }
+
+  button.quiet:hover {
+    color: var(--ink);
   }
 
   .cancel {
