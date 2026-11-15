@@ -595,6 +595,24 @@ pub struct Media {
     pub size: u64,
 }
 
+/// What a file given to the agent by its path is, for the card that names
+/// it before the message goes: how big, and whether it is a folder.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    pub size: u64,
+    pub dir: bool,
+}
+
+pub fn file_info(path: &Path) -> Result<FileInfo, String> {
+    let meta =
+        std::fs::metadata(path).map_err(|e| format!("could not read {}: {e}", path.display()))?;
+    Ok(FileInfo {
+        size: if meta.is_dir() { 0 } else { meta.len() },
+        dir: meta.is_dir(),
+    })
+}
+
 pub fn read_media(path: &Path) -> Result<Media, String> {
     use base64::Engine;
     let mime = media_type(path)
@@ -982,6 +1000,24 @@ mod tests {
         std::fs::write(&text, "hello").unwrap();
         assert!(read_media(&text).unwrap_err().contains("not an image"));
         assert!(read_media(&dir.join("missing.png"))
+            .unwrap_err()
+            .contains("could not read"));
+    }
+
+    #[test]
+    fn says_how_big_a_file_is_and_whether_it_is_a_folder() {
+        let dir = Scratch::new("show-info");
+        let file = dir.join("trace.bin");
+        std::fs::write(&file, [0u8; 5]).unwrap();
+        assert_eq!(
+            file_info(&file).unwrap(),
+            FileInfo {
+                size: 5,
+                dir: false
+            }
+        );
+        assert_eq!(file_info(&dir).unwrap(), FileInfo { size: 0, dir: true });
+        assert!(file_info(&dir.join("missing"))
             .unwrap_err()
             .contains("could not read"));
     }
