@@ -284,10 +284,13 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
     assert_eq!(ended["usage"]["outputTokens"], 4);
     assert_eq!(h.until_state("idle"), ["idle", "working", "idle"]);
 
-    let sent = h.stdin();
-    assert_eq!(sent[2]["type"], "user");
-    assert_eq!(sent[2]["message"]["content"], "say hello");
-    assert_eq!(sent[2]["uuid"], message.as_str());
+    let sent: Vec<Value> = h
+        .stdin()
+        .into_iter()
+        .filter(|line| line["type"] == "user")
+        .collect();
+    assert_eq!(sent[0]["message"]["content"], "say hello");
+    assert_eq!(sent[0]["uuid"], message.as_str());
 
     let end = h.stop();
     assert_eq!(end["clean"], true);
