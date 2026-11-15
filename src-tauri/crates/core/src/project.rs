@@ -23,6 +23,9 @@ pub struct ProjectInfo {
     /// False for a folder that is not in a repository at all. The changes pane
     /// says so rather than sitting there empty.
     pub is_git: bool,
+    /// The branch the repository has checked out, short; None outside a
+    /// repository and on a detached HEAD.
+    pub branch: Option<String>,
 }
 
 pub fn describe(path: &Path) -> Result<ProjectInfo, String> {
@@ -42,8 +45,26 @@ pub fn describe(path: &Path) -> Result<ProjectInfo, String> {
         name: project_name(&path),
         path: path.to_string_lossy().to_string(),
         is_git: repository.is_some(),
+        branch: repository.as_deref().and_then(branch),
         repository: repository.map(|p| p.to_string_lossy().to_string()),
     })
+}
+
+/// The branch a repository has checked out, read from its HEAD: in `.git`
+/// for a clone, and in the directory a `.git` file names for a worktree.
+/// None for a detached HEAD or one that cannot be read.
+fn branch(repository: &Path) -> Option<String> {
+    let dot = repository.join(".git");
+    let git = if dot.is_file() {
+        let pointer = std::fs::read_to_string(&dot).ok()?;
+        let named = pointer.trim().strip_prefix("gitdir:")?.trim();
+        repository.join(named)
+    } else {
+        dot
+    };
+    let head = std::fs::read_to_string(git.join("HEAD")).ok()?;
+    let name = head.trim().strip_prefix("ref: refs/heads/")?;
+    (!name.is_empty()).then(|| name.to_string())
 }
 
 /// Walks up looking for `.git`. It is a directory in a normal clone and a file
@@ -146,6 +167,36 @@ mod tests {
         std::fs::write(dir.join(".git"), b"gitdir: /elsewhere/.git/worktrees/x").unwrap();
 
         assert!(describe(&dir).unwrap().is_git);
+    }
+
+    #[test]
+    fn names_the_branch_checked_out() {
+        let dir = temp("workbench-project-branch");
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        std::fs::write(dir.join(".git/HEAD"), b"ref: refs/heads/feature/x\n").unwrap();
+        assert_eq!(describe(&dir).unwrap().branch.as_deref(), Some("feature/x"));
+
+        std::fs::write(
+            dir.join(".git/HEAD"),
+            b"0123456789abcdef0123456789abcdef01234567\n",
+        )
+        .unwrap();
+        assert_eq!(describe(&dir).unwrap().branch, None);
+
+        let plain = temp("workbench-project-branch-plain");
+        assert_eq!(describe(&plain).unwrap().branch, None);
+    }
+
+    #[test]
+    fn names_a_worktree_s_branch_from_the_directory_its_git_file_names() {
+        let dir = temp("workbench-project-branch-worktree");
+        let gitdir = dir.join("main/.git/worktrees/wt");
+        std::fs::create_dir_all(&gitdir).unwrap();
+        std::fs::write(gitdir.join("HEAD"), b"ref: refs/heads/wt\n").unwrap();
+        let tree = dir.join("wt");
+        std::fs::create_dir_all(&tree).unwrap();
+        std::fs::write(tree.join(".git"), b"gitdir: ../main/.git/worktrees/wt\n").unwrap();
+        assert_eq!(describe(&tree).unwrap().branch.as_deref(), Some("wt"));
     }
 
     #[test]

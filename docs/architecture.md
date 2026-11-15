@@ -17,11 +17,12 @@ Tests install a fake behind that seam and drive the real frontend without
 Tauri, which is how the browser tier works.
 
 The Rust side is two crates. The **core** has no window attached: ptys, git,
-the watcher, the transcript indexes, the hooks, the session log and the plugin
-processes, with an event sink and a per-pty output that whoever holds the core
-provides. The **app** is the window: thin Tauri commands over one core object,
-the native menu, the window chrome, and the routing that sends a command to
-the core here or to the same core on another machine.
+the watcher, file reads and writes, the transcript indexes, the hooks, the
+session log and the plugin processes, with an event sink and a per-pty output
+that whoever holds the core provides. The **app** is the window: thin Tauri
+commands over one core object, the native menu, the window chrome, and the
+routing that sends a command to the core here or to the same core on another
+machine.
 
 The git the core runs, for projects and for plugins, always works on the
 repository in the folder it is run in. It clears the variables that name a

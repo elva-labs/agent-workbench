@@ -1,0 +1,220 @@
+[
+  {
+    "commands": [],
+    "effort": "medium",
+    "efforts": [
+      "low",
+      "medium"
+    ],
+    "mode": "untrusted, workspace-write",
+    "model": "gpt-a",
+    "models": [
+      {
+        "description": null,
+        "efforts": [
+          "low",
+          "medium"
+        ],
+        "name": "GPT A",
+        "value": "gpt-a"
+      },
+      {
+        "description": null,
+        "efforts": [
+          "high"
+        ],
+        "name": "GPT B",
+        "value": "gpt-b"
+      }
+    ],
+    "modes": [
+      {
+        "description": "Reads files, and asks before it changes anything or runs a command that would",
+        "name": "Read only",
+        "value": "read-only"
+      },
+      {
+        "description": "Changes files and runs commands in the project, and asks before going beyond it",
+        "name": "Auto",
+        "value": "auto"
+      },
+      {
+        "description": "Changes anything and runs anything without asking",
+        "name": "Full access",
+        "value": "full-access"
+      }
+    ],
+    "sessionId": "019a0000-0000-7000-8000-000000000001",
+    "type": "ready",
+    "version": "0.169.0"
+  },
+  {
+    "state": "idle",
+    "type": "state"
+  },
+  {
+    "error": null,
+    "images": [],
+    "message": "00000000-0000-4000-8000-000000000001",
+    "state": "sent",
+    "text": "Run the tests",
+    "type": "message"
+  },
+  {
+    "state": "working",
+    "type": "state"
+  },
+  {
+    "messages": [
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    "type": "turnStarted"
+  },
+  {
+    "call": "cmd",
+    "kind": "command",
+    "name": "commandExecution",
+    "parent": null,
+    "type": "toolStarted"
+  },
+  {
+    "call": "cmd",
+    "delta": null,
+    "input": {
+      "actions": [],
+      "command": "/bin/zsh -lc 'npm test'",
+      "cwd": "/w"
+    },
+    "parent": null,
+    "truncated": false,
+    "type": "toolInput"
+  },
+  {
+    "call": "cmd",
+    "choices": [
+      {
+        "choice": "allow",
+        "message": false,
+        "remembers": null
+      },
+      {
+        "choice": "allowSession",
+        "message": false,
+        "remembers": "/bin/zsh -lc 'npm test' for the rest of this session"
+      },
+      {
+        "choice": "allowAlways",
+        "message": false,
+        "remembers": "commands that start with npm test in Codex's rules, from now on"
+      },
+      {
+        "choice": "deny",
+        "message": false,
+        "remembers": null
+      },
+      {
+        "choice": "cancel",
+        "message": false,
+        "remembers": null
+      }
+    ],
+    "description": null,
+    "input": {
+      "actions": [],
+      "command": "/bin/zsh -lc 'npm test'",
+      "cwd": "/w"
+    },
+    "parent": null,
+    "path": null,
+    "request": "7",
+    "tool": "commandExecution",
+    "truncated": false,
+    "type": "permissionAsked"
+  },
+  {
+    "state": "asking",
+    "type": "state"
+  },
+  {
+    "call": "q",
+    "parent": null,
+    "questions": [
+      {
+        "header": "Go",
+        "multiple": false,
+        "options": [
+          {
+            "description": null,
+            "label": "Yes"
+          },
+          {
+            "description": null,
+            "label": "No"
+          }
+        ],
+        "other": false,
+        "question": "Go on?",
+        "secret": false
+      }
+    ],
+    "request": "8",
+    "type": "questionAsked"
+  },
+  {
+    "request": "8",
+    "type": "withdrawn"
+  },
+  {
+    "call": "cmd",
+    "changes": [],
+    "error": false,
+    "output": "12 passed\n",
+    "parent": null,
+    "truncated": false,
+    "type": "toolFinished"
+  },
+  {
+    "request": "7",
+    "type": "withdrawn"
+  },
+  {
+    "state": "working",
+    "type": "state"
+  },
+  {
+    "durationMs": 5,
+    "error": null,
+    "outcome": "done",
+    "totalCostUsd": null,
+    "type": "turnEnded",
+    "usage": null
+  },
+  {
+    "state": "idle",
+    "type": "state"
+  },
+  {
+    "error": null,
+    "images": [],
+    "message": "00000000-0000-4000-8000-000000000002",
+    "state": "sent",
+    "text": "And again",
+    "type": "message"
+  },
+  {
+    "state": "working",
+    "type": "state"
+  },
+  {
+    "error": "the input is too long",
+    "images": [],
+    "message": "00000000-0000-4000-8000-000000000002",
+    "state": "dropped",
+    "text": null,
+    "type": "message"
+  },
+  {
+    "state": "idle",
+    "type": "state"
+  }
+]

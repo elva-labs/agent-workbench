@@ -48,7 +48,9 @@ into a running session, and Enter after it on its own, as a person does. A
 long line goes in as a paste when the session's terminal has asked for
 paste, and in small pieces a moment apart when it has not, so the agent
 takes it whole either way. Its Enter follows on its own, later the longer
-the line is.
+the line is. A session that runs integrated is sent the text as a message,
+whole, as the user's own is, and one sent while it works waits for its
+turn.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A stop is told once: the wait that
 answers with it and a listing that shows it each count, so a session that
@@ -59,9 +61,19 @@ told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
 telling anything. `read` answers with the last lines on a session's screen,
-as you would see them, whether or not it has ever been on screen. `stop`
+as you would see them, whether or not it has ever been on screen; for an
+integrated session, which has no screen, with what its agent last said and
+did, a line for each step, and what it is doing or waiting for now; each
+message in it, and each that waits for the turn, is said to be the user's
+or the session's that sent it. A
+message one session sends another shows in that session's thread under the
+sender's name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
 their row, rather than leaving a row of it under the project.
+A session `start` starts runs in a terminal or integrated as the
+agent's own setting says, and every tool acts on it either way; what an
+integrated session cannot do when it is not running, such as take a
+message, the answer says, with the way to start it again.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
@@ -272,8 +284,10 @@ place in it, quietly beside the title and in the header's own type: the
 workflow and orchestrator for the session following it, the workflow
 marked deleted where it follows the copy it kept, or the workflow, the step
 and the round for a session started for a step. Where the header is short
-of room, the workflow's name is cut short and then left out, and the place
-stays whole. The rules for that place open in a popover under the tag when
+of room, the workflow's name is cut short and then left out, then the
+header's status, and the place stays whole until both have gone; only
+then is it cut short, and it goes with its tag at a letter or two, before
+the title gives way (see [layout](layout.md)). The rules for that place open in a popover under the tag when
 the pointer rests on it, or on a click, Enter or Space, and Escape puts
 them away. For the orchestrator they are its instructions. For a session
 started for a step they are what the step allows, in the words of its

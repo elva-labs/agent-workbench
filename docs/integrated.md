@@ -492,6 +492,7 @@ has to do itself:
   orchestrator's waits act only for a session the window shows as a
   running row whose id is the conversation's id, so an integrated session
   needs such a row for its agent's tools to work. The orchestrator's send
-  and read act on terminals and do not reach an integrated session.
+  reaches an integrated session as a message, and its read answers with
+  what the agent last said and did.
   Past sessions are listed from the transcripts, integrated ones among
   them.

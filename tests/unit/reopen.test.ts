@@ -112,13 +112,23 @@ describe("keeping the record", () => {
     expect(record().open).toEqual([]);
   });
 
-  it("leaves out a session another session started", () => {
+  it("leaves out a terminal session another session started", () => {
     stop = reopen();
     live(A, "caller");
     const child = live(B, "child");
     conductor.startedBy[child.key] = "caller";
     flushSync();
     expect(record().open.map((entry) => entry.id)).toEqual(["caller"]);
+  });
+
+  it("keeps an integrated session another session started, which the core goes on running", () => {
+    stop = reopen();
+    live(A, "caller");
+    const child = create(B, null, "claude-code", null, null, null, null, undefined, "integrated");
+    started(child.key, "pty-child", "child");
+    conductor.startedBy[child.key] = "caller";
+    flushSync();
+    expect(record().open.map((entry) => entry.id)).toEqual(["caller", "child"]);
   });
 
   it("keeps where a session was started and on which model", () => {
@@ -133,6 +143,7 @@ describe("keeping the record", () => {
       startIn: "/home/ada/dev/one/tree",
       model: "opus",
       account: null,
+      kind: "terminal",
     });
   });
 
@@ -203,6 +214,23 @@ describe("coming back", () => {
     onRecord([entry(A, "one")], null);
     stop = reopen();
     expect(forProject(A)[0].title).toBe("the refactor");
+  });
+
+  it("brings back the orchestrator's sessions once its directory is known, though it is not an open project", async () => {
+    const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
+    onRecord([entry(ORCHESTRATOR, "conductor"), entry("/gone", "one"), entry(A, "two")], null);
+    let know: (dir: string | null) => void = () => {};
+    stop = reopen(new Map(), new Promise((resolve) => (know = resolve)));
+    expect(sessions.all.map((session) => session.id)).toEqual(["two"]);
+    // Kept on record while the directory is not known yet.
+    flushSync();
+    expect(record().open.map((kept) => kept.id).sort()).toEqual(["conductor", "one", "two"]);
+    know(ORCHESTRATOR);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sessions.all.map((session) => session.id)).toEqual(["two", "conductor"]);
+    flushSync();
+    expect(record().open.map((kept) => kept.id).sort()).toEqual(["conductor", "two"]);
   });
 
   it("leaves out a session whose project is not open", () => {

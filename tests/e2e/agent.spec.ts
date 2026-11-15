@@ -347,6 +347,14 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         browserKeys: async () => {},
         onBrowserFocused: async () => () => {},
         onFullScreen: async () => () => {},
+        // Leaving with unsaved edits and the File menu: nothing to ask here.
+        setUnsaved: async () => {},
+        onLeaveRequested: async () => () => {},
+        leaveHeard: async () => {},
+        leaveConfirmed: async () => {},
+        onMenuAction: async () => () => {},
+        menuKeys: async () => {},
+        menuEnabled: async () => {},
         worktreeAdd: async (project: string, name: string) =>
           `${project}/${name}`,
         setSelection: async () => {},
@@ -984,6 +992,18 @@ test.describe("several sessions in one project", () => {
     await expect(page.locator(AGENT)).toContainText("running");
     const live = rows(page).filter({ has: page.locator(".dot.live") });
     const left = rows(page).filter({ has: page.locator(".dot.dormant") });
+    // Measured once the rows have finished coming in, not while they move.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            document
+              .getAnimations()
+              .filter((motion) => motion.playState === "running" && motion.effect?.getTiming().iterations !== Infinity)
+              .length,
+        ),
+      )
+      .toBe(0);
 
     const name = (await live.locator(".label").boundingBox())!;
     const when = (await live.locator(".when").boundingBox())!;

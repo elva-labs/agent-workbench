@@ -1,4 +1,5 @@
-import type { ITheme } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import type { ITheme, Terminal } from "@xterm/xterm";
 
 /**
  * The terminal's colours, taken from the app's own tokens.
@@ -206,3 +207,58 @@ export function domRendererChosen(): boolean {
     return false;
   }
 }
+
+/** The renderer's measurements, read where the fit addon reads them. */
+type Rendered = {
+  _core: {
+    _renderService: {
+      dimensions: { device: { cell: { width: number; height: number } } };
+    };
+  };
+};
+
+/**
+ * The fit addon, measuring by the cell the renderer draws in device pixels.
+ * The DOM renderer's cell in CSS pixels is its row rounded to the pixel and
+ * shared out over the columns the grid has now, so a fit by it depends on the
+ * grid it starts from: a pane back at the width it had can be given a column
+ * more or fewer than it had. The device cell is the same whatever the grid.
+ */
+export class GridFit extends FitAddon {
+  #terminal: Terminal | null = null;
+
+  override activate(terminal: Terminal): void {
+    super.activate(terminal);
+    this.#terminal = terminal;
+  }
+
+  override proposeDimensions(): { cols: number; rows: number } | undefined {
+    const terminal = this.#terminal;
+    const element = terminal?.element;
+    const parent = element?.parentElement;
+    if (!terminal || !element || !parent) return undefined;
+    const device = (terminal as unknown as Rendered)._core._renderService.dimensions.device.cell;
+    const ratio = window.devicePixelRatio || 1;
+    const cell = { width: device.width / ratio, height: device.height / ratio };
+    if (cell.width === 0 || cell.height === 0) return undefined;
+
+    // The room as the addon counts it: whole pixels, less the element's
+    // padding and the scrollbar's gutter when there is scrollback.
+    const room = getComputedStyle(parent);
+    const own = getComputedStyle(element);
+    const px = (style: CSSStyleDeclaration, name: string) => parseInt(style.getPropertyValue(name));
+    const scrollbar = terminal.options.scrollback === 0 ? 0 : (terminal.options.overviewRuler?.width || SCROLLBAR);
+    const width = Math.max(0, px(room, "width")) - (px(own, "padding-left") || 0) - (px(own, "padding-right") || 0) - scrollbar;
+    const height = px(room, "height") - (px(own, "padding-top") || 0) - (px(own, "padding-bottom") || 0);
+    // A box that is not laid out has no width or height in pixels, and a
+    // grid counted from nothing would be told to the process.
+    if (Number.isNaN(width) || Number.isNaN(height)) return undefined;
+    return {
+      cols: Math.max(2, Math.floor(width / cell.width)),
+      rows: Math.max(1, Math.floor(height / cell.height)),
+    };
+  }
+}
+
+/** xterm's scrollbar gutter where no overview ruler sets its own. */
+const SCROLLBAR = 14;

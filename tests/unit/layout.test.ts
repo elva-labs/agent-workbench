@@ -11,8 +11,21 @@ import {
   NEEDS_SESSIONS,
   NEEDS_TERMINAL,
   SPLITTER,
+  CONTROLS_STEP,
   agentVisible,
   applyLayout,
+  defaultChanges,
+  defaultEditAgent,
+  minChanges,
+  besideSessions,
+  editTreeVisible,
+  peekable,
+  resetEditAgent,
+  resetEditTree,
+  resizeEditAgent,
+  resizeEditTree,
+  setEditing,
+  toggleRightPane,
   browserFocused,
   changesVisible,
   enterReview,
@@ -55,6 +68,12 @@ function reset() {
   layout.width = 1200;
   layout.height = 800;
   layout.projectSort = "used";
+  layout.editTree = DEFAULT.editTree;
+  layout.editAgent = DEFAULT.editAgent;
+  layout.agentChosen = true;
+  layout.editTreeForced = false;
+  layout.changesDragged = false;
+  layout.editAgentDragged = false;
 }
 
 beforeEach(reset);
@@ -439,6 +458,7 @@ describe("persistence", () => {
   it("round-trips widths and intent", () => {
     layout.sessions = 300;
     layout.changes = 420;
+    layout.changesDragged = true;
     layout.review = 720;
     layout.changesChosen = false;
     saveLayout();
@@ -716,5 +736,452 @@ describe("the rightmost pane", () => {
     layout.mode = "reviewing";
     applyLayout(500);
     expect(rightmost()).toBe("changes");
+  });
+});
+
+/** The editor's width while editing, from what the store laid out. */
+function editorWidth(width: number) {
+  const sessions = (sessionsVisible() ? layout.sessions : FOLDED) + SPLITTER;
+  const tree = editTreeVisible() ? layout.editTree + SPLITTER : 0;
+  const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
+  return width - sessions - tree - agent;
+}
+
+describe("the editing shape", () => {
+  it("keeps every pane open when the window holds them beside the editor", () => {
+    applyLayout(1728);
+    setEditing(true);
+    expect(layout.mode).toBe("editing");
+    expect(sessionsVisible()).toBe(true);
+    expect(editTreeVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+    expect(layout.editTree).toBe(DEFAULT.editTree);
+    expect(layout.editAgent).toBe(DEFAULT.editAgent);
+    expect(editorWidth(1728)).toBeGreaterThanOrEqual(MIN.editor);
+  });
+
+  it("folds the sessions pane first, forced and not chosen", () => {
+    applyLayout(1440);
+    setEditing(true);
+    expect(sessionsVisible()).toBe(false);
+    expect(layout.sessionsForced).toBe(true);
+    expect(layout.sessionsChosen).toBe(true);
+    expect(editTreeVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+    expect(editorWidth(1440)).toBeGreaterThanOrEqual(MIN.editor);
+  });
+
+  it("then gives up the tree's column", () => {
+    applyLayout(1240);
+    setEditing(true);
+    expect(sessionsVisible()).toBe(false);
+    expect(editTreeVisible()).toBe(false);
+    expect(agentVisible()).toBe(true);
+    expect(layout.editAgent).toBe(DEFAULT.editAgent);
+    expect(editorWidth(1240)).toBeGreaterThanOrEqual(MIN.editor);
+  });
+
+  it("then hides the agent rather than squeezing it below its minimum", () => {
+    applyLayout(1000);
+    setEditing(true);
+    expect(agentVisible()).toBe(false);
+    expect(layout.agentHidden).toBe(true);
+    expect(layout.agentChosen).toBe(true);
+    expect(layout.editAgent).toBeGreaterThanOrEqual(MIN.agent);
+  });
+
+  it("never lets the agent or the tree drop below their minimums", () => {
+    for (const width of [1080, 1120, 1300, 1360]) {
+      applyLayout(width);
+      setEditing(true);
+      if (agentVisible()) expect(layout.editAgent).toBeGreaterThanOrEqual(MIN.agent);
+      if (editTreeVisible()) expect(layout.editTree).toBeGreaterThanOrEqual(MIN.tree);
+      setEditing(false);
+    }
+  });
+
+  it("gives the panes back as the window grows", () => {
+    applyLayout(1000);
+    setEditing(true);
+    applyLayout(1728);
+    expect(sessionsVisible()).toBe(true);
+    expect(editTreeVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+  });
+
+  it("forgets the fold it forced when the window goes back to agent mode", () => {
+    applyLayout(1440);
+    setEditing(true);
+    setEditing(false);
+    expect(layout.mode).toBe("working");
+    expect(sessionsVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+  });
+
+  it("keeps the files pane in the middle whatever its toggle says", () => {
+    layout.changesChosen = false;
+    applyLayout(1728);
+    setEditing(true);
+    expect(changesVisible()).toBe(true);
+  });
+
+  it("gives the keyboard to the files pane on the way in, and the agent on the way out", () => {
+    applyLayout(1728);
+    const asked = layout.focusRequest;
+    setEditing(true);
+    expect(layout.focus).toBe("changes");
+    expect(layout.focusRequest).toBe(asked + 1);
+    setEditing(false);
+    expect(layout.focus).toBe("agent");
+  });
+
+  it("does not open the viewer, or close it, while editing", () => {
+    applyLayout(1728);
+    setEditing(true);
+    enterReview();
+    expect(layout.mode).toBe("editing");
+    exitReview();
+    expect(layout.mode).toBe("editing");
+  });
+});
+
+describe("the right pane while editing", () => {
+  it("is the agent, and its toggle hides it as a choice", () => {
+    applyLayout(1728);
+    setEditing(true);
+    toggleRightPane();
+    expect(agentVisible()).toBe(false);
+    expect(layout.agentChosen).toBe(false);
+    expect(layout.agentHidden).toBe(false);
+    toggleRightPane();
+    expect(agentVisible()).toBe(true);
+  });
+
+  it("is the changes pane in agent mode", () => {
+    applyLayout(1728);
+    toggleRightPane();
+    expect(changesVisible()).toBe(false);
+    expect(layout.changesChosen).toBe(false);
+  });
+
+  it("hands the keyboard to the files pane when the agent goes with it", () => {
+    applyLayout(1728);
+    setEditing(true);
+    focusPane("agent");
+    toggleRightPane();
+    expect(layout.focus).toBe("changes");
+  });
+
+  it("gives the editor the room the agent leaves, and the panes before it", () => {
+    applyLayout(1440);
+    setEditing(true);
+    expect(sessionsVisible()).toBe(false);
+    toggleRightPane();
+    expect(sessionsVisible()).toBe(true);
+    expect(editorWidth(1440)).toBeGreaterThanOrEqual(MIN.editor);
+  });
+
+  it("moves the keyboard off an agent the window hides", () => {
+    applyLayout(1728);
+    setEditing(true);
+    focusPane("agent");
+    applyLayout(1000);
+    expect(layout.focus).toBe("changes");
+  });
+});
+
+describe("the editing widths", () => {
+  it("drag the agent without folding or hiding a pane", () => {
+    applyLayout(1728);
+    setEditing(true);
+    layout.width = 1728;
+    resizeEditAgent(-2000);
+    expect(sessionsVisible()).toBe(true);
+    expect(editTreeVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+    expect(editorWidth(1728)).toBe(MIN.editor);
+    resizeEditAgent(2000);
+    expect(layout.editAgent).toBe(MIN.agent);
+  });
+
+  it("drag the tree on the same terms", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditTree(2000);
+    expect(sessionsVisible()).toBe(true);
+    expect(agentVisible()).toBe(true);
+    expect(editorWidth(1728)).toBe(MIN.editor);
+    resizeEditTree(-2000);
+    expect(layout.editTree).toBe(MIN.tree);
+  });
+
+  it("go back to their defaults", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditAgent(-100);
+    resizeEditTree(60);
+    expect(layout.editAgentDragged).toBe(true);
+    resetEditAgent();
+    resetEditTree();
+    expect(layout.editAgent).toBe(defaultEditAgent());
+    expect(layout.editAgentDragged).toBe(false);
+    expect(layout.editTree).toBe(DEFAULT.editTree);
+  });
+
+  it("are remembered apart from the other shapes' widths", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditAgent(-60);
+    resizeEditTree(30);
+    const agent = layout.editAgent;
+    const tree = layout.editTree;
+    setEditing(false);
+    expect(layout.changes).toBe(DEFAULT.changes);
+    expect(layout.tree).toBe(DEFAULT.tree);
+    saveLayout();
+    reset();
+    loadLayout();
+    expect(layout.editAgent).toBe(agent);
+    expect(layout.editTree).toBe(tree);
+  });
+});
+
+describe("editor mode across a restart", () => {
+  it("comes back in editor mode, and with the agent's toggle as it was", () => {
+    applyLayout(1728);
+    setEditing(true);
+    toggleRightPane();
+    reset();
+    loadLayout();
+    expect(layout.mode).toBe("editing");
+    expect(layout.agentChosen).toBe(false);
+  });
+
+  it("comes back in agent mode once it was left", () => {
+    applyLayout(1728);
+    setEditing(true);
+    setEditing(false);
+    reset();
+    loadLayout();
+    expect(layout.mode).toBe("working");
+  });
+
+  it("never comes back with a fold the window forced", () => {
+    applyLayout(1440);
+    setEditing(true);
+    const stored = JSON.parse(localStorage.getItem("workbench.layout")!);
+    expect(stored.sessionsForced).toBeUndefined();
+    expect(stored.editTreeForced).toBeUndefined();
+    expect(stored.sessionsChosen).toBe(true);
+  });
+});
+
+describe("peeking while editing", () => {
+  it("peeks a pane the window folded for the editor", () => {
+    applyLayout(1440);
+    setEditing(true);
+    expect(peekable()).toBe(true);
+    peekSessions(true);
+    expect(layout.sessionsPeek).toBe(true);
+    expect(sessionsShown()).toBe(true);
+  });
+
+  it("does not peek a pane that has room to open", () => {
+    applyLayout(1728);
+    setEditing(true);
+    togglePane("sessions");
+    expect(peekable()).toBe(false);
+    peekSessions(true);
+    expect(layout.sessionsPeek).toBe(false);
+  });
+
+  it("hands the keyboard to the files pane when put back", () => {
+    applyLayout(1440);
+    setEditing(true);
+    peekSessions(true);
+    focusPane("sessions");
+    peekSessions(false);
+    expect(layout.focus).toBe("changes");
+  });
+
+  it("ends when the window grows enough to open the pane", () => {
+    applyLayout(1440);
+    setEditing(true);
+    peekSessions(true);
+    applyLayout(1728);
+    expect(layout.sessionsPeek).toBe(false);
+    expect(sessionsVisible()).toBe(true);
+  });
+});
+
+describe("the edges while editing", () => {
+  it("puts the files pane beside the sessions column and leftmost when it folds", () => {
+    applyLayout(1440);
+    setEditing(true);
+    expect(besideSessions()).toBe("changes");
+    expect(leftmost()).toBe("changes");
+  });
+
+  it("puts the agent rightmost, and the files pane once the agent is away", () => {
+    applyLayout(1728);
+    setEditing(true);
+    expect(rightmost()).toBe("agent");
+    toggleRightPane();
+    expect(rightmost()).toBe("changes");
+  });
+});
+
+/** Runs `body` with the browser reporting `platform`. */
+function asPlatform(platform: string, body: () => void) {
+  Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+  try {
+    body();
+  } finally {
+    delete (navigator as unknown as { platform?: string }).platform;
+  }
+}
+
+describe("the right pane's default widths", () => {
+  it("are the base ones on macOS, which draws the window's buttons itself", () => {
+    asPlatform("MacIntel", () => {
+      expect(defaultChanges()).toBe(DEFAULT.changes);
+      expect(defaultEditAgent()).toBe(DEFAULT.editAgent);
+    });
+  });
+
+  it("are wider by a step on Linux and Windows, where the app draws the window's buttons", () => {
+    for (const platform of ["Linux x86_64", "Win32"]) {
+      asPlatform(platform, () => {
+        expect(defaultChanges()).toBe(DEFAULT.changes + CONTROLS_STEP);
+        expect(defaultEditAgent()).toBe(DEFAULT.editAgent + CONTROLS_STEP);
+      });
+    }
+  });
+
+  it("follow the platform across a restart until the user drags them", () => {
+    layout.changes = 300;
+    layout.editAgent = 380;
+    saveLayout();
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(DEFAULT.changes + CONTROLS_STEP);
+      expect(layout.editAgent).toBe(DEFAULT.editAgent + CONTROLS_STEP);
+      expect(layout.changesDragged).toBe(false);
+    });
+  });
+
+  it("stay as the user dragged them", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditAgent(-40);
+    const agent = layout.editAgent;
+    setEditing(false);
+    layout.changes = 300;
+    layout.changesDragged = true;
+    saveLayout();
+    reset();
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(300);
+      expect(layout.changesDragged).toBe(true);
+      expect(layout.editAgent).toBe(agent);
+      expect(layout.editAgentDragged).toBe(true);
+    });
+  });
+
+  it("read a layout saved without saying as dragged only where it holds other than the base default", () => {
+    localStorage.setItem("workbench.layout", JSON.stringify({ changes: DEFAULT.changes, editAgent: 380 }));
+    asPlatform("Linux x86_64", () => {
+      loadLayout();
+      expect(layout.changes).toBe(DEFAULT.changes + CONTROLS_STEP);
+      expect(layout.changesDragged).toBe(false);
+      expect(layout.editAgent).toBe(380);
+      expect(layout.editAgentDragged).toBe(true);
+    });
+  });
+});
+
+describe("the changes pane's least width", () => {
+  it("is the base one on macOS and where the browser reports no platform", () => {
+    expect(minChanges()).toBe(MIN.changes);
+    asPlatform("MacIntel", () => expect(minChanges()).toBe(MIN.changes));
+  });
+
+  it("keeps room for the window's buttons after the corner on Linux and Windows", () => {
+    for (const platform of ["Linux x86_64", "Win32"]) {
+      asPlatform(platform, () => {
+        expect(minChanges()).toBe(MIN.changes + CONTROLS_STEP);
+        // Squeezed by a narrow window, it stops there, and dragged below
+        // it, it is drawn there.
+        layout.changes = DEFAULT.changes + CONTROLS_STEP;
+        applyLayout(NEEDS_CHANGES + CONTROLS_STEP);
+        expect(changesVisible()).toBe(true);
+        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        layout.changes = MIN.changes;
+        applyLayout(1200);
+        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        // Below what it needs beside the folded sessions pane, it goes.
+        applyLayout(NEEDS_CHANGES + CONTROLS_STEP - 1);
+        expect(changesVisible()).toBe(false);
+        applyLayout(NEEDS_SESSIONS + CONTROLS_STEP - 1);
+        expect(sessionsVisible()).toBe(false);
+        applyLayout(NEEDS_SESSIONS + CONTROLS_STEP);
+        expect(sessionsVisible()).toBe(true);
+      });
+    }
+  });
+});
+
+describe("a width the window squeezes while editing", () => {
+  it("never replaces the tree column's width chosen, which comes back with room", () => {
+    applyLayout(1728);
+    setEditing(true);
+    resizeEditTree(40);
+    const chosen = layout.editTree;
+    expect(layout.editTreeDrawn).toBe(chosen);
+    applyLayout(1340);
+    expect(editTreeVisible()).toBe(true);
+    expect(layout.editTreeDrawn).toBeLessThan(chosen);
+    expect(layout.editTree).toBe(chosen);
+    saveLayout();
+    applyLayout(1728);
+    expect(layout.editTreeDrawn).toBe(chosen);
+    reset();
+    loadLayout();
+    expect(layout.editTree).toBe(chosen);
+  });
+
+  it("never replaces the agent's either", () => {
+    applyLayout(1728);
+    setEditing(true);
+    const chosen = layout.editAgent;
+    applyLayout(1100);
+    expect(agentVisible()).toBe(true);
+    expect(layout.editAgentDrawn).toBeLessThan(chosen);
+    expect(layout.editAgent).toBe(chosen);
+    applyLayout(1728);
+    expect(layout.editAgentDrawn).toBe(chosen);
+  });
+
+  it("is where a drag starts, and the width a drag ends at is the one chosen", () => {
+    applyLayout(1340);
+    setEditing(true);
+    const drawn = layout.editTreeDrawn;
+    expect(drawn).toBeLessThan(DEFAULT.editTree);
+    resizeEditTree(-10);
+    expect(layout.editTree).toBe(drawn - 10);
+    expect(layout.editTreeDrawn).toBe(drawn - 10);
+  });
+});
+
+describe("the editing widths read across a restart", () => {
+  it("are drawn as read until the layout is laid out for the window", () => {
+    localStorage.setItem(
+      "workbench.layout",
+      JSON.stringify({ editing: true, editTree: 300, editAgent: 500, editAgentDragged: true }),
+    );
+    loadLayout();
+    expect(layout.editTreeDrawn).toBe(300);
+    expect(layout.editAgentDrawn).toBe(500);
   });
 });

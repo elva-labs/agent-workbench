@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { Terminal } from "@xterm/xterm";
-  import { FitAddon } from "@xterm/addon-fit";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { WebglAddon } from "@xterm/addon-webgl";
 
@@ -13,6 +12,7 @@
   import { layout, overlayHoldsKeyboard, sliding } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
   import {
+    GridFit,
     WriteQueue,
     buildTheme,
     colorReply,
@@ -86,7 +86,7 @@
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
-  let fit: FitAddon | null = null;
+  let fit: GridFit | null = null;
   let queue: WriteQueue | null = null;
   let observer: ResizeObserver | null = null;
 
@@ -122,7 +122,7 @@
       linkHandler: { activate: follow },
     });
 
-    fit = new FitAddon();
+    fit = new GridFit();
     terminal.loadAddon(fit);
     // Bare URLs in the output, found by the addon.
     terminal.loadAddon(new WebLinksAddon(follow));

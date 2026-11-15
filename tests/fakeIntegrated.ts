@@ -46,6 +46,15 @@ export type IntegratedCall =
 export interface FakeIntegratedOptions {
   holding?: boolean;
   mints?: boolean;
+  /** A mode the agent reports from its own configuration, whatever the
+      start asked for, and which the list of modes does not hold. */
+  ownMode?: string;
+  /** Keeps the sessions across a reload of the page, as the core keeps
+      them while a window reloads: every call made on the fake is kept in
+      the page's session storage under this key and played again when the
+      fake is made anew. The calls a window made are its own, so a fake
+      made anew starts with none. */
+  keep?: string;
 }
 
 /** A scripted integrated session behind the seam, for the unit tests and
@@ -60,7 +69,11 @@ export interface FakeIntegratedOptions {
     elsewhere. `ready` goes out before `start` returns, as it may from the
     core, and an interrupt's end of turn comes after the call. What the
     agent says within a turn is the test's to script, through `emit` and
-    the helpers built on it. */
+    the helpers built on it. A session started with no model says the
+    model it resolved its default to, as the core does. A session of Codex
+    is shaped as the core's Codex driver says one is: it makes its own ids,
+    offers its own models and modes, and withdraws what a turn asked when
+    the turn ends, with no answer. */
 export interface FakeIntegrated {
   /** Every call, in order. */
   calls: IntegratedCall[];
@@ -90,6 +103,9 @@ export interface FakeIntegrated {
 
   /** Says anything at all for a session, under the core's rules. */
   emit(id: string, event: IntegratedEventBody): void;
+  /** Hands events the real core emitted to the window as they are, with
+      none of this fake's own rules: a replay of what a driver said. */
+  replay(id: string, events: IntegratedEventBody[]): void;
   /** Starts a turn for `messages`: by default all those waiting, or for a
       holding agent the one handed over. */
   startTurn(id: string, messages?: string[]): void;
@@ -184,6 +200,9 @@ export interface FakeIntegrated {
   /** The agent drops a message it was sent: refused, discarded or
       cancelled. */
   drop(id: string, message: string, error?: string): void;
+  /** The agent stops waiting for a request by itself, as a question of
+      Codex's does after a while. */
+  expire(id: string, request: string): void;
   /** The core left out streamed pieces because the window fell behind. */
   skip(id: string, pieces: number): void;
   /** The process ends by itself: cleanly, or not, with an error. */
@@ -209,6 +228,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   };
   type Held = { message: string; text: string; images: IntegratedImage[] };
   type Session = {
+    codex: boolean;
     sessionId: string | null;
     settings: IntegratedSettings;
     efforts: string[];
@@ -243,20 +263,47 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     { value: "plan", name: "Plan", description: null },
   ];
   const MODELS = [
+    {
+      value: "default",
+      name: "Default (recommended)",
+      description: "Sonnet, for everyday work",
+      efforts: ["low", "medium", "high"],
+    },
     { value: "haiku", name: "Haiku", description: null, efforts: [] as string[] },
     { value: "sonnet", name: "Sonnet", description: null, efforts: ["low", "medium", "high"] },
+  ];
+  /** What the agent says it runs on when no model was asked for. */
+  const RESOLVED = "claude-sonnet-5-5";
+  const CODEX_MODES = [
+    { value: "read-only", name: "Read only", description: "Reads, and asks before it changes anything" },
+    { value: "auto", name: "Auto", description: "Works in the project, and asks before going outside it" },
+    { value: "full-access", name: "Full access", description: "Works anywhere without asking" },
+  ];
+  const CODEX_MODELS = [
+    { value: "gpt-5-codex", name: "gpt-5-codex", description: null, efforts: ["low", "medium", "high"] },
   ];
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
   let count = 0;
+  /** How deep in its own calls the fake is, and whether it is playing
+      back what was kept across a reload. */
+  let depth = 0;
+  let replaying = false;
+  /** Runs `then` after the call that asked for it, as the agent would;
+      while calls are played back, what it did then is played back too. */
+  const later = (then: () => void) => {
+    if (!replaying) queueMicrotask(then);
+  };
   let blocks = 0;
   let requests = 0;
   let calls = 0;
   let tasks = 0;
 
   const efforts = (model: string | null) =>
-    MODELS.find((entry) => entry.value === model)?.efforts ?? [];
+    [...MODELS, ...CODEX_MODELS].find(
+      (entry) => entry.value === model || (model !== null && model.split(/[-_.]/).includes(entry.value)),
+    )?.efforts ?? [];
 
   // Lengths are in UTF-8 bytes, and a cut falls on a character's edge.
   const size = (text: string) => new TextEncoder().encode(text).length;
@@ -319,14 +366,16 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       if (fake.untrusted.has(folder))
         throw new Error(`untrusted: ${folder} has not been trusted in claude yet`);
       const id = `int-${++count}`;
+      const codex = startOptions.agent === "codex";
       const sessionId =
-        startOptions.session ?? (options.mints ? null : `integrated-session-${count}`);
+        startOptions.session ?? (options.mints || codex ? null : `integrated-session-${count}`);
       const settings = {
-        model: startOptions.model ?? null,
-        mode: startOptions.mode ?? "default",
+        model: startOptions.model ?? (codex ? "gpt-5-codex" : RESOLVED),
+        mode: options.ownMode ?? startOptions.mode ?? (codex ? "untrusted, workspace-write" : "default"),
         effort: startOptions.effort ?? null,
       };
       sessions.set(id, {
+        codex,
         sessionId,
         settings,
         efforts: [],
@@ -356,8 +405,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         sessionId: sessionId ?? `agent-thread-${count}`,
         ...settings,
         version: "0.0.0-fake",
-        models: MODELS,
-        modes: MODES,
+        models: codex ? CODEX_MODELS : MODELS,
+        modes: codex ? CODEX_MODES : MODES,
         efforts: efforts(settings.model),
         commands: [{ name: "compact", description: "Compact the conversation", hint: null }],
       });
@@ -404,7 +453,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         return;
       }
       // The core answers first; the turn's end comes from the agent after.
-      queueMicrotask(() => {
+      later(() => {
         for (const request of [...session.asked.keys()])
           fake.emit(id, { type: "withdrawn", request });
         if (session.turn) fake.endTurn(id, "interrupted");
@@ -416,7 +465,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.calls.push({ method: "compact", id });
       session.compactAsked = true;
       // The agent takes it once no turn runs, after the call answers.
-      queueMicrotask(() => {
+      later(() => {
         if (!session.turn) compactNow(id);
       });
     },
@@ -433,7 +482,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.emit(id, { type: "answered", request, choice, answers: null, message: said });
       // Cancelling stops the turn, which the agent then ends.
       if (choice === "cancel")
-        queueMicrotask(() => {
+        later(() => {
           if (session.turn) fake.endTurn(id, "interrupted");
         });
     },
@@ -507,12 +556,20 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     stop(id) {
       live(id);
       fake.calls.push({ method: "stop", id });
-      queueMicrotask(() => fake.end(id, true));
+      later(() => fake.end(id, true));
     },
 
     subscribe(handler) {
       handlers.add(handler);
       return () => handlers.delete(handler);
+    },
+
+    replay(id, events) {
+      for (const body of events) {
+        const event = { ...body, id } as IntegratedEvent;
+        fake.events.push(event);
+        for (const handler of handlers) handler(event);
+      }
     },
 
     emit(id, body) {
@@ -584,6 +641,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         }
         case "turnEnded": {
           if (!session.turn) fake.emit(id, { type: "turnStarted", messages: [] });
+          // Codex withdraws what the turn asked when it ends, with no answer.
+          if (session.codex)
+            for (const request of [...session.asked.keys()]) fake.emit(id, { type: "withdrawn", request });
           const working = new Set(session.subagents.values());
           close(id, (parent) => parent === null || !working.has(parent));
           session.turn = false;
@@ -785,6 +845,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.emit(id, { type: "notice", level, message });
     },
 
+    expire(id, request) {
+      fake.emit(id, { type: "withdrawn", request });
+    },
+
     drop(id, message, error = "the agent refused the message") {
       fake.emit(id, { ...movedOn(message, "dropped"), error });
     },
@@ -880,7 +944,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   /** What the agent does once a turn is over: compact, if it was asked. */
   function afterTurn(id: string) {
     const session = sessions.get(id);
-    if (session?.compactAsked) queueMicrotask(() => compactNow(id));
+    if (session?.compactAsked) later(() => compactNow(id));
   }
 
   function compactNow(id: string) {
@@ -924,6 +988,49 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     if (state === session.state) return;
     session.state = state;
     fake.emit(id, { type: "state", state });
+  }
+
+  // Kept across a reload: every call made from outside is written down,
+  // and a fake made anew plays them again before anything listens. Calls
+  // the fake makes on itself, and what it does later of its own accord,
+  // follow from those and are not written down.
+  if (options.keep !== undefined) {
+    const key = options.keep;
+    const log: { name: string; args: unknown[] }[] = (() => {
+      try {
+        return JSON.parse(sessionStorage.getItem(key) ?? "[]");
+      } catch {
+        return [];
+      }
+    })();
+    const own = fake as unknown as Record<string, (...args: unknown[]) => unknown>;
+    for (const name of Object.keys(own)) {
+      const call = own[name];
+      if (typeof call !== "function" || name === "subscribe" || name === "snapshot") continue;
+      own[name] = (...args: unknown[]) => {
+        if (depth === 0 && !replaying) {
+          log.push({ name, args });
+          sessionStorage.setItem(key, JSON.stringify(log));
+        }
+        depth += 1;
+        try {
+          return call(...args);
+        } finally {
+          depth -= 1;
+        }
+      };
+    }
+    replaying = true;
+    for (const { name, args } of [...log]) {
+      try {
+        own[name](...args);
+      } catch {
+        // A call that failed the first time fails again, as it should.
+      }
+    }
+    replaying = false;
+    fake.calls.length = 0;
+    fake.events.length = 0;
   }
 
   return fake;

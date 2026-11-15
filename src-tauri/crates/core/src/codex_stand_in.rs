@@ -1326,3 +1326,93 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     );
     assert_eq!(h.stop()["clean"], true);
 }
+
+/// One session through the real driver that holds what a window drawing a
+/// Codex session must know: a mode the user's configuration sets that is
+/// not among the modes, a command as Codex wraps it, its output only at the
+/// end, a question that resolves itself, an approval withdrawn at the
+/// turn's end, and a message Codex refuses. The events go to a file the
+/// window's tests replay, so the view is tried against what the driver
+/// says rather than a guess at it. `WORKBENCH_WRITE_FIXTURES=1` writes the
+/// file anew; otherwise the events must match it.
+#[test]
+fn the_events_a_window_replays_are_the_ones_the_driver_emits() {
+    let opening = opening(
+        r#"{"account":{"type":"chatgpt","email":null,"planType":"plus"},"requiresOpenaiAuth":true}"#,
+    )
+    .replace(
+        r#""approvalPolicy":"on-request""#,
+        r#""approvalPolicy":"untrusted""#,
+    );
+    let scenario = [
+        opening,
+        take("turn-1"),
+        item("item/started", "turn-1", r#"{"type":"commandExecution","id":"cmd","command":"/bin/zsh -lc 'npm test'","cwd":"/w","commandActions":[],"status":"inProgress"}"#),
+        format!(
+            r#"say {{"id":7,"method":"item/commandExecution/requestApproval","params":{{"threadId":"{THREAD}","turnId":"turn-1","itemId":"cmd","command":"/bin/zsh -lc 'npm test'","cwd":"/w","proposedExecpolicyAmendment":["npm","test"],"startedAtMs":1}}}}"#
+        ),
+        r#"say {"id":8,"method":"item/tool/requestUserInput","params":{"turnId":"turn-1","itemId":"q","isBlocking":true,"questions":[{"id":"go","header":"Go","question":"Go on?","options":[{"label":"Yes","description":""},{"label":"No","description":""}]}]}}"#.into(),
+        "sleep 0.3".into(),
+        notify("serverRequest/resolved", r#"{"requestId":8}"#),
+        item("item/completed", "turn-1", r#"{"type":"commandExecution","id":"cmd","command":"/bin/zsh -lc 'npm test'","status":"completed","aggregatedOutput":"12 passed\n","exitCode":0}"#),
+        done("turn-1", "completed"),
+        r#"expect "method":"turn/start""#.into(),
+        r#"reply {"id":@ID@,"error":{"code":-32600,"message":"the input is too long"}}"#.into(),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("replayed", &scenario);
+    h.until_type("ready");
+    send(
+        &h.sessions,
+        &h.id,
+        "00000000-0000-4000-8000-000000000001",
+        "Run the tests",
+        &[],
+    )
+    .unwrap();
+    h.until_type("turnEnded");
+    send(
+        &h.sessions,
+        &h.id,
+        "00000000-0000-4000-8000-000000000002",
+        "And again",
+        &[],
+    )
+    .unwrap();
+    h.until(|e| e["type"] == "message" && e["state"] == "dropped");
+    let project = h.dir.to_string_lossy().to_string();
+    let events: Vec<Value> = h
+        .events()
+        .into_iter()
+        .map(|mut event| {
+            event.as_object_mut().unwrap().remove("id");
+            serde_json::from_str(&event.to_string().replace(&project, "/w")).unwrap()
+        })
+        .collect();
+    h.stop();
+    let kinds = kinds(&events);
+    for kind in [
+        "ready",
+        "permissionAsked",
+        "questionAsked",
+        "withdrawn",
+        "toolFinished",
+        "turnEnded",
+    ] {
+        assert!(kinds.contains(&kind.to_string()), "{kind} in {kinds:?}");
+    }
+    let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../tests/fixtures/codex-session.json");
+    let written = serde_json::to_string_pretty(&events).unwrap() + "\n";
+    if std::env::var("WORKBENCH_WRITE_FIXTURES").is_ok() {
+        std::fs::write(&file, &written).unwrap();
+    }
+    let kept = std::fs::read_to_string(&file).unwrap_or_default();
+    assert_eq!(
+        kept,
+        written,
+        "the driver's events differ from {}",
+        file.display()
+    );
+}

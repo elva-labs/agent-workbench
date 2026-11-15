@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   FRAME_WAIT_MS,
+  GridFit,
   WriteQueue,
   buildTheme,
   colorReply,
@@ -356,5 +357,78 @@ describe("softwareGl", () => {
     expect(softwareGl("ANGLE (Apple, Apple M2, OpenGL 4.1)")).toBe(false);
     expect(softwareGl("WebKit WebGL")).toBe(false);
     expect(softwareGl(null)).toBe(false);
+  });
+});
+
+describe("GridFit", () => {
+  /** A terminal in a box, as far as the fit reads one: its element in a
+      parent of the given width, the renderer's cell in device pixels, and
+      the cell in CSS pixels that the DOM renderer shares out over the
+      columns the grid has now. */
+  function fitted(width: number, device: number, css: number, ratio = 1) {
+    const parent = document.createElement("div");
+    parent.style.width = `${width}px`;
+    parent.style.height = "600px";
+    const element = document.createElement("div");
+    element.style.padding = "0 14px";
+    parent.append(element);
+    document.body.append(parent);
+    const terminal = {
+      element,
+      options: { scrollback: 10_000 },
+      _core: {
+        _renderService: {
+          dimensions: {
+            device: { cell: { width: device * ratio, height: 16 * ratio } },
+            css: { cell: { width: css, height: 16 } },
+          },
+        },
+      },
+    };
+    const original = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { value: ratio, configurable: true });
+    const fit = new GridFit();
+    fit.activate(terminal as never);
+    const grid = fit.proposeDimensions();
+    Object.defineProperty(window, "devicePixelRatio", { value: original, configurable: true });
+    parent.remove();
+    return grid;
+  }
+
+  // DejaVu Sans Mono at 12px, in a pane 1024 wide: 982 pixels of room fit
+  // 135.9 cells. From a grid of 60 columns the DOM renderer's cell is 433/60
+  // of a pixel, by which 136 would fit.
+  it("counts by the device cell, whatever grid the renderer's cell was shared out over", () => {
+    const glyph = 12 * (1233 / 2048);
+    expect(fitted(1024, glyph, 433 / 60)?.cols).toBe(135);
+    expect(fitted(1024, glyph, 975 / 135)?.cols).toBe(135);
+    expect(fitted(1024, glyph, glyph, 2)?.cols).toBe(135);
+  });
+
+  it("leaves room for the padding and the scrollbar, and takes the rows from the cell's height", () => {
+    expect(fitted(1024, 7, 7)).toEqual({ cols: Math.floor((1024 - 28 - 14) / 7), rows: Math.floor(600 / 16) });
+  });
+
+  // A pane that is not laid out reports no width in pixels. The stock addon
+  // proposes nothing there, and a grid of two columns must not reach the pty.
+  it("proposes nothing for a box that is not laid out", () => {
+    const parent = document.createElement("div");
+    parent.style.display = "none";
+    const element = document.createElement("div");
+    parent.append(element);
+    document.body.append(parent);
+    const fit = new GridFit();
+    fit.activate({
+      element,
+      options: { scrollback: 10_000 },
+      _core: { _renderService: { dimensions: { device: { cell: { width: 7, height: 16 } } } } },
+    } as never);
+    expect(fit.proposeDimensions()).toBeUndefined();
+    parent.remove();
+  });
+
+  it("proposes nothing before the terminal is open, or while its cell is unmeasured", () => {
+    expect(new GridFit().proposeDimensions()).toBeUndefined();
+    expect(fitted(1024, 0, 0)).toBeUndefined();
   });
 });

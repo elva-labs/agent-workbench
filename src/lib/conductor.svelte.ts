@@ -44,6 +44,7 @@ import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
 import {
+  nameTaken,
   byKey,
   close,
   create,
@@ -64,6 +65,11 @@ import { hostOf } from "$lib/remote.svelte";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
 import { screen, takesPaste } from "$lib/screens";
+import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
+import { lastRun } from "$lib/thread";
+import { OUTCOME_ASK } from "$lib/instructions";
+import { senderOf, startersFrom } from "$lib/senders.svelte";
+import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -81,10 +87,7 @@ export const START_WAIT = 30_000;
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
-/** The sentence every started session gets after the caller's own line, so
-    what became of it comes back on its row instead of being watched for. */
-export const OUTCOME_ASK =
-  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
+export { OUTCOME_ASK };
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
@@ -1041,8 +1044,16 @@ async function startFitted(
     // The row holds its place in the step from here.
     fit.hold();
   }
-  // The name the caller gave is the row's, until the agent names it.
-  if (name !== null) session.title = oneLine(name);
+  // The name the caller gave is the row's, until the agent names it. One
+  // that reads as "You" is the user's alone, and one another live session
+  // has is that session's: neither is taken, and the row is named by the
+  // prompt instead.
+  // Weighed as it would be stored.
+  const candidate = name === null ? null : oneLine(name);
+  const you = candidate !== null && readsAsYou(candidate);
+  const taken = candidate !== null && !you && nameTaken(candidate, session.key);
+  const called = candidate !== null && !you && !taken ? candidate : null;
+  if (called !== null) session.title = called;
   if (looking !== null && byKey(looking) !== null) sessions.active = looking;
 
   const id = await idFor(session.key);
@@ -1059,20 +1070,27 @@ async function startFitted(
     project,
     worktree: startIn,
     agent,
-    name: name === null ? null : oneLine(name),
+    name: called,
     account,
   });
   const where = startIn === null ? project : `${project}, in ${startIn}`;
+  const notCalled = you
+    ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+    : taken
+      ? mixesScripts(candidate!)
+        ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
+        : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+      : "";
   if (fit === null)
     return said(
-      `Started session ${id} in ${where}${underWords(named)}. It has the prompt. Call wait to hear how it goes.`,
+      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt. Call wait to hear how it goes.`,
+    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
   );
 }
 
@@ -1603,9 +1621,19 @@ async function sendText(request: ConductRequest): Promise<Answered> {
   const session = byId(id);
   if (session === null) return refused(`The workbench has no session ${id}.`);
   if (!mine(request, session)) return notMine(id);
-  if (session.status !== "running" || session.ptyId === null)
-    return refused(`Session ${id} is not running.`);
-  const typed = oneLine(line);
+  // An integrated session takes the message whole, as the user's own; one
+  // sent while it works waits for its turn. A terminal one takes a line.
+  const integrated = session.kind === "integrated";
+  const reachable = (row: Session) =>
+    row.status === "running" && (integrated ? handleOf(row.key) !== null : row.ptyId !== null);
+  const unreachable = () =>
+    refused(
+      integrated
+        ? `Session ${id} is an integrated session and is ${stateOf(session)}, so it takes no message now. Start it again with start, naming session ${id}, then send.`
+        : `Session ${id} is not running.`,
+    );
+  if (!reachable(session)) return unreachable();
+  const typed = integrated ? line : oneLine(line);
   const at = placeOf(session.key);
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
@@ -1646,8 +1674,7 @@ async function sendText(request: ConductRequest): Promise<Answered> {
         )) === "no"
       )
         return refused(notAllowed(beyond));
-      if (session.status !== "running" || session.ptyId === null)
-        return refused(`Session ${id} is not running.`);
+      if (!reachable(session)) return unreachable();
       countRound(caller, review.name, at.piece);
       owed.delete(session.key);
       round = { ...at, round: done + 1 };
@@ -1658,12 +1685,19 @@ async function sendText(request: ConductRequest): Promise<Answered> {
       if (mark !== undefined) mark.worked = false;
     }
   }
+  const sent = round === null ? `Sent to session ${id}` : `Sent to session ${id}, for ${placeText(round)}`;
+  if (integrated) {
+    const working = session.working;
+    if (sendIntegrated(session.key, typed, [], callerOf(request)) === null)
+      return refused(`Session ${id} is an integrated session and took no message: there was nothing to send.`);
+    return said(
+      working
+        ? `${sent}. It is at work, so the message waits for its turn. Call wait to hear what it does next.`
+        : `${sent}. Call wait to hear what it does next.`,
+    );
+  }
   await typeLine(session.key, session.ptyId!, typed);
-  return said(
-    round === null
-      ? `Sent to session ${id}. Call wait to hear what it does next.`
-      : `Sent to session ${id}, for ${placeText(round)}. Call wait to hear what it does next.`,
-  );
+  return said(`${sent}. Call wait to hear what it does next.`);
 }
 
 /** Whether a line may change the model an agent runs on. Any command an
@@ -1832,6 +1866,18 @@ function readSession(request: ConductRequest): Answered {
   if (session === null) return refused(`The workbench has no session ${id}.`);
   if (!mine(request, session)) return notMine(id);
   const lines = number(request, "lines", LINES, LINES_MAX);
+  // An integrated session has no screen: what its agent last said and did
+  // is read from its conversation instead.
+  if (session.kind === "integrated") {
+    const run = lastRun(
+      conversationOf(session.key),
+      lines,
+      (message) => senderOf(message)?.name ?? null,
+    );
+    if (run === "")
+      return said(`Session ${id} is an integrated session and has said nothing yet. ${lastLine(session)}`);
+    return said(`Session ${id}, what its agent last said and did:\n${run}`);
+  }
   const drawn = screen(session.key, lines);
   if (drawn === null || drawn === "") {
     return said(`Session ${id} has drawn nothing yet. ${lastLine(session)}`);
@@ -1862,6 +1908,8 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+// The prompt a session is started with is its starter's.
+startersFrom(startedFor);
 
 // A session gone from its project goes from what its workflow ran too.
 onForgotten((ids) => {

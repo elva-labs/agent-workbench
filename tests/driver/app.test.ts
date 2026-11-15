@@ -170,6 +170,29 @@ async function sceneReport(driver: WebDriver, selector: string) {
   }, selector) as Promise<string>;
 }
 
+/** What the window held when a step in editor mode did not happen: its
+    size, the panes' and the tree column's widths, the tree and what it
+    lists, the field above it and which search it is set to. */
+async function editingReport(driver: WebDriver) {
+  return driver.executeScript(() => {
+    const width = (selector: string) => {
+      const el = document.querySelector(selector);
+      return el === null ? "none" : String(Math.round(el.getBoundingClientRect().width));
+    };
+    const trees = document.querySelectorAll<HTMLElement>("[data-testid='file-tree']");
+    const fields = [...document.querySelectorAll<HTMLInputElement>("[data-testid='search-field']")];
+    const checked = document.querySelector("[data-testid='mode-files']")?.getAttribute("aria-checked");
+    return [
+      `window ${window.innerWidth}x${window.innerHeight}`,
+      `mode ${document.querySelector("[data-testid='mode-readout']")?.textContent}`,
+      `widths sessions ${width("section[data-pane='sessions']")}, changes ${width("section[data-pane='changes']")}, agent ${width("section[data-pane='agent']")}, tree column ${width("[data-testid='tree-column']")}`,
+      `trees ${trees.length}, the first listing ${JSON.stringify(trees[0]?.innerText.slice(0, 200) ?? null)}`,
+      `tree column ${JSON.stringify((document.querySelector<HTMLElement>("[data-testid='tree-column']")?.innerText ?? "").slice(0, 200))}`,
+      `fields ${JSON.stringify(fields.map((field) => field.value))}, files search ${checked}`,
+    ].join("; ");
+  }) as Promise<string>;
+}
+
 const TREE = "[data-testid='file-tree']";
 const CHANGES = "section[data-pane='changes']";
 /** The plugin source the tier adds: a directory with two plugins in it,
@@ -431,6 +454,111 @@ describe("the real app", () => {
     await (await located(driver, "[data-testid='mode-files']")).click();
     await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
+
+  // Editor mode on the real core: the agent moves to the right, a file is
+  // read, edited and written through the core, and a change on disk with
+  // nothing unsaved is read in. The window goes back to agent mode after,
+  // for the tests that follow.
+  it("edits and saves a file in editor mode through the core", async () => {
+    const { driver } = app;
+    const mode = () => textOf(driver, "[data-testid='mode-readout']");
+    try {
+      await editInEditorMode(driver, mode);
+    } catch (error) {
+      throw new Error(`${(error as Error).message}; ${await editingReport(driver)}`);
+    } finally {
+      // Back in agent mode whatever happened above: the tests after this
+      // one start there.
+      if ((await mode()) === "editing") {
+        await (await located(driver, "[data-testid='mode-agent']")).click();
+        await driver.wait(async () => (await mode()) === "working", 10_000);
+      }
+    }
+  });
+
+  async function editInEditorMode(driver: WebDriver, mode: () => Promise<string>) {
+    // The field above the tree can still hold what the test before searched
+    // for: WebDriver's clear empties the input on screen and fires no input
+    // event, so the query stays and the tree stays narrowed by it. Escape in
+    // the field clears the query, as it does for a user.
+    await (await located(driver, "[data-testid='search-field']")).sendKeys(Key.ESCAPE);
+    await (await located(driver, "[data-testid='mode-editor']")).click();
+    await driver.wait(async () => (await mode()) === "editing", 10_000);
+    const sides = (await driver.executeScript(() => {
+      const left = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().left;
+      return [left("section[data-pane='changes']"), left("section[data-pane='agent']")];
+    })) as number[];
+    expect(sides[1]).toBeGreaterThan(sides[0]);
+
+    // Every file is listed while editing; a click opens one as a tab.
+    await waitForPaneText(driver, TREE, "README.md");
+    await driver.executeScript(() => {
+      const rows = document.querySelectorAll<HTMLElement>("[data-testid='file-tree'] [role='treeitem']");
+      [...rows].find((row) => row.querySelector(".name")?.textContent === "README.md")?.click();
+    });
+    await located(driver, ".cm-content");
+    await waitForPaneText(driver, ".cm-content", "# demo");
+
+    const key = process.platform === "darwin" ? Key.COMMAND : Key.CONTROL;
+    await (await driver.findElement(By.css(".cm-content"))).click();
+    await driver.actions().keyDown(key).sendKeys(Key.END).keyUp(key).perform();
+    await driver.actions().sendKeys("from the editor").perform();
+    await located(driver, "[data-testid='editor-tab-dirty']", 5_000);
+    // Nothing reaches the disk until the save.
+    expect(readFileSync(join(repo, "README.md"), "utf8")).not.toContain("from the editor");
+    await driver.actions().keyDown(key).sendKeys("s").keyUp(key).perform();
+    await driver.wait(
+      () => readFileSync(join(repo, "README.md"), "utf8").includes("from the editor"),
+      10_000,
+      "the save never reached the disk",
+    );
+    await driver.wait(
+      async () => (await driver.findElements(By.css("[data-testid='editor-tab-dirty']"))).length === 0,
+      10_000,
+    );
+
+    writeFileSync(join(repo, "README.md"), "# demo\n\nfrom the disk\n");
+    await waitForPaneText(driver, ".cm-content", "from the disk");
+
+    // A save under unsaved edits after the disk changed is refused by the
+    // real core's stamp: asked directly with the stamp the editor read, and
+    // through the editor, which then raises the bar.
+    const read = (await driver.executeAsyncScript(
+      (root: string, done: (value: unknown) => void) => {
+        const ipc = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } })
+          .__TAURI_INTERNALS__;
+        ipc.invoke("file_read", { root, file: "README.md" }).then(done, (error) => done({ error: String(error) }));
+      },
+      repo,
+    )) as { stamp: string };
+    expect(read.stamp).toBeTruthy();
+    await (await driver.findElement(By.css(".cm-content"))).click();
+    await driver.actions().keyDown(key).sendKeys(Key.END).keyUp(key).perform();
+    await driver.actions().sendKeys(" mine").perform();
+    await located(driver, "[data-testid='editor-tab-dirty']", 5_000);
+    writeFileSync(join(repo, "README.md"), "# demo\n\nfrom the agent\n");
+    const refused = (await driver.executeAsyncScript(
+      (root: string, stamp: string, done: (value: unknown) => void) => {
+        const ipc = (window as unknown as { __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> } })
+          .__TAURI_INTERNALS__;
+        ipc
+          .invoke("file_write", { root, file: "README.md", text: "stale", stamp, overwrite: false })
+          .then(done, (error) => done({ error: String(error) }));
+      },
+      repo,
+      read.stamp,
+    )) as { written: boolean; stamp: string | null };
+    expect(refused.written).toBe(false);
+    expect(refused.stamp).not.toBe(read.stamp);
+    await driver.actions().keyDown(key).sendKeys("s").keyUp(key).perform();
+    await located(driver, "[data-testid='disk-bar']", 10_000);
+    expect(readFileSync(join(repo, "README.md"), "utf8")).toBe("# demo\n\nfrom the agent\n");
+    await (await located(driver, "[data-testid='disk-load']")).click();
+    await waitForPaneText(driver, ".cm-content", "from the agent");
+
+    await (await located(driver, "[data-testid='mode-agent']")).click();
+    await driver.wait(async () => (await mode()) === "working", 10_000);
+  }
 
   // The agent's show tool, through the daemon as the agent would call it:
   // one JSON-RPC exchange on its stdin, and the viewer opens on the lines.
