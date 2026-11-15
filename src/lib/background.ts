@@ -376,9 +376,8 @@ export function fitLch(L: number, C: number, hue: number): Lab {
 }
 
 /** Relative luminance, as WCAG reckons it. */
-export function luminance(rgb: Rgb): number {
-  const [r, g, b] = rgb.map(toLinear);
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+export function luminance([r, g, b]: Rgb): number {
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
 }
 
 /** The contrast between two luminances, 1 to 21. */
@@ -586,7 +585,10 @@ export function groundsOf(colours: Record<string, string>, look: Look): Partial<
 const TEXT_PARTS: Record<Look, Part[]> = { modern: ["side", "surf", "status"], terminal: ["status"] };
 
 /** The lightest and darkest a tinted part gets anywhere in the window,
-    grain at its strongest speck either way, bare or under a fill. */
+    grain at its strongest speck either way, bare or under a fill. A dark
+    speck lowers every channel and a light one raises it, and the tint, a
+    fill and luminance all rise with every channel, so a point is at its
+    darkest under its dark speck and its lightest under its light one. */
 function extremes(
   grid: Rgb[],
   ground: Rgb,
@@ -597,19 +599,13 @@ function extremes(
   let low = 1;
   let high = 0;
   for (const colour of grid) {
-    for (const shade of speck > 0 ? [0, -1, 1] : [0]) {
-      const specked =
-        shade === 0
-          ? colour
-          : shade < 0
-            ? (colour.map((value) => value * (1 - speck)) as Rgb)
-            : (colour.map((value) => value + (255 - value) * speck) as Rgb);
-      const shown = mix(ground, specked, strength);
-      for (const under of [shown, ...fills.map(([fill, amount]) => mix(shown, fill, amount))]) {
-        const y = luminance(under);
-        if (y < low) low = y;
-        if (y > high) high = y;
-      }
+    const dark = mix(ground, speck > 0 ? (colour.map((value) => value * (1 - speck)) as Rgb) : colour, strength);
+    const light = mix(ground, speck > 0 ? (colour.map((value) => value + (255 - value) * speck) as Rgb) : colour, strength);
+    low = Math.min(low, luminance(dark));
+    high = Math.max(high, luminance(light));
+    for (const [fill, amount] of fills) {
+      low = Math.min(low, luminance(mix(dark, fill, amount)));
+      high = Math.max(high, luminance(mix(light, fill, amount)));
     }
   }
   return [low, high];
@@ -701,8 +697,11 @@ export function paintOf(background: Background, look: Look, colours: Record<stri
   const grid = dots.length === 1 ? [labToRgb(dots[0])] : gridOf(at, 24, 15);
   let low = 1;
   let high = 0;
-  for (const part of TEXT_PARTS[look]) {
-    const [partLow, partHigh] = extremes(grid, grounds[part]!, strength, grain * GRAIN_SPECK, fills);
+  // Parts that share a ground, as the modern look's headers and status bar
+  // do, are read once.
+  const textGrounds = new Map(TEXT_PARTS[look].map((part) => [grounds[part]!.join(","), grounds[part]!]));
+  for (const ground of textGrounds.values()) {
+    const [partLow, partHigh] = extremes(grid, ground, strength, grain * GRAIN_SPECK, fills);
     low = Math.min(low, partLow);
     high = Math.max(high, partHigh);
   }
