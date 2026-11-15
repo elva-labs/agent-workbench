@@ -1,6 +1,13 @@
 import type { Workflow, WorkflowModel, WorkflowStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
 
+/** Whether a workflow's orchestrator delegates only through the start
+    tool, its own ways to hand work out taken away. On unless the workflow
+    says otherwise. */
+export function startsOnly(workflow: Workflow): boolean {
+  return workflow.startOnly !== false;
+}
+
 /**
  * What an orchestrator is told, written from a workflow.
  *
@@ -50,8 +57,8 @@ function stepLine(workflow: Workflow, index: number): string {
         : `For the step ${quoted(step.name)}, start a session for each piece once it has ${from(before)}`;
     const at =
       step.parallel === 1
-        ? "Run one session at a time."
-        : `Run at most ${step.parallel} sessions at once.`;
+        ? `Run one ${quoted(step.name)} session at a time, and stop it once its piece is done with; a stopped session can be resumed.`
+        : `Run at most ${step.parallel} ${quoted(step.name)} sessions at once, and stop each once its piece is done with; a stopped session can be resumed.`;
     return `${lead}, ${placeText(step)}. ${at}`;
   }
   const lead =
@@ -67,15 +74,18 @@ function stepLine(workflow: Workflow, index: number): string {
   const target = workflow.steps.findIndex((other) => other.name === step.backTo);
   const between = target < 0 ? [] : workflow.steps.slice(target + 1, index).map((other) => other.name);
   const through = between.length === 0 ? "" : `, take it through ${listed(between)} again`;
-  const times = step.limit === 1 ? "once" : `at most ${step.limit} times`;
-  const otherwise = `If it does not pass, send it back to its session for ${quoted(step.backTo)}${through}, then review it again for ${quoted(step.name)}. Send a piece back ${times}; after that, stop and ask the user.`;
+  const times = step.limit === 1 ? "at most once" : `at most ${step.limit} times`;
+  const otherwise = `If it does not pass, send it back with send to the piece's own session for ${quoted(step.backTo)}, with what the review found, resuming that session first with start if it was stopped${through}. Then review it again for ${quoted(step.name)}, with a new review naming the same work or a line to the reviewer. Send a piece back ${times}; after that, stop and ask the user, and start another round only if they want one.`;
   return `${lead}, ${placeText(step)}. ${passes} ${otherwise}`;
 }
 
 /** The instructions as sentences, one per line of the list. */
 export function instructionLines(workflow: Workflow): string[] {
+  const delegate = startsOnly(workflow)
+    ? "Delegate every piece by starting a session with the workbench's start tool, never with your own subagents."
+    : "Delegate every piece by starting a session with the workbench's start tool, so the user can see it; your own subagents are for help along the way, not for a piece of the work.";
   const lines = [
-    "You direct this work and do not do it yourself: do not edit files. Delegate every piece by starting a session with the workbench's `start` tool, never with your own subagents. In each start, give the agent and the model named below, and leave the model out where it says no model.",
+    `You direct this work and do not do it yourself: do not edit files. ${delegate} In each start, name the step it is for, give the agent and the model named below, and leave the model out where it says no model. A review also names the session whose work it checks, so its rounds are counted for that piece.`,
   ];
   workflow.steps.forEach((_, index) => {
     lines.push(stepLine(workflow, index));
@@ -87,6 +97,12 @@ export function instructionLines(workflow: Workflow): string[] {
       : `When every piece has ${from(last)}, report to the user.`,
   );
   return lines;
+}
+
+/** What a session that follows a workflow is told when it starts: which
+    workflow it follows, then the instructions. */
+export function orchestratorPrompt(workflow: Workflow): string {
+  return `You are the orchestrator of the Agent Workbench workflow ${quoted(workflow.name)}. Follow it:\n${instructions(workflow)}`;
 }
 
 /** The instructions as plain text, numbered. */

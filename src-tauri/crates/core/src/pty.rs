@@ -67,13 +67,16 @@ fn next_id() -> String {
 }
 
 /// Starts a process in a pty. The output is made once the id is known, so
-/// whoever carries the bytes can label them.
+/// whoever carries the bytes can label them. `held` lives as long as the
+/// process does, and goes once it has ended: what the session needs on disk
+/// while it runs, and nothing after.
 pub fn spawn(
     sink: Arc<dyn Sink>,
     sessions: Arc<Sessions>,
     command: CommandBuilder,
     size: PtySize,
     make_output: impl FnOnce(&str) -> Output,
+    held: impl Send + 'static,
 ) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(size)
@@ -142,6 +145,7 @@ pub fn spawn(
         let sessions = Arc::clone(&sessions);
         move || {
             let status = child.wait();
+            drop(held);
             // Bounded: a grandchild that kept the pty open would otherwise
             // hold the end back for as long as it lived.
             let _ = read_done.recv_timeout(std::time::Duration::from_secs(2));

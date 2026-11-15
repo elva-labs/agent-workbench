@@ -26,6 +26,8 @@
     removeUnread,
     renameWorkflow,
     setDefault,
+    setStartOnly,
+    startsOnly,
     setOrchestrator,
     setOverride,
     workflowNamed,
@@ -239,6 +241,25 @@
 </script>
 
 {#snippet more()}
+  {#if current !== undefined}
+    <label class="own" data-testid="workflow-start-only-row">
+      <input
+        type="checkbox"
+        checked={startsOnly(current)}
+        onchange={(event) => (problem = setStartOnly(current.name, event.currentTarget.checked))}
+        data-testid="workflow-start-only"
+      />
+      <span>
+        <span class="own-label">Hand out work only as sessions you can see</span>
+        <small>
+          {startsOnly(current)
+            ? "The orchestrator's own ways to hand work to agents you cannot see are taken away, so every piece it hands out is a session you can see."
+            : "The orchestrator keeps its own subagents, whose work does not show as sessions."}
+        </small>
+      </span>
+    </label>
+  {/if}
+
   <details class="told" data-testid="workflow-told">
     <summary data-testid="workflow-told-toggle">
       <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4" /></svg>
@@ -727,6 +748,27 @@
 
   .told li + li {
     margin-top: 4px;
+  }
+
+  /* Whether the orchestrator keeps its own subagents: a box and two lines. */
+  .own {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin: 0 0 12px;
+    cursor: pointer;
+  }
+  .own input {
+    margin: 2px 0 0;
+    accent-color: var(--accent);
+  }
+  .own > span {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .own small {
+    color: var(--ink-3);
   }
 
   .foot {

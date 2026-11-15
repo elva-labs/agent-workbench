@@ -16,18 +16,28 @@ import {
   handle,
   loadStarted,
   once,
+  placeOf,
+  roundsOf,
   refuse,
   resetConductor,
   revoke,
+  roundQuestion,
+  mayChangeModel,
   startedBy,
   startedFor,
+  dismissRefusal,
   stopAll,
   typeWhole,
+  AMBIGUOUS,
+  NOWHERE,
+  UNPLACED,
+  workflowTag,
   watchStops,
   worktreeName,
 } from "$lib/conductor.svelte";
 import {
   byKey,
+  close,
   create,
   ended,
   exact,
@@ -43,6 +53,10 @@ import {
 } from "$lib/sessions.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
+import { instructionLines } from "$lib/workflowInstructions";
+import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import type { Workflow } from "$lib/core";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
@@ -121,6 +135,7 @@ function call(
 }
 
 const last = () => answers[answers.length - 1];
+const byId = (id: string) => sessions.all.find((session) => session.id === id) ?? null;
 
 /** A terminal with these lines in its buffer. */
 function screenOf(lines: string[], bracketedPasteMode?: boolean): Screen {
@@ -177,6 +192,9 @@ async function startAllowed(
 let unwatch: () => void;
 
 beforeEach(() => {
+  // A session follows no workflow here unless a test gives it one.
+  resetWorkflows();
+  resetAccounts();
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();
@@ -191,6 +209,7 @@ beforeEach(() => {
   standing = {};
   calls = 0;
   localStorage.removeItem("workbench.started");
+  localStorage.removeItem("workbench.runs");
   workspace.open.push(repo(A), repo(B));
 });
 
@@ -1602,5 +1621,797 @@ describe("the answer", () => {
     workspace.open.push(repo(remote));
     await handle(call("projects", {}, { cwd: `${remote}/src` }));
     expect(last().cwd).toBe(`${remote}/src`);
+  });
+});
+
+
+describe("starting in a workflow's shape", () => {
+  /** A caller that follows a workflow, running in the first project. */
+  function orchestrating(workflow: Workflow = defaultWorkflow()) {
+    const row = create(A, null, "claude-code", null, null, null, null, workflow);
+    started(row.key, "pty-orch", "orch");
+    return row;
+  }
+
+  const from = (args: Record<string, unknown>) =>
+    call("start", { project: B, prompt: "Fix the flake", ...args }, { session: "orch" });
+
+  /** A start that is refused before the user is asked, and its answer. */
+  async function refusedWith(args: Record<string, unknown>): Promise<string> {
+    await handle(from(args));
+    expect(conductor.asking).toBeNull();
+    expect(last().content).toBeNull();
+    return last().error ?? "";
+  }
+
+  /** A start the shape lets through, with the row it made. */
+  async function begun(args: Record<string, unknown>, id: string) {
+    const row = await startAllowed(from(args), `pty-${id}`, id);
+    expect(last().error).toBeNull();
+    return row;
+  }
+
+  it("refuses a start that names no step, with the steps there are", async () => {
+    orchestrating();
+    expect(await refusedWith({})).toBe(
+      'You follow the workflow "Build and review", so a start names the step it is for, with step. The steps are "Work" (work) and "Review" (review).',
+    );
+  });
+
+  it("refuses a step the workflow does not have, with the steps there are", async () => {
+    orchestrating();
+    expect(await refusedWith({ step: "Deploy" })).toBe(
+      'The workflow "Build and review" has no step called "Deploy". The steps are "Work" (work) and "Review" (review).',
+    );
+  });
+
+  it("refuses a model the step does not allow, with what it allows", async () => {
+    orchestrating();
+    expect(await refusedWith({ step: "Work", agent: "claude-code", model: "opus" })).toBe(
+      'The step "Work" does not allow claude-code with the model opus. It allows claude-code with the model sonnet. Leave the agent and the model out to use the first.',
+    );
+  });
+
+  it("refuses an agent the step does not allow, with what it allows", async () => {
+    orchestrating();
+    expect(await refusedWith({ step: "Work", agent: "codex" })).toContain(
+      'The step "Work" does not allow codex. It allows claude-code with the model sonnet.',
+    );
+  });
+
+  it("uses the step's first model when none is named, and the step's name matches in any case", async () => {
+    const workflow = defaultWorkflow();
+    workflow.steps[0].models = [
+      { agent: "codex", model: "default" },
+      { agent: "claude-code", model: "haiku" },
+    ];
+    orchestrating(workflow);
+    const first = await begun({ step: "work" }, "w1");
+    expect(byKey(first.key)?.agent).toBe("codex");
+    expect(byKey(first.key)?.model).toBeNull();
+    expect(byKey(first.key)?.workflow).toBeNull();
+    expect(last().content).toContain('Started session w1 for step "Work"');
+  });
+
+  it("takes the first allowed model of the agent named", async () => {
+    const workflow = defaultWorkflow();
+    workflow.steps[0].models = [
+      { agent: "codex", model: "default" },
+      { agent: "claude-code", model: "haiku" },
+    ];
+    orchestrating(workflow);
+    const row = await begun({ step: "Work", agent: "claude-code" }, "w1");
+    expect(byKey(row.key)?.model).toBe("haiku");
+  });
+
+  it("refuses more sessions at once than a work step permits", async () => {
+    orchestrating();
+    await begun({ step: "Work" }, "w1");
+    expect(await refusedWith({ step: "Work" })).toBe(
+      'The step "Work" runs one session at once, and session w1 is running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.',
+    );
+    // Once that one has ended, the step has room again.
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    await begun({ step: "Work" }, "w2");
+  });
+
+  it("refuses a review with no work session behind it", async () => {
+    orchestrating();
+    expect(await refusedWith({ step: "Review" })).toBe(
+      'A review checks a piece of work: name the session that did it, one you started for a work step of "Build and review", with work.',
+    );
+    expect(await refusedWith({ step: "Review", work: "nobody" })).toBe(
+      'Session nobody is not one you started for a work step of "Build and review", so there is no work behind this review. Name the session that did the work, with work.',
+    );
+    // A review is no work to review either.
+    await begun({ step: "Work" }, "w1");
+    await begun({ step: "Review", work: "w1" }, "r1");
+    expect(await refusedWith({ step: "Review", work: "r1" })).toContain(
+      "there is no work behind this review",
+    );
+  });
+
+  it("counts the rounds of a review per piece of work, and past the limit tells the orchestrator to ask the user", async () => {
+    const workflow = defaultWorkflow();
+    const review = workflow.steps[1];
+    if (review.kind === "review") review.limit = 2;
+    orchestrating(workflow);
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    // Three rounds: the first, and the two the work may be sent back for.
+    for (const round of [1, 2, 3]) {
+      const row = await begun({ step: "Review", work: "w1" }, `r${round}`);
+      expect(placeOf(row.key)).toEqual({
+        step: "Review",
+        kind: "review",
+        piece: "w1",
+        round,
+        work: "w1",
+      });
+      // The reviewer is done with its round before the next one starts.
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
+    // Another round is the user's to allow, however the project was
+    // allowed; refused, the caller is told to ask the user.
+    const asked = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round).toEqual({
+      step: "Review",
+      work: "w1",
+      name: "Fix the cache",
+      done: 3,
+      limit: 2,
+    });
+    // The user is asked in the words they know the work by.
+    expect(roundQuestion(conductor.asking!.round!)).toBe(
+      "Review has run 3 times on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
+    refuse();
+    await asked;
+    expect(last().error).toBe(
+      '"Fix the cache", the work of session w1, has had 3 rounds of "Review", as many as the workflow gives a piece, and the user did not allow another. Ask the user how to go on.',
+    );
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
+
+    // Another piece has rounds of its own, even with the first one's work
+    // session stopped.
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    stopAll("orch");
+    expect(byKey(work.key)).toBeNull();
+    await begun({ step: "Work" }, "w2");
+    const other = await begun({ step: "Review", work: "w2" }, "r4");
+    expect(placeOf(other.key)?.round).toBe(1);
+    const again = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(3);
+    refuse();
+    await again;
+  });
+
+  it("lets one round past the limit through when the user allows it, and asks again for the next", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work" }, "w1");
+    for (const round of [1, 2]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    const granted = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(2);
+    once();
+    await settle();
+    const row = forProject(B).at(-1)!;
+    started(row.key, "pty-r3", "r3");
+    flushSync();
+    await granted;
+    expect(last().content).toContain('for step "Review" round 3');
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
+    ended({ id: "pty-r3", code: 0, clean: true });
+    flushSync();
+    // The next one is asked about again.
+    const next = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(3);
+    refuse();
+    await next;
+    // Past the limit already, the count is said against the rounds the
+    // workflow gives, and the user's own answer is not put back to them
+    // over the orchestrator's terminal as a refused start.
+    expect(last().error).toContain(
+      'has had 3 rounds of "Review", more than the 2 the workflow gives a piece, and the user did not allow another.',
+    );
+    expect(Object.keys(conductor.refusals)).toEqual([]);
+  });
+
+  it("counts the rounds of a piece carried on by a later work step under the piece", async () => {
+    const workflow: Workflow = {
+      name: "Polish",
+      orchestrator: { agent: "claude-code", model: "fable" },
+      steps: [
+        { kind: "work", name: "Work", models: [], parallel: 2 },
+        { kind: "work", name: "Tidy", models: [], parallel: 2 },
+        {
+          kind: "review",
+          name: "Review",
+          models: [],
+          reviewerApproves: true,
+          orchestratorAgrees: false,
+          backTo: "Work",
+          limit: 1,
+        },
+      ],
+    };
+    orchestrating(workflow);
+    await begun({ step: "Work" }, "w1");
+    const tidy = await begun({ step: "Tidy", work: "w1" }, "t1");
+    expect(placeOf(tidy.key)?.piece).toBe("w1");
+    await begun({ step: "Review", work: "t1" }, "r1");
+    expect(roundsOf("orch", "Review", "w1")).toBe(1);
+    expect(await refusedWith({ step: "Tidy", work: "nobody" })).toContain(
+      "there is no piece of work to carry on",
+    );
+  });
+
+  it("says each session's step and round in the sessions tool, and remembers them between runs", async () => {
+    orchestrating();
+    await begun({ step: "Work" }, "w1");
+    await begun({ step: "Review", work: "w1" }, "r1");
+    await handle(call("sessions", {}, { session: "orch" }));
+    const lines = last().content!.split("\n");
+    expect(lines[0]).toContain('w1  ');
+    expect(lines[0]).toContain('step "Work"');
+    expect(lines[1]).toContain('step "Review" round 1, reviewing session w1');
+
+    // After a restart the record says the same of the sessions that went.
+    const record = localStorage.getItem("workbench.runs");
+    resetSessions();
+    resetConductor();
+    localStorage.setItem("workbench.runs", record!);
+    loadStarted();
+    orchestrating();
+    await handle(call("sessions", {}, { session: "orch" }));
+    const gone = last().content!.split("\n");
+    expect(gone[0]).toContain('step "Work"');
+    expect(gone[0]).toContain("stopped");
+    expect(gone[1]).toContain('step "Review" round 1, reviewing session w1');
+    expect(roundsOf("orch", "Review", "w1")).toBe(1);
+  });
+
+  it("resumes a started session in its step, on a model the step allows", async () => {
+    orchestrating();
+    const first = await begun({ step: "Work" }, "w1");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    expect(await refusedWith({ session: "w1", agent: "claude-code", model: "opus" })).toContain(
+      'The step "Work" does not allow claude-code with the model opus.',
+    );
+    const back = await resumed(from({ session: "w1" }), "pty-w1b");
+    expect(back.key).not.toBe(first.key);
+    expect(back.model).toBe("sonnet");
+    expect(placeOf(back.key)).toMatchObject({ step: "Work", piece: "w1" });
+  });
+
+  /** A review that has done its round: it worked, and came to rest. */
+  function reviewed(row: { key: string }) {
+    const review = byKey(row.key)!;
+    review.working = true;
+    flushSync();
+    review.working = false;
+    flushSync();
+  }
+
+  /** Sends a line as the orchestrator, and its answer. */
+  async function sent(session: string, text: string) {
+    const answering = handle(call("send", { session, text }, { session: "orch" }));
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await answering;
+    return last();
+  }
+
+  const limitOne = () => {
+    const workflow = defaultWorkflow();
+    const review = workflow.steps[1];
+    if (review.kind === "review") review.limit = 1;
+    return workflow;
+  };
+
+  it("says a limit of one as once in the tag, as the diagram and the instructions do", () => {
+    const review = limitOne().steps[1];
+    expect(stepFacts(review)).toContain("Otherwise: go back to Work at most once, then ask me.");
+    expect(stepFacts(review)).toContain("A piece is reviewed 2 times at most before that.");
+    expect(describeWorkflow(limitOne())).toContain("else back to Work once at most");
+  });
+
+  it("holds a resumed work session to the step's room", async () => {
+    orchestrating();
+    await begun({ step: "Work" }, "w1");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    await begun({ step: "Work" }, "w2");
+    expect(await refusedWith({ session: "w1", prompt: "Go on" })).toContain(
+      'The step "Work" runs one session at once, and session w2 is running for it.',
+    );
+    expect(byId("w1")?.status).not.toBe("running");
+  });
+
+  it("counts a round when a review is resumed with a prompt, and refuses one past the limit", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work" }, "w1");
+    await begun({ step: "Review", work: "w1" }, "r1");
+    ended({ id: "pty-r1", code: 0, clean: true });
+    flushSync();
+    // Brought back to wait for a line, it is the same round.
+    const waiting = await resumed(call("start", { session: "r1" }, { session: "orch" }), "pty-r1b");
+    expect(placeOf(waiting.key)?.round).toBe(1);
+    expect(roundsOf("orch", "Review", "w1")).toBe(1);
+    ended({ id: "pty-r1b", code: 0, clean: true });
+    flushSync();
+    const again = await resumed(from({ session: "r1", prompt: "Review it again" }), "pty-r1c");
+    expect(last().content).toContain('for step "Review" round 2, reviewing session w1');
+    expect(placeOf(again.key)?.round).toBe(2);
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    ended({ id: "pty-r1c", code: 0, clean: true });
+    flushSync();
+    const asked = handle(from({ session: "r1", prompt: "And once more" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", work: "w1", done: 2, limit: 1 });
+    refuse();
+    await asked;
+    expect(last().error).toContain("has had 2 rounds");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+  });
+
+  it("counts a round when a review that finished is sent a line, once until it works again", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    // A line while it works is no new round.
+    byKey(review.key)!.working = true;
+    flushSync();
+    expect((await sent("r1", "Mind the tests too")).error).toBeNull();
+    expect(roundsOf("orch", "Review", "w1")).toBe(1);
+    byKey(review.key)!.working = false;
+    flushSync();
+    const answer = await sent("r1", "Look again, it changed");
+    expect(answer.content).toContain('for step "Review" round 2');
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(placeOf(review.key)?.round).toBe(2);
+    // Another line before it works again is part of the same round.
+    await sent("r1", "The second file too");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    reviewed(review);
+    const answering = handle(call("send", { session: "r1", text: "Once more" }, { session: "orch" }));
+    await settle();
+    expect(conductor.asking?.round?.done).toBe(2);
+    refuse();
+    await answering;
+    expect(last().error).toContain("has had 2 rounds");
+    expect(written.filter(([, data]) => data === "Once more")).toHaveLength(0);
+  });
+
+  it("refuses a line that changes a started session's model, and not one to a session with no step", async () => {
+    orchestrating();
+    await begun({ step: "Work" }, "w1");
+    for (const line of ["/model opus", "  /MODEL", "/fast", "/mod", "/config"]) {
+      const answer = await sent("w1", line);
+      expect(answer.error).toContain("stays on it");
+    }
+    expect(written.some(([, data]) => data.startsWith("/"))).toBe(false);
+    expect((await sent("w1", "/compact")).error).toBeNull();
+    expect((await sent("w1", "Use the model in src/model.ts")).error).toBeNull();
+    // Nor does a start or a resume for a step begin with a command.
+    expect(await refusedWith({ step: "Work", prompt: "/model opus" })).toContain(
+      "begins with a slash",
+    );
+    // Checked as it would be typed, with what a terminal would not show
+    // taken out first.
+    expect(await refusedWith({ step: "Work", prompt: "\u0007/model opus" })).toContain(
+      "begins with a slash",
+    );
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    expect(await refusedWith({ session: "w1", prompt: "/model opus" })).toContain("stays on it");
+  });
+
+  it("takes a step's room and a review's round before asking, and gives them back when refused", async () => {
+    orchestrating();
+    // Two starts for a step of one at once: the second finds the first's
+    // place taken while the user is asked about it.
+    const first = handle(from({ step: "Work" }));
+    await settle();
+    expect(conductor.asking).not.toBeNull();
+    await handle(from({ step: "Work" }));
+    expect(last().error).toContain("another start for it is on its way");
+    refuse();
+    await first;
+    expect(answers.at(-1)?.error).toContain("did not allow");
+    // Refused, the place is free again. Allowed once, so the next start
+    // is asked about too.
+    const work = handle(from({ step: "Work" }));
+    await settle();
+    once();
+    await settle();
+    started(forProject(B).at(-1)!.key, "pty-w1", "w1");
+    flushSync();
+    await work;
+    expect(last().error).toBeNull();
+
+    // Two reviews at once take rounds one and two, and a refused one gives
+    // its round back.
+    const one = handle(from({ step: "Review", work: "w1" }));
+    const two = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    refuse();
+    await settle();
+    allow();
+    await settle();
+    const row = forProject(B).at(-1)!;
+    started(row.key, "pty-r2", "r2");
+    flushSync();
+    await Promise.all([one, two]);
+    expect(placeOf(row.key)?.round).toBe(2);
+    expect(roundsOf("orch", "Review", "w1")).toBe(1);
+  });
+
+  it("refuses a caller it cannot tell from another session in its directory, where one follows a workflow", async () => {
+    // A Codex orchestrator, untold of its id, and another session running
+    // in the same directory.
+    const codex = create(A, null, "codex", null, null, null, null, defaultWorkflow());
+    started(codex.key, "pty-codex", null);
+    const mate = create(A, null, "codex", null, null, null, null, null);
+    started(mate.key, "pty-mate", null);
+    await handle(call("start", { project: B, prompt: "Go", step: "Work" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(UNPLACED);
+    // Alone in its directory it is the caller, held to its workflow.
+    close(mate.key);
+    await handle(call("start", { project: B, prompt: "Go" }));
+    expect(last().error).toContain("so a start names the step it is for");
+  });
+
+  it("names the workflow and each session's place in it, with the rules that place goes by", async () => {
+    const orch = orchestrating();
+    expect(workflowTag(byKey(orch.key)!)).toEqual({
+      workflow: "Build and review",
+      role: "orchestrator",
+      rules: instructionLines(defaultWorkflow()),
+      numbered: true,
+    });
+    // A step's session says what the step allows, for the person reading
+    // it, in the settings' own words, and tells no one what to do.
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    expect(workflowTag(byKey(work.key)!)).toEqual({
+      workflow: "Build and review",
+      role: "Work",
+      rules: ["Does work.", "Models it may use: Sonnet.", "Sessions at once: 1."],
+      numbered: false,
+    });
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    const tag = workflowTag(byKey(review.key)!)!;
+    expect(tag.role).toBe("Review round 1");
+    // The work it checks by the name the user knows it by.
+    expect(tag.rules).toEqual([
+      "Reviews Fix the cache.",
+      "Models it may use: Opus.",
+      "The work passes when the reviewer approves and the orchestrator agrees.",
+      "Otherwise: go back to Work at most 3 times, then ask me.",
+      "A piece is reviewed 4 times at most before that.",
+    ]);
+    for (const line of tag.rules) expect(line).not.toMatch(/\byou\b|`/i);
+    // A deleted workflow followed by its kept copy says so by its name.
+    byKey(orch.key)!.workflowGone = true;
+    expect(workflowTag(byKey(orch.key)!)?.workflow).toBe("Build and review (deleted)");
+    // A session outside any workflow has no tag.
+    const plain = create(A, null, "claude-code", null, null, null, null, null);
+    expect(workflowTag(plain)).toBeNull();
+  });
+
+  it("counts the round of a review resumed with no prompt on the first line it is sent", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    // Its second round, which is as many as the limit gives.
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    reviewed(review);
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    // Stopped and brought back with no prompt, it waits for a line: no
+    // round yet, and it has not worked since.
+    ended({ id: "pty-r1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(call("start", { session: "r1" }, { session: "orch" }), "pty-r1b");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(placeOf(back.key)?.round).toBe(2);
+    // The line it is sent is the next round, which is the user's to allow.
+    const answering = handle(call("send", { session: "r1", text: "Review it once more" }, { session: "orch" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2, name: "Fix the cache" });
+    refuse();
+    await answering;
+    expect(last().error).toContain("the user did not allow another");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
+  });
+
+  it("counts that round once, and lets the user allow it", async () => {
+    const workflow = defaultWorkflow();
+    orchestrating(workflow);
+    await begun({ step: "Work" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    ended({ id: "pty-r1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(call("start", { session: "r1" }, { session: "orch" }), "pty-r1b");
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(placeOf(back.key)?.round).toBe(2);
+    // A second line before it works is the same round.
+    await sent("r1", "And the tests");
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+  });
+
+  it("refuses to resume a session whose step the workflow no longer has, naming the steps there are", async () => {
+    const orch = orchestrating();
+    await begun({ step: "Work" }, "w1");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    // The step is renamed in the settings, and the caller resumed takes
+    // the workflow as it is now.
+    const renamed = defaultWorkflow();
+    renamed.steps[0].name = "Build";
+    const review = renamed.steps[1];
+    if (review.kind === "review") review.backTo = "Build";
+    byKey(orch.key)!.workflow = renamed;
+    const rows = sessions.all.length;
+    expect(await refusedWith({ session: "w1", agent: "claude-code", model: "opus", prompt: "/model opus" })).toBe(
+      'Session w1 ran for the step "Work", which the workflow "Build and review" no longer has. The steps are "Build" (work) and "Review" (review). Start a new session for the step its work is in now.',
+    );
+    expect(sessions.all.length).toBe(rows);
+    // A step named in other letters' case is the same step.
+    renamed.steps[0].name = "work";
+    byKey(orch.key)!.workflow = { ...renamed };
+    const back = await resumed(from({ session: "w1" }), "pty-w1b");
+    expect(back.model).toBe("sonnet");
+  });
+
+  it("refuses a call naming a session the workbench does not run, while one follows a workflow", async () => {
+    orchestrating();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { session: "made-up" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(
+      "The workbench runs no session made-up, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.",
+    );
+    // Nor does one naming a session whose process has ended, which cannot
+    // be the one calling.
+    const gone = create(A, null, "claude-code", null, null, null, null, null);
+    started(gone.key, "pty-gone", "gone");
+    ended({ id: "pty-gone", code: 0, clean: true });
+    flushSync();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { session: "gone" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toContain("The workbench runs no session gone");
+  });
+
+  it("refuses a call naming no session from the directory of a workflow session told its id", async () => {
+    // The orchestrator was told its id, so a call from it names it; a call
+    // from its directory that names none could still be it.
+    orchestrating();
+    await handle(call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(UNPLACED);
+  });
+
+  it("refuses to resume, under a workflow, a session a plain session in its directory started", async () => {
+    // A plain Codex session, untold of its id, starts two sessions.
+    const plain = create(A, null, "codex", null, null, null, null, null);
+    started(plain.key, "pty-plain", null);
+    await startAllowed(call("start", { project: B, prompt: "Go", agent: "codex" }), "pty-p1", "p1");
+    await startAllowed(call("start", { project: B, prompt: "Go too", agent: "codex" }), "pty-p2", "p2");
+    ended({ id: "pty-p1", code: 0, clean: true });
+    ended({ id: "pty-plain", code: 0, clean: true });
+    close(plain.key);
+    flushSync();
+    // A Codex orchestrator under a workflow comes up in the same directory,
+    // and is keyed by it as the plain one was.
+    const codex = create(A, null, "codex", null, null, null, null, defaultWorkflow());
+    started(codex.key, "pty-codex", null);
+    flushSync();
+    const rows = sessions.all.length;
+    await handle(
+      call("start", { session: "p1", agent: "claude-code", model: "opus", prompt: "/model opus" }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(
+      'Session p1 was not started for a step of the workflow "Build and review", so it cannot be held to it, and you follow that workflow. Start a new session for a step instead.',
+    );
+    expect(sessions.all.length).toBe(rows);
+    // The one still running is not given a command either.
+    await handle(call("send", { session: "p2", text: "/model opus" }));
+    expect(last().error).toContain("You follow a workflow, so the workbench gives the sessions you reach no command but /compact");
+    expect(written).toEqual([]);
+    const words = handle(call("send", { session: "p2", text: "Tell me how it goes" }));
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await words;
+    expect(last().error).toBeNull();
+  });
+
+  it("holds the step's room and the review's rounds when the steps are re-cased", async () => {
+    const orch = orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    for (const round of [1, 2]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    // The user re-cases the steps, and the orchestrator goes on with the
+    // workflow as it is now.
+    const recased = limitOne();
+    recased.steps[0].name = "work";
+    const review = recased.steps[1];
+    review.name = "review";
+    if (review.kind === "review") review.backTo = "work";
+    byKey(orch.key)!.workflow = recased;
+    expect(await refusedWith({ step: "work" })).toBe(
+      'The step "work" runs one session at once, and session w1 is running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.',
+    );
+    const asked = handle(from({ step: "review", work: "w1" }));
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "review", done: 2, limit: 1 });
+    refuse();
+    await asked;
+    expect(roundsOf("orch", "Review", "w1")).toBe(2);
+    expect(roundsOf("orch", "review", "w1")).toBe(2);
+  });
+
+  it("reads rounds kept under a step's name in any case as one count", () => {
+    localStorage.setItem(
+      "workbench.runs",
+      JSON.stringify({ orch: { places: {}, rounds: { "Review\nw1": 2, "review\nw1": 1 } } }),
+    );
+    loadStarted();
+    expect(roundsOf("orch", "REVIEW", "w1")).toBe(3);
+  });
+
+  it("refuses a call naming no session from a directory where none runs, while a workflow runs", async () => {
+    orchestrating();
+    await handle(
+      call("start", { project: B, prompt: "/model opus", agent: "claude-code", model: "opus" }, { cwd: "/tmp/elsewhere" }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(NOWHERE);
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("refuses a call naming no session from a directory where several untold sessions run, while a workflow runs elsewhere", async () => {
+    orchestrating();
+    const one = create(B, null, "codex", null, null, null, null, null);
+    started(one.key, "pty-one", null);
+    const two = create(B, null, "codex", null, null, null, null, null);
+    started(two.key, "pty-two", null);
+    await handle(
+      call("start", { project: A, prompt: "/model opus", agent: "claude-code", model: "opus" }, { cwd: B }),
+    );
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toBe(AMBIGUOUS);
+    expect(forProject(A)).toHaveLength(1);
+  });
+
+  it("asks about a call naming no session from anywhere as before, with no workflow running", async () => {
+    const answering = handle(
+      call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { cwd: "/tmp/elsewhere" }),
+    );
+    await settle();
+    expect(conductor.asking?.project).toBe(B);
+    refuse();
+    await answering;
+    expect(last().error).toBe("The user did not allow the session to be started.");
+  });
+
+  it("honours an account for a step, and resumes the session under it", async () => {
+    adoptAccounts({
+      list: { Work: { claude: "~/.claude-work", codex: null } },
+      everywhere: null,
+      overrides: {},
+    });
+    orchestrating();
+    const work = await begun({ step: "Work", account: "Work" }, "w1");
+    expect(byKey(work.key)?.account).toBe("Work");
+    ended({ id: "pty-w1", code: 0, clean: true });
+    flushSync();
+    const back = await resumed(from({ session: "w1" }), "pty-w1b");
+    expect(back.account).toBe("Work");
+    expect(back.model).toBe("sonnet");
+    // One it does not have is refused with the ones there are, and none
+    // is chosen for a step that names none.
+    expect(await refusedWith({ step: "Work", account: "Home" })).toBe(
+      "There is no account called Home. The accounts are Work.",
+    );
+    ended({ id: "pty-w1b", code: 0, clean: true });
+    flushSync();
+    const plain = await begun({ step: "Work" }, "w2");
+    expect(byKey(plain.key)?.account).toBeNull();
+  });
+
+  it("reads a line as a command after characters that draw nothing, and a wide slash as a slash", () => {
+    expect(mayChangeModel("\u200b/model opus")).toBe(true);
+    expect(mayChangeModel("\ufeff /model opus")).toBe(true);
+    expect(mayChangeModel("\uff0fmodel opus")).toBe(true);
+    expect(mayChangeModel("/compact")).toBe(false);
+    expect(mayChangeModel("Look at /src/x.ts")).toBe(false);
+  });
+
+  it("says the same of a review's limit on the tag, in the question and in the count", async () => {
+    // A review that sends the work back at most twice reviews a piece three
+    // times; the third is as many as it allows, and the fourth is asked.
+    const workflow = defaultWorkflow();
+    const review = workflow.steps[1];
+    if (review.kind === "review") review.limit = 2;
+    orchestrating(workflow);
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    for (const round of [1, 2, 3]) {
+      await begun({ step: "Review", work: "w1" }, `r${round}`);
+      ended({ id: `pty-r${round}`, code: 0, clean: true });
+      flushSync();
+    }
+    expect(stepFacts(review)).toContain("Otherwise: go back to Work at most 2 times, then ask me.");
+    expect(stepFacts(review)).toContain("A piece is reviewed 3 times at most before that.");
+    const asked = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    expect(roundQuestion(conductor.asking!.round!)).toBe(
+      "Review has run 3 times on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
+    refuse();
+    await asked;
+    expect(roundsOf("orch", "Review", "w1")).toBe(3);
+  });
+
+  it("asks about a round past the limit in words, however many rounds there were", () => {
+    const at = { step: "Review", work: "w1", name: "Fix the cache", limit: 1 };
+    expect(roundQuestion({ ...at, done: 2 })).toBe(
+      "Review has run twice on Fix the cache, as many times as the workflow allows. Allow another round?",
+    );
+    expect(roundQuestion({ ...at, done: 3 })).toBe(
+      "Review has run 3 times on Fix the cache, more times than the workflow allows. Allow another round?",
+    );
+  });
+
+  it("keeps a refused start where the user can see it, until a start goes through", async () => {
+    const orch = orchestrating();
+    await refusedWith({ step: "Deploy" });
+    expect(conductor.refusals[orch.key]).toContain('has no step called "Deploy"');
+    await begun({ step: "Work" }, "w1");
+    expect(conductor.refusals[orch.key]).toBeUndefined();
+    await refusedWith({});
+    dismissRefusal(orch.key);
+    expect(conductor.refusals[orch.key]).toBeUndefined();
+    // A caller with no workflow is answered as before, and nothing shows.
+    const row = create(A, null, "claude-code", null, null, null, null, null);
+    started(row.key, "pty-plain", "plain");
+    await handle(call("start", { project: B }, { session: "plain" }));
+    expect(conductor.refusals[row.key]).toBeUndefined();
+  });
+
+  it("lets a session with no workflow start others as before, step or none", async () => {
+    const row = create(A, null, "claude-code", null, null, null, null, null);
+    started(row.key, "pty-plain", "plain");
+    const answering = handle(
+      call("start", { project: B, prompt: "Go", agent: "claude-code", model: "opus" }, { session: "plain" }),
+    );
+    allow();
+    await settle();
+    const child = forProject(B).at(-1)!;
+    started(child.key, "pty-c", "c1");
+    flushSync();
+    await answering;
+    expect(last().error).toBeNull();
+    expect(byKey(child.key)?.model).toBe("opus");
+    expect(placeOf(child.key)).toBeNull();
   });
 });
