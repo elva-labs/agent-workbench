@@ -563,6 +563,14 @@ export async function installFakeCore(
           fromLoginShell: true,
         }),
         pickProject: async () => null,
+        // What the file picker hands back: what a test put in `__picked`,
+        // once, or nothing, as when the user cancels.
+        pickFiles: async () => {
+          const w = window as unknown as { __picked?: string[] };
+          const picked = w.__picked ?? [];
+          w.__picked = [];
+          return picked;
+        },
         projectInfo: async (path: string) => {
           if (held.includes(path))
             await new Promise<void>((resolve) => answers.set(path, resolve));
@@ -995,6 +1003,16 @@ export async function installFakeCore(
             project,
             selection,
           };
+        },
+        // A file's size from `__sizes` by path, 2 KB for any other; a path
+        // ending in a slash is a folder; one with "missing" in it is not
+        // there.
+        fileInfo: async (path: string) => {
+          if (path.includes("missing"))
+            throw new Error(`could not read ${path}: No such file`);
+          const sizes = (window as unknown as { __sizes?: Record<string, number> }).__sizes ?? {};
+          if (path.endsWith("/")) return { size: 0, dir: true };
+          return { size: sizes[path] ?? 2048, dir: false };
         },
         // One pixel of PNG for any image asked for; a PDF as itself; a
         // path with "missing" in it is not there.

@@ -61,6 +61,16 @@ export function watchRoot(): string | null {
   return project.repository ?? project.path;
 }
 
+/** The folder a session's files are listed from, the way the changes pane
+    lists them for it: the worktree it is in, else its project's
+    repository. Null for a folder git knows nothing about. */
+export function sessionRoot(session: Session): string | null {
+  if (session.worktree !== null) return session.worktree;
+  const project = workspace.open.find((candidate) => candidate.path === session.project);
+  if (project === undefined || !project.isGit) return null;
+  return project.repository ?? project.path;
+}
+
 /** The worktree the changes pane is following instead of the project's own,
     as a name to show, or null while it is the project's own. */
 export function followedWorktree(): string | null {

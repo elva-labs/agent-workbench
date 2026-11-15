@@ -5,7 +5,9 @@
   import { close, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
   import { spoken } from "$lib/instructions";
-  import { projectLabel } from "$lib/workspace.svelte";
+  import { projectLabel, sessionRoot } from "$lib/workspace.svelte";
+  import { mentionOpener } from "$lib/show.svelte";
+  import { unsent } from "$lib/mention";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
@@ -44,8 +46,10 @@
       agent dropped stays in the thread, where it happened; one that never
       reached it leaves the thread for the composer. */
   function putBack(message: Message) {
-    const text = spoken(message.text, senderOf(message) === null).text;
+    const back = unsent(spoken(message.text, senderOf(message) === null).text);
+    const text = back.draft;
     link.draft = link.draft.trim() === "" ? text : `${text}\n${link.draft}`;
+    link.mentions = [...new Set([...link.mentions, ...back.picked])];
     link.images = [...message.images, ...link.images];
     if (!message.placed) conversation.forget(message.id);
     queueMicrotask(() =>
@@ -175,6 +179,7 @@
       agent={name}
       onPutBack={putBack}
       sender={(message) => senderOf(message)}
+      opener={(path) => mentionOpener(session.key, path)}
     />
     <div class="foot">
       {#if over}
@@ -195,6 +200,9 @@
           onDock={toDock}
           defaultModel={session.model === null}
           slash={profile.commands}
+          root={sessionRoot(session)}
+          dir={session.cwd ?? folder}
+          project={projectLabel(session.project)}
         />
       {/if}
     </div>

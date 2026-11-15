@@ -3,6 +3,7 @@
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
   import { reportsShown, spoken } from "$lib/instructions";
+  import { sentParts, unsent } from "$lib/mention";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { goTo } from "$lib/workspace.svelte";
@@ -36,9 +37,12 @@
     onPutBack?: (message: Message) => void;
     /** The session that sent a message, or null for the user. */
     sender?: (message: Message) => Sender | null;
+    /** What opens a file a message mentions, or null for one the viewer
+        does not show. */
+    opener?: (path: string) => (() => void) | null;
   }
 
-  let { conversation, root, intro, agent, onPutBack, sender }: Props = $props();
+  let { conversation, root, intro, agent, onPutBack, sender, opener }: Props = $props();
 
   /** The messages whose workbench sentence stands open. */
   let unfolded = $state<Record<string, boolean>>({});
@@ -459,7 +463,7 @@
   >
     <header class="who">
       {#if words.text !== ""}
-        <Copy label="Copy" name="Copy the message" text={() => words.text} host="message" testid="copy-message" />
+        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text).draft} host="message" testid="copy-message" />
       {/if}
       {#if from === null}
         <b>You</b>
@@ -479,7 +483,19 @@
           {/each}
         </div>
       {/if}
-      {#if words.text !== ""}<p><Plain text={words.text} /></p>{/if}
+      {#if words.text !== ""}<p
+          >{#each sentParts(words.text) as part, at (at)}{#if part.path === undefined}<Plain text={part.text} />{:else}{@const open =
+                opener?.(part.path) ?? null}{#if open === null}<span class="mention" data-testid="message-mention"
+                  ><Plain text={part.text} /></span
+                >{:else}<button
+                  class="mention link-file"
+                  tabindex="-1"
+                  data-thread-item
+                  title="Open {part.path}"
+                  onclick={open}
+                  data-testid="message-mention"><Plain text={part.text} /></button
+                >{/if}{/if}{/each}</p
+        >{/if}
     </div>
     {#if words.reports !== null}
       {@const shown = `${said.id}:reports`}
@@ -638,6 +654,29 @@
     margin: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  /* A file the message mentions, in the accent; one the viewer shows
+     opens there. */
+  .mention {
+    color: var(--accent);
+  }
+
+  .link-file {
+    display: inline;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    text-align: inherit;
+    white-space: inherit;
+    overflow-wrap: inherit;
+    cursor: pointer;
+  }
+
+  .link-file:hover {
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .images {

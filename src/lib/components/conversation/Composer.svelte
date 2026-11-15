@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { core, type IntegratedImage } from "$lib/core";
+  import type { Attached } from "$lib/integrated.svelte";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
   import { compact, interrupt, linkFor, send } from "$lib/integrated.svelte";
@@ -9,6 +10,20 @@
   import { modelName, tokens } from "$lib/thread";
   import { pieces } from "$lib/completion";
   import { complete, named, slashGroups, slashWord, sourceOf, waitingHint } from "$lib/slash";
+  import {
+    forAgent,
+    insertMention,
+    mentionSpans,
+    mentionWord,
+    outgoing,
+    parts,
+    size,
+    split,
+    type Found,
+  } from "$lib/mention";
+  import { finder, find, LIMIT, list } from "$lib/mentionFiles.svelte";
+  import { lastSegment } from "$lib/paths";
+  import { isRemote } from "$lib/remote.svelte";
   import ChoiceMenu from "../ChoiceMenu.svelte";
   import CompletionMenu, { rowId } from "./CompletionMenu.svelte";
   import Icon from "./Icon.svelte";
@@ -31,6 +46,14 @@
    * the field, its argument hint waiting after it until something is
    * typed. Escape puts the menu away and stops nothing. A message that is
    * the compact command compacts through the agent's own compaction.
+   *
+   * An `@` typed at the start or after a space opens the project's files in
+   * the same menu: what changed first, then the top of the project, and,
+   * once something follows the `@`, the files and folders it names. A file
+   * picked goes in as its path, drawn in the accent, and Backspace right
+   * after it takes it out whole. It goes to the agent as the path, for the
+   * agent to read itself. A file attached that is not an image goes the
+   * same way, shown as a card above the field until it is sent.
    */
   interface Props {
     sessionKey: string;
@@ -48,15 +71,32 @@
     defaultModel?: boolean;
     /** Whether the agent lists slash commands once ready. */
     slash?: boolean;
+    /** The folder the project's files are listed from, for `@`; null for
+        a folder git lists nothing in. */
+    root?: string | null;
+    /** Where the agent works, which a path it is told of is written from. */
+    dir?: string;
+    /** The project's name, as the menu says it. */
+    project?: string;
   }
 
-  let { sessionKey, conversation, agent, ready, active, onDock, defaultModel = false, slash = false }: Props =
-    $props();
+  let {
+    sessionKey,
+    conversation,
+    agent,
+    ready,
+    active,
+    onDock,
+    defaultModel = false,
+    slash = false,
+    root = null,
+    dir = "",
+    project = "the project",
+  }: Props = $props();
 
   let link = $derived(linkFor(sessionKey));
   let field = $state<HTMLTextAreaElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
-  let picker = $state<HTMLInputElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
   let menu = $state<"model" | "mode" | null>(null);
   /** It was opened with the pointer rather than a key. */
@@ -117,12 +157,131 @@
   });
   let menuId = $derived(`slash-${sessionKey.replace(/[^\w-]/g, "_")}`);
 
+  // ---- files mentioned with @ ----
+
+  /** An input method is putting a character together in the field. */
+  let composing = $state(false);
+  /** Where the picked mentions stand in the message. */
+  let spans = $derived(mentionSpans(link.draft, link.mentions));
+  let mword = $derived.by(() => {
+    if (root === null || !focused || composing || word !== null || dismissed === link.draft) return null;
+    const found = mentionWord(link.draft, caret);
+    if (found === null || spans.some((span) => caret > span.start && caret <= span.end)) return null;
+    return found;
+  });
+  let opened = $derived(mword !== null);
+  let query = $derived(mword?.query ?? null);
+
+  // The files are read again each time the menu opens, never on a key.
+  $effect(() => {
+    if (!opened || root === null) return;
+    const from = root;
+    untrack(() => void list(from));
+  });
+
+  $effect(() => {
+    const wanted = query;
+    if (wanted !== null && wanted !== "") untrack(() => find(wanted));
+  });
+
+  let changedBy = $derived(new Map(finder.changed.map((file) => [file.path, file])));
+  let fileGroups = $derived.by((): { label: string; items: Found[] }[] => {
+    if (mword === null || finder.root !== root) return [];
+    if (mword.query === "") {
+      const changed = finder.changed.slice(0, LIMIT).map((file) => ({ path: file.path, marks: [] }));
+      const top = finder.top
+        .filter((path) => !changedBy.has(path))
+        .slice(0, LIMIT)
+        .map((path) => ({ path, marks: [] }));
+      return [
+        { label: "Changed", items: changed },
+        { label: "Files", items: top },
+      ].filter((group) => group.items.length > 0);
+    }
+    if (finder.found.query === null || finder.found.paths.length === 0) return [];
+    return [{ label: "", items: finder.found.paths }];
+  });
+  let fileItems = $derived(fileGroups.flatMap((group) => group.items));
+  /** What the menu shows for `@`: the files, none that match, the files
+      still being read, or why they could not be. */
+  let fileMenu = $derived.by((): "list" | "none" | "reading" | "error" | null => {
+    if (mword === null) return null;
+    if (fileItems.length > 0) return "list";
+    if (finder.root === root && finder.error !== null) return "error";
+    if (finder.root !== root || !finder.listed) return "reading";
+    if (mword.query !== "" && finder.found.query !== mword.query) return "reading";
+    return "none";
+  });
+  let fileMarking = $derived(
+    mword !== null && marked.query === `@${mword.query}` ? Math.min(marked.index, Math.max(0, fileItems.length - 1)) : 0,
+  );
+  let fileMenuId = $derived(`files-${sessionKey.replace(/[^\w-]/g, "_")}`);
+  let fileAnnounced = $derived.by(() => {
+    if (fileMenu === "reading") return `Reading the files of ${project}.`;
+    if (fileMenu === "error") return `The files of ${project} could not be read.`;
+    if (fileMenu === "none")
+      return mword?.query === "" ? `No files in ${project}.` : `No file in ${project} matches ${mword?.query}.`;
+    if (fileMenu !== "list") return "";
+    const count = mword?.query === "" ? fileItems.length : finder.found.total;
+    return `${count} ${count === 1 ? "file" : "files"}`;
+  });
+
+  /** Puts the file at that place in the menu in the field as a mention, a
+      space after it, with the caret there. */
+  function mentionAt(index: number) {
+    const item = fileItems[index];
+    if (item === undefined || mword === null || root === null) return;
+    const path = forAgent(item.path, root, dir || root);
+    const done = insertMention(link.draft, mword, path);
+    link.draft = done.text;
+    link.mentions = [...link.mentions.filter((known) => known !== path), path];
+    caret = done.caret;
+    void tick().then(() => {
+      field?.focus();
+      field?.setSelectionRange(done.caret, done.caret);
+    });
+  }
+
+  /** Backspace right after a mention takes all of it out. */
+  function takeOut(e: KeyboardEvent): boolean {
+    if (e.key !== "Backspace" || e.isComposing || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return false;
+    if (field === null || field.selectionStart !== field.selectionEnd) return false;
+    const at = field.selectionStart;
+    const span = spans.find((known) => known.end === at);
+    if (span === undefined) return false;
+    e.preventDefault();
+    link.draft = link.draft.slice(0, span.start) + link.draft.slice(span.end);
+    if (mentionSpans(link.draft, [span.path]).length === 0)
+      link.mentions = link.mentions.filter((known) => known !== span.path);
+    caret = span.start;
+    void tick().then(() => field?.setSelectionRange(span.start, span.start));
+    return true;
+  }
+
+  /** The field draws its text itself unless a mention is in it: then the
+      text is drawn behind it, the mentions in the accent, and the field's
+      own is clear. While an input method composes, the field draws. */
+  let drawn = $derived((spans.length > 0 || mword !== null) && !composing);
+  /** What the text behind the field draws in the accent: the picked
+      mentions, and the `@` word being typed. */
+  let accented = $derived(
+    mword === null ? spans : [...spans, { start: mword.at, end: mword.end, path: "" }].sort((a, b) => a.start - b.start),
+  );
+  let backdrop = $state<HTMLDivElement | null>(null);
+  /** The room a scroll bar takes in the field, which the text behind it
+      leaves too. */
+  let gutter = $state(0);
+
+  function scrolled() {
+    if (backdrop !== null && field !== null) backdrop.scrollTop = field.scrollTop;
+  }
+
   function seen() {
     if (field !== null) caret = field.selectionStart;
   }
 
   function mark(index: number) {
-    marked = { query: word?.query ?? "", index };
+    marked = { query: word !== null ? word.query : mword !== null ? `@${mword.query}` : "", index };
   }
 
   /** Puts the command at that place in the menu in the field, a space
@@ -141,7 +300,8 @@
 
   /** The keys the menu takes while it is open; true when one was taken. */
   function menuKey(e: KeyboardEvent): boolean {
-    if (slashMenu === null || e.isComposing || e.keyCode === 229) return false;
+    if (slashMenu === null) return fileKey(e);
+    if (e.isComposing || e.keyCode === 229) return false;
     const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
     if (e.key === "Escape") {
       e.preventDefault();
@@ -170,8 +330,65 @@
     return false;
   }
 
+  /** The keys the `@` menu takes while it is open, as the slash menu's. */
+  function fileKey(e: KeyboardEvent): boolean {
+    if (fileMenu === null || e.isComposing || e.keyCode === 229) return false;
+    const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      dismissed = link.draft;
+      return true;
+    }
+    if (!plain) return false;
+    // Tab or Enter before the files for what is typed are in picks the
+    // best of them once they are, rather than sending the word as text.
+    if ((e.key === "Enter" || e.key === "Tab") && (fileMenu === "reading" || (fileMenu === "list" && !answered))) {
+      e.preventDefault();
+      awaited = link.draft;
+      return true;
+    }
+    if (fileMenu !== "list") return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      mark((fileMarking + step + fileItems.length) % fileItems.length);
+      return true;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      mentionAt(fileMarking);
+      return true;
+    }
+    return false;
+  }
+
+  /** Whether the menu's rows are for what is typed now. */
+  let answered = $derived(mword !== null && (mword.query === "" || finder.found.query === mword.query));
+  /** The message as it stood when Tab or Enter came before the files for
+      it: the best of them is picked once they are in, unless it changed. */
+  let awaited = $state<string | null>(null);
+
+  $effect(() => {
+    if (awaited === null) return;
+    if (link.draft !== awaited || fileMenu === null || fileMenu === "none" || fileMenu === "error") {
+      awaited = null;
+      return;
+    }
+    if (fileMenu === "list" && answered)
+      untrack(() => {
+        awaited = null;
+        mentionAt(0);
+      });
+  });
+
   let running = $derived(conversation.current !== null || conversation.working);
-  let hasWords = $derived(link.draft.trim() !== "" || link.images.length > 0);
+  let hasWords = $derived(link.draft.trim() !== "" || link.images.length > 0 || link.files.length > 0);
+  /** The keys the empty field names, for what the agent and project take. */
+  let keysSaid = $derived.by(() => {
+    const keys = [slash ? "/ for commands" : null, root !== null ? "@ for files" : null].filter((key) => key !== null);
+    return keys.length === 0 ? "" : `. Type ${keys.join(", ")}`;
+  });
 
   /** The kinds of image the agent takes. */
   const IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -208,7 +425,8 @@
       return;
     }
     digit = null;
-    const asked = slash && link.images.length === 0 ? named(link.draft, commands) : null;
+    const asked =
+      slash && link.images.length === 0 && link.files.length === 0 ? named(link.draft, commands) : null;
     if (asked?.command.name === "compact") {
       // The words come back if the compaction could not be asked for.
       const typed = link.draft;
@@ -220,10 +438,17 @@
       });
       return;
     }
-    const id = send(sessionKey, link.draft, link.images);
+    const text = outgoing(
+      link.draft,
+      link.mentions,
+      link.files.map((file) => file.path),
+    );
+    const id = send(sessionKey, text, link.images);
     if (id === null) return;
     link.draft = "";
     link.images = [];
+    link.mentions = [];
+    link.files = [];
     void tick().then(grow);
   }
 
@@ -233,6 +458,7 @@
 
   function onkeydown(e: KeyboardEvent) {
     if (menuKey(e)) return;
+    if (takeOut(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -256,6 +482,8 @@
     if (field === null) return;
     field.style.height = "auto";
     field.style.height = `${field.scrollHeight}px`;
+    gutter = field.offsetWidth - field.clientWidth;
+    scrolled();
   }
 
   $effect(() => {
@@ -290,27 +518,76 @@
     void attach(files);
   }
 
-  /** Files dropped on the conversation: an image goes with the message,
-      anything else by its path in the text. */
+  /** Files from this machine that an agent on another cannot read: said
+      under the field until the message changes. */
+  let unreachable = $state<{ names: string[]; draft: string } | null>(null);
+
+  $effect(() => {
+    if (unreachable !== null && link.draft !== unreachable.draft) unreachable = null;
+  });
+
+  /** Files dropped on the conversation or picked with the paper clip: an
+      image goes with the message as a picture, anything else as a card,
+      for the agent to read by its path. A file outside the project goes
+      by its full path, and the card says which folder it is from. An
+      agent on another machine is given only pictures: the files are on
+      this one. */
   async function take(paths: string[]) {
-    const words: string[] = [];
+    const away: string[] = [];
     for (const path of paths) {
-      if (!IMAGE_FILE.test(path)) {
-        words.push(path);
+      if (IMAGE_FILE.test(path)) {
+        reading += 1;
+        try {
+          const found = await core().readMedia(path);
+          if (IMAGES.includes(found.mime)) {
+            link.images = [...link.images, { mediaType: found.mime, data: found.data }];
+            continue;
+          }
+        } catch {
+          // Read as a file instead.
+        } finally {
+          reading -= 1;
+        }
+      }
+      if (isRemote(dir || (root ?? ""))) {
+        away.push(lastSegment(path));
         continue;
       }
-      reading += 1;
-      try {
-        const found = await core().readMedia(path);
-        if (IMAGES.includes(found.mime)) link.images = [...link.images, { mediaType: found.mime, data: found.data }];
-        else words.push(path);
-      } catch {
-        words.push(path);
-      } finally {
-        reading -= 1;
-      }
+      void card(path);
     }
-    if (words.length > 0) insert(words.join(" "));
+    unreachable = away.length > 0 ? { names: away, draft: link.draft } : null;
+  }
+
+  /** A card for a file that is not an image, its size filled in once
+      read. */
+  async function card(local: string) {
+    const base = dir || root || "";
+    const told = base === "" ? local : forAgent(local, base, base);
+    if (link.files.some((file) => file.path === told)) return;
+    const inside = told !== local || (root !== null && forAgent(local, root, root) !== local);
+    const parent = local.replace(/[\\/]+$/, "").replace(/[\\/][^\\/]*$/, "");
+    const attached: Attached = {
+      path: told,
+      name: lastSegment(local),
+      size: null,
+      dir: false,
+      from: inside ? null : lastSegment(parent) || parent,
+    };
+    link.files = [...link.files, attached];
+    try {
+      const info = await core().fileInfo(local);
+      link.files = link.files.map((file) =>
+        file.path === told ? { ...file, size: info.dir ? null : info.size, dir: info.dir } : file,
+      );
+    } catch {
+      // The card goes without its size.
+    }
+  }
+
+  async function pickFiles() {
+    const paths = await core().pickFiles();
+    if (paths.length > 0) await take(paths);
+    field?.focus();
   }
 
   function insert(text: string) {
@@ -323,6 +600,11 @@
 
   function remove(image: IntegratedImage) {
     link.images = link.images.filter((known) => known !== image);
+  }
+
+  function unattach(file: Attached) {
+    link.files = link.files.filter((known) => known !== file);
+    field?.focus();
   }
 
   $effect(() => {
@@ -455,9 +737,57 @@
         {/if}
       {/snippet}
     </CompletionMenu>
+  {:else if fileMenu !== null}
+    <CompletionMenu
+      id={fileMenuId}
+      label="Files"
+      groups={fileGroups}
+      active={fileMarking}
+      key={(found) => found.path}
+      action="mention"
+      onpick={mentionAt}
+      onpoint={mark}
+      testid="file-menu"
+    >
+      {#snippet row(found)}
+        {@const cut = split(found)}
+        {@const changed = changedBy.get(found.path)}
+        <!-- A screen reader hears the parts apart, by commas drawn at no
+             size at the end of each. -->
+        <span class="file-name" data-testid="file-name"
+          ><Icon name={found.path.endsWith("/") ? "folder" : "file"} size={13} /><span
+            >{#each pieces(cut.name, cut.nameMarks) as piece, at (at)}{#if piece.hit}<b><Plain text={piece.text} /></b
+                >{:else}<Plain text={piece.text} />{/if}{/each}</span
+          >{#if cut.dir !== "" || changed !== undefined}<span class="sep">,</span>{/if}</span
+        >
+        <span class="file-dir" data-testid="file-dir"
+          ><span dir="ltr"
+            >{#each pieces(cut.dir, cut.dirMarks) as piece, at (at)}{#if piece.hit}<b><Plain text={piece.text} /></b
+                >{:else}<Plain text={piece.text} />{/if}{/each}</span
+          >{#if cut.dir !== "" && changed !== undefined}<span class="sep">,</span>{/if}</span
+        >
+        <span class="file-change"
+          >{#if changed !== undefined}{#if changed.binary}<span class="file-bin">binary</span>{:else}<span class="plus"
+                >+{changed.add}</span
+              >
+              <span class="minus">−{changed.del}</span>{/if}{/if}</span
+        >
+      {/snippet}
+      {#snippet empty()}
+        {#if fileMenu === "reading"}
+          Reading the files of <Plain text={project} />…
+        {:else if fileMenu === "error"}
+          The files of <Plain text={project} /> could not be read.
+        {:else if mword?.query === ""}
+          No files in <Plain text={project} />.
+        {:else}
+          No file in <Plain text={project} /> matches <code><Plain text={mword?.query ?? ""} /></code>.
+        {/if}
+      {/snippet}
+    </CompletionMenu>
   {/if}
-  <p class="sr" role="status" data-testid="slash-announce">{announced}</p>
-  {#if link.images.length > 0 || reading > 0}
+  <p class="sr" role="status" data-testid="slash-announce">{slashMenu !== null ? announced : fileAnnounced}</p>
+  {#if link.images.length > 0 || link.files.length > 0 || reading > 0}
     <div class="attached" data-testid="attachments">
       {#each link.images as image, at (at)}
         <span class="thumb">
@@ -467,15 +797,49 @@
           >
         </span>
       {/each}
+      {#each link.files as file (file.path)}
+        {@const about = [file.size === null ? null : size(file.size), file.from === null ? null : `from ${file.from}`]
+          .filter((part) => part !== null)
+          .join(", ")}
+        <span class="card" title={file.path} data-testid="attached-file">
+          <Icon name={file.dir ? "folder" : "file"} />
+          <span class="card-text"
+            ><span class="card-name"><Plain text={file.name} />{#if about !== ""}<span class="sep">, </span>{/if}</span
+            >{#if about !== ""}<small data-testid="attached-file-about">{about}</small>{/if}</span
+          >
+          <button
+            class="remove"
+            tabindex="0"
+            onclick={() => unattach(file)}
+            aria-label="Remove {file.name}"
+            data-testid="remove-attached-file"><Icon name="x" size={10} /></button
+          >
+        </span>
+      {/each}
       {#if reading > 0}<span class="reading">Reading…</span>{/if}
     </div>
   {/if}
   <div class="write">
+    {#if drawn}
+      <div class="backdrop" style:right="{gutter}px" aria-hidden="true" bind:this={backdrop} data-testid="composer-drawn"
+        >{#each parts(link.draft, accented) as part, at (at)}{#if part.path !== undefined}<span
+              class="mention"
+              data-testid={part.path === "" ? "composer-typing" : "composer-mention"}>{part.text}</span
+            >{:else}{part.text}{/if}{/each}</div
+      >
+    {/if}
     <textarea
       bind:this={field}
       bind:value={link.draft}
+      class:drawn
       {onkeydown}
       {onpaste}
+      onscroll={scrolled}
+      oncompositionstart={() => (composing = true)}
+      oncompositionend={() => {
+        composing = false;
+        seen();
+      }}
       oninput={seen}
       onkeyup={seen}
       onpointerup={seen}
@@ -488,13 +852,15 @@
       rows="1"
       placeholder={conversation.open.length > 0
         ? "↑ to answer, or write a message"
-        : conversation.entries.length === 0
-          ? `Tell ${agent} what to do`
-          : `Reply to ${agent}`}
+        : `${conversation.entries.length === 0 ? `Tell ${agent} what to do` : `Reply to ${agent}`}${keysSaid}`}
       aria-label="Message to {agent}"
-      aria-autocomplete={slash ? "list" : undefined}
-      aria-controls={slashMenu === "list" ? menuId : undefined}
-      aria-activedescendant={slashMenu === "list" ? rowId(menuId, marking) : undefined}
+      aria-autocomplete={slash || root !== null ? "list" : undefined}
+      aria-controls={slashMenu === "list" ? menuId : fileMenu === "list" ? fileMenuId : undefined}
+      aria-activedescendant={slashMenu === "list"
+        ? rowId(menuId, marking)
+        : fileMenu === "list"
+          ? rowId(fileMenuId, fileMarking)
+          : undefined}
       data-testid="composer-input"
     ></textarea>
     {#if ghost !== null}
@@ -509,25 +875,18 @@
     </p>
   {:else if held}
     <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
+  {:else if unreachable !== null}
+    <p class="hint" data-testid="composer-unreachable">
+      Not attached: <Plain text={unreachable.names.join(", ")} />. {agent} runs on another machine and cannot read files from this one; only
+      pictures go with the message.
+    </p>
   {:else if link.compactAsked && running && !conversation.compacting}
     <p class="hint" data-testid="composer-compact">Compacts once {agent} is done with this turn.</p>
   {/if}
   <div class="bar">
-    <button class="chip bare" tabindex="0" onclick={() => picker?.click()} aria-label="Attach images" title="Attach images" data-testid="attach"
+    <button class="chip bare" tabindex="0" onclick={() => void pickFiles()} aria-label="Attach files" title="Attach files" data-testid="attach"
       ><Icon name="clip" /></button
     >
-    <input
-      bind:this={picker}
-      type="file"
-      accept={IMAGES.join(",")}
-      multiple
-      hidden
-      onchange={(e) => {
-        const input = e.currentTarget as HTMLInputElement;
-        void attach([...(input.files ?? [])]);
-        input.value = "";
-      }}
-    />
     <div class="picker">
       <button
         class="chip"
@@ -679,6 +1038,96 @@
     visibility: hidden;
   }
 
+  /* The message drawn behind a field whose own text is clear, so a
+     mention in it can be in the accent. It wraps and scrolls as the field
+     does. */
+  .backdrop {
+    position: absolute;
+    inset: 0;
+    padding: 0 2px;
+    font-size: var(--conv-size);
+    line-height: 1.5;
+    color: var(--ink);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  .mention {
+    color: var(--accent);
+  }
+
+  textarea {
+    position: relative;
+  }
+
+  textarea.drawn {
+    color: transparent;
+    caret-color: var(--ink);
+  }
+
+  textarea.drawn::selection {
+    color: transparent;
+    background: color-mix(in srgb, var(--accent) 26%, transparent);
+  }
+
+  /* A file in the menu: its name with the letters typed marked, the folder
+     it is in, cut at the start when long, and its counts when changed. */
+  .file-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+
+  .file-name :global(svg) {
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: -2px;
+    color: var(--ink-3);
+  }
+
+  .file-name b,
+  .file-dir b {
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .file-dir {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    font-size: calc(var(--meta-size) - 0.5px);
+    color: var(--ink-3);
+  }
+
+  .file-dir > span {
+    unicode-bidi: isolate;
+  }
+
+  .file-change {
+    font-size: calc(var(--meta-size) - 0.5px);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .plus {
+    color: var(--add);
+  }
+
+  .minus {
+    color: var(--del);
+  }
+
+  .file-bin {
+    color: var(--ink-3);
+  }
+
   /* A command in the menu: its name with the letters typed marked and its
      argument hint, what it does, and where it comes from. */
   .cmd-name {
@@ -790,6 +1239,49 @@
 
   .reading {
     font-size: var(--conv-meta);
+    color: var(--ink-2);
+  }
+
+  /* A file that is not an image: its name and size, and the folder it is
+     from when that is outside the project. */
+  .card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 280px;
+    height: 40px;
+    padding: 0 14px 0 10px;
+    border-radius: var(--radius);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--rule);
+    font-size: var(--conv-small);
+    color: var(--ink);
+  }
+
+  .card > :global(svg) {
+    flex: none;
+    color: var(--ink-3);
+  }
+
+  .card-text {
+    min-width: 0;
+    line-height: 1.3;
+  }
+
+  .card-name {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--conv-fine);
     color: var(--ink-2);
   }
 

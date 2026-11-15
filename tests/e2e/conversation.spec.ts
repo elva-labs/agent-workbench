@@ -426,7 +426,7 @@ test.describe("the composer", () => {
     await expect(input(page)).toBeFocused();
   });
 
-  test("takes an image dropped or pasted with the message, and another file by its path", async ({ page }) => {
+  test("takes an image dropped or pasted with the message, and another file as a card, by its path", async ({ page }) => {
     await openIntegrated(page);
     const box = (await page.getByTestId("composer").boundingBox())!;
     await page.evaluate(
@@ -440,7 +440,8 @@ test.describe("the composer", () => {
       { x: box.x + 40, y: box.y + 20 },
     );
     await expect(page.getByTestId("attachments").locator("img")).toHaveCount(1);
-    await expect(input(page)).toHaveValue("/home/ada/notes.md ");
+    await expect(page.getByTestId("attached-file")).toContainText("notes.md");
+    await expect(input(page)).toHaveValue("");
     await input(page).evaluate((field) => {
       const data = new DataTransfer();
       const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
@@ -454,7 +455,7 @@ test.describe("the composer", () => {
     await page.keyboard.press("Enter");
     const sent = (await calls(page)).find((call) => call.method === "send") as unknown as { images: unknown[]; text: string };
     expect(sent.images).toHaveLength(1);
-    expect(sent.text.trim()).toBe("/home/ada/notes.md");
+    expect(sent.text).toBe("`@/home/ada/notes.md`");
     await expect(page.getByTestId("user-message").locator("img")).toHaveCount(1);
   });
 

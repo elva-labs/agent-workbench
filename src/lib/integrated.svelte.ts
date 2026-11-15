@@ -1,5 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
+import { unsent } from "$lib/mention";
 import { readsAsYou } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
@@ -48,6 +49,19 @@ import {
  * account's limits go to the store that keeps them by account.
  */
 
+/** A file going with a message that is not an image: it goes as its path,
+    for the agent to read. */
+export interface Attached {
+  /** As the agent is told of it: from where it works when inside that,
+      else in full. */
+  path: string;
+  name: string;
+  size: number | null;
+  dir: boolean;
+  /** The folder it is in, when that is outside the project. */
+  from: string | null;
+}
+
 /** What runs behind one row. */
 export class Link {
   /** The core's id for the session, while it runs. */
@@ -61,6 +75,10 @@ export class Link {
   draft = $state("");
   /** The images going with it. */
   images = $state<IntegratedImage[]>([]);
+  /** The paths of the files mentioned in it, as picked from the menu. */
+  mentions = $state<string[]>([]);
+  /** The files that are not images going with it, by path. */
+  files = $state<Attached[]>([]);
   /** Why the model could not be changed, until it next is. */
   configureError = $state<string | null>(null);
   /** Why the conversation could not be compacted, until it next is. */
@@ -520,7 +538,10 @@ export function send(
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt.
   if (session.title === null) {
-    const line = spoken(text, from === null).text.split("\n").find((candidate) => candidate.trim() !== "")?.trim();
+    const line = unsent(spoken(text, from === null).text)
+      .draft.split("\n")
+      .find((candidate) => candidate.trim() !== "")
+      ?.trim();
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
     const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
