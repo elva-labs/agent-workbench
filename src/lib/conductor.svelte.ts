@@ -19,10 +19,11 @@
  *
  * Every session the workbench starts names itself in each call its tools
  * make, by a token the window chose for it and gave its environment, and
- * the caller is the session that token names. A call that names no session
- * the workbench runs, as one from an agent it did not start does, is
- * refused: these tools serve the workbench's own sessions and no other
- * agent.
+ * the caller is the session that token names. A call naming a session the
+ * workbench is not running is refused. A call that names none comes from an
+ * agent the workbench did not start, which is a caller of its own, known by
+ * the folder it calls from: it follows no workflow, and every session it
+ * asks to start is put to the user, who is told what is asking.
  *
  * What a session started is remembered between runs, by its token, which
  * a session resumed keeps, so a caller resumed after the app was closed
@@ -84,7 +85,7 @@ import {
 } from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
 import { OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
-import { senderOf, startersFrom } from "$lib/senders.svelte";
+import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { printable } from "$lib/terminals.svelte";
@@ -206,6 +207,10 @@ export interface Ask {
   request: Placed;
   /** What the calling session is called, for the title. */
   caller: string;
+  /** The folder an agent the workbench did not start calls from, when that
+      is what asks: the question says so, and offers this one session or
+      none, never a standing answer. */
+  outside: string | null;
   project: string;
   /** The prompt's first line. */
   prompt: string;
@@ -327,11 +332,12 @@ export const conductor = $state({
       starter's token: the link for a row that has no id yet, and for the
       rest until the window goes. */
   startedBy: {} as Record<string, string>,
-  /** What each caller started, by the caller's token, kept between runs.
-      A row whose id is here is the caller's whether or not it was started
-      in this run. A list an earlier version kept under the folder a caller
-      that named no session called from is kept as it is, and is no
-      caller's, since no call names a folder. */
+  /** What each caller started, by the caller's token, or for an agent the
+      workbench did not start by its folder with a mark of its own, kept
+      between runs. A row whose id is here is the caller's whether or not it
+      was started in this run. A list an earlier version kept under the bare
+      folder a caller that named no session called from is kept as it is,
+      and is no caller's, since no caller is a bare folder. */
   started: {} as Record<string, Started[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
@@ -579,9 +585,9 @@ const byFolder = (caller: string) => /^(?:\/|ssh:\/\/|[A-Za-z]:[\\/])/.test(call
 
 /** The caller of each remembered session, by the session's id: the first
     caller listed where two remember one, a caller's own list before one
-    kept under a folder. A session a folder's list holds was started by
-    another all the same, so it starts none of its own, and no call acts
-    on it: no call names a folder. */
+    kept under a bare folder. A session a folder's list holds was started
+    by another all the same, so it starts none of its own, and no call acts
+    on it: no caller is a bare folder. */
 const owners = $derived.by(() => {
   const index = new Map<string, string>();
   const lists = Object.entries(conductor.started);
@@ -791,7 +797,7 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
   if (request.tool === "prompt") return promptNote(request);
   const refusal = unplaced(request);
   if (refusal !== null) return refused(refusal);
-  const call = request as Placed;
+  const call: Placed = { ...request, caller: request.session ?? outsideCaller(request.cwd) };
   switch (call.tool) {
     case "projects":
       return said(projectLines(call));
@@ -812,26 +818,29 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
   }
 }
 
-/** A call the workbench has placed: its token names a session it runs,
-    which is the caller. */
-export type Placed = ConductRequest & { session: string };
+/** A call the workbench has placed, with its caller: the token of the
+    session it names, or, for a call that names none, an agent the
+    workbench did not start, by the folder it calls from. */
+export type Placed = ConductRequest & { caller: string };
 
-/** What a call is told that names no session: each session the workbench
-    starts names itself in every call its tools make, so it is not taken
-    for one of them. */
+/** What a call that names no session is told when it would start or send
+    while a session follows a workflow: each session the workbench starts
+    names itself in every call its tools make, so such a call is from an
+    agent it did not start, and it cannot be held to the workflow. */
 export const OUTSIDE =
-  "This call names no session, so the workbench cannot tell it comes from one of its sessions: each session it starts names itself in every call its tools make, and an agent it did not start names none. The tools that start and direct sessions are for the sessions the workbench runs. Start the agent from the workbench to use them.";
+  "This call names no session, so it comes from an agent the workbench did not start: each session the workbench starts names itself in every call its tools make. A session the workbench runs follows a workflow, and a call that names no session cannot be held to it, so starting and sending are for the sessions the workbench runs until none follows one. Start the agent from the workbench to use them.";
 
 /** What a call is told that names a session the workbench is not running:
     one it never had, or one that has stopped and so cannot be calling. */
 export const UNKNOWN =
   "This call names a session the workbench is not running, so it cannot tell what this call may do. The tools that start and direct sessions are for the sessions the workbench runs.";
 
-/** Why a call cannot be held to a session, when it cannot: it names none,
-    or names one the workbench is not running. Null for a call whose token
-    names a running session, which is the caller. */
+/** Why a call cannot be placed, when it cannot: it names a session the
+    workbench is not running. Null for a call whose token names a running
+    session, which is the caller, and for one that names none, from an agent
+    the workbench did not start. */
 function unplaced(request: ConductRequest): string | null {
-  if (request.session === null) return OUTSIDE;
+  if (request.session === null) return null;
   return callerRow(request) === null ? UNKNOWN : null;
 }
 
@@ -1406,7 +1415,8 @@ async function startFitted(
  *
  * Once there are accounts to tell apart, the account is named when it is
  * not the project's own, when the caller's chosen account was not handed
- * on, and when one handed on keeps no directory for the agent.
+ * on, when one handed on keeps no directory for the agent, and for an agent
+ * the workbench did not start, which hands none on.
  */
 function underFor(
   request: Placed,
@@ -1430,7 +1440,8 @@ function underFor(
 }
 
 /** The session a placed call comes from, while it runs: the one its token
-    names. Null once that session has stopped. */
+    names. Null once that session has stopped, and for an agent the
+    workbench did not start. */
 function callingSession(request: Placed): Session | null {
   return callerRow(request);
 }
@@ -1629,25 +1640,37 @@ function modelFor(
 
 /** The workflow the caller follows, null for none, or why the call cannot
     be held to one: its session has stopped since the call was placed, and
-    a session that is not running cannot be calling. */
+    a session that is not running cannot be calling. An agent the workbench
+    did not start follows none, and is refused while any session follows
+    one, since it cannot be held to it. */
 function callerFlow(
   request: Placed,
 ): { workflow: Workflow | null } | { refusal: string } {
+  if (request.session === null)
+    return workflowRunning() ? { refusal: OUTSIDE } : { workflow: null };
   const row = callingSession(request);
   if (row === null) return { refusal: UNKNOWN };
   return { workflow: row.workflow };
+}
+
+/** Whether a running session follows a workflow. */
+function workflowRunning(): boolean {
+  return sessions.all.some((session) => isLive(session) && session.workflow !== null);
 }
 
 const ONE_LEVEL =
   "A session that another session started cannot start sessions of its own.";
 
 /** Why a caller may not start another session right now, when it may not:
-    it has as many running as one may, or it was itself started by one. */
+    it has as many running as one may, or it was itself started by one. An
+    agent the workbench did not start has a cap of its own, and the user is
+    asked about each start it makes, being told what asks. */
 function roomFor(request: Placed): Answered | null {
   if (startedBy(callerOf(request)).filter(isLive).length >= CAP)
     return refused(
       `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
     );
+  if (request.session === null) return null;
   const calling = callingSession(request);
   if (calling === null) return refused(UNKNOWN);
   if (startedFor(calling.key) !== null) return refused(ONE_LEVEL);
@@ -2221,9 +2244,10 @@ function notMine(id: string): Answered {
   );
 }
 
-/** Who is calling: the token of the session the call names. */
+/** Who is calling: the token of the session the call names, or an agent
+    the workbench did not start, by the folder it calls from. */
 function callerOf(request: Placed): string {
-  return request.session;
+  return request.caller;
 }
 
 function byId(sessionId: string): Session | null {
@@ -2241,8 +2265,10 @@ function agentOf(request: ConductRequest, project: string): AgentId {
 /**
  * Puts the question to the user, unless this caller already has a
  * standing answer for the project and what the session would run on. A
- * round past a review's limit is always asked. A question that arrives
- * while another is up waits behind it.
+ * round past a review's limit is always asked, and so is every start an
+ * agent the workbench did not start asks for: the workbench cannot tell
+ * which agent that is, so it neither uses nor gives a standing answer. A
+ * question that arrives while another is up waits behind it.
  */
 function askUser(
   request: Placed,
@@ -2253,7 +2279,9 @@ function askUser(
   named: Named | null,
   round: Beyond | null = null,
 ): Promise<Choice> {
+  const outside = outsideFolder(callerOf(request));
   if (
+    outside === null &&
     round === null &&
     login !== null &&
     allowed.has(allowance(callerOf(request), project, login))
@@ -2262,7 +2290,13 @@ function askUser(
   const session = callingSession(request);
   const ask: Ask = {
     request,
-    caller: session === null ? "A session" : label(session),
+    outside,
+    caller:
+      outside !== null
+        ? "An agent the workbench did not start"
+        : session === null
+          ? "A session"
+          : label(session),
     project,
     prompt: prompt.split("\n")[0],
     worktree,
@@ -2289,10 +2323,12 @@ function answerAsk(choice: Choice) {
   const settle = pending;
   conductor.asking = null;
   pending = null;
-  // A round past the limit is allowed once, whatever the button.
+  // A round past the limit is allowed once, whatever the button, and so is
+  // a session for an agent the workbench did not start.
   if (
     ask !== null &&
     choice === "allow" &&
+    ask.outside === null &&
     ask.round === null &&
     ask.login !== null
   )

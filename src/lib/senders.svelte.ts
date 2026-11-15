@@ -95,18 +95,37 @@ export function senderOf(message: { id: string }): Sender | null {
     null;
   const id =
     row?.id ?? Object.entries(sessions.tokens).find(([, kept]) => kept.token === from)?.[0] ?? null;
+  // An agent the workbench did not start, by the folder it called from;
+  // an earlier version kept the folder bare.
+  const folder = outsideFolder(from) ?? (from.startsWith("/") ? from : null);
   return {
     id,
     key: row?.key ?? null,
     name:
       row !== null
         ? label(row)
-        : from.startsWith("/")
-          ? `an agent in ${lastSegment(from)}`
+        : folder !== null
+          ? `an agent in ${lastSegment(folder)}`
           : id !== null
             ? `session ${id}`
             : "another session",
   };
+}
+
+const OUTSIDE_MARK = "outside:";
+
+/** What a call that names no session is kept under as its caller: an agent
+    the workbench did not start, by the folder it calls from, marked so that
+    no token can be it, and no list an earlier version kept under the bare
+    folder either. */
+export function outsideCaller(cwd: string): string {
+  return `${OUTSIDE_MARK}${cwd}`;
+}
+
+/** The folder an agent the workbench did not start calls from, for a
+    caller kept under one; null for a session's token. */
+export function outsideFolder(caller: string): string | null {
+  return caller.startsWith(OUTSIDE_MARK) ? caller.slice(OUTSIDE_MARK.length) : null;
 }
 
 /** Test seam. */

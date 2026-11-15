@@ -9,7 +9,7 @@ import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
-import { resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
+import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 
@@ -188,6 +188,9 @@ describe("the orchestrator's tools with an integrated session", () => {
     sessions.tokens["kept-id"] = { token: "token-kept", project: A };
     sentBy("m-kept", "token-kept");
     expect(senderOf({ id: "m-kept" })).toEqual({ id: "kept-id", key: null, name: "session kept-id" });
+    // An agent the workbench did not start is named by its folder.
+    sentBy("m-outside", outsideCaller("/home/ada/dev/one"));
+    expect(senderOf({ id: "m-outside" })).toEqual({ id: null, key: null, name: "an agent in one" });
   });
 
   it("does not name a session by a first line that is another live session's name", async () => {

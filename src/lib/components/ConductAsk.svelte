@@ -35,6 +35,14 @@
 {:else if ask !== null}
   <div class="ask" role="alertdialog" aria-label="Start a session" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants to start a session</p>
+    {#if ask.outside !== null}
+      <!-- A call that names no session: the workbench cannot tell which
+           agent makes it, so each start it asks for is asked about. -->
+      <p class="where" data-testid="conduct-outside">
+        An agent running in {ask.outside} is asking, one the workbench did not start, so it cannot tell which agent
+        that is. Each session it asks for is put to you.
+      </p>
+    {/if}
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
       {#if ask.named !== null}
@@ -43,8 +51,12 @@
     </p>
     <p class="prompt"><Plain text={ask.prompt} /></p>
     <div class="actions">
-      <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
-      <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>
+      {#if ask.outside !== null}
+        <button class="go" onclick={() => answer(once)} data-testid="conduct-once">Allow once</button>
+      {:else}
+        <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>
+        <button class="later" onclick={() => answer(once)} data-testid="conduct-once">Once</button>
+      {/if}
       <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">No</button>
     </div>
   </div>

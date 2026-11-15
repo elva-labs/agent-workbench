@@ -354,20 +354,28 @@ test.describe("a session started by a session under another account", () => {
     await expect(page.getByTestId("started-account")).toHaveText("as Work");
   });
 
-  test("refuses a call that names no session, asking the user nothing", async ({
+  test("names the project's account to an agent the workbench did not start, one session at a time", async ({
     page,
   }) => {
     await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
 
-    // A call that names no session is from no session the workbench runs.
+    // A call that names no session is from an agent the workbench did not
+    // start: the question says so, and offers no standing answer.
     await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, null);
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask.getByTestId("conduct-outside")).toBeVisible();
+    await expect(ask.getByTestId("conduct-allow")).toHaveCount(0);
+    await expect(ask.getByTestId("conduct-account")).toHaveText(
+      "Under the project's account, Work.",
+    );
+    await page.getByTestId("conduct-once").click();
+    await expect.poll(() => spawns(page)).toHaveLength(1);
+    expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
     await expect
-      .poll(async () => (await answerTo(page, "c-1"))?.error ?? null)
-      .toContain("This call names no session");
-    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
-    expect(await spawns(page)).toHaveLength(0);
+      .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
+      .toContain(`in ${PROJECT}, under the project's account, Work.`);
   });
 });
 

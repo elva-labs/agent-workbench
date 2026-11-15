@@ -67,6 +67,7 @@ import {
   reset as resetAccounts,
 } from "$lib/accounts.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
+import { outsideCaller } from "$lib/senders.svelte";
 import { render } from "@testing-library/svelte";
 import ConductAsk from "$lib/components/ConductAsk.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
@@ -700,19 +701,29 @@ describe("starting a session", () => {
       expect(forProject(A)).toHaveLength(CAP);
     });
 
-    it("is not taken for an outside call from its directory, which is refused", async () => {
+    it("is not taken for an outside call from its directory, which is an agent of its own", async () => {
       // A started session and a session of the user's own share the
-      // directory: a call that names neither is neither's, and the user is
-      // never asked about it.
-      codexChild();
+      // directory: a call that names neither is neither's. It reaches none
+      // of their sessions, and its start is asked about as an outside
+      // agent's, with no one-level refusal of the started one's.
+      const child = codexChild();
       const top = create(A, null, "codex", null, null, null, null, null);
       cameUp(top.key, "pty-top", null);
-      for (const tool of ["start", "sessions", "send", "stop", "wait", "read", "projects"] as const) {
-        await handle(raw(tool, { project: A, prompt: "Fix it", session: "sid-1", text: "hi" }));
-        expect(last().error).toBe(OUTSIDE);
-        expect(last().content).toBeNull();
+      const kid = own(B, "pty-kid", "kid-1", top.token);
+      await handle(raw("sessions", {}, { cwd: A }));
+      expect(last().content).toBe("You have started no sessions.");
+      for (const tool of ["send", "stop", "wait", "read"] as const) {
+        await handle(raw(tool, { session: "kid-1", text: "hi" }, { cwd: A }));
+        expect(last().error).toContain("Session kid-1 was not started by you.");
       }
-      expect(conductor.asking).toBeNull();
+      expect(byKey(kid.key)).not.toBeNull();
+      const outside = handle(raw("start", { project: A, prompt: "Fix it" }, { cwd: A }));
+      expect(conductor.asking?.outside).toBe(A);
+      expect(conductor.asking?.caller).toBe("An agent the workbench did not start");
+      refuse();
+      await outside;
+      expect(last().error).toBe("The user did not allow the session to be started.");
+      expect(startedFor(child.key)).toBe(ME);
       expect(forProject(A)).toHaveLength(2);
       // The session of the user's own, named by its token, is asked about,
       // and its answer stands for it alone.
@@ -989,14 +1000,18 @@ describe("the account a started session runs under", () => {
     });
 
     it("is never an agent outside the workbench calling from the same directory", async () => {
+      // An outside agent hands no account on: its sessions run under the
+      // project's, and the question says so.
       accounts.overrides[A] = "Home";
       codex(A, "Work");
-      await handle(raw("start", { project: A, prompt: "Fix it" }));
-      expect(last().error).toBe(OUTSIDE);
+      expect(await question({}, { session: null, cwd: A })).toBe("Under the project's account, Home.");
+      const row = await start({}, { session: null, cwd: A });
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(`in ${A}, under the project's account, Home.`);
       await handle(raw("start", { project: A, prompt: "Fix it" }, { session: "unknown-1" }));
       expect(last().error).toBe(UNKNOWN);
       expect(conductor.asking).toBeNull();
-      expect(forProject(A)).toHaveLength(1);
+      expect(forProject(A)).toHaveLength(2);
     });
   });
 
@@ -3180,14 +3195,16 @@ describe("starting in a workflow's shape", () => {
     expect(roundsOf("orch", "REVIEW", "w1")).toBe(3);
   });
 
-  it("refuses a call naming no session wherever it comes from, with or without a workflow", async () => {
+  it("asks about a call naming no session wherever it comes from, and refuses it while a workflow runs", async () => {
     const one = create(B, null, "codex", null, null, null, null, null);
     cameUp(one.key, "pty-one", null);
     const two = create(B, null, "codex", null, null, null, null, null);
     cameUp(two.key, "pty-two", null);
     for (const cwd of [B, "/tmp/elsewhere"]) {
-      await handle(raw("start", { project: A, prompt: "Go" }, { cwd }));
-      expect(last().error).toBe(OUTSIDE);
+      const asked = handle(raw("start", { project: A, prompt: "Go" }, { cwd }));
+      expect(conductor.asking?.outside).toBe(cwd);
+      refuse();
+      await asked;
     }
     orchestrating();
     for (const cwd of [B, "/tmp/elsewhere"]) {
@@ -3571,8 +3588,12 @@ describe("sessions told apart by their tokens", () => {
     cameUp(b1.key, "pty-b1", "codex-b1");
     await handle(call("stop", { session: "kid-b" }, { session: "codex-b1" }));
     expect(last().error).toContain("Session kid-b was not started by you.");
+    // An agent the workbench did not start, calling from the folder, is
+    // not the folder's list either.
     await handle(raw("stop", { session: "kid-b" }, { cwd: B }));
-    expect(last().error).toBe(OUTSIDE);
+    expect(last().error).toContain("Session kid-b was not started by you.");
+    await handle(raw("sessions", {}, { cwd: B }));
+    expect(last().content).toBe("You have started no sessions.");
     await handle(raw("stop", { session: "kid-b" }, { session: B, cwd: B }));
     expect(last().error).toBe(UNKNOWN);
     expect(byKey(kid.key)).not.toBeNull();
@@ -3634,5 +3655,167 @@ describe("sessions told apart by their tokens", () => {
     expect(startedFor(kid.key)).toBe(A);
     await handle(call("read", { session: "kid-a" }, { session: "codex-y" }));
     expect(last().error).toContain("Session kid-a was not started by you.");
+  });
+});
+
+// An agent run by hand in a project whose hooks are on has the same tools,
+// and its calls name no session. It is a caller of its own, by the folder
+// it calls from, asked about every start.
+describe("an agent the workbench did not start", () => {
+  /** A call from an agent run by hand, naming no session. */
+  const outside = (
+    tool: ConductRequest["tool"],
+    args: Record<string, unknown> = {},
+    cwd: string = A,
+  ) => raw(tool, args, { cwd });
+
+  /** A start the user allows once, answered when the session is up. */
+  async function startedOnce(request: ConductRequest, ptyId: string, id: string) {
+    const answering = handle(request);
+    expect(conductor.asking?.outside).toBe(request.cwd);
+    once();
+    await settle();
+    const row = forProject(String(request.arguments.project)).at(-1)!;
+    started(row.key, ptyId, id);
+    flushSync();
+    await answering;
+    return row;
+  }
+
+  it("is asked about every start, offered one session at a time and never a standing answer", async () => {
+    const first = await startedOnce(outside("start", { project: B, prompt: "One" }), "pty-1", "out-1");
+    expect(last().error).toBeNull();
+    expect(startedFor(first.key)).toBe(outsideCaller(A));
+    // Allow, were it pressed, lets this one through and stands for nothing.
+    const second = handle(outside("start", { project: B, prompt: "Two" }));
+    expect(conductor.asking?.outside).toBe(A);
+    allow();
+    await settle();
+    started(forProject(B).at(-1)!.key, "pty-2", "out-2");
+    flushSync();
+    await second;
+    expect(last().error).toBeNull();
+    expect(allowedProjects(outsideCaller(A))).toEqual([]);
+    const third = handle(outside("start", { project: B, prompt: "Three" }));
+    expect(conductor.asking?.outside).toBe(A);
+    refuse();
+    await third;
+    expect(last().error).toBe("The user did not allow the session to be started.");
+  });
+
+  it("says in the question what asks, and offers Allow once and No only", async () => {
+    const asked = handle(outside("start", { project: B, prompt: "Fix it" }));
+    const card = render(ConductAsk);
+    expect(card.getByTestId("conduct-ask")).toHaveTextContent("An agent the workbench did not start wants to start a session");
+    expect(card.getByTestId("conduct-outside")).toHaveTextContent(
+      `An agent running in ${A} is asking, one the workbench did not start, so it cannot tell which agent that is.`,
+    );
+    expect(card.queryByTestId("conduct-allow")).toBeNull();
+    expect(card.getByTestId("conduct-once")).toHaveTextContent("Allow once");
+    expect(card.getByTestId("conduct-no")).toHaveTextContent("No");
+    refuse();
+    flushSync();
+    card.unmount();
+    await asked;
+  });
+
+  it("directs the sessions it started and no others, and they start none of their own", async () => {
+    const mine = await startedOnce(outside("start", { project: B, prompt: "One" }), "pty-1", "out-1");
+    own(B, "pty-other", "other-1");
+    await handle(outside("sessions"));
+    expect(last().content).toContain("out-1");
+    expect(last().content).not.toContain("other-1");
+    await handle(outside("read", { session: "out-1" }));
+    expect(last().error).toBeNull();
+    await handle(outside("stop", { session: "other-1" }));
+    expect(last().error).toContain("Session other-1 was not started by you.");
+    // From another folder it is another agent.
+    await handle(outside("stop", { session: "out-1" }, B));
+    expect(last().error).toContain("Session out-1 was not started by you.");
+    await handle(call("start", { project: A, prompt: "Deeper" }, { session: mine.token }));
+    expect(last().error).toBe("A session that another session started cannot start sessions of its own.");
+    // The prompt hook tells it nothing of what it started.
+    mine.working = true;
+    flushSync();
+    mine.working = false;
+    flushSync();
+    await handle(outside("prompt", { agentSession: "hand-run" }));
+    expect(last()).toMatchObject({ content: "", error: null });
+    // What it is kept under is no token a call can name.
+    await handle(raw("sessions", {}, { session: outsideCaller(A), cwd: A }));
+    expect(last().error).toBe(UNKNOWN);
+    await handle(outside("stop", { session: "out-1" }));
+    expect(last().content).toBe("Stopped session out-1.");
+  });
+
+  it("has a cap of its own", async () => {
+    for (let n = 0; n < CAP; n += 1) own(B, `pty-${n}`, `out-${n}`, outsideCaller(A));
+    await handle(outside("start", { project: B, prompt: "Ninth" }));
+    expect(last().error).toContain(`${CAP} sessions running already`);
+    expect(conductor.asking).toBeNull();
+    // A session's room is its own.
+    const room = handle(call("start", { project: B, prompt: "First" }));
+    expect(conductor.asking).not.toBeNull();
+    expect(conductor.asking?.outside).toBeNull();
+    refuse();
+    await room;
+  });
+
+  it("gives a started session that calls without its token no standing answer, its starter's or any", async () => {
+    // The caller has a standing answer for A, and its session runs there.
+    const kid = await startAllowed(call("start", { project: A, prompt: "Work" }), "pty-kid", "kid-1");
+    expect(startedFor(kid.key)).toBe(ME);
+    expect(allowedProjects(ME)).toEqual([A]);
+    // The session, its variable cleared, calls from where it runs: it is an
+    // agent the workbench did not start, asked about every time.
+    for (const [n, prompt] of ["Deeper", "Deeper still"].entries()) {
+      const asked = handle(outside("start", { project: A, prompt }));
+      expect(conductor.asking?.outside).toBe(A);
+      expect(conductor.asking?.caller).toBe("An agent the workbench did not start");
+      allow();
+      await settle();
+      started(forProject(A).at(-1)!.key, `pty-deep-${n}`, `deep-${n}`);
+      flushSync();
+      await asked;
+      expect(last().error).toBeNull();
+    }
+    expect(allowedProjects(outsideCaller(A))).toEqual([]);
+    expect(allowedProjects(kid.token)).toEqual([]);
+    expect(allowedProjects(ME)).toEqual([A]);
+  });
+
+  it("finds nothing in what an earlier version kept under its bare folder", async () => {
+    localStorage.setItem(
+      "workbench.started",
+      JSON.stringify({ [A]: [{ id: "kid-old", project: B, worktree: null, agent: "claude-code", name: null }] }),
+    );
+    restarted();
+    await handle(outside("sessions"));
+    expect(last().content).toBe("You have started no sessions.");
+    await handle(outside("start", { session: "kid-old" }));
+    expect(last().error).toContain("Session kid-old is not one you started.");
+  });
+
+  it("resumes what it started after a restart, from the same folder", async () => {
+    await startedOnce(outside("start", { project: B, prompt: "One" }), "pty-1", "out-1");
+    restarted();
+    await handle(outside("sessions"));
+    expect(last().content).toContain("out-1");
+    const row = await resumed(outside("start", { session: "out-1" }), "pty-back");
+    expect(last().error).toBeNull();
+    expect(startedFor(row.key)).toBe(outsideCaller(A));
+  });
+
+  it("is refused a start or a send while a session follows a workflow, and may still look", async () => {
+    own(B, "pty-1", "out-1", outsideCaller(A));
+    const orchestrator = create(C, null, "claude-code", null, null, null, null, defaultWorkflow());
+    started(orchestrator.key, "pty-orch", "orch");
+    await handle(outside("start", { project: B, prompt: "Go" }));
+    expect(last().error).toBe(OUTSIDE);
+    await handle(outside("send", { session: "out-1", text: "hi" }));
+    expect(last().error).toBe(OUTSIDE);
+    expect(conductor.asking).toBeNull();
+    await handle(outside("sessions"));
+    expect(last().content).toContain("out-1");
   });
 });
