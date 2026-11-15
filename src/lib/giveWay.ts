@@ -30,8 +30,11 @@ function textWidth(node: HTMLElement): number {
 
 /** Sets `--keep` on a header's head: the width of what in it is marked
     `data-keep`, which stays whole until the header's status has given way.
-    Measured again when the head or what it keeps changes size, and when
-    what it holds changes. */
+    A part marked `data-keep-room` keeps the room around the text it holds
+    as well, its icons, gaps and padding, and that room is `--least`: the
+    width the head keeps until the title has given way, once the text in
+    it has gone. Measured again when the head or what it keeps changes
+    size, and when what it holds changes. */
 export function keeps(node: HTMLElement) {
   const sizes = new ResizeObserver(() => measure());
   const content = new MutationObserver(() => {
@@ -43,17 +46,31 @@ export function keeps(node: HTMLElement) {
     return [...node.querySelectorAll<HTMLElement>("[data-keep]")];
   }
 
+  function rooms(): HTMLElement[] {
+    return [...node.querySelectorAll<HTMLElement>("[data-keep-room]")];
+  }
+
   function watch() {
     sizes.disconnect();
     sizes.observe(node);
-    for (const part of kept()) sizes.observe(part);
+    for (const part of [...kept(), ...rooms()]) sizes.observe(part);
+  }
+
+  /** The width of a part's room: its own, less the boxes of the text it
+      keeps, which are cut short or not. */
+  function roomOf(part: HTMLElement): number {
+    const inside = [...part.querySelectorAll<HTMLElement>("[data-keep]")];
+    return part.getBoundingClientRect().width - inside.reduce((sum, text) => sum + text.getBoundingClientRect().width, 0);
   }
 
   function measure() {
     // A pixel over, so a width laid out to a fraction short of the text
     // never cuts it.
-    const width = kept().reduce((sum, part) => sum + textWidth(part), 0);
+    const text = kept().reduce((sum, part) => sum + textWidth(part), 0);
+    const room = rooms().reduce((sum, part) => sum + roomOf(part), 0);
+    const width = text + room;
     node.style.setProperty("--keep", width > 0 ? `${Math.ceil(width) + 1}px` : "0px");
+    node.style.setProperty("--least", room > 0 ? `${Math.ceil(room)}px` : "0px");
   }
 
   watch();

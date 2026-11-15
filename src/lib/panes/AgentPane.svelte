@@ -2,6 +2,7 @@
   import { shown } from "$lib/thread";
   import HooksNotice from "$lib/components/HooksNotice.svelte";
   import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
+  import RunChip from "$lib/components/RunChip.svelte";
   import { letters } from "$lib/giveWay";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
@@ -40,7 +41,7 @@
   import type { SessionKind } from "$lib/sessionKind.svelte";
   import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
-  import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
+  import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
   import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
@@ -113,6 +114,9 @@
 
   /** The workflow the session on screen is part of, and its place in it. */
   let tag = $derived(current === null ? null : workflowTag(current));
+  /** Where the run stands, for a session that follows a workflow: the chip
+      takes the tag's place. */
+  let run = $derived(current === null ? null : runStanding(current));
   let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
 
   // A session that was open when the app quit starts once it is the one
@@ -240,7 +244,9 @@
 {/snippet}
 
 {#snippet head()}
-  {#if tag !== null}
+  {#if run !== null && tag !== null}
+    <RunChip {run} rules={tag.rules} />
+  {:else if tag !== null}
     <WorkflowTagButton {tag} />
   {/if}
   {#if current !== null && integrated}

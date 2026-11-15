@@ -76,6 +76,16 @@ import { CODEX_DEFAULT } from "$lib/models";
 import { hostOf } from "$lib/remote.svelte";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
+import {
+  placeLong,
+  placeShort,
+  placeWords,
+  roundText,
+  summarize,
+  type Doing,
+  type RunEntry,
+  type RunSummary,
+} from "$lib/runSummary";
 import { screen, takesPaste } from "$lib/screens";
 import {
   conversationOf,
@@ -307,7 +317,9 @@ export interface Place {
   /** The piece of work it is part of: the id of the session that began the
       piece. Null for a work session that began one and has no id yet. */
   piece: string | null;
-  /** For a review, which round of it this is, from one. */
+  /** For a review, which round of it this is, from one. For work, the
+      round its piece is in once a review has sent it back: one past the
+      rounds the review has had. Null for work in its first round. */
   round: number | null;
   /** For a review, the session whose work it checks. */
   work: string | null;
@@ -896,7 +908,7 @@ export function workflowTag(session: Session): WorkflowTag | null {
   if (at === null) return null;
   const caller = startedFor(session.key);
   const workflow = caller === null ? null : (byToken(caller)?.workflow ?? null);
-  const role = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
+  const role = placeLong(placeWords(workflow, at));
   const step = workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
   const work =
     at.kind === "review" && at.work !== null && caller !== null
@@ -907,6 +919,77 @@ export function workflowTag(session: Session): WorkflowTag | null {
       ? [`Runs for the step ${at.step}.`, ...(work === null ? [] : [`Reviews ${work}.`])]
       : stepFacts(step, work);
   return { workflow: workflow?.name ?? null, role, rules, numbered: false };
+}
+
+/** A started session's place in words: its step, its round of the most
+    there are, the header's long form and the rail's short one. */
+export interface PlaceText {
+  step: string;
+  /** "round 2 of 4", or null where there is no round to say. */
+  round: string | null;
+  /** "Review, round 2 of 4". */
+  long: string;
+  /** "Review, 2 of 4". */
+  short: string;
+}
+
+/** Where a started row stands in its starter's workflow, in words. Null
+    for a row started for no step. */
+export function placeTextOf(key: string): PlaceText | null {
+  const at = placeOf(key);
+  if (at === null) return null;
+  const caller = startedFor(key);
+  const words = placeWords(caller === null ? null : (byToken(caller)?.workflow ?? null), at);
+  return { step: words.step, round: roundText(words), long: placeLong(words), short: placeShort(words) };
+}
+
+/** What a started session is doing, as the run tells it. */
+function doingOf(row: Session | null): Doing {
+  if (row === null) return "done";
+  switch (row.status) {
+    case "crashed":
+    case "failed":
+      return "stopped";
+    case "starting":
+      return "working";
+    case "running":
+      if (row.needs === "permission") return "asking";
+      return row.working ? "working" : "done";
+    default:
+      return "done";
+  }
+}
+
+/** Where the run of a session that follows a workflow stands, from what
+    the conductor keeps of the sessions it started. Null for a session
+    that follows none. */
+export function runStanding(session: Session): RunSummary | null {
+  const workflow = session.workflow;
+  if (workflow === null) return null;
+  const caller = session.token;
+  const mineRow = (id: string) =>
+    sessions.all.find((row) => row.id === id && isLive(row) && startedFor(row.key) === caller) ??
+    sessions.all.find((row) => row.id === id && startedFor(row.key) === caller) ??
+    null;
+  const entries: RunEntry[] = [];
+  const kept = conductor.runs[caller]?.places ?? {};
+  for (const [id, at] of Object.entries(kept)) {
+    const row = mineRow(id);
+    const now = row === null ? at : (conductor.places[row.key] ?? at);
+    entries.push({ key: row?.key ?? null, id, name: workName(caller, id), place: now, doing: doingOf(row) });
+  }
+  for (const row of startedBy(caller)) {
+    const at = conductor.places[row.key];
+    if (at === undefined || (row.id !== null && row.id in kept)) continue;
+    entries.push({ key: row.key, id: row.id, name: label(row), place: at, doing: doingOf(row) });
+  }
+  const asking = conductor.asking;
+  const wait =
+    asking !== null && asking.round !== null && asking.request.caller === caller
+      ? { step: asking.round.step, done: asking.round.done, limit: asking.round.limit }
+      : null;
+  const name = session.workflowGone ? `${workflow.name} (deleted)` : workflow.name;
+  return summarize(workflow, entries, wait, session.working || session.needs !== null, name);
 }
 
 /** What the user knows a session's work by: the name its row has, or had,
@@ -1529,7 +1612,13 @@ function fitStart(
     const free = reserveSlot(caller, step.name);
     return {
       ...runs,
-      place: { step: step.name, kind: "work", piece, round: null, work: null },
+      place: {
+        step: step.name,
+        kind: "work",
+        piece,
+        round: piece === null ? null : workRound(caller, workflow, step, piece),
+        work: null,
+      },
       beyond: null,
       hold: free,
       release: free,
@@ -1576,6 +1665,18 @@ function pastLimit(
   return done > step.limit
     ? { step: step.name, work, name: workName(caller, work), done, limit: step.limit }
     : null;
+}
+
+/** The round a piece's work goes on in once a review sent back to its
+    step has had it: one past that review's rounds. Null before any. */
+function workRound(caller: string, workflow: Workflow, step: WorkStep, piece: string): number | null {
+  const had = Math.max(
+    0,
+    ...workflow.steps
+      .filter((candidate): candidate is ReviewStep => candidate.kind === "review" && sameName(candidate.backTo, step.name))
+      .map((review) => roundsOf(caller, review.name, piece)),
+  );
+  return had === 0 ? null : had + 1;
 }
 
 /** What the user is asked about a round past the limit, in the words
@@ -1754,6 +1855,10 @@ async function resumeSession(
       const free = reserveSlot(caller, step.name);
       hold = free;
       release = free;
+      if (prompt !== null && flow.workflow !== null) {
+        const round = workRound(caller, flow.workflow, step, at.piece ?? id);
+        if (round !== null && (at.round ?? 1) < round) goesOn = { ...at, round };
+      }
     } else if (prompt !== null && at.piece !== null) {
       const piece = at.piece;
       const done = roundsOf(caller, step.name, piece);
@@ -1930,6 +2035,17 @@ async function sendText(request: Placed): Promise<Answered> {
       // The round is counted once, however many lines go before it works.
       const mark = stops.get(session.key);
       if (mark !== undefined) mark.worked = false;
+    }
+  }
+  // A line to work whose piece a review has had since is the work sent
+  // back: it goes on in the round after the review's.
+  if (at !== null && at.kind === "work" && flow.workflow !== null && session.id !== null) {
+    const step = flow.workflow.steps.find((candidate) => sameName(candidate.name, at.step));
+    const next = step?.kind === "work" ? workRound(callerOf(request), flow.workflow, step, at.piece ?? session.id) : null;
+    if (next !== null && (at.round ?? 1) < next) {
+      const goesOn = { ...at, round: next };
+      conductor.places[session.key] = goesOn;
+      place(callerOf(request), session.id, goesOn);
     }
   }
   const sent = round === null ? `Sent to session ${id}` : `Sent to session ${id}, for ${placeText(round)}`;
