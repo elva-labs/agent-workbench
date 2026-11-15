@@ -95,7 +95,7 @@ const CODEX_CONFIG: &str = ".codex/config.toml";
 const FILES: [&str; 3] = [CLAUDE_LOCAL, CODEX_HOOKS, CODEX_CONFIG];
 
 const SERVER_NAME: &str = "agent-workbench";
-const CODEX_SERVER_KEY: &str = "agent_workbench";
+pub(crate) const CODEX_SERVER_KEY: &str = "agent_workbench";
 
 fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
@@ -416,6 +416,208 @@ pub fn claude_trust(state: &Path, folder: &Path) -> Result<(), String> {
         .pop()
         .expect("a folder has at least one key");
     update_settings(state, |read| accept_trust(read, &key))
+}
+
+/// The keys Codex may file a folder's trust under in its configuration,
+/// in the order it looks them up: the path as resolved, then as given.
+fn codex_keys(folder: &Path) -> Vec<String> {
+    let mut keys = Vec::new();
+    for path in [
+        dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf()),
+        folder.to_path_buf(),
+    ] {
+        let key = path.to_string_lossy().to_string();
+        if !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
+/// The most of a git metadata file Codex reads.
+const CODEX_GIT_FILE_LIMIT: u64 = 64 * 1024;
+
+/// A git metadata file's text, as Codex reads one: a plain file, not a
+/// link, and no larger than its limit.
+fn codex_git_file(path: &Path) -> Option<String> {
+    let link = std::fs::symlink_metadata(path).ok()?;
+    let metadata = std::fs::metadata(path).ok()?;
+    if link.file_type().is_symlink() || !metadata.is_file() || metadata.len() > CODEX_GIT_FILE_LIMIT
+    {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    (bytes.len() as u64 <= CODEX_GIT_FILE_LIMIT)
+        .then(|| String::from_utf8_lossy(&bytes).trim_ascii().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+/// Where a `.git` file points, from the folder it is in.
+fn codex_gitdir(dot_git: &Path) -> Option<PathBuf> {
+    let text = codex_git_file(dot_git)?;
+    let target = text.strip_prefix("gitdir:")?.trim_ascii();
+    if target.is_empty() {
+        return None;
+    }
+    Some(lexical(&dot_git.parent()?.join(target)))
+}
+
+/// A path with its `.` and `..` parts worked out by name alone.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push(part);
+                }
+            }
+            _ => out.push(part),
+        }
+    }
+    out
+}
+
+/// The repository root Codex takes a folder's trust from when the folder
+/// has no record of its own, or None, by Codex's own rule:
+///
+/// - The checkout is the nearest folder, the given one or above, with a
+///   `.git`; a `.git` folder with no `HEAD` in it is passed over.
+/// - A checkout with a `.git` folder is its own root.
+/// - A checkout with a `.git` file is a root only through a linked
+///   worktree: its git directory is in a `worktrees` folder of a common
+///   directory, records this checkout and that common directory, and the
+///   folder holding the common directory has a `.git` that leads to it.
+///   That folder is the root. A checkout whose git directory is kept
+///   elsewhere, a submodule among them, has none.
+fn codex_repository_root(folder: &Path) -> Option<PathBuf> {
+    let canonical = |path: &Path| dunce::canonicalize(path).ok();
+    let mut from = if folder.is_dir() {
+        folder
+    } else {
+        folder.parent()?
+    };
+    let checkout = loop {
+        let found = from.ancestors().find(|at| at.join(".git").exists())?;
+        let dot_git = found.join(".git");
+        if !dot_git.is_dir() || dot_git.join("HEAD").exists() {
+            break found;
+        }
+        from = found.parent()?;
+    };
+    let dot_git = checkout.join(".git");
+    if dot_git.is_dir() {
+        return Some(checkout.to_path_buf());
+    }
+    let git_dir = codex_gitdir(&dot_git)?;
+    if !std::fs::metadata(&git_dir).ok()?.is_dir()
+        || std::fs::symlink_metadata(&git_dir)
+            .ok()?
+            .file_type()
+            .is_symlink()
+    {
+        return None;
+    }
+    let resolved = canonical(&git_dir)?;
+    let worktrees = resolved.parent()?;
+    if worktrees.file_name()? != "worktrees" {
+        return None;
+    }
+    let common = worktrees.parent()?;
+    let registered = lexical(&resolved.join(codex_git_file(&resolved.join("gitdir"))?));
+    if registered.file_name()? != ".git" {
+        return None;
+    }
+    let linked = resolved.join(codex_git_file(&resolved.join("commondir"))?);
+    if canonical(registered.parent()?)? != canonical(checkout)?
+        || canonical(&linked)?.as_path() != common
+    {
+        return None;
+    }
+    let root = git_dir.parent()?.parent()?.parent()?;
+    let main = root.join(".git");
+    let main_git_dir = if main.is_dir() {
+        main
+    } else {
+        codex_gitdir(&main)?
+    };
+    (canonical(&main_git_dir)?.as_path() == common).then(|| root.to_path_buf())
+}
+
+/// Whether Codex holds a folder as trusted, by the records its own trust
+/// question writes in the configuration given. The folder's own record
+/// decides when there is one, whatever it says; else the record of the
+/// repository it is in, as [`codex_repository_root`] finds it. A folder
+/// between the two counts for nothing, and only a `trust_level` of
+/// `trusted` is a yes.
+pub fn codex_trusts(config: &Path, folder: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(config) else {
+        return false;
+    };
+    let Ok(document) = text.parse::<toml_edit::DocumentMut>() else {
+        return false;
+    };
+    let Some(projects) = document.get("projects").and_then(|p| p.as_table_like()) else {
+        return false;
+    };
+    let record = |folder: &Path| {
+        codex_keys(folder)
+            .iter()
+            .find_map(|key| projects.get(key))
+            .map(|project| {
+                project.get("trust_level").and_then(|level| level.as_str()) == Some("trusted")
+            })
+    };
+    if let Some(trusted) = record(folder) {
+        return trusted;
+    }
+    codex_repository_root(folder)
+        .and_then(|root| record(&root))
+        .unwrap_or(false)
+}
+
+/// Records in the configuration given that the user trusts a folder, as
+/// Codex's own trust question does when the answer is yes. Everything
+/// else in the file is kept as it was written; a file that cannot be read
+/// is left alone.
+pub fn codex_trust(config: &Path, folder: &Path) -> Result<(), String> {
+    let key = codex_keys(folder).remove(0);
+    let _state = lock_state();
+    let text = match std::fs::read_to_string(config) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(format!("could not read {}: {error}", config.display())),
+    };
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("{} is not TOML ({e}); leaving it alone", config.display()))?;
+    let projects = document["projects"].or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    let Some(projects) = projects.as_table_like_mut() else {
+        return Err(format!(
+            "projects in {} is not a table; leaving it alone",
+            config.display()
+        ));
+    };
+    if projects
+        .get(&key)
+        .and_then(|project| project.get("trust_level"))
+        .and_then(|level| level.as_str())
+        == Some("trusted")
+    {
+        return Ok(());
+    }
+    match projects.get_mut(&key).and_then(|p| p.as_table_like_mut()) {
+        Some(project) => {
+            project.insert("trust_level", toml_edit::value("trusted"));
+        }
+        None => {
+            let mut table = toml_edit::Table::new();
+            table["trust_level"] = toml_edit::value("trusted");
+            projects.insert(&key, toml_edit::Item::Table(table));
+        }
+    }
+    write_whole(config, &document.to_string())
 }
 
 fn trust_codex(codex: &Path, from: &str, to: &str) -> Result<(), String> {
@@ -995,14 +1197,20 @@ fn remove_stale_writes(parent: &Path, name: &str) {
 /// and the file it names is replaced, and the file keeps its permissions.
 /// What an earlier write cut off by a crash left beside it goes.
 fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), String> {
+    let mut text = serde_json::to_string_pretty(&Value::Object(settings.clone()))
+        .map_err(|e| format!("could not write settings: {e}"))?;
+    text.push('\n');
+    write_whole(path, &text)
+}
+
+/// Writes a file whole, as [`write_settings`] describes.
+fn write_whole(path: &Path, text: &str) -> Result<(), String> {
     let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
-    let text = serde_json::to_string_pretty(&Value::Object(settings.clone()))
-        .map_err(|e| format!("could not write settings: {e}"))?;
     let name = path
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
@@ -1019,7 +1227,6 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
             file.set_permissions(old.permissions())?;
         }
         file.write_all(text.as_bytes())?;
-        file.write_all(b"\n")?;
         file.sync_all()?;
         std::fs::rename(&temporary, &path)
     })();
@@ -1207,6 +1414,237 @@ mod tests {
     }
 
     #[test]
+    fn codex_records_a_folder_s_trust_and_keeps_the_rest_of_the_file() {
+        let (home, project) = fixture("codex-trust");
+        let config = home.join(".codex").join("config.toml");
+        let inner = project.join("src");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert!(
+            !codex_trusts(&config, &project),
+            "no configuration, no trust"
+        );
+
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        std::fs::write(&config, "# mine\nmodel = \"o3\"\n").unwrap();
+        assert!(!codex_trusts(&config, &project));
+        codex_trust(&config, &project).unwrap();
+        assert!(codex_trusts(&config, &project));
+        assert!(
+            !codex_trusts(&config, &inner),
+            "a folder inside a trusted one that is no repository"
+        );
+        assert!(!codex_trusts(&config, &home), "nothing above it");
+
+        let text = std::fs::read_to_string(&config).unwrap();
+        assert!(text.starts_with("# mine\nmodel = \"o3\"\n"), "{text}");
+        let document = text.parse::<toml_edit::DocumentMut>().unwrap();
+        let key = dunce::canonicalize(&project)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(
+            document["projects"][key.as_str()]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        codex_trust(&config, &project).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), text, "once");
+
+        // A record that says otherwise is no, and trusting keeps the rest of
+        // the folder's table.
+        std::fs::write(
+            &config,
+            format!("[projects.'{key}']\ntrust_level = \"untrusted\"\nnote = 1\n"),
+        )
+        .unwrap();
+        assert!(!codex_trusts(&config, &project));
+        codex_trust(&config, &project).unwrap();
+        let document = std::fs::read_to_string(&config)
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        assert_eq!(
+            document["projects"][key.as_str()]["trust_level"].as_str(),
+            Some("trusted")
+        );
+        assert_eq!(
+            document["projects"][key.as_str()]["note"].as_integer(),
+            Some(1)
+        );
+
+        // A file that is not TOML is left alone.
+        std::fs::write(&config, "[[[ half").unwrap();
+        assert!(codex_trust(&config, &project).is_err());
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "[[[ half");
+    }
+
+    /// A repository with one commit, made without running git, so that
+    /// nothing outside the folder given is touched.
+    fn repository(at: &Path) -> git2::Repository {
+        let repo = git2::Repository::init(at).unwrap();
+        let tree = repo.treebuilder(None).unwrap().write().unwrap();
+        let tree = repo.find_tree(tree).unwrap();
+        let signature = git2::Signature::now("workbench", "workbench@example.invalid").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "one", &tree, &[])
+            .unwrap();
+        drop(tree);
+        repo
+    }
+
+    #[test]
+    fn codex_trusts_a_folder_by_its_own_record_then_its_repository_s() {
+        let (home, base) = fixture("codex-trust-records");
+        let config = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let key = |path: &Path| {
+            dunce::canonicalize(path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        };
+        let records = |records: &[(&Path, &str)]| {
+            let text: String = records
+                .iter()
+                .map(|(path, record)| format!("[projects.'{}']\n{record}\n", key(path)))
+                .collect();
+            std::fs::write(&config, text).unwrap();
+        };
+        let trusted = "trust_level = \"trusted\"";
+        let untrusted = "trust_level = \"untrusted\"";
+
+        // A folder above that is no repository counts for nothing.
+        let plain = base.join("plain");
+        let child = plain.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        records(&[(&plain, trusted)]);
+        assert!(codex_trusts(&config, &plain));
+        assert!(!codex_trusts(&config, &child));
+
+        // The repository's record covers what is in it, its worktrees too,
+        // wherever they are, but not a repository of its own inside it.
+        let repo_dir = base.join("repo");
+        let sub = repo_dir.join("sub");
+        let deeper = sub.join("deeper");
+        let nested = repo_dir.join("nested");
+        std::fs::create_dir_all(&deeper).unwrap();
+        let repo = repository(&repo_dir);
+        repository(&nested);
+        let inside = repo_dir.join(".claude").join("worktrees").join("w");
+        std::fs::create_dir_all(inside.parent().unwrap()).unwrap();
+        repo.worktree("w", &inside, None).unwrap();
+        let outside = base.join("outside");
+        repo.worktree("o", &outside, None).unwrap();
+        records(&[(&repo_dir, trusted)]);
+        for folder in [&repo_dir, &sub, &deeper, &inside, &outside] {
+            assert!(codex_trusts(&config, folder), "{folder:?}");
+        }
+        assert!(!codex_trusts(&config, &nested));
+
+        // The folder's own record decides, whatever it says.
+        records(&[(&repo_dir, trusted), (&sub, untrusted)]);
+        assert!(!codex_trusts(&config, &sub));
+        records(&[(&repo_dir, trusted), (&sub, "note = 1")]);
+        assert!(!codex_trusts(&config, &sub), "a record with no level");
+        records(&[(&repo_dir, untrusted), (&sub, trusted)]);
+        assert!(codex_trusts(&config, &sub));
+        assert!(
+            !codex_trusts(&config, &deeper),
+            "a folder between is no record"
+        );
+        records(&[(&sub, trusted)]);
+        assert!(!codex_trusts(&config, &deeper));
+    }
+
+    /// A bare repository with one commit and a worktree of it at `tree`.
+    fn bare_with_worktree(bare: &Path, tree: &Path) {
+        let repo = git2::Repository::init_bare(bare).unwrap();
+        let empty = repo.treebuilder(None).unwrap().write().unwrap();
+        let empty = repo.find_tree(empty).unwrap();
+        let signature = git2::Signature::now("workbench", "workbench@example.invalid").unwrap();
+        repo.commit(Some("HEAD"), &signature, &signature, "one", &empty, &[])
+            .unwrap();
+        drop(empty);
+        let name = tree.file_name().unwrap().to_str().unwrap();
+        repo.worktree(name, tree, None).unwrap();
+    }
+
+    #[test]
+    fn codex_takes_a_repository_root_only_from_a_worktree_s_main_checkout() {
+        let (home, base) = fixture("codex-trust-layouts");
+        let config = home.join(".codex").join("config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        let trusting = |folders: &[&Path]| {
+            let text: String = folders
+                .iter()
+                .map(|folder| {
+                    let key = dunce::canonicalize(folder).unwrap();
+                    format!(
+                        "[projects.'{}']\ntrust_level = \"trusted\"\n",
+                        key.to_string_lossy()
+                    )
+                })
+                .collect();
+            std::fs::write(&config, text).unwrap();
+        };
+
+        // A worktree of a bare repository whose folder has no `.git` of its
+        // own: the folder is no repository root. With a `.git` file naming
+        // the bare repository, it is.
+        let proj = base.join("proj");
+        let feature = proj.join("feature");
+        bare_with_worktree(&proj.join(".bare"), &feature);
+        trusting(&[&proj]);
+        assert!(!codex_trusts(&config, &feature), "no proj/.git");
+        std::fs::write(proj.join(".git"), "gitdir: ./.bare\n").unwrap();
+        assert!(codex_trusts(&config, &feature), "proj/.git names .bare");
+        std::fs::write(proj.join(".git"), "gitdir: ./elsewhere\n").unwrap();
+        assert!(!codex_trusts(&config, &feature), "proj/.git names another");
+
+        let w = base.join("w");
+        let bwt = w.join("bwt");
+        bare_with_worktree(&w.join("bare.git"), &bwt);
+        trusting(&[&w]);
+        assert!(!codex_trusts(&config, &bwt), "no w/.git");
+        std::fs::write(w.join(".git"), "gitdir: bare.git\n").unwrap();
+        assert!(codex_trusts(&config, &bwt), "w/.git names bare.git");
+
+        // A checkout whose git directory is kept elsewhere has no repository
+        // root, even where that elsewhere is a repository itself; its own
+        // record still counts.
+        let store = base.join("store");
+        let sep = base.join("sep");
+        let inside = sep.join("inside");
+        std::fs::create_dir_all(&store).unwrap();
+        let mut options = git2::RepositoryInitOptions::new();
+        options.workdir_path(&sep);
+        git2::Repository::init_opts(store.join("sep.git"), &options).unwrap();
+        assert!(sep.join(".git").is_file());
+        std::fs::create_dir_all(&inside).unwrap();
+        trusting(&[&store]);
+        assert!(!codex_trusts(&config, &sep), "the folder holding it");
+        repository(&store);
+        assert!(!codex_trusts(&config, &sep), "a repository holding it");
+        trusting(&[&sep]);
+        assert!(codex_trusts(&config, &sep), "its own record");
+        assert!(!codex_trusts(&config, &inside), "a folder inside it");
+
+        // A submodule is a checkout of that kind too.
+        let super2 = base.join("super2");
+        let modules = super2.join(".git").join("modules");
+        let module = super2.join("m");
+        let outer = repository(&super2);
+        let url = format!("file://{}", base.join("elsewhere").display());
+        let submodule = outer.submodule(&url, Path::new("m"), true).unwrap();
+        submodule.open().unwrap();
+        assert!(module.join(".git").is_file());
+        trusting(&[&modules]);
+        assert!(!codex_trusts(&config, &module), "super2/.git/modules");
+        trusting(&[&super2]);
+        assert!(!codex_trusts(&config, &module), "super2");
+        trusting(&[&module]);
+        assert!(codex_trusts(&config, &module), "its own record");
+    }
+
+    #[test]
     fn a_worktree_is_trusted_where_its_project_is_and_nowhere_else() {
         let (home, project) = fixture("trust");
         let worktree = project.join(".claude").join("worktrees").join("fix");
@@ -1262,7 +1700,7 @@ mod tests {
         );
 
         // A project the user has not trusted lends nothing.
-        let other = project.parent().unwrap().join("other");
+        let other = Scratch::new("hook-trust-other");
         let tree = other.join("tree");
         std::fs::create_dir_all(&tree).unwrap();
         trust_like(&home, &other, &tree, &[]).unwrap();

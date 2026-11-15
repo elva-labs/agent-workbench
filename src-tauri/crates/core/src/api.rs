@@ -465,10 +465,9 @@ impl Core {
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
-        let trusted = self
-            .home
-            .as_deref()
-            .is_some_and(|home| protocol.trusted(home, expanded.as_deref(), project));
+        let trusted = self.home.as_deref().is_some_and(|home| {
+            protocol.trusted(home, expanded.as_deref(), &environment.vars, project)
+        });
         if !trusted {
             return Err(format!(
                 "{}: {} has not been trusted in {} yet",
@@ -535,7 +534,12 @@ impl Core {
         let expanded = config_dir
             .filter(|dir| !dir.trim().is_empty())
             .map(|dir| account::expand(home, dir));
-        protocol.trust(home, expanded.as_deref(), cwd.unwrap_or(project))
+        protocol.trust(
+            home,
+            expanded.as_deref(),
+            &env::environment().vars,
+            cwd.unwrap_or(project),
+        )
     }
 
     /// Sends the user's message, with any images, under the id the window
