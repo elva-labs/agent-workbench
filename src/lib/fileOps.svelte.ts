@@ -182,8 +182,8 @@ export async function confirmReplace() {
   await writeAs(asked.root, asked.replace, true);
 }
 
-/** Writes the untitled file. Once written the tree, when it is the one on
-    screen, is read again to show the file, and the field goes. */
+/** Writes the untitled file. Once written the field goes at once, and the
+    tree, when it is the one on screen, is read again to show the file. */
 async function writeAs(root: string, path: string, overwrite: boolean) {
   const asked = editor.savingAs!;
   asked.busy = true;
@@ -202,13 +202,12 @@ async function writeAs(root: string, path: string, overwrite: boolean) {
     asked.replace = path;
     return;
   }
-  if (watchRoot() === root) {
-    await refresh();
-    await treeSettled();
-    reveal(path);
-  }
   asked.busy = false;
   endSaveAs(written);
+  if (watchRoot() !== root) return;
+  await refresh();
+  await treeSettled();
+  if (watchRoot() === root) reveal(path);
 }
 
 /** A name field for a new folder. */

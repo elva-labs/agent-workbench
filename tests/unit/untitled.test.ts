@@ -49,6 +49,8 @@ const writes: { file: string; text: string; stamp: string | null; overwrite: boo
 /** The tree each write went to, in order. */
 const writeRoots: string[] = [];
 const reads: string[] = [];
+/** Holds the tree's reads of git's status until it is let go, when set. */
+let statusHeld: Promise<void> | null = null;
 /** The window controls the fake core was asked for. */
 const controls: string[] = [];
 /** What the fake core says when it cannot write a file, by file. */
@@ -59,6 +61,7 @@ vi.mock("$lib/core", () => ({
   core: () => ({
     async setWindowTitle() {},
     async gitStatus() {
+      if (statusHeld !== null) await statusHeld;
       return [];
     },
     async gitFiles() {
@@ -143,6 +146,7 @@ beforeEach(async () => {
   disk.clear();
   writes.length = 0;
   writeRoots.length = 0;
+  statusHeld = null;
   reads.length = 0;
   controls.length = 0;
   writeErrors.clear();
@@ -405,6 +409,21 @@ describe("saving an untitled file", () => {
     expect(editor.savingAs?.problem).toBe("locked.md is read-only");
     expect(editor.savingAs?.busy).toBe(false);
     expect(activeTab()?.path).toBe("Untitled");
+  });
+
+  it("puts the field away once written, before the tree is read again", async () => {
+    openUntitled(null);
+    type("mine");
+    void save();
+    setSaveAsName("notes.md");
+    let letGo = () => {};
+    statusHeld = new Promise((resolve) => (letGo = resolve));
+    const saving = commitSaveAs();
+    await settle();
+    expect(editor.savingAs).toBeNull();
+    expect(activeTab()?.path).toBe("notes.md");
+    letGo();
+    await saving;
   });
 
   it("puts the field away when another tab comes to the front", async () => {
