@@ -2130,7 +2130,7 @@ fn end_group(child: &Child, grace: Duration) {
         }
     }
     #[cfg(not(unix))]
-    let _ = child;
+    let _ = (child, grace);
 }
 
 /// Asks the agent alone to end, as a terminal's close would. Claude Code
