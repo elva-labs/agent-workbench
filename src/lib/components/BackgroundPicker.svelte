@@ -77,6 +77,7 @@
   let dragging = $state(-1);
   /** The dot last moved or focused: the one Remove takes away. */
   let chosen = $state(0);
+  let chosenAt = $derived(Math.max(0, Math.min(chosen, (shown?.dots.length ?? 1) - 1)));
   /** A word under the pad when a dot is held at the rim. */
   let rim = $state(false);
   let keepTimer: ReturnType<typeof setTimeout> | null = null;
@@ -254,7 +255,7 @@
     void focusDot(chosen);
   }
 
-  function remove(index = Math.min(chosen, (shown?.dots.length ?? 1) - 1)) {
+  function remove(index = chosenAt) {
     if (shown === null) return;
     const left = removeDot(shown, index);
     keep(left);
@@ -356,7 +357,7 @@
             class="dot"
             class:first={index === 0}
             class:held={dragging === index}
-            class:chosen={shown.dots.length > 1 && Math.min(chosen, shown.dots.length - 1) === index}
+            class:chosen={shown.dots.length > 1 && chosenAt === index}
             role="slider"
             tabindex="0"
             aria-label="Colour {index + 1} of {shown.dots.length}"
@@ -389,21 +390,27 @@
         title="Add a colour"
         data-testid="background-add">+</button
       >
+      <!-- The minus shows the colour it takes away. -->
       <button
         type="button"
         class="tool"
+        class:with-chip={shown !== null}
         tabindex="0"
         onclick={() => remove()}
         disabled={shown === null}
-        aria-label="Remove colour {Math.min(chosen, (shown?.dots.length ?? 1) - 1) + 1}"
-        title="Remove the ringed colour"
-        data-testid="background-remove">−</button
+        aria-label="Remove colour {chosenAt + 1}"
+        title="Remove this colour"
+        data-testid="background-remove"
+        >−{#if shown !== null}<span class="chip-mini" style:background={padColour(shown.dots[chosenAt], appearance)}
+          ></span>{/if}</button
       >
       <span class="word" data-testid="background-word">
         {#if rim}
           Held at the rim: more colour would make text hard to read.
         {:else if shown !== null && shown.harmony === "free" && shown.dots.length > 1}
           Free: each colour moves on its own.
+        {:else if shown !== null && shown.dots.length > 1}
+          Minus takes away the marked colour.
         {/if}
       </span>
     </div>
@@ -507,12 +514,11 @@
         onchange={(event) => slide("strength", event, true)}
         data-testid="background-strength"
       />
-      <span class="value">
-        {percent(shown?.strength ?? FIRST.strength)}
-        {#if terminal && shown !== null && shown.strength > TERMINAL_STRENGTH}
-          <em>{percent(TERMINAL_STRENGTH)} in this look</em>
-        {/if}
-      </span>
+      <span class="value"
+        >{percent(shown?.strength ?? FIRST.strength)}{#if terminal && shown !== null && shown.strength > TERMINAL_STRENGTH}<em
+            >, held at {percent(TERMINAL_STRENGTH)} here</em
+          >{/if}</span
+      >
     </div>
     <div class="row">
       <label class="what" for="background-grain">Grain</label>
@@ -535,11 +541,9 @@
       </span>
     </div>
     <p class="note" data-testid="background-note">
-      Kept with {paletteLabel}. One background serves light and dark: the pad sets the hue and how
-      much colour, and the appearance sets how light. It tints the chrome, and the text on it keeps a
-      contrast of 4.5 to 1 or more.
+      Kept with {paletteLabel}, for light and dark alike. Text on it always stays easy to read.
       {#if setAside}
-        It is set aside while the system asks for more contrast.
+        Off while the system asks for more contrast.
       {/if}
     </p>
   </div>
@@ -626,12 +630,19 @@
     cursor: grabbing;
   }
 
-  /* The colour the arrows and the minus act on, when there is a choice. */
-  .dot.chosen {
-    box-shadow:
-      0 0 0 2px #ffffff,
-      0 0 0 4px var(--accent),
-      0 2px 6px color-mix(in srgb, black 30%, transparent);
+  /* The colour the minus takes away, when there is a choice, is marked
+     with a white centre; a ring is focus's alone. */
+  .dot.chosen::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    background: #ffffff;
+    box-shadow: 0 0 0 1px color-mix(in srgb, black 35%, transparent);
   }
 
   .dot:focus-visible {
@@ -659,6 +670,22 @@
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
+  }
+
+  .tool.with-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    width: auto;
+    padding: 0 6px;
+  }
+
+  .chip-mini {
+    width: 8px;
+    height: 8px;
+    border-radius: var(--radius-tag);
+    box-shadow: 0 0 0 1px color-mix(in srgb, black 25%, transparent);
   }
 
   .tool:hover:not(:disabled) {
@@ -937,7 +964,6 @@
   }
 
   .value em {
-    margin-left: 4px;
     font-style: normal;
     color: var(--ink-3);
   }
@@ -967,7 +993,6 @@
     border-radius: 0;
     box-shadow: 0 0 0 1px var(--accent);
   }
-</style>
 
   /* The thumb already has an accent edge at rest, so focus rings it again,
      square and a step off. */
@@ -977,3 +1002,4 @@
       0 0 0 3px var(--surface),
       0 0 0 4px var(--accent);
   }
+</style>

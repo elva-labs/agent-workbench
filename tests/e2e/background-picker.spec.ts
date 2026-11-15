@@ -120,6 +120,10 @@ test("adds and removes a colour, and the last one taken away leaves none", async
   await page.getByTestId("background-add").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(3);
   await expect(page.getByTestId("background-add")).toBeDisabled();
+  // The one the minus takes is marked on the pad and named by the minus.
+  await expect(page.getByTestId("background-dot").nth(2)).toHaveClass(/chosen/);
+  await expect(page.getByTestId("background-remove")).toHaveAccessibleName("Remove colour 3");
+  await expect(page.getByTestId("background-word")).toContainText("Minus takes away the marked colour");
   for (const left of [2, 1, 0]) {
     await page.getByTestId("background-remove").click();
     await expect(page.getByTestId("background-dot")).toHaveCount(left);
@@ -149,7 +153,7 @@ test("sets the strength and grain, and holds the terminal look to half strength 
   await expect.poll(() => kept(page)).toMatchObject({ grain: 0 });
   await page.getByTestId("look-terminal").click();
   await expect(page.getByTestId("background-grain")).toBeDisabled();
-  await expect(page.getByTestId("background-picker")).toContainText("50% in this look");
+  await expect(page.getByTestId("background-picker")).toContainText("90%, held at 50% here");
   await expect(page.getByTestId("background-picker")).toContainText("None in this look");
 });
 
