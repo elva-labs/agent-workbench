@@ -349,9 +349,10 @@ asking the user or waiting for a permission. Short of room the project and
 the branch give way before what the session is doing, and each goes with
 its icon once it would show no more than a letter or two. A session another session
 started is named by the name its start gave, or by the first line of its
-prompt; a name that reads as You, in any case or with anything unseen
-around it, is never taken, since the thread says You for the user alone,
-and nor is a name another live session has, ignoring case, spaces,
+prompt; a name that reads as You or Workbench, in any case or with
+anything unseen around it, is never taken, since the thread says You for
+the user alone and Workbench for the workbench's own messages, and nor is
+a name another live session has, ignoring case, spaces,
 accents, anything unseen and letters of other scripts that look like Latin
 ones, or a name whose letters mix scripts, so no message or row can pass for another session's; the start
 tool says which it was to its caller, and the session is named by its
