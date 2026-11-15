@@ -133,11 +133,13 @@ test.describe("the run's chip", () => {
     const reviewRow = page.getByTestId("started-session").filter({ hasText: "Review the cache fix" });
     await expect(reviewRow.getByTestId("started-role")).toHaveText("Review, 2 of 4");
 
-    // Passed, and the orchestrator at rest: done.
+    // The review and the orchestrator at rest: every pip grey, and the
+    // words say the round that finished. Whether it passed is not known.
     await event(page, "session-4", "stop");
     await event(page, "session-1", "stop");
-    await expect(words(page)).toHaveText("Done");
+    await expect(words(page)).toHaveText("Review, round 2 of 4 done");
     expect(await pips(page)).toEqual(["done", "done", "done"]);
+    await expect(words(page)).not.toHaveText(/^Done/);
   });
 
   test("counts the pieces in each step, with the rounds in its popover", async ({ page }) => {
@@ -155,7 +157,7 @@ test.describe("the run's chip", () => {
     const popover = page.getByTestId("run-popover");
     await expect(popover).toBeVisible();
     await expect(popover.getByTestId("run-step")).toHaveText([
-      /Plan\s*none/,
+      /Plan\s*skipped/,
       /Work\s*done · Fix the cache\s*working · Palette filter/,
       /Review\s*round 1 of 4, working · Review the cache fix/,
     ]);
@@ -204,8 +206,12 @@ test.describe("the run's chip", () => {
     const accent = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent"));
     expect(await colour()).not.toBe(quiet);
     expect(accent.trim().length).toBeGreaterThan(0);
+    // Stopped there by the user: said in the chip's own ink, the review's
+    // pip lit, until another round of the piece goes ahead.
     await page.getByTestId("conduct-no").click();
-    await expect(words(page)).not.toHaveText(/asks you/);
+    await expect(words(page)).toHaveText("Stopped at round 2 of 2");
+    expect(await pips(page)).toEqual(["done", "done", "live"]);
+    expect(await colour()).toBe(quiet);
   });
 
   test("opens from the keyboard, names its state in words, and gives the keyboard back on Escape", async ({ page }) => {
@@ -214,7 +220,7 @@ test.describe("the run's chip", () => {
     await event(page, "session-2", "prompt");
     await expect(chip(page)).toHaveAttribute(
       "aria-label",
-      "Plan, work, review: Work. Plan done, Work now, Review to come. Show where the run stands",
+      "Plan, work, review: Work. Plan skipped, Work now, Review to come. Show where the run stands",
     );
     await expect(chip(page)).not.toHaveAttribute("aria-controls");
     // A stop of its own on Tab, as every control is.
@@ -236,6 +242,16 @@ test.describe("the run's chip", () => {
     await expect(popover).toBeVisible();
     const pane = (await page.locator(AGENT).boundingBox())!;
     await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height - 20);
+    await expect(popover).toHaveCount(0);
+    // A click on the one the pointer showed holds it, and a second puts it
+    // away.
+    await chip(page).hover();
+    await expect(popover).toBeVisible();
+    await chip(page).click();
+    await expect(popover).toBeVisible();
+    await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height - 20);
+    await expect(popover).toBeVisible();
+    await chip(page).click();
     await expect(popover).toHaveCount(0);
   });
 
@@ -261,6 +277,7 @@ test.describe("the run's chip", () => {
           titleCut: title.scrollWidth > title.clientWidth + 0.5,
           wordsDrawn: drawn(words),
           wordsCut: words.scrollWidth > words.clientWidth + 0.5,
+          wordsWidth: words.getBoundingClientRect().width,
           metaDrawn: drawn(meta),
           pipsInside: pipsBox.width > 20 && pipsBox.right <= head.right - 8,
         };
@@ -279,6 +296,8 @@ test.describe("the run's chip", () => {
       const at = await state();
       expect(at.pipsInside, `at ${width}`).toBe(true);
       if (at.wordsCut || !at.wordsDrawn) expect(at.metaDrawn, `at ${width}`).toBe(false);
+      // Gone, the words take no room from the title.
+      if (at.titleCut) expect(at.wordsWidth, `at ${width}`).toBeLessThan(0.5);
       if (at.titleCut) expect(at.wordsDrawn, `at ${width}`).toBe(false);
       if (!at.wordsDrawn) sawWordsGone = true;
     }
@@ -294,5 +313,17 @@ test.describe("a started session's place", () => {
     await call(page, "start", { project: PROJECT, prompt: "Review it", step: "Review", work: "session-2", name: "Review the cache fix" });
     await page.getByTestId("started-session").filter({ hasText: "Review the cache fix" }).click();
     await expect(page.getByTestId("workflow-tag-role")).toHaveText("Review, round 1 of 4");
+    // Its rules, shown by the pointer resting on the tag, are held by a
+    // click.
+    const tag = page.getByTestId("workflow-tag");
+    const rules = page.getByTestId("workflow-rules");
+    await tag.hover();
+    await expect(rules).toBeVisible();
+    await tag.click();
+    const pane = (await page.locator(AGENT).boundingBox())!;
+    await page.mouse.move(pane.x + pane.width / 2, pane.y + pane.height - 20);
+    await expect(rules).toBeVisible();
+    await tag.click();
+    await expect(rules).toHaveCount(0);
   });
 });

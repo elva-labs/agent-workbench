@@ -54,8 +54,8 @@ gives way in this order: a workflow's name and a session's project and
 branch, then the status, then the session's place in the workflow, or the
 words of a run's chip, and its title last. Each is cut short and then goes
 at a letter or two, its icon or its tag with it. A run's chip keeps its
-pips: once its words have gone it stands as the pips alone, and the title
-gives way to them. In editor mode on Windows and Linux the window controls
+pips: once its words have gone it stands as the pips alone, the words
+taking no room, and the title gives way to them. In editor mode on Windows and Linux the window controls
 and the corner leave no room for the place in the workflow beside the
 title, so it goes there, and on macOS in the terminal look it is cut a few
 letters short. A click on the

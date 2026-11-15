@@ -18,8 +18,9 @@
    * away, and Escape gives the keyboard back to the chip.
    *
    * Where the header is short of room the words give way, cut short and
-   * then gone, and the pips stay: the header keeps them until its title
-   * has gone.
+   * then gone, taking no room once gone, and the pips stay: the header
+   * keeps them until its title has gone. The header says when the words
+   * have no room, by `data-short` on the chip.
    */
   let { run, rules }: { run: RunSummary; rules: string[] } = $props();
 
@@ -78,13 +79,15 @@
     leave = setTimeout(() => (hovered = false), HIDE_AFTER);
   }
 
+  /** A click, Enter or Space holds the popover open, the one shown by
+      the pointer resting on it as well, and puts a held one away. */
   function toggle() {
     cancelTimers();
-    if (open) {
+    if (held) {
       close();
       return;
     }
-    place();
+    if (!open) place();
     held = true;
   }
 
@@ -197,7 +200,7 @@
                   >{:else}<span class="gone">{session.name}</span>{/if}</span
               >
             {:else}
-              <span class="none">{step.pip === "done" ? "none" : "nothing yet"}</span>
+              <span class="none">{step.skipped ? "skipped" : "nothing yet"}</span>
             {/each}
           </span>
         </div>
@@ -300,6 +303,15 @@
 
   /* Words cut to a letter or two say nothing: they go, and the pips stay. */
   .words:global(.cut) {
+    visibility: hidden;
+  }
+
+  /* With less room than a few letters the words take none, and the gap
+     before them goes too. Their text is still measured whole, so the
+     header knows the room they want back. */
+  .chip:global([data-short]) .words {
+    max-width: 0;
+    margin-left: -7px;
     visibility: hidden;
   }
 

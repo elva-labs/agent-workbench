@@ -33,8 +33,9 @@ function textWidth(node: HTMLElement): number {
     A part marked `data-keep-room` keeps the room around the text it holds
     as well, its icons, gaps and padding, and that room is `--least`: the
     width the head keeps until the title has given way, once the text in
-    it has gone. Measured again when the head or what it keeps changes
-    size, and when what it holds changes. */
+    it has gone, and marked `data-short` while the head leaves its text
+    less than about three letters. Measured again when the head or what
+    it keeps changes size, and when what it holds changes. */
 export function keeps(node: HTMLElement) {
   const sizes = new ResizeObserver(() => measure());
   const content = new MutationObserver(() => {
@@ -82,6 +83,15 @@ export function keeps(node: HTMLElement) {
     const width = text + room;
     node.style.setProperty("--keep", width > 0 ? `${Math.ceil(width) + 1}px` : "0px");
     node.style.setProperty("--least", room > 0 ? `${Math.ceil(room)}px` : "0px");
+    // The text a part keeps takes no room once the head leaves it less
+    // than about three letters: decided from the head's width, which does
+    // not hang on the text's own, so hiding it moves nothing back.
+    const free = node.clientWidth - room;
+    for (const part of rooms()) {
+      const text = part.querySelector<HTMLElement>("[data-keep]");
+      const least = text === null ? 0 : parseFloat(getComputedStyle(text).fontSize) * 3;
+      part.toggleAttribute("data-short", free < least);
+    }
   }
 
   watch();
