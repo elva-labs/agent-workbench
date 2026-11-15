@@ -82,6 +82,9 @@ pub struct Core {
     plugins: Option<crate::plugins::Plugins>,
     /// None without a home directory, for the same reason.
     settings: Option<Arc<crate::settings::Store>>,
+    /// The prompt calls the window has yet to answer, each with the time
+    /// its hook stops waiting.
+    deadlines: Arc<crate::show::Deadlines>,
 }
 
 /// The sink the core hands to the ptys and the watcher: everything reaches
@@ -146,6 +149,7 @@ impl Core {
             home,
             plugins,
             settings,
+            deadlines: Arc::default(),
         }
     }
 
@@ -302,6 +306,7 @@ impl Core {
                 let plugins = self.plugins.clone();
                 let sink = Arc::clone(&self.sink);
                 let browser_sink = Arc::clone(&self.sink);
+                let deadlines = Arc::clone(&self.deadlines);
                 crate::show::watch(
                     Arc::clone(&self.sink),
                     crate::show::requests_path(home),
@@ -310,11 +315,21 @@ impl Core {
                             plugins.call(request);
                         }
                     },
-                    move |request| events::emit(&sink, crate::show::CONDUCT_REQUEST, &request),
+                    move |request| {
+                        deadlines.note(&request);
+                        events::emit(&sink, crate::show::CONDUCT_REQUEST, &request)
+                    },
                     move |request| {
                         events::emit(&browser_sink, crate::show::BROWSER_REQUEST, &request)
                     },
                 )?;
+                // A prompt hook asks the window only while this core says it
+                // is here.
+                let beating = home.clone();
+                std::thread::spawn(move || loop {
+                    let _ = crate::show::beat(&beating);
+                    std::thread::sleep(crate::show::HEARTBEAT_EVERY);
+                });
                 // Starting the plugins reads manifests and spawns runtimes,
                 // which is not for the thread the window is being drawn on.
                 if let Some(plugins) = self.plugins.clone() {
@@ -881,7 +896,9 @@ impl Core {
     }
 
     /// The answer to a call on one of the conductor's tools, left where
-    /// the tool server that made the call is waiting for it.
+    /// the tool server that made the call is waiting for it. A prompt call
+    /// whose hook has stopped waiting gets none, and the window hears so:
+    /// nothing in it reached the agent.
     pub fn conduct_answer(
         &self,
         id: &str,
@@ -889,6 +906,9 @@ impl Core {
         error: Option<String>,
     ) -> Result<(), String> {
         let home = self.home.as_deref().ok_or("no home directory")?;
+        if !self.deadlines.open(id) {
+            return Err("the prompt hook stopped waiting for this answer".to_string());
+        }
         crate::show::write_answer(home, id, &crate::show::Answer { content, error })
     }
 
@@ -1268,6 +1288,37 @@ mod tests {
     use crate::scratch::Scratch;
     use std::collections::HashMap;
 
+    // A prompt hook stops waiting at the deadline its call carries: an
+    // answer past it is not left, and the window hears it was not, so it
+    // tells nothing that did not reach the agent.
+    #[test]
+    fn leaves_no_answer_to_a_prompt_call_whose_hook_stopped_waiting() {
+        let home = Scratch::new("api-prompt-deadline");
+        let core = Core::at_home(Arc::new(Recorder::default()), Some(home.to_path_buf()));
+        let call = |id: &str, deadline: u64| crate::show::ConductRequest {
+            id: id.to_string(),
+            tool: crate::show::CONDUCT_PROMPT.to_string(),
+            arguments: serde_json::json!({ "deadline": deadline }),
+            cwd: "/p".to_string(),
+            session: None,
+        };
+        core.deadlines
+            .note(&call("late", crate::show::now_ms() - 1));
+        core.deadlines
+            .note(&call("in-time", crate::show::now_ms() + 60_000));
+        assert!(core
+            .conduct_answer("late", Some("note".into()), None)
+            .is_err());
+        assert!(!crate::show::answer_path(&home, "late").exists());
+        core.conduct_answer("in-time", Some("note".into()), None)
+            .unwrap();
+        assert!(crate::show::answer_path(&home, "in-time").exists());
+        // A wait's answer has no deadline.
+        core.conduct_answer("a-wait", Some("stopped".into()), None)
+            .unwrap();
+        assert!(crate::show::answer_path(&home, "a-wait").exists());
+    }
+
     /// A core made once the test process's environment is settled, so the
     /// shell it starts is the system's `sh` and reads no startup files.
     fn core_with(sink: Arc<dyn Sink>) -> Core {
@@ -1291,6 +1342,7 @@ mod tests {
             home: Some(home.to_path_buf()),
             plugins: None,
             settings: None,
+            deadlines: Arc::default(),
         }
     }
 

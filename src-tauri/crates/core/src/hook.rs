@@ -4,9 +4,12 @@
 //! tool changed a file; and session hooks, `UserPromptSubmit`, `Stop` and
 //! the permission prompt, appended to a log the core tails, so a row says
 //! exactly when its agent started, stopped, or asked for permission rather
-//! than reading that off the pty. Both agents take the same shape: Claude
-//! Code in the project's `.claude/settings.local.json`, Codex in the
-//! project's `.codex/hooks.json`, with the same events and the same stdin.
+//! than reading that off the pty. Beside the session hook on the prompt,
+//! where there is a daemon, a second one asks the window through it what
+//! the sessions this one started did, and gives the agent the answer with
+//! the user's message. Both agents take the same shape: Claude Code in the
+//! project's `.claude/settings.local.json`, Codex in the project's
+//! `.codex/hooks.json`, with the same events and the same stdin.
 //!
 //! The watcher already works, and this does not replace it: a person editing
 //! in another editor still has to show up. What the hook adds is immediacy and
@@ -168,6 +171,25 @@ fn codex_hooks_path(project: &Path) -> PathBuf {
     project.join(".codex").join("hooks.json")
 }
 
+/// The event at which the agent is told what the sessions it started did,
+/// as the user's message goes in.
+const PROMPT_EVENT: &str = "UserPromptSubmit";
+
+/// The command the prompt hook runs beside the session hook: the daemon
+/// asks the window what the agent is told, and prints it for the agent.
+/// It never fails the prompt: a daemon from a version without the
+/// command, or one that cannot ask, says nothing and the prompt goes on.
+fn reports_command(home: &Path) -> String {
+    format!(
+        "{daemon} reports 2>/dev/null || true",
+        daemon = shell_quote(&bash_path(&daemon_path(home).to_string_lossy())),
+    )
+}
+
+fn reports_entry(home: &Path) -> Value {
+    json!({ "hooks": [{ "type": "command", "command": reports_command(home) }] })
+}
+
 /// The command a session hook runs: add what the agent said to the log.
 fn activity_command(home: &Path) -> String {
     let log = activity_path(home);
@@ -257,8 +279,8 @@ fn read_for_writing(path: &Path) -> Result<Map<String, Value>, String> {
     }
 }
 
-fn is_ours(entry: &Value, home: &Path) -> bool {
-    let ours = [command(home), activity_command(home)];
+/// Whether an entry runs one of the commands given.
+fn runs(entry: &Value, commands: &[String]) -> bool {
     entry
         .get("hooks")
         .and_then(Value::as_array)
@@ -266,26 +288,40 @@ fn is_ours(entry: &Value, home: &Path) -> bool {
             hooks.iter().any(|hook| {
                 hook.get("command")
                     .and_then(Value::as_str)
-                    .is_some_and(|command| ours.iter().any(|own| own == command))
+                    .is_some_and(|command| commands.iter().any(|own| own == command))
             })
         })
 }
 
-fn has_ours(settings: &Map<String, Value>, event: &str, home: &Path) -> bool {
+fn is_ours(entry: &Value, home: &Path) -> bool {
+    runs(
+        entry,
+        &[command(home), activity_command(home), reports_command(home)],
+    )
+}
+
+/// Whether an event has an entry that runs this command.
+fn has_command(settings: &Map<String, Value>, event: &str, command: &str) -> bool {
+    let commands = [command.to_string()];
     settings
         .get("hooks")
         .and_then(|hooks| hooks.get(event))
         .and_then(Value::as_array)
-        .is_some_and(|entries| entries.iter().any(|entry| is_ours(entry, home)))
+        .is_some_and(|entries| entries.iter().any(|entry| runs(entry, &commands)))
 }
 
-/// Adds our entry under an event, leaving whatever else is there alone.
-fn add_entry(
-    settings: &mut Map<String, Value>,
-    event: &str,
-    entry: Value,
-    home: &Path,
-) -> Result<bool, String> {
+/// Adds our entry under an event, leaving whatever else is there alone. An
+/// event holds each of our commands once, and may hold more than one of
+/// them.
+fn add_entry(settings: &mut Map<String, Value>, event: &str, entry: Value) -> Result<bool, String> {
+    let commands: Vec<String> = entry
+        .get("hooks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|hook| hook.get("command").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
     let hooks = settings
         .entry("hooks")
         .or_insert_with(|| json!({}))
@@ -296,7 +332,7 @@ fn add_entry(
         .or_insert_with(|| json!([]))
         .as_array_mut()
         .ok_or_else(|| format!("the {event} setting is not a list"))?;
-    if entries.iter().any(|entry| is_ours(entry, home)) {
+    if entries.iter().any(|existing| runs(existing, &commands)) {
         return Ok(false);
     }
     entries.push(entry);
@@ -353,18 +389,18 @@ pub fn status_many(
         .map(|project| {
             let settings = settings_path(project);
             let read = read_settings(&settings);
-            let hooks = has_ours(&read, "PostToolUse", home)
-                && CLAUDE_SESSION_EVENTS
-                    .iter()
-                    .all(|event| has_ours(&read, event, home));
-            // With a daemon here the server is part of what is installed: a
-            // project that got the hooks before there was a server is brought
-            // up to date by the next install.
+            let hooks = has_hooks_in(&read, home);
+            // With a daemon here the server and the prompt hook that asks
+            // through it are part of what is installed: a project that got
+            // the hooks before there was either is brought up to date by the
+            // next install.
             let installed = hooks
-                && (!daemon_here || {
-                    let states = servers.get_or_insert_with(|| read_servers(home, accounts, env));
-                    has_server(states, home, project)
-                });
+                && (!daemon_here
+                    || has_command(&read, PROMPT_EVENT, &reports_command(home)) && {
+                        let states =
+                            servers.get_or_insert_with(|| read_servers(home, accounts, env));
+                        has_server(states, home, project)
+                    });
             HookStatus {
                 installed,
                 settings: settings.to_string_lossy().to_string(),
@@ -775,11 +811,16 @@ pub fn install(
 /// Whether the project has the hooks in its own settings, whatever else is
 /// or is not in place.
 fn has_hooks(home: &Path, project: &Path) -> bool {
-    let read = read_settings(&settings_path(project));
-    ["PostToolUse"]
-        .iter()
-        .chain(CLAUDE_SESSION_EVENTS)
-        .all(|event| has_ours(&read, event, home))
+    has_hooks_in(&read_settings(&settings_path(project)), home)
+}
+
+/// Whether Claude Code's settings hold the tool hook and every session
+/// hook.
+fn has_hooks_in(settings: &Map<String, Value>, home: &Path) -> bool {
+    has_command(settings, "PostToolUse", &command(home))
+        && CLAUDE_SESSION_EVENTS
+            .iter()
+            .all(|event| has_command(settings, event, &activity_command(home)))
 }
 
 /// Gives a worktree of the project the hooks the project has, and says
@@ -922,8 +963,10 @@ fn tracked(folder: &Path) -> Vec<&'static str> {
 }
 
 /// Adds the hooks to the agents' settings files in a folder, all but those
-/// named in `leave`, which are not read or written.
+/// named in `leave`, which are not read or written. The prompt hook that
+/// asks through the daemon goes in only where there is a daemon.
 fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
+    let asks = daemon_path(home).is_file();
     if !leave.contains(&CLAUDE_LOCAL) {
         let path = settings_path(folder);
         let mut settings = read_for_writing(&path)?;
@@ -934,10 +977,12 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
                 "matcher": MATCHER,
                 "hooks": [{ "type": "command", "command": command(home) }],
             }),
-            home,
         )?;
         for event in CLAUDE_SESSION_EVENTS {
-            changed |= add_entry(&mut settings, event, session_entry(home), home)?;
+            changed |= add_entry(&mut settings, event, session_entry(home))?;
+        }
+        if asks {
+            changed |= add_entry(&mut settings, PROMPT_EVENT, reports_entry(home))?;
         }
         if changed {
             write_settings(&path, &settings)?;
@@ -949,7 +994,10 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
         let mut hooks = read_for_writing(&codex)?;
         let mut changed = false;
         for event in CODEX_SESSION_EVENTS {
-            changed |= add_entry(&mut hooks, event, session_entry(home), home)?;
+            changed |= add_entry(&mut hooks, event, session_entry(home))?;
+        }
+        if asks {
+            changed |= add_entry(&mut hooks, PROMPT_EVENT, reports_entry(home))?;
         }
         if changed {
             write_settings(&codex, &hooks)?;
@@ -2250,6 +2298,79 @@ mod tests {
         assert_eq!(hooks["description"], "mine");
         assert_eq!(hooks["hooks"]["Stop"].as_array().unwrap().len(), 1);
         assert_eq!(hooks["hooks"]["Stop"][0]["hooks"][0]["command"], "say done");
+    }
+
+    /// The commands each of an event's entries runs, in order.
+    fn commands_of(hooks: &Value, event: &str) -> Vec<String> {
+        hooks["hooks"][event]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|entry| entry["hooks"].as_array().cloned().unwrap_or_default())
+            .filter_map(|hook| hook["command"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    // With a daemon here, a second prompt hook runs it to ask the window
+    // what the sessions this one started did, beside the hook that logs the
+    // prompt, in both agents' files.
+    #[test]
+    fn puts_the_prompt_hook_that_asks_beside_the_one_that_logs() {
+        let (home, project) = fixture("reports");
+        with_daemon(&home);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        for hooks in [settings_of(&project), codex_hooks_of(&project)] {
+            let commands = commands_of(&hooks, PROMPT_EVENT);
+            assert_eq!(commands, [activity_command(&home), reports_command(&home)]);
+            assert!(commands[1].contains(&bash_path(&daemon_path(&home).to_string_lossy())));
+            // It can never fail the prompt, whatever the daemon makes of it.
+            assert!(
+                commands[1].ends_with(" reports 2>/dev/null || true"),
+                "{}",
+                commands[1]
+            );
+        }
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(settings_of(&project).get("hooks").is_none());
+        assert!(!codex_hooks_path(&project).exists());
+    }
+
+    #[test]
+    fn without_a_daemon_no_prompt_hook_asks() {
+        let (home, project) = fixture("reports-no-daemon");
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert_eq!(
+            commands_of(&settings_of(&project), PROMPT_EVENT),
+            [activity_command(&home)]
+        );
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+    }
+
+    // Hooks put in by a version before the prompt hook asked: they keep
+    // working as they are, read as not installed, and the next install adds
+    // the hook that asks and leaves the one that logs alone.
+    #[test]
+    fn hooks_from_before_gain_the_prompt_hook_and_keep_their_own() {
+        let (home, project) = fixture("reports-later");
+        with_daemon(&home);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        for path in [settings_path(&project), codex_hooks_path(&project)] {
+            let mut hooks = read_settings(&path);
+            let entries = hooks["hooks"][PROMPT_EVENT].as_array_mut().unwrap();
+            entries.retain(|entry| !runs(entry, &[reports_command(&home)]));
+            write_settings(&path, &hooks).unwrap();
+        }
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        for hooks in [settings_of(&project), codex_hooks_of(&project)] {
+            assert_eq!(
+                commands_of(&hooks, PROMPT_EVENT),
+                [activity_command(&home), reports_command(&home)]
+            );
+        }
     }
 
     #[test]

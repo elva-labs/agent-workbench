@@ -191,7 +191,9 @@ when the row last changed: `now`, `4m`, `1h`, a weekday within the week, then `3
 the agent has left a line for, or one that started others, takes a second
 line: the agent's line, in the accent while it asks for a permission, or
 for a session that started others what those are doing; at its end is the
-model the session was started on, when the app knows it. The two lines are
+model the session was started on, when the app knows it, or for a session
+that started others how many of them it has not yet heard from, as the
+[orchestrator](orchestrator.md#in-the-panes) describes. The two lines are
 laid out apart, so the model never narrows the name. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its

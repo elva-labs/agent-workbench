@@ -40,6 +40,7 @@ import {
   OWN_LABEL,
 } from "$lib/accounts.svelte";
 import { agentLabel } from "$lib/agent.svelte";
+import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest } from "$lib/core";
@@ -65,9 +66,15 @@ import { hostOf } from "$lib/remote.svelte";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
 import { screen, takesPaste } from "$lib/screens";
-import { conversationOf, handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
+import {
+  conversationOf,
+  handleOf,
+  notesFrom,
+  send as sendIntegrated,
+  userWaiting,
+} from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
-import { OUTCOME_ASK } from "$lib/instructions";
+import { OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
@@ -87,7 +94,7 @@ export const START_WAIT = 30_000;
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
-export { OUTCOME_ASK };
+export { OUTCOME_ASK, REPORTS_HEAD };
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
@@ -327,6 +334,9 @@ export const conductor = $state({
       caller's row key, until it starts one or the user puts it away: the
       user sees why as well as the agent. */
   refusals: {} as Record<string, string>,
+  /** How many waits each caller has held, by the caller as its calls name
+      it: a caller with one is listening for its sessions itself. */
+  listening: {} as Record<string, number>,
 });
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
@@ -594,22 +604,53 @@ interface Answered {
   /** The refusal is the user's own answer to the question, which they
       need not be shown again. */
   byUser?: boolean;
+  /** What follows once the answer has been left where the caller reads
+      it, and only then. */
+  delivered?: () => void;
 }
 
-/** The waits being held, by call, each with what ends it unanswered. */
-const waiting = new Map<string, () => void>();
+/** A wait being held: the caller it is for, the sessions it watches by
+    row key, what ends it unanswered, and what ends it with an answer of
+    its own. */
+interface Held {
+  caller: string;
+  watched: string[];
+  abandon: () => void;
+  interrupt: (answer: string) => void;
+  /** A note went with the user's message while it was held and named
+      what was still out, so giving the wait up for that message leaves
+      nothing more to say. */
+  noted?: boolean;
+}
+
+/** The waits being held, by call. */
+const waiting = new Map<string, Held>();
 /** Calls given up on by the agent: their answer is not written. */
 const given = new Set<string>();
+/** Callers whose last wait was given up on, as the user's message cutting
+    it short does: the next note they are given says what is still out. */
+const cut = new Set<string>();
 
 /**
  * The agent gave up on a call. A wait still held for it ends without
  * answering and tells nothing, since no one is there to hear it.
  */
 export function cancelled(id: string) {
-  const end = waiting.get(id);
-  if (end === undefined) return;
+  const held = waiting.get(id);
+  if (held === undefined) return;
   given.add(id);
-  end();
+  if (held.noted !== true) cut.add(held.caller);
+  held.abandon();
+}
+
+/** What a wait the user's message ended answers. */
+export const USER_WROTE =
+  "The user wrote to you, which ends this wait. Read their message, ending your turn if it has not reached you yet, and answer it before you wait again.";
+
+/** Ends the waits these callers hold, each with the answer given. */
+function endWaits(callers: string[], answer: string) {
+  for (const held of [...waiting.values()])
+    if (callers.includes(held.caller)) held.interrupt(answer);
 }
 
 const said = (content: string): Answered => ({ content, error: null });
@@ -640,10 +681,13 @@ export async function handle(request: ConductRequest): Promise<void> {
   if (given.delete(request.id)) return;
   await core()
     .conductAnswer(request.id, request.cwd, answered.content, answered.error)
-    .catch(() => {
-      // The core has gone, or the call had already given up. Nothing here
-      // can tell the agent either way.
-    });
+    .then(
+      () => answered.delivered?.(),
+      () => {
+        // The core has gone, or the call had already given up. Nothing here
+        // can tell the agent either way, and nothing counts as told.
+      },
+    );
 }
 
 function run(request: ConductRequest): Answered | Promise<Answered> {
@@ -662,6 +706,8 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
       return waitFor(request);
     case "read":
       return readSession(request);
+    case "prompt":
+      return promptNote(request);
     default:
       return refused(`The workbench has no ${String(request.tool)} tool.`);
   }
@@ -785,19 +831,29 @@ type Rest = "ended" | "permission" | "quiet";
  * differ, so a session that goes from one kind of rest to another is
  * reported again, and one that works again starts over.
  */
-const stops = new Map<
-  string,
-  { worked: boolean; rest: Rest | null; told: Rest | null }
->();
+type Mark = { worked: boolean; rest: Rest | null; told: Rest | null };
+
+const stops = new Map<string, Mark>();
+
+/** Moves whenever a stop goes untold or is told, for what is drawn from
+    the marks, which are kept outside the rows' reactive state. Moved
+    without being read, so an effect that moves it does not run again for
+    it. */
+const heard = $state({ version: 0 });
+const moved = () => untrack(() => heard.version++);
+
+const unheardMark = (mark: Mark | undefined) =>
+  mark !== undefined && mark.rest !== null && mark.rest !== mark.told;
 
 /** Brings the record of a started session's stops up to date with the row. */
 function observe(session: Session) {
   const key = session.key;
   if (startedFor(key) === null) {
-    stops.delete(key);
+    if (stops.delete(key)) moved();
     return;
   }
   const mark = stops.get(key) ?? { worked: false, rest: null, told: null };
+  const before = unheardMark(stops.get(key));
   stops.set(key, mark);
   if (!isLive(session)) mark.rest = "ended";
   else if (session.needs === "permission") mark.rest = "permission";
@@ -806,24 +862,30 @@ function observe(session: Session) {
     mark.rest = null;
     mark.told = null;
   } else mark.rest = mark.worked ? "quiet" : null;
+  if (unheardMark(mark) !== before) moved();
 }
 
 function observeAll() {
   const keys = new Set(sessions.all.map((session) => session.key));
-  for (const key of stops.keys()) if (!keys.has(key)) stops.delete(key);
+  for (const key of stops.keys())
+    if (!keys.has(key)) {
+      stops.delete(key);
+      moved();
+    }
   for (const session of sessions.all) observe(session);
 }
 
 /** Whether a session has stopped and the caller has not been told. */
 function untold(session: Session): boolean {
   observe(session);
-  const mark = stops.get(session.key);
-  return mark !== undefined && mark.rest !== null && mark.rest !== mark.told;
+  return unheardMark(stops.get(session.key));
 }
 
 function tell(key: string) {
   const mark = stops.get(key);
-  if (mark !== undefined) mark.told = mark.rest;
+  if (mark === undefined || mark.told === mark.rest) return;
+  mark.told = mark.rest;
+  moved();
 }
 
 /**
@@ -835,6 +897,127 @@ export function watchStops(): () => void {
   return $effect.root(() => {
     $effect(observeAll);
   });
+}
+
+/**
+ * The callers a session is, as its calls name it: its id, and the
+ * directory it runs in when it is the one session running there that was
+ * not told its id, whose calls name no session. `row` is the session's
+ * row, or null for a call naming a session the window does not have or
+ * naming none; one naming none is the directory's caller when one such
+ * session runs there.
+ */
+function callersOf(session: string | null, row: Session | null, cwd: string): string[] {
+  const callers = session === null ? [] : [session];
+  const here = untoldHere(cwd);
+  if (here.length === 1 && (row === null ? session === null : here[0].key === row.key))
+    callers.push(cwd);
+  return callers;
+}
+
+/** Whether a started session is still at work: running, and not at rest
+    in any way, which takes in one that has not begun yet. */
+function atWork(session: Session): boolean {
+  observe(session);
+  return isLive(session) && stops.get(session.key)?.rest === null;
+}
+
+/** A note for a caller, and what counts it as told once it has reached
+    the agent. */
+export interface Note {
+  text: string;
+  deliver: () => void;
+}
+
+/**
+ * What a caller is told of the sessions it started as a message from the
+ * user reaches it, ahead of the user's words: a line for each that stopped,
+ * asked for permission or ended without the caller having heard, and, when
+ * it was waiting on them or a wait of its was given up on since, which of
+ * them are still at work. It counts as told, as a wait's answer does, once
+ * it is delivered, and only as it was then: a session at rest another way
+ * by that time is told again. A wait the caller still holds answers for the
+ * sessions it watches itself, so the note leaves those out, unless
+ * `ending`, which ends the wait for the message at once. Null when there
+ * is nothing to say.
+ */
+function reportNote(callers: string[], ending: boolean): Note | null {
+  const kids = [...new Set(callers.flatMap(startedBy))];
+  const holding = [...waiting.values()].filter((wait) => callers.includes(wait.caller));
+  const watched = new Set(ending ? [] : holding.flatMap((wait) => wait.watched));
+  const lapsed = callers.some((caller) => cut.has(caller));
+  if (ending) endWaits(callers, USER_WROTE);
+  const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
+  const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
+  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
+  const lines = news.map((kid) => restText(kid, name(kid)));
+  const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
+  if (out.length > 0)
+    lines.push(
+      `Still at work when the user wrote: ${either(out.map(name), "and")}. Call wait to hear from them once you have answered.`,
+    );
+  if (lines.length === 0) return null;
+  return {
+    text: [REPORTS_HEAD, ...lines].join("\n"),
+    deliver: () => {
+      for (const [key, rest] of reported) tellAs(key, rest);
+      for (const caller of callers) cut.delete(caller);
+      // A wait the message is about to cut short has had its still-out
+      // line.
+      for (const wait of holding) wait.noted = true;
+    },
+  };
+}
+
+/** The answer to a prompt hook's call as the user's message goes in: the
+    note for the caller the call is, told once the answer is left where
+    the hook reads it. The core leaves none once the hook has stopped
+    waiting, so a note the agent never read stays untold. The call is held
+    to the agent's own id, so an agent started from a starter's shell, with
+    its environment, gets nothing; a Codex caller whose id the window has
+    not learned yet is taken at its word. An integrated session is given
+    its note by the window, with the message itself. */
+function promptNote(request: ConductRequest): Answered {
+  const row = request.session === null ? callingSession(request) : byId(request.session);
+  const own = text(request, "agentSession");
+  if (row === null || row.kind === "integrated" || own === null) return said("");
+  if (row.id !== own && !(row.id === null && row.agent === "codex")) return said("");
+  const note = reportNote(callersOf(request.session, row, request.cwd), false);
+  return note === null ? said("") : { ...said(note.text), delivered: note.deliver };
+}
+
+/** Counts a stop told as it was when the note was made, unless the session
+    has since come to rest another way, which is news of its own. */
+function tellAs(key: string, rest: Rest | null) {
+  const mark = stops.get(key);
+  if (mark === undefined || mark.rest !== rest || mark.told === rest) return;
+  mark.told = rest;
+  moved();
+}
+
+// An integrated session is sent the user's message by the window, which
+// puts the note in ahead of the words, tells it once the agent takes the
+// message, and ends the session's waits, so the message is not held behind
+// one.
+notesFrom((key) => {
+  const row = byKey(key);
+  if (row === null) return null;
+  return reportNote(callersOf(row.id, row, row.startIn ?? row.project), true);
+});
+
+/**
+ * The sessions a session started that stopped, asked or ended without it
+ * having heard, while it is idle and holds no wait: what its row says it
+ * has to read. None while it works or waits, since it may yet look.
+ */
+export function unheard(session: Session): Session[] {
+  void heard.version;
+  if (!isLive(session) || session.working || session.needs === "permission") return [];
+  const callers = callersOf(session.id, session, session.startIn ?? session.project);
+  if (callers.some((caller) => (conductor.listening[caller] ?? 0) > 0)) return [];
+  return [...new Set(callers.flatMap(startedBy))].filter((kid) =>
+    unheardMark(stops.get(kid.key)),
+  );
 }
 
 /**
@@ -1797,7 +1980,32 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
     if (!mine(request, session)) return notMine(id);
     watched = [session];
   }
+  const owner = callerOf(request);
+  // A message from the user that the caller's agent has not taken yet
+  // waits behind this call: it goes first.
+  const calling = callingSession(request);
+  if (calling !== null && calling.kind === "integrated" && userWaiting(calling.key))
+    return said(USER_WROTE);
+  cut.delete(owner);
+  conductor.listening[owner] = (conductor.listening[owner] ?? 0) + 1;
+  try {
+    return await holdWait(request, owner, watched, seconds);
+  } finally {
+    const left = (conductor.listening[owner] ?? 1) - 1;
+    if (left > 0) conductor.listening[owner] = left;
+    else delete conductor.listening[owner];
+  }
+}
 
+/** A wait once it is held: until one of the sessions watched comes to
+    rest, the seconds run out, the agent gives up on it, or the user's
+    message ends it. */
+async function holdWait(
+  request: ConductRequest,
+  owner: string,
+  watched: Session[],
+  seconds: number,
+): Promise<Answered> {
   // What each one was doing when the wait began: what is worth answering
   // is a change from here, so a session at work is waited out rather than
   // answered for at once. One that stopped without the caller being told
@@ -1815,15 +2023,24 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
   const callerAt = caller?.key ?? null;
   let reported: string | null = null;
   let abandoned = false;
+  let interrupted: string | null = null;
   let ending: (() => void) | null = null;
-  waiting.set(request.id, () => {
-    abandoned = true;
-    ending?.();
+  waiting.set(request.id, {
+    caller: owner,
+    watched: watched.map((session) => session.key),
+    abandon: () => {
+      abandoned = true;
+      ending?.();
+    },
+    interrupt: (answer) => {
+      interrupted = answer;
+      ending?.();
+    },
   });
   const happened = await settles<string | null>(
     (settle) => {
       ending = () => settle(null);
-      if (abandoned) {
+      if (abandoned || interrupted !== null) {
         settle(null);
         return;
       }
@@ -1848,10 +2065,9 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
           settle(`Session ${name} was closed.`);
           return;
         }
-        const resting = !isLive(session)
-          ? `Session ${name} ${stateOf(session)}. ${lastLine(session)}`
-          : session.needs === "permission"
-            ? `Session ${name} is asking for permission. ${lastLine(session)}`
+        const resting =
+          !isLive(session) || session.needs === "permission"
+            ? restText(session, name)
             : null;
         if (resting !== null) {
           if (untold(session)) {
@@ -1866,7 +2082,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
         if (session.working) worked.set(key, true);
         else if (worked.get(key) === true || untold(session)) {
           reported = key;
-          settle(`Session ${name} stopped working. ${lastLine(session)}`);
+          settle(restText(session, name));
           return;
         }
       }
@@ -1880,6 +2096,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
   );
   waiting.delete(request.id);
   if (abandoned) return said("");
+  if (interrupted !== null) return said(interrupted);
   if (reported !== null) tell(reported);
   if (happened === null)
     return said(
@@ -1926,11 +2143,29 @@ export function oneLine(text: string): string {
   return printable(text.replace(/[\r\n]+/g, " ")).trim();
 }
 
-/** What a session last left for its row. */
+/** What a session at rest is doing, in the words a wait answers with: it
+    ended, it is asking for permission, or it stopped working. Its name goes
+    on one line, as its last line does. */
+function restText(session: Session, called: string): string {
+  const name = oneLine(called);
+  if (!isLive(session))
+    return `Session ${name} ${stateOf(session)}. ${lastLine(session)}`;
+  if (session.needs === "permission")
+    return `Session ${name} is asking for permission. ${lastLine(session)}`;
+  return `Session ${name} stopped working. ${lastLine(session)}`;
+}
+
+/** The most of a session's last line a tool answers with, in characters,
+    as the core cuts a line left on a row. */
+export const LINE_CAP = 120;
+
+/** What a session last left for its row: its own words, on one line and
+    cut short, so they read as a line of the answer and nothing more. */
 function lastLine(session: Session): string {
-  return session.note === null
-    ? "It has left no line."
-    : `Its last line: ${session.note}`;
+  const line = session.note === null ? "" : oneLine(session.note);
+  if (line === "") return "It has left no line.";
+  const chars = [...line];
+  return `Its last line: ${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}`;
 }
 
 /** The id of the session that started this one, when one did: the row's
@@ -2223,4 +2458,6 @@ export function resetConductor() {
   reserved.clear();
   waiting.clear();
   given.clear();
+  cut.clear();
+  conductor.listening = {};
 }
