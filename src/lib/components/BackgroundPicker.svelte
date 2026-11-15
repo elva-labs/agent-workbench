@@ -968,3 +968,12 @@
     box-shadow: 0 0 0 1px var(--accent);
   }
 </style>
+
+  /* The thumb already has an accent edge at rest, so focus rings it again,
+     square and a step off. */
+  :global(:root:not([data-look])) input[type="range"]:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 1px var(--accent),
+      0 0 0 3px var(--surface),
+      0 0 0 4px var(--accent);
+  }
