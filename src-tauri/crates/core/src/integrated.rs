@@ -3488,6 +3488,53 @@ mod tests {
     }
 
     #[test]
+    fn the_snapshot_holds_the_limits_last_told() {
+        let limits = |percent: f64| Event::Limits {
+            agent: "claude-code".into(),
+            plan: Some("max".into()),
+            windows: vec![
+                LimitWindow {
+                    kind: LimitKind::Session,
+                    model: None,
+                    percent,
+                    resets_at: Some(1_794_738_000),
+                    severity: Some(LimitSeverity::Normal),
+                },
+                LimitWindow {
+                    kind: LimitKind::WeeklyScoped,
+                    model: Some("Fable".into()),
+                    percent: 100.0,
+                    resets_at: None,
+                    severity: Some(LimitSeverity::Reached),
+                },
+            ],
+            taken_at: 1_794_730_000,
+        };
+        let (tracker, _) = tracked(vec![turn(&[])]);
+        assert!(tracker.snapshot().limits.is_none(), "none before any");
+        let (tracker, out) = tracked(vec![limits(10.0), limits(20.0)]);
+        let told: Vec<&Event> = out
+            .iter()
+            .filter(|event| matches!(event, Event::Limits { .. }))
+            .collect();
+        assert_eq!(told, [&limits(10.0), &limits(20.0)], "each goes out");
+        assert_eq!(tracker.snapshot().limits, Some(limits(20.0)));
+        assert_eq!(tracker.state(), SessionState::Idle, "and changes no state");
+        assert_eq!(
+            serde_json::to_value(tracker.snapshot()).unwrap()["limits"],
+            serde_json::json!({
+                "type": "limits", "agent": "claude-code", "plan": "max", "takenAt": 1_794_730_000,
+                "windows": [
+                    {"kind": "session", "model": null, "percent": 20.0,
+                     "resetsAt": 1_794_738_000, "severity": "normal"},
+                    {"kind": "weeklyScoped", "model": "Fable", "percent": 100.0,
+                     "resetsAt": null, "severity": "reached"}
+                ]
+            })
+        );
+    }
+
+    #[test]
     fn a_setting_settled_without_the_agent_answers_after_its_events() {
         let gate = Arc::new(Gate::default());
         let bench = Bench::into(fake(), gate.clone());

@@ -750,6 +750,80 @@ fn unknown_lines_are_skipped_and_unhandled_requests_refused() {
 }
 
 #[test]
+fn the_account_s_limits_are_read_when_ready_and_after_a_turn_and_move_with_its_responses() {
+    let scenario = [
+        READY,
+        r#"expect "subtype":"get_usage""#,
+        r#"reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"subscription_type":"max","rate_limits_available":true,"rate_limits":{"seven_day_opus":null,"limits":[{"kind":"session","group":"session","percent":11,"severity":"normal","resets_at":"2026-11-15T10:20:00+00:00","scope":null,"is_active":false},{"kind":"weekly_all","group":"weekly","percent":37,"severity":"normal","resets_at":"2026-11-19T18:00:00+00:00","scope":null,"is_active":true}]}}}}"#,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","utilization":0.8,"resetsAt":1794738000},"uuid":"r1","session_id":"s"}"#,
+        DONE,
+        // A read that fails says nothing, and the session goes on.
+        r#"expect "subtype":"get_usage""#,
+        r#"reply {"type":"control_response","response":{"subtype":"error","request_id":"@ID@","error":"get_usage is not supported in this context"}}"#,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        r#"say {"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"still here"}]},"parent_tool_use_id":null}"#,
+        DONE,
+        "drain",
+    ]
+    .join("\n");
+    let h = start("limits", &scenario);
+    let read = h.until_type("limits");
+    let read = read.last().unwrap();
+    assert_eq!(read["agent"], "claude-code");
+    assert_eq!(read["plan"], "max");
+    assert_eq!(
+        read["windows"],
+        json!([
+            {"kind": "session", "model": null, "percent": 11.0, "resetsAt": 1_794_738_000_u64,
+             "severity": "normal"},
+            {"kind": "weekly", "model": null, "percent": 37.0, "resetsAt": 1_795_111_200_u64,
+             "severity": "normal"}
+        ])
+    );
+    let taken_at = read["takenAt"].as_u64().unwrap();
+    assert!(taken_at.abs_diff(now_seconds()) < 60);
+    // A window that comes late has them too, as the event told them.
+    let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
+    let mut told = read.clone();
+    told.as_object_mut().unwrap().remove("id");
+    assert_eq!(late["limits"], told);
+
+    h.send("how much is left");
+    let events = h.until_type("turnEnded");
+    let moved = events.iter().rfind(|e| e["type"] == "limits").unwrap();
+    assert_eq!(moved["windows"][0]["percent"], 80.0);
+    assert_eq!(moved["windows"][0]["severity"], "warning");
+    assert_eq!(moved["windows"][1]["percent"], 37.0, "the week as read");
+    assert_eq!(moved["plan"], "max");
+
+    h.send("are you there");
+    let events = h.until(|e| e["type"] == "text" && e["text"] == "still here");
+    h.until_type("turnEnded");
+    assert!(!kinds(&events).contains(&"error".to_string()), "{events:?}");
+    let told: Vec<Value> = h
+        .events()
+        .into_iter()
+        .filter(|e| e["type"] == "limits")
+        .collect();
+    assert_eq!(told.len(), 2, "nothing from the read that failed");
+    let late = serde_json::to_value(snapshot(&h.sessions, &h.id).unwrap()).unwrap();
+    assert_eq!(late["limits"]["windows"][0]["percent"], 80.0);
+    let reads = h
+        .stdin()
+        .into_iter()
+        .filter(|line| line["request"]["subtype"] == "get_usage")
+        .inspect(|line| assert_eq!(line["request"]["skip_behaviors"], true))
+        .count();
+    assert!(reads >= 2, "read when ready and after the first turn");
+    h.stop();
+}
+
+#[test]
 fn a_process_that_dies_mid_turn_fails_the_turn_and_says_so() {
     let scenario = [
         READY,
