@@ -204,6 +204,10 @@ export interface Ask {
   login: Login | null;
   /** What the question says of the account, when it names it. */
   named: Named | null;
+  /** The call has no id and may come from a session another session
+      started, which may not start any. No standing answer is used or
+      given, and the question says so. */
+  unsure: boolean;
 }
 
 /** What a started session runs on: the account, by name, null for the
@@ -666,10 +670,19 @@ function run(request: ConductRequest): Answered | Promise<Answered> {
 /** Keeps a refused start where the user can see it, for a caller that
     follows a workflow, and clears it once a start goes through. */
 function noteRefusal(request: ConductRequest, error: string | null) {
-  const row = callingSession(request);
+  const row =
+    callingSession(request) ??
+    (request.session === null ? followingHere(request.cwd) : null);
   if (row === null) return;
   if (error === null) delete conductor.refusals[row.key];
   else if (row.workflow !== null) conductor.refusals[row.key] = error;
+}
+
+/** The one untold session where a call comes from that follows a workflow,
+    when there is exactly one. */
+function followingHere(cwd: string): Session | null {
+  const rows = untoldHere(cwd).filter((row) => row.workflow !== null);
+  return rows.length === 1 ? rows[0] : null;
 }
 
 /** Puts away the refusal shown on a caller's row. */
@@ -1413,6 +1426,17 @@ function callerFlow(
   return { workflow: null };
 }
 
+const ONE_LEVEL =
+  "A session that another session started cannot start sessions of its own.";
+
+/** Whether a call with no id, that cannot be placed, may come from a
+    session another session started while others there were not: the
+    standing answer of its directory is not one the call can use or give. */
+function maybeStarted(request: ConductRequest): boolean {
+  if (request.session !== null || callingSession(request) !== null) return false;
+  return untoldHere(request.cwd).some((row) => startedFor(row.key) !== null);
+}
+
 /** Why a caller may not start another session right now, when it may not:
     it has as many running as one may, or it was itself started by one. */
 function roomFor(request: ConductRequest): Answered | null {
@@ -1421,9 +1445,22 @@ function roomFor(request: ConductRequest): Answered | null {
       `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
     );
   const calling = callingSession(request);
-  if (calling !== null && startedFor(calling.key) !== null)
+  if (request.session !== null) {
+    if (calling !== null && startedFor(calling.key) !== null)
+      return refused(ONE_LEVEL);
+    return null;
+  }
+  if (calling !== null) {
+    if (startedFor(calling.key) !== null)
+      return refused(
+        `The workbench takes this call for ${label(calling)}, which another session started, in this directory, and a session that another started cannot start sessions of its own. If you are not that session, call from a directory of your own.`,
+      );
+    return null;
+  }
+  const here = untoldHere(request.cwd);
+  if (here.length > 1 && here.every((row) => startedFor(row.key) !== null))
     return refused(
-      "A session that another session started cannot start sessions of its own.",
+      "The workbench cannot tell which session in this directory is calling, and every one that could be was started by another session, which cannot start sessions of its own. If you are not one of them, call from a directory of your own.",
     );
   return null;
 }
@@ -1976,15 +2013,18 @@ function askUser(
   named: Named | null,
   round: Beyond | null = null,
 ): Promise<Choice> {
+  const unsure = maybeStarted(request);
   if (
     round === null &&
     login !== null &&
+    !unsure &&
     allowed.has(allowance(callerOf(request), project, login))
   )
     return Promise.resolve("allow");
   const session = callingSession(request);
   const ask: Ask = {
     request,
+    unsure,
     caller: session === null ? "A session" : label(session),
     project,
     prompt: prompt.split("\n")[0],
@@ -2016,6 +2056,7 @@ function answerAsk(choice: Choice) {
   if (
     ask !== null &&
     choice === "allow" &&
+    !ask.unsure &&
     ask.round === null &&
     ask.login !== null
   )

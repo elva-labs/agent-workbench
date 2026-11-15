@@ -620,29 +620,75 @@ describe("starting a session", () => {
       return row;
     }
 
-    it("is refused as a told one is, and its starter's count holds", async () => {
+    it("is refused, and says which session the call is taken for", async () => {
       for (let n = 0; n < CAP - 1; n += 1) own(A, `pty-${n}`, `sid-${n}`, "caller-1");
       const child = untoldChild("caller-1");
-      expect(startedBy("caller-1").filter((row) => row.status !== "exited")).toHaveLength(CAP);
       await handle(call("start", { project: A, prompt: "Deeper" }));
-      const told = answers[answers.length - 1].error;
+      const told = last().error;
+      expect(told).toContain(`takes this call for ${label(child)}`);
       expect(told).toContain("cannot start sessions of its own");
+      expect(told).toContain("call from a directory of your own");
       expect(conductor.asking).toBeNull();
-      // The same words a told one gets.
+      // A told session gets the rule in its own words.
       child.id = "child-1";
       await handle(call("start", { project: A, prompt: "Deeper" }, { session: "child-1" }));
-      expect(last().error).toBe(told);
-      expect(startedBy("caller-1")).toHaveLength(CAP);
+      expect(last().error).toBe(
+        "A session that another session started cannot start sessions of its own.",
+      );
+      expect(forProject(A)).toHaveLength(CAP);
     });
 
-    it("is not placed where two untold sessions run", async () => {
+    it("is refused where every untold session there was started by another", async () => {
       untoldChild("caller-1");
+      untoldChild("caller-2");
+      await handle(call("start", { project: A, prompt: "Fix it" }));
+      expect(last().error).toContain("every one that could be was started by another session");
+      expect(conductor.asking).toBeNull();
+    });
+
+    it("is asked about every time where only some untold sessions there were started by another", async () => {
       untoldChild("caller-1");
-      const answering = handle(call("start", { project: A, prompt: "Fix it" }));
-      expect(conductor.asking).not.toBeNull();
+      const top = create(A, null, "codex", null);
+      started(top.key, "pty-top", null);
+      // The folder's standing answer, which the unplaced call cannot use.
+      const first = handle(call("start", { project: A, prompt: "One" }));
+      expect(conductor.asking?.unsure).toBe(true);
+      const card = render(ConductAsk);
+      expect(card.getByTestId("conduct-unsure")).toHaveTextContent(
+        "This call may come from a session another session started.",
+      );
+      expect(card.queryByTestId("conduct-allow")).toBeNull();
+      expect(card.getByTestId("conduct-once")).toHaveTextContent("Allow once");
+      card.unmount();
+      allow();
+      await settle();
+      started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+      flushSync();
+      await first;
+      expect(last().error).toBeNull();
+      // Allowing did not record an answer: the next call is asked too.
+      const second = handle(call("start", { project: A, prompt: "Two" }));
+      expect(conductor.asking?.unsure).toBe(true);
+      refuse();
+      await second;
+    });
+
+    it("is asked about every time even where the folder has a standing answer", async () => {
+      // The answer is given while the top session is the only one there.
+      const top = create(A, null, "codex", null);
+      started(top.key, "pty-top", null);
+      const placed = handle(call("start", { project: A, prompt: "One" }));
+      allow();
+      await settle();
+      started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+      flushSync();
+      await placed;
+      // Then a session another started comes up beside it.
+      untoldChild("caller-1");
+      const answering = handle(call("start", { project: A, prompt: "Two" }));
+      expect(conductor.asking?.unsure).toBe(true);
       refuse();
       await answering;
-      expect(last().error).toContain("did not allow");
     });
   });
 
@@ -2621,6 +2667,9 @@ describe("starting in a workflow's shape", () => {
     await handle(call("start", { project: B, prompt: "Go", step: "Work" }));
     expect(conductor.asking).toBeNull();
     expect(last().error).toBe(UNPLACED);
+    // The refusal is shown on the one row there that follows a workflow.
+    expect(conductor.refusals[codex.key]).toBe(UNPLACED);
+    expect(conductor.refusals[mate.key]).toBeUndefined();
     // Alone in its directory it is the caller, held to its workflow.
     close(mate.key);
     await handle(call("start", { project: B, prompt: "Go" }));
