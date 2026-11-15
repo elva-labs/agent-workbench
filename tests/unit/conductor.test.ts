@@ -814,6 +814,20 @@ describe("the account a started session runs under", () => {
       expect(last().content).toContain(`in ${A}, under the Work account.`);
     });
 
+    it("is the untold session where a told one runs beside it", async () => {
+      // The told session runs under a chosen account, the untold one under
+      // the project's. A call with no id cannot be the told one's.
+      accounts.overrides[A] = "Home";
+      caller(A, "Work");
+      untold(A, "Home");
+      expect(await question({}, { session: null })).toBeNull();
+      const row = await start({}, { session: null });
+      expect(row.account).toBe("Home");
+      expect(last().content).toContain(
+        `Started session sid-1 in ${A}. It has the prompt.`,
+      );
+    });
+
     it("cannot be placed where two sessions run, and gets the project's, said", async () => {
       accounts.overrides[A] = "Home";
       untold(A, "Work");
