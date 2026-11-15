@@ -15,13 +15,6 @@ use rusqlite::{Connection, OpenFlags};
 
 use crate::transcripts::{tidy, Transcript};
 
-/// Where Codex keeps its state: `CODEX_HOME`, or `.codex` under the home.
-pub fn home(user_home: &Path) -> PathBuf {
-    std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| user_home.join(".codex"))
-}
-
 /// The newest state database by schema number: Codex bumps the number when
 /// the schema moves, and leaves the old file behind.
 fn state_db(codex_home: &Path) -> Option<PathBuf> {

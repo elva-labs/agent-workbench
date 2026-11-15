@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::adapter::CLAUDE_CONFIG_VAR;
+use crate::adapter::{CLAUDE_CONFIG_VAR, CODEX_HOME_VAR};
 
 /// The directories of one account, as the window gives them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,16 +41,16 @@ pub fn expand(home: &Path, text: &str) -> PathBuf {
     PathBuf::from(text)
 }
 
-/// The configuration directory a Claude Code process started with `env`
-/// runs with when no account names one: the absolute `CLAUDE_CONFIG_DIR` in
-/// that environment, `~` standing for the home. A relative value is not one:
-/// the agent resolves it against its working directory, and the workbench
-/// does not follow it there. Everything that reads or
-/// writes the agent's own state asks here, so the app's environment, which
-/// differs from a login shell's when it is launched from the Dock, is never
-/// the one consulted.
-fn launch_dir(home: &Path, env: &HashMap<String, String>) -> Option<PathBuf> {
-    env.get(CLAUDE_CONFIG_VAR)
+/// The directory an agent process started with `env` runs with when no
+/// account names one: the absolute value of `var` in that environment, `~`
+/// standing for the home. An empty value is none, as the agents treat it. A
+/// relative value is not one: the agent resolves it against its working
+/// directory, and the workbench does not follow it there. Everything that
+/// reads or writes an agent's own state asks here, so the app's environment,
+/// which differs from a login shell's when it is launched from the Dock, is
+/// never the one consulted.
+fn launch_dir(home: &Path, env: &HashMap<String, String>, var: &str) -> Option<PathBuf> {
+    env.get(var)
         .map(|dir| expand(home, dir))
         .filter(|dir| dir.is_absolute())
 }
@@ -61,7 +61,7 @@ fn launch_dir(home: &Path, env: &HashMap<String, String>) -> Option<PathBuf> {
 pub fn claude_dir(home: &Path, dir: Option<&str>, env: &HashMap<String, String>) -> PathBuf {
     match dir.filter(|dir| !dir.trim().is_empty()) {
         Some(dir) => expand(home, dir),
-        None => launch_dir(home, env).unwrap_or_else(|| home.join(".claude")),
+        None => launch_dir(home, env, CLAUDE_CONFIG_VAR).unwrap_or_else(|| home.join(".claude")),
     }
 }
 
@@ -72,7 +72,7 @@ pub fn claude_dir(home: &Path, dir: Option<&str>, env: &HashMap<String, String>)
 pub fn claude_json(home: &Path, dir: Option<&str>, env: &HashMap<String, String>) -> PathBuf {
     match dir.filter(|dir| !dir.trim().is_empty()) {
         Some(dir) => expand(home, dir).join(CLAUDE_STATE),
-        None => match launch_dir(home, env) {
+        None => match launch_dir(home, env, CLAUDE_CONFIG_VAR) {
             Some(dir) => dir.join(CLAUDE_STATE),
             None => home.join(CLAUDE_STATE),
         },
@@ -81,11 +81,12 @@ pub fn claude_json(home: &Path, dir: Option<&str>, env: &HashMap<String, String>
 
 const CLAUDE_STATE: &str = ".claude.json";
 
-/// Where Codex keeps its state: the home given, or its own.
-pub fn codex_home(home: &Path, dir: Option<&str>) -> PathBuf {
+/// Where Codex keeps its state: the account's home, else the one a process
+/// started with `env` runs with, else `.codex` under the home.
+pub fn codex_home(home: &Path, dir: Option<&str>, env: &HashMap<String, String>) -> PathBuf {
     match dir.filter(|dir| !dir.trim().is_empty()) {
         Some(dir) => expand(home, dir),
-        None => crate::codex::home(home),
+        None => launch_dir(home, env, CODEX_HOME_VAR).unwrap_or_else(|| home.join(".codex")),
     }
 }
 
@@ -105,10 +106,10 @@ pub fn claude_jsons(home: &Path, accounts: &[Dirs], env: &HashMap<String, String
 
 /// Codex's home for the agent's own account and for each account given,
 /// each once.
-pub fn codex_homes(home: &Path, accounts: &[Dirs]) -> Vec<PathBuf> {
-    let mut paths = vec![codex_home(home, None)];
+pub fn codex_homes(home: &Path, accounts: &[Dirs], env: &HashMap<String, String>) -> Vec<PathBuf> {
+    let mut paths = vec![codex_home(home, None, env)];
     for account in accounts {
-        let path = codex_home(home, account.codex.as_deref());
+        let path = codex_home(home, account.codex.as_deref(), env);
         if !paths.contains(&path) {
             paths.push(path);
         }
@@ -145,8 +146,9 @@ mod tests {
             claude_json(home, Some("~/.claude-work"), &none),
             home.join(".claude-work").join(".claude.json")
         );
+        assert_eq!(codex_home(home, None, &none), home.join(".codex"));
         assert_eq!(
-            codex_home(home, Some("~/.codex-work")),
+            codex_home(home, Some("~/.codex-work"), &none),
             home.join(".codex-work")
         );
     }
@@ -173,7 +175,7 @@ mod tests {
                 home.join(".claude-work").join(".claude.json")
             ]
         );
-        let homes = codex_homes(home, &accounts);
+        let homes = codex_homes(home, &accounts, &none);
         assert_eq!(homes.len(), 2);
         assert_eq!(homes[1], home.join(".codex-work"));
     }
@@ -213,6 +215,38 @@ mod tests {
                 shell.join(".claude.json"),
                 home.join(".claude-work").join(".claude.json")
             ]
+        );
+    }
+
+    #[test]
+    fn the_launch_environment_names_codexs_home() {
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let home = &Path::new(root).join("home").join("ada");
+        let shell = Path::new(root).join("srv").join("shell-codex");
+        let named = |dir: &str| HashMap::from([(CODEX_HOME_VAR.to_string(), dir.to_string())]);
+        let env = named(&shell.to_string_lossy());
+        assert_eq!(codex_home(home, None, &env), shell);
+        assert_eq!(codex_home(home, Some(""), &env), shell);
+        let tilde = named("~/.codex-shell");
+        assert_eq!(codex_home(home, None, &tilde), home.join(".codex-shell"));
+
+        // An empty or relative value is no home at all.
+        for unset in [named(""), named("relative")] {
+            assert_eq!(codex_home(home, None, &unset), home.join(".codex"));
+        }
+
+        // An account's home wins over the environment's.
+        assert_eq!(
+            codex_home(home, Some("~/.codex-work"), &env),
+            home.join(".codex-work")
+        );
+        let accounts = [Dirs {
+            claude: None,
+            codex: Some("~/.codex-work".into()),
+        }];
+        assert_eq!(
+            codex_homes(home, &accounts, &env),
+            vec![shell, home.join(".codex-work")]
         );
     }
 }

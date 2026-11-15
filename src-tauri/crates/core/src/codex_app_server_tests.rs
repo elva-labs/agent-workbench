@@ -2851,7 +2851,7 @@ fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
     let folder = base.join("work");
     std::fs::create_dir_all(home.join(".codex")).unwrap();
     std::fs::create_dir_all(&shell).unwrap();
-    std::fs::create_dir_all(folder.join("relative-codex")).unwrap();
+    std::fs::create_dir_all(&folder).unwrap();
     let key = dunce::canonicalize(&folder).unwrap();
     let trusting = format!(
         "[projects.'{}']\ntrust_level = \"trusted\"\n",
@@ -2875,10 +2875,8 @@ fn trust_is_read_and_written_in_the_home_the_codex_process_runs_with() {
     let empty = HashMap::from([("CODEX_HOME".to_string(), String::new())]);
     assert!(CODEX_APP_SERVER.trusted(&home, None, &empty, &folder));
 
-    // A relative one is taken from the folder the process starts in.
+    // A relative one is no home at all: the user's `.codex` stands.
     let relative = named(Path::new("relative-codex"));
-    assert!(!CODEX_APP_SERVER.trusted(&home, None, &relative, &folder));
-    std::fs::write(folder.join("relative-codex").join("config.toml"), &trusting).unwrap();
     assert!(CODEX_APP_SERVER.trusted(&home, None, &relative, &folder));
 
     // An account's home wins over the environment.

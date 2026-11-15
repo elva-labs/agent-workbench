@@ -434,7 +434,7 @@ pub fn trust_like(
     for claude in account::claude_jsons(home, accounts, env) {
         trust_claude(&claude, &from, &to)?;
     }
-    for codex in account::codex_homes(home, accounts) {
+    for codex in account::codex_homes(home, accounts, env) {
         trust_codex(&codex.join("config.toml"), &from, &to)?;
     }
     Ok(())
@@ -1866,6 +1866,40 @@ mod tests {
     }
 
     #[test]
+    fn a_worktrees_codex_trust_goes_to_the_home_the_launch_environment_names() {
+        let (home, project) = fixture("trust-launch-home");
+        let worktree = project.join(".claude").join("worktrees").join("fix");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let key = |path: &Path| {
+            dunce::canonicalize(path)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        };
+        let shell = home.join("shell-codex");
+        std::fs::create_dir_all(&shell).unwrap();
+        let env = HashMap::from([(
+            "CODEX_HOME".to_string(),
+            shell.to_string_lossy().to_string(),
+        )]);
+        let trusting = format!(
+            "[projects.'{}']\ntrust_level = \"trusted\"\n",
+            key(&project)
+        );
+        std::fs::write(shell.join("config.toml"), &trusting).unwrap();
+        let own = home.join(".codex");
+        std::fs::create_dir_all(&own).unwrap();
+        std::fs::write(own.join("config.toml"), &trusting).unwrap();
+
+        trust_like(&home, &project, &worktree, &[], &env).unwrap();
+        assert!(codex_trusts(&shell.join("config.toml"), &worktree));
+        assert!(
+            !codex_trusts(&own.join("config.toml"), &worktree),
+            "nothing under the user's own home"
+        );
+    }
+
+    #[test]
     fn a_worktree_is_trusted_where_its_project_is_and_nowhere_else() {
         let (home, project) = fixture("trust");
         let worktree = project.join(".claude").join("worktrees").join("fix");
@@ -1881,7 +1915,9 @@ mod tests {
         // missing Codex config is left missing.
         trust_like(&home, &project, &worktree, &[], &HashMap::new()).unwrap();
         assert!(!claude_json_path(&home).exists());
-        assert!(!crate::codex::home(&home).join("config.toml").exists());
+        assert!(!account::codex_home(&home, None, &HashMap::new())
+            .join("config.toml")
+            .exists());
 
         // The project is trusted with both: the worktree is too, and the
         // rest of each file stands.
@@ -1894,7 +1930,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let codex = crate::codex::home(&home).join("config.toml");
+        let codex = account::codex_home(&home, None, &HashMap::new()).join("config.toml");
         std::fs::create_dir_all(codex.parent().unwrap()).unwrap();
         std::fs::write(
             &codex,

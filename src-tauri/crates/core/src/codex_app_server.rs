@@ -223,7 +223,7 @@ impl Protocol for CodexAppServer {
         env: &HashMap<String, String>,
         folder: &Path,
     ) -> bool {
-        hook::codex_trusts(&config_file(home, config_dir, env, folder), folder)
+        hook::codex_trusts(&config_file(home, config_dir, env), folder)
     }
 
     fn trust(
@@ -233,28 +233,16 @@ impl Protocol for CodexAppServer {
         env: &HashMap<String, String>,
         folder: &Path,
     ) -> Result<(), String> {
-        hook::codex_trust(&config_file(home, config_dir, env, folder), folder)
+        hook::codex_trust(&config_file(home, config_dir, env), folder)
     }
 }
 
 /// Codex's configuration, where the trust it was given is kept, in the home
-/// a Codex process started with `env` in `folder` runs with: the account's,
-/// else the one `CODEX_HOME` in that environment names, from the folder
-/// when it is relative, else `.codex` in the user's home.
-fn config_file(
-    home: &Path,
-    config_dir: Option<&Path>,
-    env: &HashMap<String, String>,
-    folder: &Path,
-) -> PathBuf {
-    let codex_home = match config_dir {
-        Some(dir) => dir.to_path_buf(),
-        None => match env.get(CODEX_HOME_VAR).filter(|dir| !dir.is_empty()) {
-            Some(dir) => folder.join(dir),
-            None => home.join(".codex"),
-        },
-    };
-    codex_home.join("config.toml")
+/// a Codex process started with `env` runs with: the account's, else the one
+/// `CODEX_HOME` in that environment names, else `.codex` in the user's home.
+fn config_file(home: &Path, config_dir: Option<&Path>, env: &HashMap<String, String>) -> PathBuf {
+    let dir = config_dir.map(|dir| dir.to_string_lossy().to_string());
+    crate::account::codex_home(home, dir.as_deref(), env).join("config.toml")
 }
 
 const NOT_LOGGED_IN: &str =

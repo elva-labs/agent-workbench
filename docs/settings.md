@@ -296,8 +296,9 @@ the settings, by project path.
 An account is a login kept apart from the others. Claude Code keeps its
 login, its settings and its past sessions in a configuration directory,
 `~/.claude` unless `CLAUDE_CONFIG_DIR` names another; Codex keeps its own
-in a home, `~/.codex` unless `CODEX_HOME` names another. An account names
-a directory of each, so a work login and a personal one can both be on the
+in a home, `~/.codex` unless `CODEX_HOME` names another, as an absolute
+path in the environment the agent is started with. An account names a
+directory of each, so a work login and a personal one can both be on the
 machine and a session run under either. The agents' own directories are
 the account every setup has, called Default where a name is shown, and a
 setup with no other account named is what it always was.
