@@ -29,6 +29,9 @@ edge with tabs past it fades. The × on a tab, a middle-click, Close in
 the File menu or <kbd>Cmd</kbd><kbd>W</kbd> closes it, and the tab beside it
 comes to the front.
 
+The row stays with no file open, and a double-click on it where no tab is
+starts an [untitled file](#untitled-files).
+
 ## The editor
 
 A plain editor: line numbers, the line the cursor is on, undo, and find in
@@ -68,6 +71,50 @@ the disk still holds that. Reading and writing go through the core, so a
 project on another machine is edited where it is; a write that fails part
 way leaves the old file whole, a read-only file is not written, and nothing
 in `.git` is. A save that cannot be made says why over that file's editor.
+
+## Untitled files
+
+A file can be started before it has a name, with <kbd>Cmd</kbd><kbd>N</kbd>,
+New File in the File menu, New untitled file in the command palette, or a
+double-click on the tab row where no tab is. From agent mode the window
+flips to the editor first. The file opens empty in a tab of its own after
+the one in front, with the keyboard in it, called Untitled, then Untitled 2
+and so on, the lowest number no open untitled file has. Its foot says it is
+plain text and not saved yet.
+
+Nothing is written until it is saved, and nothing outside the editor sees
+it: no tree lists it, nothing watches it, and with it in front the viewer's
+record, which the agent's selection tool reads, names no file. The agent
+cannot read it until it is saved. It is edited and searched like any file,
+with the edit view only, and carries the dot once something is typed in it.
+One with nothing typed closes without a question; one with text asks as any
+unsaved file does.
+
+An untitled file belongs to the tree it was started in, the project's own
+or the worktree of the session beside it, and is saved there whichever
+project is on screen when it is saved.
+
+Saving it, by <kbd>Cmd</kbd><kbd>S</kbd>, Save in the File menu or Save and
+close in a question, asks for a path first, in a field over the editor. The
+field names the project and holds a path from its top: the folder the
+tree's cursor was in when the file was started, then its name, selected so
+that typing replaces it. <kbd>Enter</kbd> or Save writes it, slashes making
+the folders on the way, and <kbd>Esc</kbd> or Cancel puts the field away
+with the file still untitled. The field refuses what the tree's name field
+refuses, a path with no name after its last slash, and a path that leaves
+the project: an absolute one, one from the home folder, or one that steps
+up out of the top. A path that holds a file already asks whether to
+replace it, and one open with unsaved edits is refused until they are
+saved or dropped. The field holds the keyboard as a question in a strip
+does, so <kbd>Cmd</kbd><kbd>W</kbd> leaves it be. It is the same on every
+platform and for a project on another machine.
+
+Once written it is that file: a kept tab on it in the untitled file's
+place, with its text, its cursor and its undo history, the tree showing it
+and the foot naming its language by its name. Written over a file that was
+open with nothing unsaved, it takes that file's place: the file's own tab
+beside it closes, other sessions' tabs on the file show what was written,
+and undo goes back through what was typed in the untitled file.
 
 ## Changes on disk
 
@@ -113,6 +160,15 @@ changed on disk or could not be written, nothing is closed: that file comes
 forward in the editor with its bar or why, and the status bar says what was
 stopped.
 
+An untitled file with text is asked about in the same way. Save and close
+asks for its path, and closes it once written. Save all writes the files
+that have names, then asks each untitled file's path in turn with that file
+in front, and closes or quits once all are written; putting a field away
+stops it there, and the status bar says so. An untitled file from another
+session's tabs is shown beside the session on screen while its path is
+asked, and its tab goes from there once it is written. Untitled files are
+not kept across a restart, since the editor reopens no tabs.
+
 The core holds the close or the quit while the window says something
 would be lost, and takes the window's question as heard only once it is
 drawn; if it is not drawn soon, the close or the quit goes through rather
@@ -123,23 +179,24 @@ tab with the only copy of unsaved edits to the tabs shown next.
 
 ## The File menu
 
-On macOS a File menu holds New File, New Shell, Save and Close, each
-showing and answering the chord its action has in the
+On macOS a File menu holds New File, New File in Tree, New Shell, Save and
+Close, each showing and answering the chord its action has in the
 [chord table](focus-model.md): move a chord there and the menu's moves with
-it. Save is greyed out outside editor mode, or without a file in front to
-save, and New File and New Shell without a project. Close closes what is in
-front, as its chord does, and is named for it: Close Tab, Close Shell,
-Close Viewer or Close Window; see
+it. New File starts an [untitled file](#untitled-files), and New File in
+Tree names one in the tree first. Save is greyed out outside editor mode,
+or without a file in front to save, and the new files and New Shell without
+a project. Close closes what is in front, as its chord does, and is named
+for it: Close Tab, Close Shell, Close Viewer or Close Window; see
 [focus](focus-model.md#closing-what-is-in-front). Close Window in the Window
 menu is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd> and asks first the same
 way, and Settings shows the chord the table gives it; when the table gives
 Shift+Cmd+W to an action, Close Window shows no chord. On Windows and Linux
-the menu button at the top left holds the same four items, named the same.
+the menu button at the top left holds the same five items, named the same.
 
 ## New files and the row menu
 
 A new file is named in a field in place in the tree, from the button heading
-the tree's column, the row menu, New File, or
+the tree's column, the row menu, New File in Tree, or
 <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>, which flips to the editor from
 agent mode. It goes in the folder the tree's cursor is in, or at the top
 until the cursor has been put somewhere or a file chosen. Enter makes the

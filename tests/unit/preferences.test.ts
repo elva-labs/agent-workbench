@@ -39,6 +39,7 @@ const DEFAULTS: Settings = {
   integrated: [],
   inactiveAfter: "week",
   themes: {},
+  backgrounds: {},
   userStyles: false,
   notifications: true,
   chime: false,

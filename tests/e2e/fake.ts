@@ -516,6 +516,7 @@ export async function installFakeCore(
         integrated: [],
         inactiveAfter: "week",
         themes: {},
+        backgrounds: {},
         userStyles: false,
         notifications: true,
         chime: false,
@@ -627,6 +628,8 @@ export async function installFakeCore(
           settings: Parameters<FakeIntegrated["configure"]>[1],
         ) => integrated().configure(id, settings),
         integratedSnapshot: async (id: string) => integrated().snapshot(id),
+        integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) =>
+          integrated().history(options),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],
@@ -1373,7 +1376,7 @@ export async function installFakeCore(
           return { text, stamp: stampOf(text) };
         },
         fileWrite: async (
-          _root: string,
+          root: string,
           file: string,
           text: string,
           stamp: string | null,
@@ -1393,8 +1396,11 @@ export async function installFakeCore(
               return { written: false, stamp: stampOf(current) };
           }
           writeFile(file, text);
-          const w = window as unknown as { __writes?: unknown[] };
+          const w = window as unknown as { __writes?: unknown[]; __writeRoots?: string[] };
           (w.__writes ??= []).push({ file, text, stamp, overwrite });
+          // The tree each write went to, for a test of which project a file
+          // landed in: the fake keeps one tree for every project.
+          (w.__writeRoots ??= []).push(root);
           treeMoved();
           return { written: true, stamp: stampOf(text) };
         },
@@ -1500,6 +1506,9 @@ export async function installFakeCore(
                 throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
             } else if (["userStyles", "notifications", "chime"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
+            } else if (field === "backgrounds") {
+              if (typeof value !== "object" || value === null || Array.isArray(value))
+                throw new Error("backgrounds is a table of backgrounds by palette or theme");
             } else if (!["keys", "hooks", "accounts", "workflows", "themes"].includes(field)) {
               throw new Error(`there is no setting called ${field}`);
             }

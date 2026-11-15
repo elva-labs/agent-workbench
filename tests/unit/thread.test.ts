@@ -4,6 +4,9 @@ import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
 import { REPORTS_HEAD } from "$lib/instructions";
 import {
   asks,
+  clock,
+  dayName,
+  stamps,
   choiceLabel,
   choiceMeans,
   inputPath,
@@ -578,3 +581,45 @@ describe("what a read says of the messages a session was sent", () => {
     expect(said).toContain(`A message from session 1 waits for the turn: ${note}`);
   });
 });
+
+describe("the times a thread shows", () => {
+  // Wednesday 4 March 2026, at noon where the tests run.
+  const now = new Date(2026, 2, 4, 12, 0).getTime();
+  const at = (day: number, hour: number) => new Date(2026, 2, day, hour, 0).getTime();
+  const weekday = (time: number) => new Date(time).toLocaleDateString([], { weekday: "short" });
+
+  it("names a day as today, by its weekday within the week, and by its date further back", () => {
+    expect(dayName(at(4, 9), now)).toBe("today");
+    expect(dayName(at(3, 23), now)).toBe(weekday(at(3, 23)));
+    expect(dayName(at(26, 9) - 7 * 86_400_000, now)).not.toBe(weekday(at(26, 9) - 7 * 86_400_000));
+    const older = new Date(2026, 1, 20, 9).getTime();
+    expect(dayName(older, now)).toBe(
+      new Date(older).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
+    );
+    const lastYear = new Date(2025, 11, 20, 9).getTime();
+    expect(dayName(lastYear, now)).toContain("2025");
+  });
+
+  it("writes the first time of each day with the day, and none when every time is today's", () => {
+    expect(stamps([{ at: at(4, 9) }, { at: at(4, 10) }], now)).toEqual([clock(at(4, 9)), clock(at(4, 10))]);
+    expect(stamps([{ at: at(2, 9) }, { at: at(2, 10) }, { at: at(4, 9) }, { at: at(4, 10) }], now)).toEqual([
+      `${weekday(at(2, 9))} ${clock(at(2, 9))}`,
+      clock(at(2, 10)),
+      `today ${clock(at(4, 9))}`,
+      clock(at(4, 10)),
+    ]);
+  });
+
+  it("always names the day on a time marked with it, which then names that day for the rest", () => {
+    expect(stamps([{ at: at(2, 9) }, { at: at(4, 9), day: true }, { at: at(4, 10) }], now)).toEqual([
+      `${weekday(at(2, 9))} ${clock(at(2, 9))}`,
+      `today ${clock(at(4, 9))}`,
+      clock(at(4, 10)),
+    ]);
+    expect(stamps([{ at: at(4, 9), day: true }, { at: at(4, 10) }], now)).toEqual([
+      `today ${clock(at(4, 9))}`,
+      clock(at(4, 10)),
+    ]);
+  });
+});
+

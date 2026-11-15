@@ -62,10 +62,10 @@ const MODES: &[(&str, &str)] = &[
 const ASK_TOOL: &str = "AskUserQuestion";
 
 /// The tool that ends plan mode by asking to go ahead with a plan.
-const PLAN_TOOL: &str = "ExitPlanMode";
+pub(crate) const PLAN_TOOL: &str = "ExitPlanMode";
 
 /// The tool that keeps the agent's list of steps.
-const TODO_TOOL: &str = "TodoWrite";
+pub(crate) const TODO_TOOL: &str = "TodoWrite";
 
 /// The arguments that make `claude` a stream session. `-p` with stream-json
 /// both ways keeps it running for as long as stdin is open; `--verbose` is
@@ -471,7 +471,7 @@ fn text(value: &Value) -> Option<String> {
     value.as_str().map(str::to_string)
 }
 
-fn text_of(content: &Value) -> String {
+pub(crate) fn text_of(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
         Value::Array(blocks) => blocks
@@ -518,7 +518,7 @@ fn usage(value: &Value) -> Option<Usage> {
 }
 
 /// What sort of tool the agent's tool of this name is.
-fn tool_kind(name: &str) -> ToolKind {
+pub(crate) fn tool_kind(name: &str) -> ToolKind {
     match name {
         "Bash" | "BashOutput" | "KillShell" | "KillBash" | "PowerShell" => ToolKind::Command,
         "Edit" | "MultiEdit" | "Write" | "NotebookEdit" => ToolKind::Edit,
@@ -534,7 +534,7 @@ fn tool_kind(name: &str) -> ToolKind {
 /// The files a tool changed, from the structured result the agent gives
 /// beside the plain one: a new file with its content, or an edit with its
 /// patch.
-fn file_changes(result: &Value) -> Vec<FileChange> {
+pub(crate) fn file_changes(result: &Value) -> Vec<FileChange> {
     let Some(path) = result["filePath"].as_str() else {
         return vec![];
     };
@@ -571,7 +571,7 @@ fn file_changes(result: &Value) -> Vec<FileChange> {
 }
 
 /// The steps of the agent's list, from the list tool's input.
-fn steps(input: &Value) -> Vec<PlanStep> {
+pub(crate) fn steps(input: &Value) -> Vec<PlanStep> {
     input["todos"]
         .as_array()
         .into_iter()

@@ -34,7 +34,7 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
-  import { newFile } from "$lib/fileOps.svelte";
+  import { newFile, newUntitled } from "$lib/fileOps.svelte";
   import {
     activeTab,
     canSaveInFront,
@@ -391,12 +391,13 @@
   });
 
   // The File menu's items that cannot act are greyed out: Save without a
-  // file in front to save, New File and New Shell without a project. Close
-  // can always act: with nothing smaller in front it is the window's.
+  // file in front to save, the new files and New Shell without a project.
+  // Close can always act: with nothing smaller in front it is the window's.
   $effect(() => {
     void core()
       .menuEnabled({
         "file.new": workspace.active !== null,
+        "file.untitled": workspace.active !== null,
         "terminal.new": workspace.active !== null,
         "file.save": editing && canSaveInFront(),
         "file.close": true,
@@ -716,9 +717,13 @@
       e.preventDefault();
       return;
     }
-    // A new shell and the chord to the status bar move the keyboard too,
-    // and do nothing while a question in a strip holds it either.
-    if ((action.type === "newShell" || action.type === "focusStatus") && keyboardHeld()) {
+    // A new shell, a new untitled file and the chord to the status bar move
+    // the keyboard too, and do nothing while a question in a strip holds it
+    // either.
+    if (
+      (action.type === "newShell" || action.type === "newUntitled" || action.type === "focusStatus") &&
+      keyboardHeld()
+    ) {
       e.preventDefault();
       return;
     }
@@ -783,6 +788,9 @@
         break;
       case "newFile":
         newFile();
+        break;
+      case "newUntitled":
+        newUntitled();
         break;
       case "findInFile":
         findInFile();
@@ -861,6 +869,7 @@
   /** An item of the File menu: what its action does. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
+    else if (action === "file.untitled" && !palette.open && !keyboardHeld()) newUntitled();
     else if (action === "terminal.new" && !palette.open && !keyboardHeld()) newShell();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") void closeInFront();
@@ -917,6 +926,7 @@
   style:--controls-inset="{CONTROLS_INSET}px"
   style:--sessions-col={sessionsColumn}
   style:--folded="{FOLDED}px"
+  style:--head-h="{sessionsHead}px"
 >
   <div class="stack" bind:clientHeight={stack}>
   <main
@@ -936,7 +946,6 @@
       class:peeking={layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
       style:--peek-w={peekWidth}
-      style:--head-h="{sessionsHead}px"
     >
       <SessionsPane />
       {#if sessionsVisible()}
@@ -1043,6 +1052,11 @@
     background: var(--bg);
   }
 
+  /* The terminal look's ground between the boxes carries a background. */
+  :global(:root[data-background]:not([data-look])) .frame {
+    background: linear-gradient(var(--tint-frame), var(--tint-frame)), var(--tint-backdrop);
+  }
+
   .stack {
     display: flex;
     flex-direction: column;
@@ -1135,6 +1149,26 @@
     background: var(--surface);
   }
 
+  :global(:root[data-background][data-look="modern"])
+    .sessions-slot.folded
+    :global([data-pane="sessions"] > header) {
+    background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
+  }
+
+  :global(:root[data-background][data-look="modern"]) .sessions-slot.folded :global([data-pane="sessions"]) {
+    background:
+      var(--edge-rule),
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px))
+        border-box,
+      var(--tint-backdrop);
+  }
+
+  /* The line between the sessions pane and the agent belongs to the
+     sessions pane, so with a background it is drawn over that pane's tint. */
+  :global(:root[data-background][data-look="modern"]) .sessions-slot > :global(.splitter) {
+    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+  }
+
   .sessions-slot.folded :global([data-pane="sessions"] > header > *) {
     visibility: hidden;
   }
@@ -1145,6 +1179,14 @@
     flex: none;
     width: var(--splitter-w);
     background: linear-gradient(var(--surface) var(--head-h), transparent var(--head-h));
+  }
+
+  /* With a background the edge is drawn over the tint beside it: the
+     headers' beside the header row, the sessions pane's below it. */
+  :global(:root[data-background][data-look="modern"]) .fold-edge {
+    background:
+      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px)),
+      var(--tint-backdrop);
   }
 
   .fold-edge::after {

@@ -107,9 +107,11 @@
   let intro = $derived(
     session.status === "starting"
       ? `Starting ${agent}…`
-      : session.resumedFrom !== null
-        ? "This session was resumed. Its earlier messages are in its transcript and are not shown here."
-        : `A new ${agent} session in ${projectLabel(session.project)}, with your login, settings, hooks and tools.`,
+      : session.resumedFrom === null
+        ? `A new ${agent} session in ${projectLabel(session.project)}, with your login, settings, hooks and tools.`
+        : conversation.earlier === "read"
+          ? "No earlier messages were found for this session."
+          : "This session was resumed. Its earlier messages are in its transcript and are not shown here.",
   );
 
   /** Why the session is over, in a sentence. */

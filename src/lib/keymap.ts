@@ -37,7 +37,9 @@ export { isMac };
  * mode's, from anywhere but a terminal, where on Windows and Linux the same
  * Ctrl chord is the process's. Close closes what is in front, from
  * anywhere on macOS; elsewhere a terminal keeps Ctrl+W and closes on the
- * chord with Shift added.
+ * chord with Shift added. A new untitled file is the app's from anywhere,
+ * in either mode, but a terminal on Windows and Linux, where Ctrl+N is the
+ * shell's next line of history.
  *
  * An integrated session has no terminal: its composer stops a running turn
  * on Escape and lets the key through when none runs, and then it closes the
@@ -58,6 +60,8 @@ export type Action =
   | { type: "toggleMode" }
   /** A name field for a new file in the tree, in editor mode. */
   | { type: "newFile" }
+  /** An untitled file in a new tab of the editor, from either mode. */
+  | { type: "newUntitled" }
   /** The file in front in the editor written to disk. */
   | { type: "save" }
   /** What is in front closed: see `closeTarget`. */
@@ -142,6 +146,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   find: { type: "find", mode: "files" },
   findLines: { type: "find", mode: "lines" },
   "file.new": { type: "newFile" },
+  "file.untitled": { type: "newUntitled" },
   "file.save": { type: "save" },
   "file.close": { type: "close" },
   "terminal.new": { type: "newShell" },
@@ -217,6 +222,10 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   const terminal = isTerminal(ctx.focus) && !(ctx.focus === "agent" && ctx.integrated);
   if (action === "file.save" && (!ctx.editing || terminal)) return null;
   if (action === "file.close" && !mac && terminal) return null;
+  // A new untitled file is the app's in either mode. On Windows and Linux
+  // a terminal keeps Ctrl+N, its next line of history; on macOS Cmd is
+  // never the terminal's.
+  if (action === "file.untitled" && terminal && !mac) return null;
   return ACTION_OF[action];
 }
 
