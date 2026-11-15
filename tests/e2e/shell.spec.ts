@@ -39,6 +39,9 @@ async function settled(page: Page) {
 
 /** Cmd on macOS, Ctrl elsewhere. */
 const MOD = "ControlOrMeta";
+/** The theme's chord: Shift+T on macOS, Shift+D elsewhere, where Shift+T
+    opens a shell. */
+const THEME = `${MOD}+Shift+${process.platform === "darwin" ? "T" : "D"}`;
 
 /** The columns the agent's terminal has fitted to, which is the pane's width
     as the process is told it. Zero until a session is running. */
@@ -297,16 +300,16 @@ test("collapses and restores the side panes", async ({ page }) => {
 
 test("cycles the theme and keeps the choice", async ({ page }) => {
   const html = page.locator("html");
-  await page.keyboard.press(`${MOD}+Shift+T`);
+  await page.keyboard.press(THEME);
   await expect(html).toHaveAttribute("data-theme", "light");
 
-  await page.keyboard.press(`${MOD}+Shift+T`);
+  await page.keyboard.press(THEME);
   await expect(html).toHaveAttribute("data-theme", "dark");
 
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");
 
-  await page.keyboard.press(`${MOD}+Shift+T`);
+  await page.keyboard.press(THEME);
   await expect(html).not.toHaveAttribute("data-theme", /.*/);
 });
 
@@ -315,8 +318,8 @@ test("repaints the panes when the theme changes", async ({ page }) => {
   const light = await pane.evaluate(
     (el) => getComputedStyle(el).backgroundColor,
   );
-  await page.keyboard.press(`${MOD}+Shift+T`);
-  await page.keyboard.press(`${MOD}+Shift+T`);
+  await page.keyboard.press(THEME);
+  await page.keyboard.press(THEME);
   const dark = await pane.evaluate(
     (el) => getComputedStyle(el).backgroundColor,
   );

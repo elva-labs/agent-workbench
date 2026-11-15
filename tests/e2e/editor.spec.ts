@@ -1540,14 +1540,25 @@ test.describe("the name field while the agent writes files", () => {
 });
 
 test.describe("Cmd+W with no tab in editor mode", () => {
-  test("closes the window on macOS, as the menu's Close Tab does", async ({ page }) => {
-    await open(page, 1728);
-    await flip(page);
-    const mac = await page.evaluate(() => /Mac/.test(navigator.platform));
-    await page.keyboard.press(`${MOD}+3`);
-    await page.keyboard.press(`${MOD}+w`);
-    expect(await controls(page)).toEqual(mac ? ["close"] : []);
-  });
+  // Nothing smaller is in front, so it is the window's close, on every
+  // platform; with no session running it closes without a question.
+  for (const platform of [
+    { name: "macOS", reported: "MacIntel", mod: "Meta" },
+    { name: "Linux", reported: "Linux x86_64", mod: "Control" },
+  ])
+    test(`closes the window, with nothing running to ask about, on ${platform.name}`, async ({ page }) => {
+      await page.addInitScript(
+        (reported) => Object.defineProperty(Navigator.prototype, "platform", { get: () => reported }),
+        platform.reported,
+      );
+      await open(page, 1728);
+      await page.keyboard.press(`${platform.mod}+Shift+E`);
+      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await page.keyboard.press(`${platform.mod}+3`);
+      await page.keyboard.press(`${platform.mod}+w`);
+      await expect.poll(() => controls(page)).toEqual(["close"]);
+      await expect(page.getByTestId("close-window")).toHaveCount(0);
+    });
 });
 
 test.describe("the session question in a peek", () => {

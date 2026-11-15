@@ -680,6 +680,14 @@ export function overlayHoldsKeyboard(): boolean {
   return document.activeElement?.closest('[aria-modal="true"]') != null;
 }
 
+/** Whether a question in a strip has the keyboard: one put in a pane
+    before something is taken away, which holds the keyboard without being
+    a dialog. */
+export function questionHoldsKeyboard(): boolean {
+  if (typeof document === "undefined") return false;
+  return document.activeElement?.closest('[role="alertdialog"]') != null;
+}
+
 /**
  * Hands the keyboard back to the pane that has the focus state. A dialog
  * takes the document's focus while it is up and leaves it on nothing when it

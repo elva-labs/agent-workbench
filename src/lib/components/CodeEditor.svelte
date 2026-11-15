@@ -100,8 +100,8 @@
     untrack(() => {
       if (view === null || layout.focus !== "changes" || editor.target !== "editor") return;
       // Anything inside the editor, its find panel included, keeps it, and
-      // so does a question put over it.
-      if (overlayHoldsKeyboard() || editor.asking !== null) return;
+      // so does a question or the field for a path put over it.
+      if (overlayHoldsKeyboard() || editor.asking !== null || editor.savingAs !== null) return;
       if (view.dom.contains(document.activeElement)) return;
       view.focus();
     });

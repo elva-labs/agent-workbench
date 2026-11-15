@@ -9,7 +9,7 @@
   import { register as registerScreen } from "$lib/screens";
   import { isMac, resolveAction } from "$lib/keymap";
   import { references } from "$lib/refs";
-  import { layout, overlayHoldsKeyboard, sliding } from "$lib/layout.svelte";
+  import { layout, overlayHoldsKeyboard, questionHoldsKeyboard, sliding } from "$lib/layout.svelte";
   import { typed } from "$lib/sessions.svelte";
   import {
     GridFit,
@@ -300,7 +300,8 @@
     await tick();
     if (!terminal) return;
     measure();
-    if (focused && active && shown) terminal.focus();
+    // A dialog or a question that holds the keyboard keeps it.
+    if (focused && active && shown && !overlayHoldsKeyboard() && !questionHoldsKeyboard()) terminal.focus();
   }
 
   // Focus by key or by click on the list lands in the terminal itself, so

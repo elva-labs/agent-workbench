@@ -14,16 +14,26 @@
  * is the core's, routed by the tree's root, so it works on a remote machine
  * as well as here; showing a file in the file manager is for a project on
  * this machine only.
+ *
+ * An untitled file starts in the folder the cursor is in, and saving it
+ * asks for a path from the top of the tree it was started in, in a field
+ * over the editor, held to the same refusals as a name in the tree. A file
+ * already at the path is replaced only once that is asked and answered.
  */
 
 import { core } from "$lib/core";
 import {
   deleted,
+  editor,
+  endSaveAs,
   enterEditor,
   focusFiles,
+  keyOf,
   moved,
   openFile,
+  openUntitled,
   unsavedUnder,
+  writeUntitled,
 } from "$lib/editor.svelte";
 import { absolute, files, listed, refresh, reveal, treeSettled } from "$lib/files.svelte";
 import { say } from "$lib/flash.svelte";
@@ -112,6 +122,92 @@ export function newFile(folder: string | null = cursorFolder()) {
   };
   if (layout.mode === "editing") start();
   else enterEditor(start);
+}
+
+/** A new untitled file, which saving starts in the folder the cursor is
+    in. From agent mode the window flips to the editor first. */
+export function newUntitled() {
+  openUntitled(cursorFolder());
+}
+
+/** A path from the top of the tree as the field naming an untitled file
+    takes it: the tree's own refusals, nothing that leaves the tree, and a
+    name after the last slash. */
+export function savePathFor(value: string): { path: string } | { problem: string } {
+  const text = value.trim();
+  const outside = /^([\\/]|~([\\/]|$)|[A-Za-z]:[\\/])/.test(text) || /(^|[\\/])\.\.([\\/]|$)/.test(text);
+  if (outside) {
+    return { problem: "The file is saved inside the project: give a path from its top." };
+  }
+  if (/[\\/]$/.test(text)) return { problem: "A name is needed." };
+  return pathFor(null, text);
+}
+
+/** Why a path holding a file open with unsaved edits will not do, or null. */
+function heldOpen(root: string, path: string): string | null {
+  return editor.buffers[keyOf(root, path)]?.dirty
+    ? `${path} is open with unsaved edits. Save or close it first.`
+    : null;
+}
+
+/** Enter in the field naming an untitled file: written at that path in
+    the tree it was started in, unless the path will not do or holds a
+    file already, which asks whether to replace it first. */
+export async function commitSaveAs() {
+  const asked = editor.savingAs;
+  if (asked === null || asked.busy || asked.replace !== null) return;
+  const target = savePathFor(asked.value);
+  if ("problem" in target) {
+    asked.problem = target.problem;
+    return;
+  }
+  const held = heldOpen(asked.root, target.path);
+  if (held !== null) {
+    asked.problem = held;
+    return;
+  }
+  await writeAs(asked.root, target.path, false);
+}
+
+/** Replace, on the question about a file already at the path. */
+export async function confirmReplace() {
+  const asked = editor.savingAs;
+  if (asked === null || asked.busy || asked.replace === null) return;
+  const held = heldOpen(asked.root, asked.replace);
+  if (held !== null) {
+    asked.replace = null;
+    asked.problem = held;
+    return;
+  }
+  await writeAs(asked.root, asked.replace, true);
+}
+
+/** Writes the untitled file. Once written the field goes at once, and the
+    tree, when it is the one on screen, is read again to show the file. */
+async function writeAs(root: string, path: string, overwrite: boolean) {
+  const asked = editor.savingAs!;
+  asked.busy = true;
+  asked.problem = null;
+  let written: string | null;
+  try {
+    written = await writeUntitled(asked.key, root, path, overwrite);
+  } catch (error) {
+    asked.busy = false;
+    asked.replace = null;
+    asked.problem = reason(error);
+    return;
+  }
+  if (written === null) {
+    asked.busy = false;
+    asked.replace = path;
+    return;
+  }
+  asked.busy = false;
+  endSaveAs(written);
+  if (watchRoot() !== root) return;
+  await refresh();
+  await treeSettled();
+  if (watchRoot() === root) reveal(path);
 }
 
 /** A name field for a new folder. */

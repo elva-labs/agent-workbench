@@ -101,12 +101,12 @@
   {#snippet buttons()}
     {#if safe && alternative !== null}
       <button type="button" class="quiet" onclick={onConfirm} data-testid="{testid}-confirm">{action}</button>
-      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      <button type="button" class="cancel keep" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
       <button type="button" class="save" onclick={alternative.onClick} data-testid="{testid}-alternative"
         >{alternative.label}</button
       >
     {:else}
-      <button type="button" class="cancel" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
+      <button type="button" class="cancel keep" use:cancelFirst onclick={onCancel} data-testid="{testid}-cancel">Cancel</button>
       {#if alternative !== null}
         <button type="button" class="cancel" onclick={alternative.onClick} data-testid="{testid}-alternative"
           >{alternative.label}</button
@@ -211,6 +211,13 @@
   }
 
   button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Cancel opens with the keyboard and is the answer Return gives, so it
+     is drawn as that whether the last thing done was a key or a click. */
+  .keep:focus {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
   }

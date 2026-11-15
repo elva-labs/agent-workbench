@@ -6,7 +6,6 @@ import {
   anyUnsaved,
   cancelAsk,
   closeDropping,
-  closeFront,
   closeTabInFront,
   closeWithoutSaving,
   closeAsking,
@@ -678,12 +677,10 @@ describe("close tab", () => {
     expect(editor.tabs.map((tab) => tab.path)).toEqual(["docs/a.md"]);
   });
 
-  it("is nothing outside editor mode, and the menu's item closes the window on macOS", async () => {
+  it("is nothing outside editor mode, and never the window's close", async () => {
     layout.mode = "working";
     expect(closeTabInFront()).toBe(false);
-    closeFront();
     await settle();
-    // jsdom is no Mac: the item does nothing more there.
     expect(controls).toEqual([]);
   });
 });
