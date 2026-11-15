@@ -38,7 +38,9 @@ export { isMac };
  *
  * An integrated session has no terminal: its composer stops a running turn
  * on Escape and lets the key through when none runs, and then it closes the
- * viewer while reviewing and does nothing else.
+ * viewer while reviewing, goes back to the editor in editor mode, and does
+ * nothing else. Save and close tab are the app's from it, and find is left
+ * free there.
  */
 
 export type Action =
@@ -167,8 +169,12 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
       if (ctx.editing) return ctx.inEditor ? null : { type: "toEditor" };
       return ctx.reviewing ? { type: "exitReview" } : { type: "focus", pane: "agent" };
     }
-    if (e.key === "Escape" && ctx.focus === "agent" && ctx.integrated && ctx.reviewing) {
-      return { type: "exitReview" };
+    // An integrated session's composer lets Escape through when no turn
+    // runs: it closes the viewer while reviewing, and hands the keyboard
+    // back to the editor in editor mode, as a list pane does there.
+    if (e.key === "Escape" && ctx.focus === "agent" && ctx.integrated) {
+      if (ctx.editing) return { type: "toEditor" };
+      if (ctx.reviewing) return { type: "exitReview" };
     }
     return null;
   }
@@ -189,12 +195,15 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   // The viewer's chord has no viewer to open in editor mode; in the editor
   // it is the editor's own.
   if (action === "review" && ctx.editing) return null;
-  // Saving and closing a tab are editor mode's, from the tree as well as the
-  // editor. A terminal keeps the chords: Ctrl+S and Ctrl+W are the
-  // process's on Windows and Linux. On macOS the File menu answers what
-  // the page lets through, so Cmd+W still closes the window there.
-  if (action === "file.save" && (!ctx.editing || isTerminal(ctx.focus))) return null;
-  if (action === "file.close" && (!ctx.editing || isTerminal(ctx.focus))) return null;
+  // Saving and closing a tab are editor mode's, from anywhere but a
+  // terminal: the tree, the editor, and an integrated session's composer,
+  // which is a text field with no use for them. A terminal keeps the
+  // chords: Ctrl+S and Ctrl+W are the process's on Windows and Linux. On
+  // macOS the File menu answers what the page lets through, so Cmd+W still
+  // closes the window there.
+  const terminal = isTerminal(ctx.focus) && !(ctx.focus === "agent" && ctx.integrated);
+  if (action === "file.save" && (!ctx.editing || terminal)) return null;
+  if (action === "file.close" && (!ctx.editing || terminal)) return null;
   return ACTION_OF[action];
 }
 

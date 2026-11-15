@@ -308,6 +308,37 @@ describe("editor mode", () => {
     expect(resolveAction({ key: "Escape" }, { focus: "agent", editing: true })).toBeNull();
   });
 
+  describe("with an integrated session beside the editor", () => {
+    const composer: Partial<KeyContext> = { focus: "agent", editing: true, integrated: true };
+
+    it("hands the keyboard back to the editor on Escape from the composer", () => {
+      expect(resolveAction({ key: "Escape" }, composer)).toEqual({ type: "toEditor" });
+      // Agent mode is as main has it: the viewer closes, and otherwise
+      // nothing happens.
+      expect(resolveAction({ key: "Escape" }, { focus: "agent", reviewing: true, integrated: true })).toEqual({ type: "exitReview" });
+      expect(resolveAction({ key: "Escape" }, { focus: "agent", integrated: true })).toBeNull();
+    });
+
+    it("leaves Escape to the editor, and sends it there from the tree, as with a terminal", () => {
+      expect(resolveAction({ key: "Escape" }, { ...editor, integrated: true })).toBeNull();
+      expect(resolveAction({ key: "Escape" }, { ...tree, integrated: true })).toEqual({ type: "toEditor" });
+    });
+
+    it("saves and closes the tab from the composer, which is no terminal", () => {
+      expect(resolveAction(mod("s"), composer)).toEqual({ type: "save" });
+      expect(resolveAction(mod("w"), composer)).toEqual({ type: "closeTab" });
+      expect(resolveAction({ key: "s", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "save" });
+      expect(resolveAction({ key: "w", ctrlKey: true }, { ...composer, mac: false })).toEqual({ type: "closeTab" });
+      // Not in agent mode, where there is nothing to save.
+      expect(resolveAction(mod("s"), { focus: "agent", integrated: true })).toBeNull();
+    });
+
+    it("leaves the find chord free in the composer, and flips the mode from it", () => {
+      expect(resolveAction(mod("f"), composer)).toBeNull();
+      expect(resolveAction(mod("e", { shiftKey: true }), composer)).toEqual({ type: "toggleMode" });
+    });
+  });
+
   it("follows a chord the user moved", () => {
     expect(setBinding("file.save", { key: "s", shift: true, alt: false })).toBeNull();
     expect(resolveAction(mod("s", { shiftKey: true }), editor)).toEqual({ type: "save" });

@@ -1829,3 +1829,187 @@ test.describe("the File menu's items", () => {
     await expect.poll(async () => (await state())?.["file.save"]).toBe(true);
   });
 });
+
+// An integrated session in the right pane: a conversation and a composer
+// in place of a terminal. The handle of the first session the fake starts
+// is int-1.
+const INT = "int-1";
+
+/** Runs a script against the fake core's scripted session, as the agent
+    would act. */
+function integrated(page: Page, script: string) {
+  return page.evaluate(`(() => { const f = window.__integrated; ${script} })()`);
+}
+
+/** The calls the window made on the scripted session. */
+function integratedCalls(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    (window as unknown as { __integrated: { calls: { method: string }[] } }).__integrated.calls.map((call) => call.method),
+  );
+}
+
+async function openIntegrated(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("start-agent").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+}
+
+for (const linux of [false, true]) {
+  const platform = linux ? "as Linux" : "as the platform it runs on";
+  test.describe(`an integrated session across the flip, ${platform}`, () => {
+    test("reads whole at the editing width, and comes back as it was", async ({ page }) => {
+      if (linux) await asLinux(page);
+      await openIntegrated(page, 1440);
+      // As Linux on a Mac the chord is Ctrl's, so the switch is clicked.
+      const turn = async () => {
+        const was = await page.getByTestId("mode-readout").textContent();
+        await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
+        await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+        await settled(page);
+      };
+      await integrated(
+        page,
+        `for (let at = 0; at < 8; at++) {
+           f.send("${INT}", crypto.randomUUID(), "Question " + at + ", long enough to wrap where the pane is narrow");
+           f.turn("${INT}", "Answer " + at + ": " + "a sentence that wraps at another width. ".repeat(5) + "\\n\\n\`\`\`\\nfn a_long_line_of_code_that_cannot_wrap(index: &mut Index, roots: &[PathBuf]) -> Result<(), Error>\\n\`\`\`");
+         }`,
+      );
+      await expect(page.getByTestId("agent-run")).toHaveCount(8);
+      await page.getByTestId("composer-input").fill("a draft");
+      // Scrolled up by the wheel, as the user leaves the foot.
+      const thread = page.getByTestId("thread");
+      const at = (await thread.boundingBox())!;
+      await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+      await page.mouse.wheel(0, -600);
+      await expect.poll(() => thread.evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeGreaterThan(300);
+      const before = await thread.evaluate((node) => node.scrollTop);
+
+      await turn();
+      const pane = (await box(page, AGENT))!;
+      expect(Math.round(pane.width)).toBe(420 + (await controlsRoom(page)));
+      // Nothing past the pane's edges but what scrolls inside it: the code.
+      const outside = await page.evaluate((AGENT) => {
+        const edge = document.querySelector(AGENT)!.getBoundingClientRect();
+        return [...document.querySelectorAll<HTMLElement>(`${AGENT} *`)]
+          .filter((el) => el.closest("pre") === null)
+          .filter((el) => {
+            const box = el.getBoundingClientRect();
+            return box.width > 0 && (box.right > edge.right + 0.5 || box.left < edge.left - 0.5);
+          })
+          .map((el) => el.dataset.testid ?? el.className);
+      }, AGENT);
+      expect(outside).toEqual([]);
+      const composer = (await page.getByTestId("composer").boundingBox())!;
+      expect(composer.x).toBeGreaterThanOrEqual(pane.x);
+      expect(composer.x + composer.width).toBeLessThanOrEqual(pane.x + pane.width);
+      await page.getByTestId("composer-input").click();
+      await page.keyboard.type(" and more");
+
+      await turn();
+      await expect(page.getByTestId("composer-input")).toHaveValue("a draft and more");
+      expect(await thread.evaluate((node) => node.scrollTop)).toBe(before);
+      // There is no pty to tell a size.
+      expect(await page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0)).toBe(0);
+    });
+  });
+}
+
+test.describe("an integrated session beside the editor", () => {
+  test.beforeEach(async ({ page }) => {
+    await openIntegrated(page, 1728);
+    await flip(page);
+  });
+
+  test("stops a running turn on Escape in the composer, and otherwise hands the keyboard back to the editor", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await integrated(page, `f.send("${INT}", crypto.randomUUID(), "go"); f.startTurn("${INT}");`);
+    await page.getByTestId("composer-input").click();
+    await expect(page.getByTestId("stop")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect.poll(() => integratedCalls(page)).toContain("interrupt");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await expect(page.getByTestId("stop")).toHaveCount(0);
+
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-content")).toBeFocused();
+    // From the tree it goes the same way.
+    await treeRow(page, "Cargo.toml").click();
+    await page.keyboard.press("Escape");
+    await expect(page.locator(".cm-content")).toBeFocused();
+  });
+
+  test("saves and closes the tab from the composer, flips from it, and leaves find to it", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.getByTestId("composer-input").click();
+    await page.keyboard.press(`${MOD}+s`);
+    await expect.poll(async () => (await writes(page)).at(-1)?.text ?? "").toContain("mine");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await page.keyboard.press(`${MOD}+w`);
+    await expect(tab(page, "README.md")).toHaveCount(0);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    await page.keyboard.press(`${MOD}+Shift+E`);
+    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  });
+
+  test("hides and shows the agent, the draft and the thread kept", async ({ page }) => {
+    await integrated(page, `f.turn("${INT}", "Something said before.");`);
+    await page.getByTestId("composer-input").fill("a draft");
+    await page.getByTestId("toggle-right").click();
+    await expect(page.locator(AGENT)).toBeHidden();
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
+    await page.getByTestId("toggle-right").click();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.getByTestId("composer-input")).toHaveValue("a draft");
+    await expect(page.getByTestId("agent-text")).toHaveText("Something said before.");
+  });
+
+  test("asks before it is closed with unsaved tabs beside it, and stops it once answered", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.locator("[data-testid='session-row']").first().hover();
+    await page.locator(`${SESSIONS} [aria-label^='Close session']`).first().click();
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close session 1 with unsaved edits?");
+    await expect(strip).toContainText("README.md");
+    await page.getByTestId("close-owner-confirm").click();
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(0);
+    await expect.poll(() => integratedCalls(page)).toContain("stop");
+    await expect(tab(page, "README.md")).toHaveCount(0);
+  });
+
+  test("asks before its project is closed, and Cancel keeps both", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    const head = page.locator(`${SESSIONS} [data-row="project:${PROJECT}"]`);
+    await head.hover();
+    await head.getByTestId("project-more").click();
+    await head.getByTestId("close-project").click();
+    const strip = page.getByTestId("close-owner");
+    await expect(strip).toContainText("Close demo with unsaved edits?");
+    await page.getByTestId("close-owner-cancel").click();
+    await expect(strip).toHaveCount(0);
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
+    expect(await integratedCalls(page)).not.toContain("stop");
+    await expect(tab(page, "README.md")).toHaveClass(/dirty/);
+  });
+
+  test("asks before the window closes and before quitting", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await typeAtEnd(page, "mine");
+    await page.evaluate(() =>
+      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+    );
+    const strip = page.getByTestId("close-window");
+    await expect(strip).toContainText("Close the window with unsaved edits?");
+    await page.getByTestId("close-window-cancel").click();
+    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
+    await expect(strip).toContainText("Quit with unsaved edits?");
+    await page.getByTestId("close-window-confirm").click();
+    await expect.poll(() => controls(page)).toEqual(["quit"]);
+  });
+});

@@ -187,7 +187,7 @@ run, which is read before its buttons are reached.
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
-| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing and does nothing else |
+| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
@@ -297,7 +297,8 @@ selects to the end of the file there rather than stepping sessions, and
 <kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
 
 Save and close tab work from anywhere in editor mode but a terminal: from
-the tree as well as the editor. A terminal keeps their chords, since on
+the tree as well as the editor, and from an integrated session's composer,
+which is a text field with no use for them. A terminal keeps their chords, since on
 Windows and Linux <kbd>Ctrl</kbd><kbd>S</kbd> and <kbd>Ctrl</kbd><kbd>W</kbd>
 are the process's. On macOS <kbd>Cmd</kbd><kbd>W</kbd> with no tab to close,
 in editor mode or out of it, closes the window, and a chord the page lets
@@ -307,8 +308,9 @@ Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. With the
 keyboard in a browser tab's page, the two are the app's only in editor
 mode; outside it they reach the menu as from anywhere else.
 
-<kbd>Esc</kbd> in the tree or the sessions pane hands the keyboard back to
-the editor, where typing resumes in this mode, and
+<kbd>Esc</kbd> in the tree, the sessions pane or an integrated session's
+composer with no turn running hands the keyboard back to the editor, where
+typing resumes in this mode, and
 puts away what the agent presented in the editor's place. Opening a file from
 the tree keeps the keyboard in the tree for the next file, as it does for
 the viewer; a click on a tab, a new file made, or the Edit button gives it to
