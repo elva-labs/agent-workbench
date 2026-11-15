@@ -131,6 +131,12 @@
       dismissed = link.draft;
       return true;
     }
+    // Nothing is sent as text that the agent, once ready, may take as a
+    // command.
+    if (slashMenu === "starting" && e.key === "Enter" && plain) {
+      e.preventDefault();
+      return true;
+    }
     if (slashMenu !== "list" || !plain) return false;
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
