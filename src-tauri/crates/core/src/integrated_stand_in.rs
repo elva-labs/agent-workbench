@@ -269,6 +269,8 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
     assert_eq!(ready[0]["version"], "9.9.9");
     assert_eq!(ready[0]["mode"], "default");
     assert_eq!(ready[0]["effort"], "high");
+    // A conversation it began has no run before this one.
+    assert_eq!(snapshot(&h.sessions, &h.id).unwrap().resumed_at, None);
 
     let message = h.send("say hello");
     let events = h.until_type("turnEnded");
@@ -323,6 +325,7 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
 fn the_command_line_and_environment_are_the_stream_session_s() {
     let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
     let config = PathBuf::from("/home/ada/.claude-work");
+    let before = now_millis();
     let h = start_with("command", &format!("{READY}\ndrain"), |launch| {
         launch.resume = true;
         launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
@@ -330,6 +333,9 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
         launch.orchestrator = true;
     });
     h.until_type("ready");
+    // A resumed conversation says when this run of it began.
+    let began = snapshot(&h.sessions, &h.id).unwrap().resumed_at.unwrap();
+    assert!((before..=now_millis()).contains(&began), "{began}");
     let args: Vec<String> = std::fs::read_to_string(h.dir.join("args"))
         .unwrap()
         .lines()

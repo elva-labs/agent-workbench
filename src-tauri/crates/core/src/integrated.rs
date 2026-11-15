@@ -546,6 +546,14 @@ pub(crate) fn now_seconds() -> u64 {
         .unwrap_or_default()
 }
 
+/// The time now, in milliseconds since the epoch.
+pub(crate) fn now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as u64)
+        .unwrap_or_default()
+}
+
 /// A percent the agent gave, held to 0 to 100. None for one that is not a
 /// number.
 pub(crate) fn percent(value: f64) -> Option<f64> {
@@ -963,7 +971,9 @@ pub struct Settings {
 /// for an answer, each as it was asked; `messages` every message sent and
 /// not yet taken into a turn, in the order sent, each as its first message
 /// event told it, with its text and images; `limits` the account's limits
-/// as the last limits event told them, null before one went out.
+/// as the last limits event told them, null before one went out;
+/// `resumedAt` when this run of a conversation it resumed began, in
+/// milliseconds since the epoch, null for a conversation it began.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -975,6 +985,32 @@ pub struct Snapshot {
     pub requests: Vec<Event>,
     pub messages: Vec<Event>,
     pub limits: Option<Event>,
+    pub resumed_at: Option<u64>,
+}
+
+/// What a conversation said and did before a window took it up, read from
+/// where the agent keeps it: the events a session of it would have sent,
+/// in order, each with when it happened. Long content is cut down further
+/// than a live session's, and flagged as cut. A turn the agent's record
+/// gives no end is left open, as one that may still run. `cut` says the
+/// start of the conversation was left out, it being longer than is read.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct History {
+    pub items: Vec<Said>,
+    pub cut: bool,
+}
+
+/// One event of a conversation's history. `at` is when it happened, in
+/// milliseconds since the epoch; `model` the model a turn ran on, on the
+/// turn's start, where the record names one.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Said {
+    pub at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub event: Event,
 }
 
 /// The state of a session as its events say it, and the bookkeeping that
@@ -1030,6 +1066,8 @@ struct Tracker {
     /// The last limits event, as it went out.
     limits: Option<Event>,
     state: Option<SessionState>,
+    /// When this run began, for a conversation it resumed.
+    resumed_at: Option<u64>,
 }
 
 impl Tracker {
@@ -1270,6 +1308,7 @@ impl Tracker {
                 .filter_map(|message| self.told.get(message).cloned())
                 .collect(),
             limits: self.limits.clone(),
+            resumed_at: self.resumed_at,
         }
     }
 
@@ -1713,7 +1752,7 @@ impl Live {
 }
 
 /// Cuts a string down to at most `keep` bytes, on a character boundary.
-fn cut(text: &mut String, keep: usize) -> bool {
+pub(crate) fn cut(text: &mut String, keep: usize) -> bool {
     if text.len() <= keep {
         return false;
     }
@@ -1726,7 +1765,7 @@ fn cut(text: &mut String, keep: usize) -> bool {
 }
 
 /// Cuts every string in a JSON value down to `keep` bytes.
-fn cut_strings(value: &mut Value, keep: usize) -> bool {
+pub(crate) fn cut_strings(value: &mut Value, keep: usize) -> bool {
     match value {
         Value::String(text) => cut(text, keep),
         Value::Array(items) => items
@@ -1739,13 +1778,13 @@ fn cut_strings(value: &mut Value, keep: usize) -> bool {
     }
 }
 
-/// Cuts a file change down: its content, and its hunks past what the
-/// limit holds of their lines.
-fn cut_change(change: &mut FileChange) {
+/// Cuts a file change down to `keep` bytes: its content, and its hunks
+/// past what that holds of their lines.
+pub(crate) fn cut_change(change: &mut FileChange, keep: usize) {
     if let Some(content) = &mut change.content {
-        change.truncated |= cut(content, CONTENT_KEEP);
+        change.truncated |= cut(content, keep);
     }
-    let mut room = CONTENT_KEEP;
+    let mut room = keep;
     let mut keep = 0;
     for hunk in &change.hunks {
         let size: usize = hunk.lines.iter().map(|line| line.len() + 1).sum();
@@ -1780,7 +1819,9 @@ fn bounded(mut event: Event) -> Event {
             ..
         } => {
             *truncated |= cut(output, OUTPUT_KEEP);
-            changes.iter_mut().for_each(cut_change);
+            changes
+                .iter_mut()
+                .for_each(|change| cut_change(change, CONTENT_KEEP));
         }
         Event::TurnDiff { diff, truncated } => *truncated |= cut(diff, CONTENT_KEEP),
         _ => {}
@@ -1891,9 +1932,11 @@ pub fn start(
     let outbox = Arc::new(Outbox::default());
     let mut driver = protocol.driver(launch);
     let opening = driver.opening();
+    let mut machine = Machine::new(driver, Some(ready), sessions.deadlines);
+    machine.tracker.resumed_at = launch.resume.then(now_millis);
     let live = Arc::new(Live::new(
         id.clone(),
-        Machine::new(driver, Some(ready), sessions.deadlines),
+        machine,
         Arc::clone(&outbox),
         lines,
         kill,
