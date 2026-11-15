@@ -336,7 +336,7 @@ jobs:
 
       - name: Build (signed)
         if: steps.signing.outputs.apple == 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -349,7 +349,7 @@ jobs:
       # and Windows shows a SmartScreen warning.
       - name: Build (unsigned)
         if: steps.signing.outputs.apple != 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
