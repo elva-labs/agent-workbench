@@ -731,8 +731,9 @@ for (const width of [300, 240, 180]) {
     // At the widest the whole of it shows.
     if (width === 300) expect(words).toBe(true);
 
-    // On a started line the mark goes first: it shows only while the
-    // model does.
+    // On a started line the mark goes first: where the line names a
+    // model, the mark shows only while the model does. An asking line
+    // names none.
     for (const started of await page.getByTestId("started-session").all()) {
       const fit = (await started.locator(".fit").boundingBox())!;
       const inLine = async (selector: string) => {
@@ -741,7 +742,8 @@ for (const width of [300, 240, 180]) {
         const box = (await part.boundingBox())!;
         return box.width > 0 && box.y < fit.y + fit.height - 1;
       };
-      if (await inLine("[data-testid='started-news']"))
+      const named = (await started.getByTestId("started-model").count()) > 0;
+      if (named && (await inLine("[data-testid='started-news']")))
         expect(await inLine("[data-testid='started-model']")).toBe(true);
     }
     // Asking stands whole, inside its row.
