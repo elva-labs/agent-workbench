@@ -1,7 +1,7 @@
 <script lang="ts">
   import { core } from "$lib/core";
-  import { renderSaid } from "$lib/media.svelte";
-  import { tick } from "svelte";
+  import { renderSaid, settled } from "$lib/media.svelte";
+  import { untrack } from "svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
@@ -9,6 +9,8 @@
    * an image from an address shown as a link to it rather than fetched.
    * While it streams it is drawn again at most once a frame, and a caret
    * stands where the next words will come, so the text grows in place.
+   * Only its last block is drawn again: the blocks before it are whole, and
+   * stay as they were drawn, a selection in them with them.
    */
   interface Props {
     text: string;
@@ -39,20 +41,66 @@
     if (frame !== null) cancelAnimationFrame(frame);
   });
 
-  let html = $derived(renderSaid(shown));
-
   let box = $state<HTMLDivElement | null>(null);
 
-  // A link is walked with the arrows in the thread, which is one stop for
-  // Tab, rather than being a stop of its own.
+  /** The whole blocks drawn so far: their text, their HTML, and how many
+      nodes they are at the head of the box. */
+  let kept = { text: "", html: "", nodes: 0 };
+
   $effect(() => {
-    html;
     const node = box;
-    // After the text is drawn again, which can be a turn after this runs.
-    void tick().then(() => {
-      for (const link of node?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) link.tabIndex = -1;
-    });
+    const now = shown;
+    const growing = streaming;
+    if (node !== null) untrack(() => draw(node, now, growing));
   });
+
+  function draw(node: HTMLDivElement, now: string, growing: boolean) {
+    if (!now.startsWith(kept.text)) {
+      kept = { text: "", html: "", nodes: 0 };
+      node.replaceChildren();
+    }
+    let rest = now.slice(kept.text.length);
+    if (growing) {
+      const whole = settled(rest);
+      if (whole > 0) {
+        const html = renderSaid(rest.slice(0, whole));
+        trim(node);
+        kept = { text: kept.text + rest.slice(0, whole), html: kept.html + html, nodes: kept.nodes + add(node, html) };
+        rest = rest.slice(whole);
+      }
+      trim(node);
+      add(node, renderSaid(rest));
+      return;
+    }
+    // Whole: drawn once more only where it reads differently from what is
+    // kept, as a reference to a link defined further down would.
+    const html = renderSaid(now);
+    const tail = kept.nodes > 0 ? renderSaid(rest) : null;
+    trim(node);
+    if (tail !== null && kept.html + tail === html) add(node, tail);
+    else {
+      kept = { text: "", html: "", nodes: 0 };
+      node.replaceChildren();
+      add(node, html);
+    }
+  }
+
+  /** Takes away what is drawn after the kept blocks. */
+  function trim(node: HTMLDivElement) {
+    while (node.childNodes.length > kept.nodes) node.lastChild!.remove();
+  }
+
+  /** Draws HTML at the end of the box, and says how many nodes it drew. A
+      link is walked with the arrows in the thread, which is one stop for
+      Tab, rather than being a stop of its own. */
+  function add(node: HTMLDivElement, html: string): number {
+    const made = document.createElement("template");
+    made.innerHTML = html;
+    for (const link of made.content.querySelectorAll<HTMLAnchorElement>("a[href]")) link.tabIndex = -1;
+    const count = made.content.childNodes.length;
+    node.append(made.content);
+    return count;
+  }
 
   function onclick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement | null)?.closest("a");
@@ -65,7 +113,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown">{@html html}</div>
+<div class="md" class:streaming {onclick} bind:this={box} data-testid="markdown"></div>
 
 <style>
   .md {

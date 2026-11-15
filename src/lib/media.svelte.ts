@@ -267,6 +267,23 @@ export function renderSaid(markdown: string): string {
   return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
 }
 
+/** How much of Markdown that is still being written stands in whole
+    blocks that nothing written after it can change: every block but the
+    last, which may yet grow. Rendered on its own, that much renders as it
+    does at the head of the whole text, so it need only be rendered once. */
+export function settled(markdown: string): number {
+  const tokens = marked.lexer(markdown, { gfm: true });
+  let last = tokens.length - 1;
+  while (last >= 0 && tokens[last].type === "space") last--;
+  const whole = tokens
+    .slice(0, Math.max(0, last))
+    .map((token) => token.raw)
+    .join("");
+  // The lexer reads line ends its own way; what it read must be the text
+  // as it stands for its length to say where the blocks end.
+  return markdown.startsWith(whole) ? whole.length : 0;
+}
+
 function decode(base64: string): string {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);

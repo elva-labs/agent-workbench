@@ -11,6 +11,7 @@ import {
   render,
   renderSaid,
   resetMedia,
+  settled,
 } from "$lib/media.svelte";
 import { closeViewer, files } from "$lib/files.svelte";
 import { layout } from "$lib/layout.svelte";
@@ -267,6 +268,61 @@ describe("what an agent says in a conversation", () => {
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
     expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
+  });
+});
+
+describe("Markdown that is still being written", () => {
+  /** Every point the text could stop at while it streams, a piece at a time. */
+  const prefixes = (text: string) => Array.from({ length: text.length }, (_, at) => text.slice(0, at + 1));
+
+  it("keeps every whole block but the last, which may yet grow", () => {
+    expect(settled("A first paragraph.\n\nA second one")).toBe("A first paragraph.\n\n".length);
+    expect(settled("Only one paragraph")).toBe(0);
+    expect(settled("")).toBe(0);
+    expect(settled("# Title\n\n- one\n- two\n\nAfter")).toBe("# Title\n\n- one\n- two\n\n".length);
+  });
+
+  it("never settles a list, a fence, a table or a quote that the next line could still continue", () => {
+    expect(settled("Intro\n\n- one\n- two\n\n")).toBe("Intro\n\n".length);
+    expect(settled("Intro\n\n```ts\nconst a = 1;\n\nconst b = 2;")).toBe("Intro\n\n".length);
+    expect(settled("Intro\n\n| a | b |\n| - | - |\n| 1 | 2 |")).toBe("Intro\n\n".length);
+    expect(settled("Intro\n\n> quoted\n\n")).toBe("Intro\n\n".length);
+  });
+
+  it("renders what it keeps as the head of the whole text renders, wherever the text stops", () => {
+    const text = [
+      "## Found",
+      "",
+      "The **counter** is in `src/count.ts`, see [the docs](https://example.com).",
+      "",
+      "- one",
+      "- two",
+      "",
+      "1. first",
+      "2. second",
+      "",
+      "```ts",
+      "let total = 0;",
+      "",
+      "total += 1;",
+      "```",
+      "",
+      "| a | b |",
+      "| - | - |",
+      "| 1 | 2 |",
+      "",
+      "> a quote",
+      "> on two lines",
+      "",
+      "Setext title",
+      "===",
+      "",
+      "The end.",
+    ].join("\n");
+    for (const now of prefixes(text)) {
+      const kept = settled(now);
+      expect(renderSaid(now.slice(0, kept)) + renderSaid(now.slice(kept))).toBe(renderSaid(now));
+    }
   });
 });
 
