@@ -34,7 +34,7 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
-  import { newFile } from "$lib/fileOps.svelte";
+  import { newFile, newUntitled } from "$lib/fileOps.svelte";
   import {
     activeTab,
     canSaveInFront,
@@ -388,12 +388,13 @@
   });
 
   // The File menu's items that cannot act are greyed out: Save without a
-  // file in front to save, New File and New Shell without a project. Close
-  // can always act: with nothing smaller in front it is the window's.
+  // file in front to save, the new files and New Shell without a project.
+  // Close can always act: with nothing smaller in front it is the window's.
   $effect(() => {
     void core()
       .menuEnabled({
         "file.new": workspace.active !== null,
+        "file.untitled": workspace.active !== null,
         "terminal.new": workspace.active !== null,
         "file.save": editing && canSaveInFront(),
         "file.close": true,
@@ -712,9 +713,13 @@
       e.preventDefault();
       return;
     }
-    // A new shell and the chord to the status bar move the keyboard too,
-    // and do nothing while a question in a strip holds it either.
-    if ((action.type === "newShell" || action.type === "focusStatus") && keyboardHeld()) {
+    // A new shell, a new untitled file and the chord to the status bar move
+    // the keyboard too, and do nothing while a question in a strip holds it
+    // either.
+    if (
+      (action.type === "newShell" || action.type === "newUntitled" || action.type === "focusStatus") &&
+      keyboardHeld()
+    ) {
       e.preventDefault();
       return;
     }
@@ -779,6 +784,9 @@
         break;
       case "newFile":
         newFile();
+        break;
+      case "newUntitled":
+        newUntitled();
         break;
       case "findInFile":
         findInFile();
@@ -857,6 +865,7 @@
   /** An item of the File menu: what its action does. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
+    else if (action === "file.untitled" && !palette.open && !keyboardHeld()) newUntitled();
     else if (action === "terminal.new" && !palette.open && !keyboardHeld()) newShell();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") void closeInFront();

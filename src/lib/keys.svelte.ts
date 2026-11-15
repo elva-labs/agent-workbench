@@ -32,6 +32,7 @@ export type ActionKey =
   | "find"
   | "findLines"
   | "file.new"
+  | "file.untitled"
   | "file.save"
   | "file.close"
   | "terminal.new"
@@ -79,7 +80,8 @@ export const ACTIONS: ActionInfo[] = [
   { key: "scope", label: "Changed files or all files", group: "Changes" },
   { key: "find", label: "Find", group: "Changes" },
   { key: "findLines", label: "Search in files", group: "Changes" },
-  { key: "file.new", label: "New file", group: "Editor" },
+  { key: "file.new", label: "New file in the tree", group: "Editor" },
+  { key: "file.untitled", label: "New untitled file", group: "Editor" },
   { key: "file.save", label: "Save", group: "Editor" },
   { key: "terminal.new", label: "New shell", group: "Terminal" },
   { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
@@ -118,6 +120,7 @@ const MACOS: Record<PresetName, Keymap> = {
     find: plain("f"),
     findLines: shifted("f"),
     "file.new": withAlt("n"),
+    "file.untitled": plain("n"),
     "file.save": plain("s"),
     "file.close": plain("w"),
     "terminal.new": plain("t"),
@@ -150,6 +153,7 @@ const MACOS: Record<PresetName, Keymap> = {
     find: plain("f"),
     findLines: shifted("f"),
     "file.new": withAlt("n"),
+    "file.untitled": plain("n"),
     "file.save": plain("s"),
     "file.close": plain("w"),
     "terminal.new": plain("t"),

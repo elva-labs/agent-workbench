@@ -11,7 +11,8 @@
    * tab in front is always scrolled into view and keeps its whole name. The
    * others give their close button no room until hovered, narrow no further
    * than a short name, and past that the row scrolls, an edge with tabs past
-   * it fading.
+   * it fading. A double-click on the row where no tab is opens an untitled
+   * file, as the new untitled file chord does.
    */
   import { tick } from "svelte";
   import {
@@ -23,11 +24,13 @@
     keep,
     otherKindShown,
     setTabView,
+    UNTITLED,
     tabKey,
     viewsOf,
     type Tab,
     type TabView,
   } from "$lib/editor.svelte";
+  import { newUntitled } from "$lib/fileOps.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import { lastSegment } from "$lib/paths";
 
@@ -131,6 +134,27 @@
     void tick().then(toRow);
   });
 
+  /** Whether the press on the row is on the row itself, not on a tab, a
+      tab's close button or the views. */
+  function onRow(e: MouseEvent): boolean {
+    return e.target === e.currentTarget || e.target === strip;
+  }
+
+  /** Where the first press of a double-click landed: one on a tab's close
+      button takes the tab away from under the second. */
+  let firstOnRow = false;
+
+  function onRowDown(e: MouseEvent) {
+    if (e.button === 0 && e.detail === 1) firstOnRow = onRow(e);
+  }
+
+  /** A double-click on the row itself, both presses where no tab is. */
+  function onRowDouble(e: MouseEvent) {
+    if (e.button !== 0 || !firstOnRow || !onRow(e)) return;
+    e.preventDefault();
+    newUntitled();
+  }
+
   function onAuxClick(e: MouseEvent, key: string) {
     if (e.button !== 1) return;
     e.preventDefault();
@@ -138,7 +162,10 @@
   }
 </script>
 
-<div class="row" data-testid="tab-row">
+<!-- The double-click is a quicker way to the new untitled file chord, which
+     the keyboard has. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="row" onmousedown={onRowDown} ondblclick={onRowDouble} data-testid="tab-row">
   <div
     class="tabs"
     class:fade-start={fadeStart}
@@ -162,7 +189,7 @@
         class:dirty
         role="tab"
         aria-selected={!other && editor.active === key}
-        title={tab.path}
+        title={tab.root === UNTITLED ? `${tab.path}, not saved yet` : tab.path}
         onclick={() => void activate(key)}
         ondblclick={() => keep(key)}
         onauxclick={(e) => onAuxClick(e, key)}
@@ -228,9 +255,11 @@
     margin: -6px 0;
   }
 
+  /* As tall as a tab with none open, so the row is there to double-click. */
   .tabs {
     flex: 1;
     min-width: 0;
+    min-height: 26px;
     display: flex;
     align-items: center;
     gap: 2px;

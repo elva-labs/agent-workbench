@@ -1373,7 +1373,7 @@ export async function installFakeCore(
           return { text, stamp: stampOf(text) };
         },
         fileWrite: async (
-          _root: string,
+          root: string,
           file: string,
           text: string,
           stamp: string | null,
@@ -1393,8 +1393,11 @@ export async function installFakeCore(
               return { written: false, stamp: stampOf(current) };
           }
           writeFile(file, text);
-          const w = window as unknown as { __writes?: unknown[] };
+          const w = window as unknown as { __writes?: unknown[]; __writeRoots?: string[] };
           (w.__writes ??= []).push({ file, text, stamp, overwrite });
+          // The tree each write went to, for a test of which project a file
+          // landed in: the fake keeps one tree for every project.
+          (w.__writeRoots ??= []).push(root);
           treeMoved();
           return { written: true, stamp: stampOf(text) };
         },
