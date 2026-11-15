@@ -104,6 +104,20 @@ test.describe("starting an untitled file", () => {
     expect(await writes(page)).toEqual([]);
   });
 
+  test("opens none on a double-click on the last tab's close button", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await expect(tab(page, "README.md")).toHaveAttribute("aria-selected", "true");
+    const close = (await tab(page, "README.md").getByTestId("editor-tab-close").boundingBox())!;
+    // The first press takes the tab away, and the second lands on the row
+    // where it was.
+    await page.mouse.dblclick(close.x + close.width / 2, close.y + close.height / 2);
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    // A double-click on the row itself opens one, and it is the only one.
+    await doubleClickRow(page);
+    await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("editor-tab")).toHaveCount(1);
+  });
+
   test("opens one on the chord from the tree, and from agent mode flips to the editor", async ({ page }) => {
     await treeRow(page, "README.md").click();
     await expect(page.locator(TREE)).toBeFocused();

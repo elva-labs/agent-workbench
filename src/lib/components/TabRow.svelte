@@ -134,11 +134,23 @@
     void tick().then(toRow);
   });
 
-  /** A double-click on the row itself, not on a tab or the views. */
+  /** Whether the press on the row is on the row itself, not on a tab, a
+      tab's close button or the views. */
+  function onRow(e: MouseEvent): boolean {
+    return e.target === e.currentTarget || e.target === strip;
+  }
+
+  /** Where the first press of a double-click landed: one on a tab's close
+      button takes the tab away from under the second. */
+  let firstOnRow = false;
+
+  function onRowDown(e: MouseEvent) {
+    if (e.button === 0 && e.detail === 1) firstOnRow = onRow(e);
+  }
+
+  /** A double-click on the row itself, both presses where no tab is. */
   function onRowDouble(e: MouseEvent) {
-    if (e.button !== 0) return;
-    const target = e.target as HTMLElement;
-    if (target !== e.currentTarget && target !== strip) return;
+    if (e.button !== 0 || !firstOnRow || !onRow(e)) return;
     e.preventDefault();
     newUntitled();
   }
@@ -153,7 +165,7 @@
 <!-- The double-click is a quicker way to the new untitled file chord, which
      the keyboard has. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="row" ondblclick={onRowDouble} data-testid="tab-row">
+<div class="row" onmousedown={onRowDown} ondblclick={onRowDouble} data-testid="tab-row">
   <div
     class="tabs"
     class:fade-start={fadeStart}
