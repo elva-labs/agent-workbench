@@ -10,7 +10,8 @@
    * there comes back to the field.
    *
    * The field holds the keyboard while it is up, as a question in a strip
-   * does: Tab goes round its field and buttons.
+   * does: Tab goes round its field and buttons, and close and the chords
+   * that move the keyboard leave it be.
    */
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import { cancelSaveAs, editor, keepName, setSaveAsName } from "$lib/editor.svelte";
@@ -66,41 +67,44 @@
       testid="save-replace"
     />
   {:else}
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <form
-      class="strip"
-      aria-label="Save {name}"
-      onkeydown={keys}
-      onsubmit={submit}
-      data-testid="save-as"
-    >
-      <label class="what" for="save-as-path">Save {name} as</label>
-      <div class="field">
-        <span class="box" class:wrong={asked.problem !== null}>
-          {#if project !== ""}<span class="root" title={project} data-testid="save-as-root">{project}/</span>{/if}
-          <input
-            id="save-as-path"
-            value={asked.value}
-            oninput={(e) => setSaveAsName((e.currentTarget as HTMLInputElement).value)}
-            use:takeKeyboard={asked.session}
-            readonly={asked.busy}
-            spellcheck="false"
-            autocomplete="off"
-            autocapitalize="off"
-            aria-invalid={asked.problem !== null}
-            aria-describedby={asked.problem === null ? undefined : "save-as-problem"}
-            data-testid="save-as-field"
-          />
-        </span>
-        {#if asked.problem !== null}
-          <p class="problem" id="save-as-problem" role="alert" data-testid="save-as-problem">{asked.problem}</p>
-        {/if}
-      </div>
-      <div class="actions">
-        <button type="button" class="cancel" onclick={cancelSaveAs} data-testid="save-as-cancel">Cancel</button>
-        <button type="submit" class="save" disabled={asked.busy} data-testid="save-as-save">Save</button>
-      </div>
-    </form>
+    <!-- A question in a strip, as the app's others are: while it has the
+         keyboard, close and the chords that move the keyboard leave it. -->
+    <div role="alertdialog" aria-label="Save {name}" tabindex="-1">
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <form
+        class="strip"
+        onkeydown={keys}
+        onsubmit={submit}
+        data-testid="save-as"
+      >
+        <label class="what" for="save-as-path">Save {name} as</label>
+        <div class="field">
+          <span class="box" class:wrong={asked.problem !== null}>
+            {#if project !== ""}<span class="root" title={project} data-testid="save-as-root">{project}/</span>{/if}
+            <input
+              id="save-as-path"
+              value={asked.value}
+              oninput={(e) => setSaveAsName((e.currentTarget as HTMLInputElement).value)}
+              use:takeKeyboard={asked.session}
+              readonly={asked.busy}
+              spellcheck="false"
+              autocomplete="off"
+              autocapitalize="off"
+              aria-invalid={asked.problem !== null}
+              aria-describedby={asked.problem === null ? undefined : "save-as-problem"}
+              data-testid="save-as-field"
+            />
+          </span>
+          {#if asked.problem !== null}
+            <p class="problem" id="save-as-problem" role="alert" data-testid="save-as-problem">{asked.problem}</p>
+          {/if}
+        </div>
+        <div class="actions">
+          <button type="button" class="cancel" onclick={cancelSaveAs} data-testid="save-as-cancel">Cancel</button>
+          <button type="submit" class="save" disabled={asked.busy} data-testid="save-as-save">Save</button>
+        </div>
+      </form>
+    </div>
   {/if}
 {/if}
 

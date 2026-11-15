@@ -105,8 +105,9 @@ refuses, a path with no name after its last slash, and a path that leaves
 the project: an absolute one, one from the home folder, or one that steps
 up out of the top. A path that holds a file already asks whether to
 replace it, and one open with unsaved edits is refused until they are
-saved or dropped. The field is the same on every platform and for a
-project on another machine.
+saved or dropped. The field holds the keyboard as a question in a strip
+does, so <kbd>Cmd</kbd><kbd>W</kbd> leaves it be. It is the same on every
+platform and for a project on another machine.
 
 Once written it is that file: a kept tab on it in the untitled file's
 place, with its text, its cursor and its undo history, the tree showing it

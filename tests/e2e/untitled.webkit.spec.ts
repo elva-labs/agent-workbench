@@ -365,6 +365,64 @@ test.describe("closing an untitled file", () => {
   });
 });
 
+test.describe("closing an untitled file by the chord", () => {
+  // As macOS, where Cmd+W closes what is in front from anywhere, the
+  // agent's pane included.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
+    await open(page);
+    await page.keyboard.press("Meta+Shift+E");
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await page.keyboard.press("Meta+3");
+    await page.keyboard.press("Meta+n");
+    await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
+  });
+
+  const menuText = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __menuText?: Record<string, string> }).__menuText ?? {});
+
+  test("closes as its × does: at once when empty, asking with text, from the agent's pane too", async ({ page }) => {
+    await expect.poll(() => menuText(page)).toMatchObject({ "file.close": "Close Tab" });
+    await page.keyboard.press("Meta+w");
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    await expect(page.getByTestId("close-unsaved")).toHaveCount(0);
+
+    await page.keyboard.press("Meta+n");
+    await page.keyboard.type("draft");
+    await page.keyboard.press("Meta+2");
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    await page.keyboard.press("Meta+w");
+    const strip = page.getByTestId("close-unsaved");
+    await expect(strip).toContainText("Close Untitled with unsaved edits?");
+    await expect(page.getByTestId("close-unsaved-cancel")).toBeFocused();
+    // A second press neither answers the question nor reaches past it.
+    await page.keyboard.press("Meta+w");
+    await expect(page.getByTestId("close-unsaved-cancel")).toBeFocused();
+    await expect(tab(page, "Untitled")).toBeVisible();
+    await page.getByTestId("close-unsaved-confirm").click();
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("leaves the path field be, as it does a question, and closes once it is written", async ({ page }) => {
+    await page.keyboard.type("draft");
+    await page.keyboard.press("Meta+w");
+    await page.getByTestId("close-unsaved-alternative").click();
+    const field = page.getByTestId("save-as-field");
+    await expect(field).toBeFocused();
+    await page.keyboard.press("Meta+w");
+    await page.keyboard.press("Meta+n");
+    await page.keyboard.press("Meta+t");
+    await expect(field).toBeFocused();
+    await expect(page.getByTestId("editor-tab")).toHaveCount(1);
+    await expect(page.getByTestId("terminal-row")).toHaveCount(0);
+    await page.keyboard.type("kept.md");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+    expect(await writes(page)).toEqual([{ file: "kept.md", text: "draft", stamp: null, overwrite: false }]);
+  });
+});
+
 test.describe("the keyboard", () => {
   test("keeps the tab row one stop, the untitled tab among the files", async ({ page }) => {
     await open(page);

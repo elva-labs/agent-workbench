@@ -713,9 +713,13 @@
       e.preventDefault();
       return;
     }
-    // A new shell and the chord to the status bar move the keyboard too,
-    // and do nothing while a question in a strip holds it either.
-    if ((action.type === "newShell" || action.type === "focusStatus") && keyboardHeld()) {
+    // A new shell, a new untitled file and the chord to the status bar move
+    // the keyboard too, and do nothing while a question in a strip holds it
+    // either.
+    if (
+      (action.type === "newShell" || action.type === "newUntitled" || action.type === "focusStatus") &&
+      keyboardHeld()
+    ) {
       e.preventDefault();
       return;
     }
@@ -861,7 +865,7 @@
   /** An item of the File menu: what its action does. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
-    else if (action === "file.untitled") newUntitled();
+    else if (action === "file.untitled" && !palette.open && !keyboardHeld()) newUntitled();
     else if (action === "terminal.new" && !palette.open && !keyboardHeld()) newShell();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") void closeInFront();
