@@ -930,8 +930,8 @@ impl Stream {
     }
 
     /// What the agent says of the limits as each response of the model
-    /// comes: the window that limits it now, and every window at once in
-    /// the newer versions, each as a fraction used. Told when it changes
+    /// comes: the window that limits it now, and every window at once
+    /// where it gives them all, each as a fraction used. Told when it changes
     /// what was told before. A window of one model is left out, since only
     /// a read names the model as the server does.
     fn rate_limited(&mut self, info: &Value, out: &mut Reading) {

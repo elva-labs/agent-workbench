@@ -483,8 +483,7 @@ pub struct LimitWindow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LimitKind {
-    /// The few hours a session of work is metered by: five, for both
-    /// agents.
+    /// The five hours a session of work is metered over.
     Session,
     /// The week, over every model.
     Weekly,
