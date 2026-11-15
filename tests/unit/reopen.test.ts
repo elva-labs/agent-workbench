@@ -246,6 +246,20 @@ describe("coming back", () => {
     expect(record().open.map((item) => item.id)).toEqual(["one", "two"]);
   });
 
+  it("hands what an earlier version kept under a folder to the one Codex session that was open there", () => {
+    conductor.started = {
+      [A]: [{ id: "kid", project: B, worktree: null, agent: "codex", name: null }],
+    };
+    onRecord([{ ...entry(A, "codex-a"), agent: "codex" }, entry(A, "claude-a")], null);
+    stop = reopen();
+    const back = forProject(A).find((session) => session.id === "codex-a")!;
+    // It comes back named by its id, as a session from before there were
+    // tokens, and what the folder held is its.
+    expect(back.token).toBe("codex-a");
+    expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid"]);
+    expect(conductor.started["claude-a"]).toBeUndefined();
+  });
+
   it("reads a corrupt record as nothing open", () => {
     localStorage.setItem(KEY, "{not json");
     stop = reopen();

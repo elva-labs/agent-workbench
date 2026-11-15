@@ -26,7 +26,6 @@
       {/if}
       <span data-testid="conduct-round">{roundQuestion(ask.round)}</span>
     </p>
-    {#if ask.unsure}<p class="where" data-testid="conduct-unsure">This call may come from a session another session started.</p>{/if}
     {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
     <div class="actions">
       <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow one more round</button>
@@ -34,18 +33,42 @@
     </div>
   </div>
 {:else if ask !== null}
-  <div class="ask" role="alertdialog" aria-label="Start a session" use:coversBrowser data-testid="conduct-ask">
-    <p class="title">{ask.caller} wants to start a session</p>
-    <p class="where">
-      In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
-      {#if ask.named !== null}
-        <span data-testid="conduct-account">{accountWords(ask.named)}</span>
-      {/if}
-    </p>
-    {#if ask.unsure}<p class="where" data-testid="conduct-unsure">This call may come from a session another session started.</p>{/if}
+  <div
+    class="ask"
+    role="alertdialog"
+    aria-label="Start a session"
+    aria-describedby={ask.outside !== null ? "conduct-ask-title conduct-ask-outside" : "conduct-ask-title"}
+    use:coversBrowser
+    data-testid="conduct-ask"
+  >
+    <p class="title" id="conduct-ask-title">{ask.caller} wants to start a session</p>
+    {#if ask.outside !== null}
+      <!-- A call that names no session: the workbench cannot tell which
+           agent makes it, so each start it asks for is asked about. -->
+      <p class="where" id="conduct-ask-outside" data-testid="conduct-outside">
+        It runs in {ask.outside} and does not say which session it is: an agent run outside the workbench, or a session
+        that left its name out. Each new session it asks for is put to you.
+      </p>
+    {/if}
+    {#if ask.outside !== ask.project}
+      <p class="where">
+        In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
+        {#if ask.named !== null}
+          <span data-testid="conduct-account">{accountWords(ask.named)}</span>
+        {/if}
+      </p>
+    {:else if ask.worktree || ask.named !== null}
+      <!-- The folder it runs in is the project, said just above. -->
+      <p class="where">
+        {ask.worktree ? "In a worktree of its own." : ""}
+        {#if ask.named !== null}
+          <span data-testid="conduct-account">{accountWords(ask.named)}</span>
+        {/if}
+      </p>
+    {/if}
     <p class="prompt"><Plain text={ask.prompt} /></p>
     <div class="actions">
-      {#if ask.unsure}
+      {#if ask.outside !== null}
         <button class="go" onclick={() => answer(once)} data-testid="conduct-once">Allow once</button>
       {:else}
         <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>

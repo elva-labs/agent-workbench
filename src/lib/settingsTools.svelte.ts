@@ -60,7 +60,7 @@ import {
   type Keymap,
   type PresetName,
 } from "$lib/keys.svelte";
-import { label, sessions } from "$lib/sessions.svelte";
+import { byToken, label } from "$lib/sessions.svelte";
 import { AGENT_ORDER, CODEX_DEFAULT, modelsOf } from "$lib/models";
 import {
   changed,
@@ -652,11 +652,8 @@ function changesOf(next: Next): Change[] {
 }
 
 function callerOf(request: SettingsRequest): string {
-  const session =
-    request.session === null
-      ? undefined
-      : sessions.all.find((candidate) => candidate.id === request.session);
-  return session === undefined ? "An agent" : label(session);
+  const session = byToken(request.session);
+  return session === null ? "An agent" : label(session);
 }
 
 /** Runs a change when the ones before it are done. */

@@ -364,7 +364,8 @@ impl Core {
     /// was told about live updates, and, with `start_only`, delegates only
     /// through them. `afresh` says what a resumed session is told now, its
     /// instructions or none, differs from what its conversation was first
-    /// given.
+    /// given. `token` is what the window knows the session by, which the
+    /// agent's tools are given so that every call they make names it.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -372,6 +373,7 @@ impl Core {
         project: &Path,
         cwd: Option<&Path>,
         session: Option<String>,
+        token: Option<&str>,
         prompt: Option<&str>,
         model: Option<&str>,
         config_dir: Option<&str>,
@@ -389,6 +391,7 @@ impl Core {
         // the agent may run in.
         let opened = project.to_string_lossy().to_string();
         let instructions = instructions.filter(|text| !text.trim().is_empty());
+        let token = token.filter(|token| !token.trim().is_empty());
         let orchestrator = instructions.is_some() || self.is_orchestrator(project);
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
@@ -413,17 +416,25 @@ impl Core {
         // A session that follows a workflow hands its work out with the
         // workbench's start tool, so it is not started where no tool server
         // can reach it.
-        let server = match (instructions, self.home.as_deref()) {
+        // Where the agent's own configuration already points at the server,
+        // an agent that passes its servers only the variables it is told to
+        // is told the server again, with the session's token to pass on.
+        // Nothing else needs to know where the server is.
+        let found = match self.home.as_deref() {
+            Some(home) if instructions.is_some() || adapter.names_server_vars() => Some(
+                hook::tool_server(home, project, agent, config_dir, &environment.vars),
+            ),
+            _ => None,
+        };
+        let server = match (instructions, &found) {
             (None, _) => None,
-            (Some(_), Some(home)) => {
-                match hook::tool_server(home, project, agent, config_dir, &env::environment().vars)
-                {
-                    hook::ToolServer::Configured => None,
-                    hook::ToolServer::Named(daemon) => Some(daemon),
-                    hook::ToolServer::Missing => return Err(NO_TOOLS.into()),
-                }
-            }
-            (Some(_), None) => return Err(NO_TOOLS.into()),
+            (Some(_), Some(hook::ToolServer::Configured)) => None,
+            (Some(_), Some(hook::ToolServer::Named(daemon))) => Some(daemon.clone()),
+            (Some(_), Some(hook::ToolServer::Missing) | None) => return Err(NO_TOOLS.into()),
+        };
+        let configured = match (&found, self.home.as_deref()) {
+            (Some(hook::ToolServer::Configured), Some(home)) => Some(hook::daemon_path(home)),
+            _ => None,
         };
         // An agent that reads the instructions and the server from files is
         // given files of the session's own, which go when the session does.
@@ -443,6 +454,7 @@ impl Core {
             project,
             env: &environment.vars,
             session: session_id.as_deref(),
+            token,
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
             config_dir: expanded.as_deref(),
@@ -452,6 +464,7 @@ impl Core {
             start_only: instructions.is_some() && start_only,
             server: server.as_deref(),
             server_file: server_file.as_deref(),
+            configured: configured.as_deref(),
             afresh: resumed && afresh,
         };
         let surface = match &session_id {
@@ -480,7 +493,7 @@ impl Core {
             files,
         )?;
         if let Some(plugins) = &self.plugins {
-            plugins.session_started(&pty_id, session_id.as_deref(), &opened);
+            plugins.session_started(&pty_id, session_id.as_deref(), token, &opened);
         }
         if let Some((home, activity)) = codex_activity {
             codex::observe(
@@ -514,6 +527,7 @@ impl Core {
         project: &Path,
         cwd: Option<&Path>,
         session: Option<String>,
+        token: Option<&str>,
         model: Option<&str>,
         mode: Option<&str>,
         effort: Option<&str>,
@@ -563,6 +577,7 @@ impl Core {
             project,
             env: &environment.vars,
             session: session.as_deref(),
+            token: token.filter(|token| !token.trim().is_empty()),
             resume,
             model: model.filter(|model| !model.trim().is_empty()),
             mode: mode.filter(|mode| !mode.trim().is_empty()),
@@ -572,6 +587,9 @@ impl Core {
             orchestrator,
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
+        let named = token
+            .filter(|token| !token.trim().is_empty())
+            .map(str::to_string);
         crate::integrated::start(
             Arc::clone(&self.sink),
             Arc::clone(&self.integrated),
@@ -579,7 +597,12 @@ impl Core {
             &launch,
             Box::new(move |started| {
                 if let Some(plugins) = starting {
-                    plugins.session_started(&started.id, started.session_id.as_deref(), &opened);
+                    plugins.session_started(
+                        &started.id,
+                        started.session_id.as_deref(),
+                        named.as_deref(),
+                        &opened,
+                    );
                 }
             }),
             Box::new(move |id| {
@@ -1391,6 +1414,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("1. Direct the work."),
             true,
             false,
@@ -1407,6 +1431,7 @@ mod tests {
         let started = core_at(&home).integrated_start(
             "claude-code",
             &home,
+            None,
             None,
             None,
             None,

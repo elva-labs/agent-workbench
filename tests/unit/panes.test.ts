@@ -480,7 +480,7 @@ describe("SessionsPane", () => {
     started(starter.key, "pty-2", "starter-1");
     const kid = create("/kid");
     started(kid.key, "pty-3", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     sessions.active = own.key;
     touch("/other", Date.now() - 1000);
     touch("/starter", Date.now() - 5000);
@@ -520,7 +520,7 @@ describe("SessionsPane", () => {
     started(starter.key, "pty-1", "starter-1");
     const kid = create("/kid");
     started(kid.key, "pty-2", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     sessions.active = starter.key;
     touch("/starter", Date.now() - 5000);
     touch("/kid", Date.now() - 1000);
@@ -561,7 +561,7 @@ describe("SessionsPane", () => {
     started(starter.key, "pty-2", "starter-1");
     const kid = create("/kid");
     started(kid.key, "pty-3", "kid-1");
-    conductor.startedBy[kid.key] = "starter-1";
+    conductor.startedBy[kid.key] = starter.token;
     sessions.active = own.key;
     touch("/other", Date.now() - 1000);
     touch("/starter", Date.now() - 5000);
@@ -1048,7 +1048,7 @@ describe("SessionsPane", () => {
     started(there.key, "pty-3", "kid-2");
     const done = create("/repo", null, "claude-code", null, null, "sonnet");
     started(done.key, "pty-4", "kid-3");
-    for (const kid of [here, there, done]) conductor.startedBy[kid.key] = "starter-1";
+    for (const kid of [here, there, done]) conductor.startedBy[kid.key] = starter.token;
     there.needs = "permission";
     done.status = "exited";
 

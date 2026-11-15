@@ -116,7 +116,7 @@ function startedIn(
   id: string,
 ): Session {
   const session = live(project, ptyId, id);
-  conductor.startedBy[session.key] = by.id ?? by.key;
+  conductor.startedBy[session.key] = by.token;
   return session;
 }
 

@@ -21,6 +21,7 @@ import {
   adopt,
   byKey,
   failed,
+  keepToken,
   loadHistory,
   named,
   noted,
@@ -188,6 +189,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
 function identify(session: Session, id: string) {
   if (session.id === id) return;
   session.id = id;
+  keepToken(session);
   adopt(session.project, id);
 }
 
@@ -277,6 +279,7 @@ export async function launch(key: string): Promise<void> {
       project: session.project,
       cwd: session.startIn ?? undefined,
       session: session.resumedFrom ?? undefined,
+      token: session.token,
       model: session.model ?? undefined,
       mode: startMode(session, link),
       configDir: dirFor(session.account, session.agent),

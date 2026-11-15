@@ -793,6 +793,10 @@ pub struct Launch<'a> {
     /// to resume. None for a fresh conversation of an agent that makes its
     /// own id.
     pub session: Option<&'a str>,
+    /// The token the workbench chose for the session, which the agent's
+    /// hooks and the tool server attached to it are given, so every call
+    /// they make names the session.
+    pub token: Option<&'a str>,
     pub resume: bool,
     pub model: Option<&'a str>,
     pub mode: Option<&'a str>,
@@ -3813,6 +3817,7 @@ mod tests {
             project: Path::new("/"),
             env: &vars,
             session,
+            token: None,
             resume: session.is_some(),
             model: None,
             mode: None,
