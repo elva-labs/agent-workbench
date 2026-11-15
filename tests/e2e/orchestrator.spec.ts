@@ -504,7 +504,7 @@ test.describe("a started session in a project of its own", () => {
 
 // Short of room, a started row cuts its project first, then drops its
 // model whole, then its account, and cuts its name last; its time and the
-// accent's asking always stand in full.
+// accent's asking always stand in full, while editing as well.
 for (const width of [300, 240, 180]) {
   test(`fits a started row into a pane ${width} pixels wide`, async ({ page }) => {
     const OTHER = "/home/ada/dev/other-project";
@@ -559,61 +559,83 @@ for (const width of [300, 240, 180]) {
       ).__sessionEvent({ sessionId: "session-2", kind: "permission" }),
     );
     await expect(page.getByTestId("started-asking")).toHaveText("asking");
+    await fits(page, width);
 
-    for (const started of await page.getByTestId("started-session").all()) {
-      const row = (await started.boundingBox())!;
-      const fit = (await started.locator(".fit").boundingBox())!;
-      const shown = async (selector: string) => {
-        const part = started.locator(selector);
-        if ((await part.count()) === 0) return null;
-        const box = (await part.boundingBox())!;
-        return box.y < fit.y + fit.height - 1 && box.width > 0 ? part : null;
-      };
-      const whole = async (selector: string) => {
-        const part = started.locator(selector);
-        const box = (await part.boundingBox())!;
-        expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
-        expect(await part.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5)).toBe(true);
-      };
-      // The time, and asking, in full and inside the row.
-      await whole(".when");
-      if ((await started.getByTestId("started-asking").count()) > 0) await whole("[data-testid='started-asking']");
-      // The model whole or not at all, never cut.
-      const model = await shown("[data-testid='started-model']");
-      if (model !== null) await whole("[data-testid='started-model']");
-      // The account whole or not at all too, and it stands until the model
-      // and the project have gone.
-      const account = await shown("[data-testid='started-account']");
-      if (account !== null) await whole("[data-testid='started-account']");
-      if ((await started.getByTestId("started-account").count()) > 0 && account === null) {
-        expect(model).toBeNull();
-        expect(await shown(".where")).toBeNull();
-      }
-      // The name always shows, and is cut only once the rest has gone.
-      const name = (await shown(".label"))!;
-      expect(name).not.toBeNull();
-      const cut = await name.evaluate((el) => el.scrollWidth > el.clientWidth + 0.5);
-      if (cut) {
-        expect(model).toBeNull();
-        expect(await shown(".where")).toBeNull();
-        expect(account).toBeNull();
-      }
-      // The project, when it shows, keeps a few letters.
-      const where = await shown(".where");
-      if (where !== null) expect((await where.boundingBox())!.width).toBeGreaterThan(14);
-    }
-    // At the default width a short one keeps its account and its model.
-    if (width === 300) {
-      const notes = page.getByTestId("started-session").filter({ hasText: "Notes" });
-      const line = (await notes.locator(".fit").boundingBox())!;
-      for (const part of ["started-account", "started-model"]) {
-        const box = (await notes.getByTestId(part).boundingBox())!;
-        expect(box.y).toBeLessThan(line.y + line.height - 1);
-      }
-      const short = page.getByTestId("started-session").filter({ hasText: "Palette check" });
-      const model = (await short.getByTestId("started-model").boundingBox())!;
-      const fit = (await short.locator(".fit").boundingBox())!;
-      expect(model.y).toBeLessThan(fit.y + fit.height - 1);
-    }
+    // Editing folds the pane in this window, and its column peeks it over
+    // the tree's.
+    await page.getByTestId("mode-editor").click();
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    const pane = page.locator("section[data-pane='sessions']");
+    const drawn = async () => Math.round((await pane.boundingBox())!.width);
+    await expect.poll(drawn).toBeLessThan(width);
+    await page.getByTestId("unfold-sessions").click();
+    await expect.poll(drawn).toBeGreaterThanOrEqual(width);
+    await fits(page, await drawn());
+    // In a window with room for it, it stands beside the editor at its own
+    // width.
+    await page.keyboard.press("Escape");
+    await page.setViewportSize({ width: 1728, height: 900 });
+    await expect.poll(drawn).toBe(width);
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await fits(page, width);
   });
+}
+
+/** The started rows, each given way in its turn within the pane. */
+async function fits(page: Page, width: number) {
+  for (const started of await page.getByTestId("started-session").all()) {
+    const row = (await started.boundingBox())!;
+    const fit = (await started.locator(".fit").boundingBox())!;
+    const shown = async (selector: string) => {
+      const part = started.locator(selector);
+      if ((await part.count()) === 0) return null;
+      const box = (await part.boundingBox())!;
+      return box.y < fit.y + fit.height - 1 && box.width > 0 ? part : null;
+    };
+    const whole = async (selector: string) => {
+      const part = started.locator(selector);
+      const box = (await part.boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(row.x + row.width + 0.5);
+      expect(await part.evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5)).toBe(true);
+    };
+    // The time, and asking, in full and inside the row.
+    await whole(".when");
+    if ((await started.getByTestId("started-asking").count()) > 0) await whole("[data-testid='started-asking']");
+    // The model whole or not at all, never cut.
+    const model = await shown("[data-testid='started-model']");
+    if (model !== null) await whole("[data-testid='started-model']");
+    // The account whole or not at all too, and it stands until the model
+    // and the project have gone.
+    const account = await shown("[data-testid='started-account']");
+    if (account !== null) await whole("[data-testid='started-account']");
+    if ((await started.getByTestId("started-account").count()) > 0 && account === null) {
+      expect(model).toBeNull();
+      expect(await shown(".where")).toBeNull();
+    }
+    // The name always shows, and is cut only once the rest has gone.
+    const name = (await shown(".label"))!;
+    expect(name).not.toBeNull();
+    const cut = await name.evaluate((el) => el.scrollWidth > el.clientWidth + 0.5);
+    if (cut) {
+      expect(model).toBeNull();
+      expect(await shown(".where")).toBeNull();
+      expect(account).toBeNull();
+    }
+    // The project, when it shows, keeps a few letters.
+    const where = await shown(".where");
+    if (where !== null) expect((await where.boundingBox())!.width).toBeGreaterThan(14);
+  }
+  // At the default width a short one keeps its account and its model.
+  if (width === 300) {
+    const notes = page.getByTestId("started-session").filter({ hasText: "Notes" });
+    const line = (await notes.locator(".fit").boundingBox())!;
+    for (const part of ["started-account", "started-model"]) {
+      const box = (await notes.getByTestId(part).boundingBox())!;
+      expect(box.y).toBeLessThan(line.y + line.height - 1);
+    }
+    const short = page.getByTestId("started-session").filter({ hasText: "Palette check" });
+    const model = (await short.getByTestId("started-model").boundingBox())!;
+    const fit = (await short.locator(".fit").boundingBox())!;
+    expect(model.y).toBeLessThan(fit.y + fit.height - 1);
+  }
 }
