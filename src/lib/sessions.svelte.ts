@@ -162,6 +162,13 @@ export interface KeptWorkflow {
   project: string | null;
 }
 
+/** A session's token as it is kept, and its project, so it goes once the
+    session is gone from the project's history. */
+export interface KeptToken {
+  token: string;
+  project: string;
+}
+
 /** A past session, whose it is, and the account it ran under: the name
     of the account whose directory holds it, or null for the agents' own.
     It resumes under that account. */
@@ -193,10 +200,11 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
-  /** The token each session's tools name it by, by the agent's id for the
-      session, kept between runs, so a session resumed is named as it was
-      and still owns what was kept under its token. */
-  tokens: {} as Record<string, string>,
+  /** The token each session's tools name it by, with the project it runs
+      in, by the agent's id for the session, kept between runs, so a session
+      resumed is named as it was and still owns what was kept under its
+      token. */
+  tokens: {} as Record<string, KeptToken>,
   /** What is kept of the workflow each session follows, by session id. A
       session that follows none is not here. */
   workflows: {} as Record<string, KeptWorkflow>,
@@ -551,9 +559,12 @@ export function loadRemembered() {
     if (raw !== null) {
       const stored: unknown = JSON.parse(raw);
       if (typeof stored === "object" && stored !== null) {
-        const tokens: Record<string, string> = {};
-        for (const [id, token] of Object.entries(stored)) {
-          if (typeof token === "string" && token !== "") tokens[id] = token;
+        const tokens: Record<string, KeptToken> = {};
+        for (const [id, kept] of Object.entries(stored)) {
+          if (typeof kept !== "object" || kept === null) continue;
+          const { token, project } = kept as Record<string, unknown>;
+          if (typeof token === "string" && token !== "" && typeof project === "string")
+            tokens[id] = { token, project };
         }
         sessions.tokens = tokens;
       }
@@ -698,26 +709,38 @@ function toldAfresh(id: string, workflow: Workflow | null): boolean {
 }
 
 /** Lets go of what is kept for the sessions of a project that are gone
-    from its history: no row has them, and the agent lists them no more.
-    A history that came back empty may be one that could not be read, and
-    takes nothing away. */
+    from its history, their workflows and their tokens: no row has them,
+    and the agent lists them no more. A history that came back empty may be
+    one that could not be read, and takes nothing away. */
 function pruneKept(project: string) {
   const listed = new Set((sessions.history[project] ?? []).map((entry) => entry.id));
   if (listed.size === 0) return;
   const rows = new Set(sessions.all.map((session) => session.id));
-  const gone = Object.entries(sessions.workflows)
-    .filter(([id, kept]) => kept.project === project && !listed.has(id) && !rows.has(id))
+  const gone = (id: string, of: string | null) => of === project && !listed.has(id) && !rows.has(id);
+  const workflows = Object.entries(sessions.workflows)
+    .filter(([id, kept]) => gone(id, kept.project))
     .map(([id]) => id);
-  if (gone.length === 0) return;
-  for (const id of gone) delete sessions.workflows[id];
-  saveKept();
-  forgotten(gone);
+  const tokens = Object.entries(sessions.tokens)
+    .filter(([id, kept]) => gone(id, kept.project))
+    .map(([id]) => id);
+  if (workflows.length === 0 && tokens.length === 0) return;
+  // What else is kept for them is kept under their tokens, which for a
+  // session from before there were tokens is its id.
+  const callers = [...new Set([...workflows, ...tokens])].map(
+    (id) => sessions.tokens[id]?.token ?? id,
+  );
+  for (const id of workflows) delete sessions.workflows[id];
+  for (const id of tokens) delete sessions.tokens[id];
+  if (workflows.length > 0) saveKept();
+  if (tokens.length > 0) saveTokens();
+  forgotten(callers);
 }
 
-let forgotten: (ids: string[]) => void = () => {};
+let forgotten: (tokens: string[]) => void = () => {};
 
-/** Hears the ids of sessions whose kept workflow went with them. */
-export function onForgotten(handler: ((ids: string[]) => void) | null) {
+/** Hears the tokens of sessions gone from their project's history, whose
+    kept workflow or token went with them. */
+export function onForgotten(handler: ((tokens: string[]) => void) | null) {
   forgotten = handler ?? (() => {});
 }
 
@@ -737,7 +760,8 @@ function orchestratorModel(workflow: Workflow): string | null {
  * one token at once.
  */
 function tokenFor(resumedFrom: string | null): string {
-  const kept = resumedFrom === null ? null : (sessions.tokens[resumedFrom] ?? resumedFrom);
+  const kept =
+    resumedFrom === null ? null : (sessions.tokens[resumedFrom]?.token ?? resumedFrom);
   if (kept !== null && !sessions.all.some((row) => row.token === kept && isLive(row)))
     return kept;
   return crypto.randomUUID();
@@ -747,11 +771,16 @@ function tokenFor(resumedFrom: string | null): string {
     the session resumed later to be named the same. */
 export function keepToken(session: Session) {
   const id = session.id;
-  if (id === null || sessions.tokens[id] === session.token) return;
+  if (id === null) return;
+  if (sessions.tokens[id]?.token === session.token) return;
   // A session from before there were tokens is named by its id, which
   // needs nothing kept.
   if (session.token === id && sessions.tokens[id] === undefined) return;
-  sessions.tokens[id] = session.token;
+  sessions.tokens[id] = { token: session.token, project: session.project };
+  saveTokens();
+}
+
+function saveTokens() {
   try {
     localStorage.setItem(TOKENS_KEY, JSON.stringify(sessions.tokens));
   } catch {

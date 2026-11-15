@@ -2187,8 +2187,8 @@ onDirected((session) => startedFor(session.key) !== null);
 startersFrom(startedFor);
 
 // A session gone from its project goes from what its workflow ran too.
-onForgotten((ids) => {
-  for (const id of ids) delete conductor.runs[id];
+onForgotten((tokens) => {
+  for (const token of tokens) delete conductor.runs[token];
   saveRuns();
 });
 

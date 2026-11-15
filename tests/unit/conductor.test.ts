@@ -50,6 +50,7 @@ import {
   forProject,
   identified,
   label,
+  loadHistory,
   loadRemembered,
   output,
   QUIET_MS,
@@ -91,6 +92,8 @@ let worktreeFails: string | null = null;
 let answerRefused: string | null = null;
 /** The worktrees each project has, as the core lists them. */
 let standing: Record<string, string[]> = {};
+/** The past sessions each project's agents list. */
+let past: Record<string, { id: string; title: string; modified: number; size: number; cwd: null }[]> = {};
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -126,11 +129,11 @@ vi.mock("$lib/core", () => ({
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
     },
-    async transcripts() {
-      return [];
+    async transcripts(project: string) {
+      return past[project] ?? [];
     },
     async transcriptsMany(projects: string[]) {
-      return projects.map(() => []);
+      return projects.map((project) => past[project] ?? []);
     },
     async setWindowTitle() {},
   }),
@@ -276,6 +279,7 @@ beforeEach(() => {
   worktreeFails = null;
   answerRefused = null;
   standing = {};
+  past = {};
   calls = 0;
   ownToken.clear();
   localStorage.removeItem("workbench.started");
@@ -3581,6 +3585,25 @@ describe("sessions told apart by their tokens", () => {
     // Carried once: a second look changes nothing.
     carryOver([{ project: A, id: "codex-a", agent: "codex", startIn: null }]);
     expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
+  });
+
+  it("lets go of what a workflow ran, and the token, once the orchestrator is gone from its project's history", async () => {
+    const orch = create(A, null, "claude-code", null, null, null, null, null);
+    ownToken.add(orch.key);
+    started(orch.key, "pty-orch", "orch-id");
+    const token = orch.token;
+    expect(token).not.toBe("orch-id");
+    expect(sessions.tokens["orch-id"]?.token).toBe(token);
+    conductor.runs[token] = {
+      places: { "kid-1": { step: "Work", kind: "work", piece: "kid-1", round: null, work: null } },
+      rounds: {},
+    };
+    close(orch.key);
+    past[A] = [{ id: "someone-else", title: "Another", modified: 1, size: 100, cwd: null }];
+    await loadHistory(A);
+    expect(conductor.runs[token]).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem("workbench.runs") ?? "{}")).not.toHaveProperty(token);
+    expect(sessions.tokens["orch-id"]).toBeUndefined();
   });
 
   it("looks at a folder once: one left as it was is not carried to the session open there at a later quit", async () => {

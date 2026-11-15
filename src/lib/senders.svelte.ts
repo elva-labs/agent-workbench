@@ -92,7 +92,7 @@ export function senderOf(message: { id: string }): Sender | null {
     sessions.all.find((candidate) => candidate.id === from) ??
     null;
   const id =
-    row?.id ?? Object.entries(sessions.tokens).find(([, token]) => token === from)?.[0] ?? from;
+    row?.id ?? Object.entries(sessions.tokens).find(([, kept]) => kept.token === from)?.[0] ?? from;
   return {
     id,
     key: row?.key ?? null,

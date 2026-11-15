@@ -989,7 +989,7 @@ describe("the token a session's tools name it by", () => {
     expect(byToken(token)?.key).toBe(session.key);
     identified("pty-1", "cx-1", null);
     expect(session.token).toBe(token);
-    expect(sessions.tokens["cx-1"]).toBe(token);
+    expect(sessions.tokens["cx-1"]).toEqual({ token, project: A });
   });
 
   it("is the same for the session resumed, after a restart too", async () => {
@@ -2150,15 +2150,23 @@ describe("following a workflow", () => {
     sessions.workflows["gone"] = { workflow: defaultWorkflow(), told: null, project: P };
     sessions.workflows["here"] = { workflow: defaultWorkflow(), told: null, project: P };
     sessions.workflows["elsewhere"] = { workflow: defaultWorkflow(), told: null, project: "/other" };
+    sessions.workflows["old"] = { workflow: defaultWorkflow(), told: null, project: P };
+    // Their tokens, but for the one from before there were tokens, whose
+    // token is its id; and a session with no workflow, gone as well.
+    for (const id of ["gone", "here", "elsewhere", "plain"])
+      sessions.tokens[id] = { token: `token-${id}`, project: id === "elsewhere" ? "/other" : P };
     historyAnswer = [{ id: "here", title: "Still here", modified: 1, size: 100, cwd: null }];
     const heard: string[][] = [];
-    onForgotten((ids) => heard.push(ids));
+    onForgotten((tokens) => heard.push(tokens));
     await loadHistory(P);
     onForgotten(null);
     expect(Object.keys(sessions.workflows).sort()).toEqual(["elsewhere", "here"]);
-    // What its workflow ran is let go of with it.
-    expect(heard).toEqual([["gone"]]);
+    expect(Object.keys(sessions.tokens).sort()).toEqual(["elsewhere", "here"]);
+    // What their workflows ran, kept under their tokens, is let go of with
+    // them.
+    expect(heard.map((tokens) => [...tokens].sort())).toEqual([["old", "token-gone", "token-plain"]]);
     expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
+    expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
   });
 
   it("gives a session started with no workflow none, whatever its project follows", () => {
