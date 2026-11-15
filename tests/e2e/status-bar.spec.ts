@@ -57,11 +57,12 @@ async function open(page: Page, settings: Record<string, unknown> = {}, more: Re
 const bar = (page: Page) => page.getByTestId("status-bar");
 const figure = (page: Page, kind: string) => page.locator(`[data-testid='limit-figure'][data-kind='${kind}']`);
 
-/** A colour as the browser computes it, from a token of the theme. */
+/** A colour as the browser computes it, from the theme's tokens: a token's
+    name, or a colour made of them. */
 function token(page: Page, name: string): Promise<string> {
   return page.evaluate((name) => {
     const probe = document.createElement("span");
-    probe.style.color = `var(${name})`;
+    probe.style.color = name.startsWith("--") ? `var(${name})` : name;
     document.body.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
@@ -142,7 +143,9 @@ test.describe("the session on screen", () => {
       ]);
       const near = figure(page, "session");
       await expect(near).toHaveAttribute("data-tone", "warn");
-      expect(await style(near, "color")).toBe(await token(page, "--ansi-yellow"));
+      // The theme's warning tone, deepened a little toward the ink so it
+      // holds 4.5:1 on the bar.
+      expect(await style(near, "color")).toBe(await token(page, "color-mix(in srgb, var(--ansi-yellow) 88%, var(--ink))"));
       expect(Number(await style(near, "font-weight"))).toBeGreaterThanOrEqual(600);
       expect(await style(figure(page, "weekly"), "color")).toBe(ink);
       // Near is not yet reached: no reset time in the bar.
@@ -201,6 +204,51 @@ test.describe("the session on screen", () => {
     await page.getByTestId("account-group").click();
     await expect(page.getByTestId("allowance-plan")).toHaveText("Codex · Plus");
   });
+});
+
+test.describe("the bar's text", () => {
+  for (const look of ["modern", "terminal"])
+    for (const appearance of ["light", "dark"])
+      test(`holds 4.5:1 against the bar, quiet, near and reached alike, ${look} ${appearance}`, async ({ page }) => {
+        await open(page, { accounts: WORK, look, appearance });
+        await agent(page, `f.configure("${H}", { effort: "high" });`);
+        await report(
+          page,
+          [
+            { kind: "session", percent: 92, resetsAt: HOUR, severity: "warning" },
+            { kind: "weekly", percent: 100, resetsAt: 2 * HOUR, severity: "reached" },
+            { kind: "weeklyScoped", model: "Fable", percent: 52, resetsAt: 3 * 24 * HOUR },
+          ],
+          { age: 3 * HOUR },
+        );
+        await expect(page.getByTestId("limits-age")).toBeVisible();
+        const ratios = await bar(page).evaluate((foot) => {
+          const rgb = (color: string): number[] => {
+            const srgb = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(color);
+            if (srgb) return srgb.slice(1, 4).map((part) => Number(part) * 255);
+            return (color.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+          };
+          const lum = (color: string) => {
+            const [r, g, b] = rgb(color).map((part) => {
+              const v = part / 255;
+              return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+            });
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          };
+          const ground = lum(getComputedStyle(foot).backgroundColor);
+          const out: Record<string, number> = {};
+          for (const node of foot.querySelectorAll<HTMLElement>("span")) {
+            const own = [...node.childNodes].some((child) => child.nodeType === 3 && child.textContent!.trim() !== "");
+            if (!own || node.getClientRects().length === 0) continue;
+            const text = lum(getComputedStyle(node).color);
+            const ratio = (Math.max(text, ground) + 0.05) / (Math.min(text, ground) + 0.05);
+            out[`${node.className.split(" ")[0]} "${node.textContent!.trim()}"`] = Math.round(ratio * 100) / 100;
+          }
+          return out;
+        });
+        expect(Object.keys(ratios).length).toBeGreaterThan(8);
+        for (const [what, ratio] of Object.entries(ratios)) expect(ratio, what).toBeGreaterThanOrEqual(4.5);
+      });
 });
 
 test.describe("a terminal session", () => {

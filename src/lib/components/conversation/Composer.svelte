@@ -46,6 +46,8 @@
   let picker = $state<HTMLInputElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
   let menu = $state<"model" | "mode" | null>(null);
+  /** It was opened with the pointer rather than a key. */
+  let byPointer = $state(false);
   let reading = $state(0);
 
   let running = $derived(conversation.current !== null || conversation.working);
@@ -255,7 +257,8 @@
       void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
   }
 
-  function openMenu(which: "model" | "mode") {
+  function openMenu(which: "model" | "mode", e: MouseEvent) {
+    byPointer = e.detail > 0;
     menu = menu === which ? null : which;
   }
 
@@ -335,7 +338,7 @@
       <button
         class="chip"
         tabindex="0"
-        onclick={() => openMenu("model")}
+        onclick={(e) => openMenu("model", e)}
         disabled={models.length === 0 || !ready}
         aria-haspopup="menu"
         aria-expanded={menu === "model"}
@@ -349,6 +352,7 @@
           note={conversation.current !== null ? "A model chosen now is used from the next turn." : null}
           onpick={(value) => pick("model", value)}
           onclose={closeMenu}
+          pointer={byPointer}
           testid="model-menu"
           optionTestid="model-option"
         />
@@ -362,7 +366,7 @@
         <button
           class="chip"
           tabindex="0"
-          onclick={() => openMenu("mode")}
+          onclick={(e) => openMenu("mode", e)}
           disabled={modes.length === 0 || !ready}
           aria-haspopup="menu"
           aria-expanded={menu === "mode"}
@@ -375,6 +379,7 @@
             choices={modeChoices(conversation)}
             onpick={(value) => pick("mode", value)}
             onclose={closeMenu}
+            pointer={byPointer}
             testid="mode-menu"
             optionTestid="mode-option"
           />

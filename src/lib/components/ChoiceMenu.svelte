@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { Choice } from "$lib/settingChoices";
   import Icon from "./conversation/Icon.svelte";
   import Plain from "./conversation/Plain.svelte";
@@ -24,13 +24,19 @@
     onclose: (how: "escape" | "tab") => void;
     /** Where it stands in the window, by its left edge and its foot. */
     at?: { left: number; bottom: number } | null;
+    /** Opened with the pointer: the choice the keyboard is on is marked
+        only once a key is pressed, so the one under the pointer is the
+        only one marked. */
+    pointer?: boolean;
     testid: string;
     optionTestid: string;
   }
 
-  let { label, choices, note = null, onpick, onclose, at = null, testid, optionTestid }: Props = $props();
+  let { label, choices, note = null, onpick, onclose, at = null, pointer = false, testid, optionTestid }: Props =
+    $props();
 
   let menu = $state<HTMLDivElement | null>(null);
+  let pointing = $state(untrack(() => pointer));
 
   function items(): HTMLButtonElement[] {
     return [...(menu?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']") ?? [])];
@@ -41,6 +47,7 @@
   });
 
   function onkeydown(e: KeyboardEvent) {
+    pointing = false;
     const all = items();
     const index = all.indexOf(document.activeElement as HTMLButtonElement);
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
@@ -65,6 +72,8 @@
   bind:this={menu}
   class="menu"
   class:placed={at !== null}
+  class:pointing
+  onpointermove={() => (pointing = true)}
   style:left={at === null ? undefined : `${at.left}px`}
   style:bottom={at === null ? undefined : `${at.bottom}px`}
   role="menu"
@@ -140,7 +149,13 @@
     outline: none;
   }
 
-  .on {
+  .pointing button:focus-visible:not(:hover) {
+    background: none;
+    color: var(--ink-2);
+  }
+
+  .on,
+  .pointing .on:focus-visible:not(:hover) {
     color: var(--ink);
   }
 

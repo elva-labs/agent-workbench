@@ -44,7 +44,7 @@
 
   /** What gives way, first to last. */
   const STEPS = ["chrome", "prefix", "fold", "reset"];
-  const POPOVER_WIDTH = 500;
+  const POPOVER_WIDTH = 540;
   const MENU_WIDTH = 320;
   const EDGE = 8;
 
@@ -106,6 +106,8 @@
   /** Where the keyboard was before the bar took it, to give it back. */
   let before: HTMLElement | null = null;
   let trigger: HTMLElement | null = null;
+  /** What is open was opened with the pointer rather than a key. */
+  let byPointer = $state(false);
 
   /** A press on the bar's controls leaves the keyboard where it is. */
   function keep(e: PointerEvent) {
@@ -133,6 +135,7 @@
       before = owner instanceof HTMLElement && owner !== document.body ? owner : null;
     }
     trigger = button;
+    byPointer = e.detail > 0;
     now = Date.now();
     place(which, button);
     open = which;
@@ -353,6 +356,7 @@
         note={conversation.current !== null ? "A model chosen now is used from the next turn." : null}
         onpick={(value) => pick("model", value)}
         onclose={menuClosed}
+        pointer={byPointer}
         at={at}
         testid="status-model-menu"
         optionTestid="status-model-option"
@@ -363,6 +367,7 @@
         choices={effortChoices(conversation)}
         onpick={(value) => pick("effort", value)}
         onclose={menuClosed}
+        pointer={byPointer}
         at={at}
         testid="status-effort-menu"
         optionTestid="status-effort-option"
@@ -425,6 +430,10 @@
     white-space: nowrap;
     overflow: hidden;
     --hover: color-mix(in srgb, var(--status-bg) 88%, var(--ink) 12%);
+    /* The bar's quieter text and its warning tone, each held to 4.5:1
+       against the bar in every look and theme. */
+    --status-quiet: color-mix(in srgb, var(--ink-2) 60%, var(--ink-3));
+    --status-warn: color-mix(in srgb, var(--ansi-yellow) 88%, var(--ink));
   }
 
   .status > * {
@@ -442,7 +451,7 @@
   }
 
   .mode {
-    color: var(--ink-3);
+    color: var(--status-quiet);
   }
 
   .waiting,
@@ -520,11 +529,6 @@
     text-overflow: ellipsis;
   }
 
-  .sess .hit + .sepdot,
-  .sess .sepdot + .hit {
-    position: relative;
-  }
-
   /* ---- the account and its allowance ---- */
 
   .acct {
@@ -544,7 +548,7 @@
   }
 
   .pre {
-    color: var(--ink-3);
+    color: var(--status-quiet);
   }
 
   .name {
@@ -571,7 +575,7 @@
   }
 
   .lim.warn {
-    color: var(--ansi-yellow);
+    color: var(--status-warn);
     font-weight: 600;
   }
 
@@ -701,7 +705,7 @@
 
   .row.warn .pc,
   .row.warn .rsl {
-    color: var(--ansi-yellow);
+    color: var(--status-warn);
     font-weight: 600;
   }
 
@@ -728,7 +732,7 @@
   }
 
   .row.warn .m b {
-    background: var(--ansi-yellow);
+    background: var(--status-warn);
   }
 
   .row.error .m b {
