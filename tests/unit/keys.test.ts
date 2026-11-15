@@ -320,3 +320,48 @@ describe("the editor's chords", () => {
     });
   });
 });
+
+describe("the chords that differ by platform", () => {
+  const macOld = () => {
+    resetKeys({ mac: true });
+    const table: Record<string, unknown> = { ...PRESETS.default };
+    delete table["terminal.new"];
+    return table as Record<string, ReturnType<typeof chord>>;
+  };
+
+  it("open a shell on Cmd+T on macOS, and on Ctrl+Shift+T elsewhere, where the theme moves to Shift+D", () => {
+    resetKeys({ mac: true });
+    expect(chordFor("terminal.new")).toEqual(chord("t"));
+    expect(chordFor("theme")).toEqual(chord("t", true));
+    resetKeys({ mac: false });
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+    expect(chordFor("theme")).toEqual(chord("d", true));
+    for (const name of ["default", "vim"] as const) expect(tableProblem(PRESETS[name])).toBeNull();
+  });
+
+  it("move a stored table's theme off the new shell's chord off macOS, and keep the preset", () => {
+    const stored = macOld();
+    resetKeys({ mac: false });
+    adoptKeys(stored);
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+    expect(chordFor("theme")).toEqual(chord("d", true));
+    expect(keys.preset).toBe("default");
+    expect(tableProblem(keys.bindings)).toBeNull();
+  });
+
+  it("leave a stored table's theme where it is on macOS, and give the new shell Cmd+T", () => {
+    const stored = macOld();
+    adoptKeys(stored);
+    expect(chordFor("theme")).toEqual(chord("t", true));
+    expect(chordFor("terminal.new")).toEqual(chord("t"));
+    expect(keys.preset).toBe("default");
+  });
+
+  it("leave a theme the user moved where it is", () => {
+    const stored = { ...macOld(), theme: chord("y", true) };
+    resetKeys({ mac: false });
+    adoptKeys(stored);
+    expect(chordFor("theme")).toEqual(chord("y", true));
+    expect(chordFor("terminal.new")).toEqual(chord("t", true));
+  });
+});

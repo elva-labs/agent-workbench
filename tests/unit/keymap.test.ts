@@ -8,7 +8,8 @@ import {
 } from "$lib/keymap";
 import { applyPreset, resetKeys, setBinding } from "$lib/keys.svelte";
 
-beforeEach(resetKeys);
+// The tables are macOS's, as the chords below are.
+beforeEach(() => resetKeys({ mac: true }));
 
 const mod = (key: string, extra: Partial<KeyState> = {}): KeyState => ({
   key,
@@ -343,5 +344,26 @@ describe("editor mode", () => {
     expect(setBinding("file.save", { key: "s", shift: true, alt: false })).toBeNull();
     expect(resolveAction(mod("s", { shiftKey: true }), editor)).toEqual({ type: "save" });
     expect(resolveAction(mod("s"), editor)).toBeNull();
+  });
+});
+
+describe("a new shell", () => {
+  it("opens on Cmd+T from anywhere, a terminal included", () => {
+    for (const focus of ["sessions", "agent", "changes", "terminal"] as const) {
+      expect(resolveAction(mod("t"), { focus })).toEqual({ type: "newShell" });
+    }
+    expect(resolveAction(mod("t"), { focus: "changes", editing: true, inEditor: true })).toEqual({ type: "newShell" });
+  });
+
+  it("leaves Ctrl+T to a terminal on macOS", () => {
+    expect(resolveAction({ key: "t", ctrlKey: true }, { focus: "terminal" })).toBeNull();
+  });
+
+  it("opens one on Ctrl+Shift+T off macOS, leaving Ctrl+T to the terminal, and moves the theme to Ctrl+Shift+D", () => {
+    resetKeys({ mac: false });
+    const off = { focus: "terminal" as const, mac: false };
+    expect(resolveAction({ key: "T", ctrlKey: true, shiftKey: true }, off)).toEqual({ type: "newShell" });
+    expect(resolveAction({ key: "t", ctrlKey: true }, off)).toBeNull();
+    expect(resolveAction({ key: "D", ctrlKey: true, shiftKey: true }, off)).toEqual({ type: "cycleTheme" });
   });
 });

@@ -100,7 +100,12 @@
   import { primeChime } from "$lib/chime";
   import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
-  import { cycle as cycleShell, ended as shellEnded, terminals } from "$lib/terminals.svelte";
+  import {
+    create as createShell,
+    cycle as cycleShell,
+    ended as shellEnded,
+    terminals,
+  } from "$lib/terminals.svelte";
   import { goTo, workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
@@ -361,12 +366,13 @@
   });
 
   // The File menu's items that cannot act are greyed out: Save without a
-  // file in front to save, New File without a project. Close Tab can always
-  // act on macOS, where with no tab it closes the window.
+  // file in front to save, New File and New Shell without a project. Close
+  // Tab can always act on macOS, where with no tab it closes the window.
   $effect(() => {
     void core()
       .menuEnabled({
         "file.new": workspace.active !== null,
+        "terminal.new": workspace.active !== null,
         "file.save": editing && canSaveInFront(),
         "file.close": isMac() || (editing && activeTab() !== null),
       })
@@ -560,6 +566,23 @@
     );
   }
 
+  /** A new shell in the project on screen, the panel opened for it, with
+      the keyboard in it. */
+  function newShell() {
+    if (workspace.active === null) {
+      say("Open a project to start a shell in");
+      return;
+    }
+    if (layout.terminalForced) {
+      say("The window is too short for the terminal");
+      return;
+    }
+    // Made before the panel opens, so opening it starts no second one.
+    createShell(workspace.active);
+    if (!terminalVisible()) toggleTerminal();
+    focusPane("terminal");
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const action = resolveAction(e, {
       focus: layout.focus,
@@ -633,6 +656,9 @@
         // With no tab to close it is the window's close on macOS, as the
         // menu's Close Tab is.
         closeFront();
+        break;
+      case "newShell":
+        newShell();
         break;
       case "newFile":
         newFile();
@@ -715,6 +741,7 @@
       with no tab to close is the window's close there. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
+    else if (action === "terminal.new") newShell();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") closeFront();
   }

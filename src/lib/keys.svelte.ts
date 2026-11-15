@@ -33,6 +33,7 @@ export type ActionKey =
   | "file.new"
   | "file.save"
   | "file.close"
+  | "terminal.new"
   | "zoom.in"
   | "zoom.out"
   | "zoom.reset"
@@ -79,6 +80,7 @@ export const ACTIONS: ActionInfo[] = [
   { key: "file.new", label: "New file", group: "Editor" },
   { key: "file.save", label: "Save", group: "Editor" },
   { key: "file.close", label: "Close tab", group: "Editor" },
+  { key: "terminal.new", label: "New shell", group: "Terminal" },
   { key: "zoom.in", label: "Zoom the terminal in", group: "Terminal" },
   { key: "zoom.out", label: "Zoom the terminal out", group: "Terminal" },
   { key: "zoom.reset", label: "Reset the terminal's zoom", group: "Terminal" },
@@ -92,7 +94,9 @@ const plain = (key: string): Chord => ({ key, shift: false, alt: false });
 const shifted = (key: string): Chord => ({ key, shift: true, alt: false });
 const withAlt = (key: string): Chord => ({ key, shift: false, alt: true });
 
-export const PRESETS: Record<PresetName, Keymap> = {
+/** The presets as they stand on macOS. Elsewhere `ELSEWHERE` is laid
+    over them. */
+const MACOS: Record<PresetName, Keymap> = {
   default: {
     "focus.sessions": plain("1"),
     "focus.agent": plain("2"),
@@ -113,6 +117,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "file.new": withAlt("n"),
     "file.save": plain("s"),
     "file.close": plain("w"),
+    "terminal.new": plain("t"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
@@ -143,6 +148,7 @@ export const PRESETS: Record<PresetName, Keymap> = {
     "file.new": withAlt("n"),
     "file.save": plain("s"),
     "file.close": plain("w"),
+    "terminal.new": plain("t"),
     "zoom.in": plain("="),
     "zoom.out": plain("-"),
     "zoom.reset": plain("0"),
@@ -154,6 +160,22 @@ export const PRESETS: Record<PresetName, Keymap> = {
     settings: plain(","),
   },
 };
+
+/** What differs off macOS. Ctrl+T is the process's in a terminal there, so
+    a new shell is Ctrl+Shift+T, as in a terminal emulator, and the theme
+    gives Shift+T up for Shift+D. */
+const ELSEWHERE: Partial<Keymap> = {
+  "terminal.new": shifted("t"),
+  theme: shifted("d"),
+};
+
+function presetsFor(mac: boolean): Record<PresetName, Keymap> {
+  const table = (name: PresetName): Keymap => (mac ? { ...MACOS[name] } : { ...MACOS[name], ...ELSEWHERE });
+  return { default: table("default"), vim: table("vim") };
+}
+
+/** The presets on the platform the window runs on. */
+export const PRESETS: Record<PresetName, Keymap> = presetsFor(isMac());
 
 export const PRESET_LABELS: Record<PresetName, string> = { default: "Default", vim: "Vim" };
 
@@ -385,6 +407,17 @@ function fromTable(table: unknown): Keymap {
       if (isChord(chord)) stored[key] = { key: chord.key, shift: chord.shift, alt: chord.alt };
     }
   }
+  // A table with no chord for a new shell may hold the theme on Shift+T,
+  // the theme's on macOS and a new shell's elsewhere. Off macOS the theme
+  // then takes the platform's own chord, and the new shell Shift+T.
+  if (
+    stored["terminal.new"] === undefined &&
+    stored.theme !== undefined &&
+    sameChord(stored.theme, MACOS.default.theme) &&
+    sameChord(PRESETS.default["terminal.new"], MACOS.default.theme)
+  ) {
+    delete stored.theme;
+  }
   const followed = followedPreset(stored);
   const bindings: Partial<Keymap> = { ...stored };
   const held = (chord: Chord) =>
@@ -482,8 +515,10 @@ function save() {
   persist({ keys: keysSettings() });
 }
 
-/** Test seam. */
-export function resetKeys() {
+/** Test seam: the default table, of macOS's presets or the others' when
+    `mac` says which, else of the platform's. */
+export function resetKeys({ mac = isMac() }: { mac?: boolean } = {}) {
+  Object.assign(PRESETS, presetsFor(mac));
   keys.bindings = { ...PRESETS.default };
   keys.preset = "default";
 }

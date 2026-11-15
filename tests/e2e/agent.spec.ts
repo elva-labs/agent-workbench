@@ -13,6 +13,9 @@ import { BUILD_AND_REVIEW } from "./fake";
 const AGENT = "section[data-pane='agent']";
 const SESSIONS = "section[data-pane='sessions']";
 const MOD = "ControlOrMeta";
+/** The theme's chord: Shift+T on macOS, Shift+D elsewhere, where Shift+T
+    opens a shell. */
+const THEME = `${MOD}+Shift+${process.platform === "darwin" ? "T" : "D"}`;
 const KEYBOARD = `${AGENT} .xterm-helper-textarea`;
 const ONE = "/home/ada/dev/one";
 const TWO = "/home/ada/dev/two";
@@ -855,8 +858,8 @@ test.describe("one project", () => {
       });
 
     const before = await background();
-    await page.keyboard.press(`${MOD}+Shift+T`);
-    await page.keyboard.press(`${MOD}+Shift+T`);
+    await page.keyboard.press(THEME);
+    await page.keyboard.press(THEME);
 
     await expect.poll(background).not.toBe(before);
     expect(await spawnCount(page)).toBe(1);

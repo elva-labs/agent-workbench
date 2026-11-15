@@ -119,17 +119,17 @@ tab with the only copy of unsaved edits to the tabs shown next.
 
 ## The File menu
 
-On macOS a File menu holds New File, Save and Close Tab, each showing and
-answering the chord its action has in the [chord table](focus-model.md):
-move a chord there and the menu's moves with it. Save is greyed out
-outside editor mode, or without a file in front to save, and New File
-without a project. Close Tab with no tab
+On macOS a File menu holds New File, New Shell, Save and Close Tab, each
+showing and answering the chord its action has in the
+[chord table](focus-model.md): move a chord there and the menu's moves with
+it. Save is greyed out outside editor mode, or without a file in front to
+save, and New File and New Shell without a project. Close Tab with no tab
 in front, or in agent mode, closes the window, as its chord does in every
 Mac window. Close Window in the Window menu is on
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, and Settings shows the chord the
 table gives it; when the table gives Shift+Cmd+W to an action, Close Window
 shows no chord. On Windows and Linux the menu button at the top left holds
-the same three items.
+the same four items.
 
 ## New files and the row menu
 

@@ -5,6 +5,7 @@
   import Pane from "$lib/components/Pane.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
+  import { chordFor, describe } from "$lib/keys.svelte";
   import {
     DEFAULT,
     MIN,
@@ -127,8 +128,8 @@
           class="tool"
           onclick={another}
           disabled={workspace.active === null}
-          aria-label="New terminal"
-          title="New terminal"
+          aria-label="New shell"
+          title="New shell ({describe(chordFor("terminal.new"))})"
           data-testid="new-terminal">+</button
         >
         <button
@@ -231,13 +232,13 @@
       {:else if current === null}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">No shell open in this project.</p>
-          <button onclick={another} data-testid="start-terminal">New terminal</button>
+          <button onclick={another} data-testid="start-terminal">New shell</button>
         </div>
       {:else if current.status !== "running"}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">{statusMessage(current)}</p>
           {#if current.status !== "starting"}
-            <button onclick={another} data-testid="start-terminal">New terminal</button>
+            <button onclick={another} data-testid="start-terminal">New shell</button>
           {/if}
         </div>
       {/if}

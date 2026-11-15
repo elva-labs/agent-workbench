@@ -260,6 +260,12 @@ nothing, and opening the panel on a project with no shell starts one. Typing
 `exit` closes the shell, and the project's last shell takes the panel with
 it. A shell that dies any other way keeps its place, with its exit code.
 
+The + at the head of the list is New shell: another shell in a group of its
+own, with the keyboard in it. <kbd>Cmd</kbd><kbd>T</kbd> does the same from
+anywhere in the window, <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd> on
+Windows and Linux, and opens the panel for it when it is closed; the +
+names the chord the table gives it.
+
 Shells come in groups, one group on screen at a time. A new shell is a group
 of its own; `split` opens one beside the current shell, in its group, taking
 half of that shell's width. The bar between two halves moves the boundary,

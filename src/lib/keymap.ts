@@ -59,6 +59,8 @@ export type Action =
   | { type: "save" }
   /** The editor's tab in front closed, or the window on macOS with none. */
   | { type: "closeTab" }
+  /** A new shell in the terminal panel, with the keyboard in it. */
+  | { type: "newShell" }
   /** Find in the file in the editor. */
   | { type: "findInFile" }
   /** The keyboard to the editor, from elsewhere in editor mode. */
@@ -136,6 +138,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   "file.new": { type: "newFile" },
   "file.save": { type: "save" },
   "file.close": { type: "closeTab" },
+  "terminal.new": { type: "newShell" },
   theme: { type: "cycleTheme" },
   settings: { type: "openSettings" },
 };

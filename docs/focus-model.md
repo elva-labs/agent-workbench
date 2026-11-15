@@ -25,6 +25,7 @@ default preset:
 | <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the right pane: the changes, or the agent while editing |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd>                              | Agent or editor in the middle                               |
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
+| <kbd>Cmd</kbd><kbd>T</kbd>                                              | A new shell in the terminal panel, opening it, with the keyboard in it |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd> / <kbd>↑</kbd>               | Next or previous session, or shell when the panel has focus |
 | <kbd>Cmd</kbd><kbd>.</kbd>                                              | Go to the next session that needs you                       |
 | <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer, in agent mode                |
@@ -40,6 +41,15 @@ default preset:
 | <kbd>Cmd</kbd><kbd>P</kbd>                                              | Go to a session or project                                  |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd>                              | Open the command palette                                    |
 | <kbd>Cmd</kbd><kbd>,</kbd>                                              | Open the settings                                           |
+
+Two chords differ on Windows and Linux, where <kbd>Ctrl</kbd><kbd>T</kbd> is
+the process's in a terminal: a new shell is
+<kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd> there, as in a terminal
+emulator, and cycling the theme is
+<kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd>. A stored table with no chord
+for a new shell and the theme on <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd>
+is read with the theme on <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>D</kbd> and the
+new shell on <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>T</kbd>.
 
 Unbound <kbd>Cmd</kbd> chords pass through rather than being swallowed.
 
@@ -62,8 +72,8 @@ panel toggles on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>J</kbd>, and sessions
 step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The command
 palette opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> steps sessions. Going to a session
-or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords are
-the default's.
+or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords and
+a new shell's are the default's.
 
 A chord with <kbd>Alt</kbd> is read from the key's place on the keyboard,
 since on macOS <kbd>Option</kbd> turns a letter into another character.
