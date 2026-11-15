@@ -305,40 +305,83 @@ function shown(painted: ReturnType<typeof paintOf>, ground: Rgb, u: number, v: n
   return mix(ground, specked, painted.strength);
 }
 
-/** The lowest contrast of each text over a grid finer than the guard's own
-    and offset from it, so a worst point between its samples is found: on
-    the tint, on a hovered row's fill and on a chosen row's. */
-function lowestContrast(painted: ReturnType<typeof paintOf>, grounds: Rgb[], colours: Record<string, string>) {
+/** Relative luminance as WCAG reckons it, worked out here apart from the
+    guard's own. */
+const channel = (value: number) => {
+  const c = value / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+};
+const wcag = (r: number, g: number, b: number) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+
+/** The background's colours over a grid finer than the guard's own and
+    offset from it, so a worst point between its samples is found. Worked
+    out once for each set of colours and read at every strength; a colour
+    met at many points, as a single dot's is at all of them, is read once. */
+const fineGrids = new Map<string, Rgb[]>();
+
+function fineGrid(colours: ReturnType<typeof paintOf>["colours"]): Rgb[] {
+  const key = colours.map((lab) => lab.join(",")).join("|");
+  let points = fineGrids.get(key);
+  if (points === undefined) {
+    const at = field(colours);
+    const found = new Map<string, Rgb>();
+    for (let i = 0; i <= 32; i++) {
+      for (let j = 0; j <= 20; j++) {
+        const point = labToRgb(at((i + 0.37) / 33, (j + 0.61) / 21.5));
+        found.set(point.join(","), point);
+      }
+    }
+    points = [...found.values()];
+    fineGrids.set(key, points);
+  }
+  return points;
+}
+
+/** The lowest contrast of each text over the fine grid: on the tint, on a
+    hovered row's fill and on a chosen row's, with grain at its strongest
+    speck either way. A dark speck lowers every channel and a light one
+    raises it, and the tint, a fill and luminance all rise with every
+    channel, so a point is at its darkest under its dark speck and its
+    lightest under its light one; with `everySpeck` all three are read,
+    which a test below holds to the same answer. */
+function lowestContrast(
+  painted: ReturnType<typeof paintOf>,
+  grounds: Rgb[],
+  colours: Record<string, string>,
+  everySpeck = false,
+) {
   const low: Record<string, number> = {};
   const texts = TEXT_TOKENS.map((token) => [token, luminance(hexToRgb(painted.text[token]))] as const);
   const fills: [Rgb, number][] = [
     [hexToRgb(colours.ink), FILL.ink],
     [hexToRgb(colours.accent), FILL.accent],
   ];
-  const at = field(painted.colours);
-  const points: Rgb[] = [];
-  for (let i = 0; i <= 32; i++) {
-    for (let j = 0; j <= 20; j++) points.push(labToRgb(at((i + 0.37) / 33, (j + 0.61) / 21.5)));
-  }
   const alpha = painted.grain * GRAIN_SPECK;
+  const strength = painted.strength;
   let darkest = 1;
   let lightest = 0;
-  for (const ground of grounds) {
-    for (const colour of points) {
-      for (const speck of painted.grain > 0 ? [0, -1, 1] : [0]) {
-        const specked =
-          speck === 0
-            ? colour
-            : speck < 0
-              ? (colour.map((value) => value * (1 - alpha)) as Rgb)
-              : (colour.map((value) => value + (255 - value) * alpha) as Rgb);
-        const bare = mix(ground, specked, painted.strength);
-        for (const under of [bare, ...fills.map(([fill, amount]) => mix(bare, fill, amount))]) {
-          const y = luminance(under);
-          darkest = Math.min(darkest, y);
-          lightest = Math.max(lightest, y);
-        }
-      }
+  // The layers over one point, in plain numbers: this runs some millions
+  // of times across the sweep.
+  const read = (ground: Rgb, [r, g, b]: Rgb, dark: boolean, light: boolean) => {
+    const R = ground[0] + (r - ground[0]) * strength;
+    const G = ground[1] + (g - ground[1]) * strength;
+    const B = ground[2] + (b - ground[2]) * strength;
+    const take = (y: number) => {
+      if (dark && y < darkest) darkest = y;
+      if (light && y > lightest) lightest = y;
+    };
+    take(wcag(R, G, B));
+    for (const [[fr, fg, fb], amount] of fills) {
+      take(wcag(R + (fr - R) * amount, G + (fg - G) * amount, B + (fb - B) * amount));
+    }
+  };
+  // Parts on the same ground are read once.
+  for (const ground of new Map(grounds.map((ground) => [ground.join(","), ground])).values()) {
+    for (const [r, g, b] of fineGrid(painted.colours)) {
+      const keep = 1 - alpha;
+      read(ground, [r * keep, g * keep, b * keep], true, everySpeck);
+      read(ground, [r + (255 - r) * alpha, g + (255 - g) * alpha, b + (255 - b) * alpha], everySpeck, true);
+      if (everySpeck) read(ground, [r, g, b], true, true);
     }
   }
   for (const [token, text] of texts) {
@@ -364,18 +407,23 @@ describe("the guard", () => {
     for (const theme of Object.values(THEMES)) expect(readability(theme)).toBeNull();
   });
 
+  /** The grounds text sits on in a look. */
+  const textGrounds = (colours: Record<string, string>, look: Look) => {
+    const grounds = groundsOf(colours, look);
+    return look === "modern" ? [grounds.side!, grounds.surf!, grounds.status!] : [grounds.status!];
+  };
+
   for (const [palette, appearance] of SWEPT) {
     for (const look of LOOKS) {
-      it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}`, () => {
-        const colours = coloursOf(palette, appearance, THEMES);
-        const grounds = groundsOf(colours, look);
-        const texts = look === "modern" ? [grounds.side!, grounds.surf!, grounds.status!] : [grounds.status!];
-        // Text lighter than its chrome only ever gets lighter, and darker
-        // text darker, so a light glyph on an accent stays readable too.
-        const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
-        const lighter = luminance(hexToRgb(colours.ink)) > ground;
-        for (const choice of choices) {
-          for (const strength of [0.1, 0.3, 1]) {
+      for (const strength of [0.1, 0.3, 1]) {
+        it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
+          const colours = coloursOf(palette, appearance, THEMES);
+          const texts = textGrounds(colours, look);
+          // Text lighter than its chrome only ever gets lighter, and darker
+          // text darker, so a light glyph on an accent stays readable too.
+          const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
+          const lighter = luminance(hexToRgb(colours.ink)) > ground;
+          for (const choice of choices) {
             const painted = paintOf({ ...choice, strength }, look, colours);
             const low = lowestContrast(painted, texts, colours);
             for (const token of TEXT_TOKENS) {
@@ -388,10 +436,24 @@ describe("the guard", () => {
               }
             }
           }
-        }
-      });
+        });
+      }
     }
   }
+
+  it("finds the same worst points reading only the darkest and lightest speck as reading every one", () => {
+    const some = [choices[0], choices[50], choices[80], choices[choices.length - 1]];
+    for (const [palette, appearance] of [["teal", "light"], ["amber", "dark"], ["night", "light"]] as const) {
+      const colours = coloursOf(palette, appearance, THEMES);
+      for (const choice of some) {
+        for (const strength of [0.1, 1]) {
+          const painted = paintOf({ ...choice, strength }, "modern", colours);
+          const texts = textGrounds(colours, "modern");
+          expect(lowestContrast(painted, texts, colours)).toEqual(lowestContrast(painted, texts, colours, true));
+        }
+      }
+    }
+  });
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
