@@ -67,8 +67,8 @@ export function starterOf(key: string): string | null {
 }
 
 export interface Sender {
-  /** What the message was sent under: the sending session's token, or
-      its id or the folder an outside agent called from. */
+  /** The sending session's id, as the tools name it, where the window
+      knows it; else what the message was sent under. */
   id: string;
   name: string;
   /** Its row, when the window has one to go to. */
@@ -91,9 +91,10 @@ export function senderOf(message: { id: string }): Sender | null {
     sessions.all.find((candidate) => candidate.token === from) ??
     sessions.all.find((candidate) => candidate.id === from) ??
     null;
-  const id = Object.entries(sessions.tokens).find(([, token]) => token === from)?.[0] ?? from;
+  const id =
+    row?.id ?? Object.entries(sessions.tokens).find(([, token]) => token === from)?.[0] ?? from;
   return {
-    id: from,
+    id,
     key: row?.key ?? null,
     name: row !== null ? label(row) : from.startsWith("/") ? `an agent in ${lastSegment(from)}` : `session ${id}`,
   };

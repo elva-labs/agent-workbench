@@ -178,7 +178,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     const [theirs, mine] = Object.values(conversationOf(key).messages);
     expect(theirs.text).toBe("yes");
     expect(mine.text).toBe("yes");
-    expect(senderOf(theirs)?.id).toBe(callerToken());
+    expect(senderOf(theirs)?.id).toBe("planner");
     expect(senderOf(mine)).toBeNull();
   });
 

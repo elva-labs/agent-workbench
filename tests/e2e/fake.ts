@@ -282,6 +282,16 @@ export async function installFakeCore(
       const integrated = () =>
         (window as unknown as { __integrated: FakeIntegrated }).__integrated;
 
+      // The token each session's tools name it by, by the agent's id for
+      // it: what the window gave the session as it started. A call a test
+      // makes as a session, by its id, reaches the window as that
+      // session's tools make it, by its token.
+      const tokens: Record<string, string> = {};
+      const named = <T extends { session?: string | null }>(request: T): T =>
+        typeof request.session === "string" && tokens[request.session] !== undefined
+          ? { ...request, session: tokens[request.session] }
+          : request;
+
       // The embedded browser's tabs, kept the way the Rust model keeps
       // them: ids from 1, never reused; every tab has an owner, each owner
       // has its own tab in front; opening puts the new tab in front for its
@@ -600,8 +610,15 @@ export async function installFakeCore(
           const fake = window as unknown as { __chimes?: number };
           fake.__chimes = (fake.__chimes ?? 0) + 1;
         },
-        integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) =>
-          integrated().start(options),
+        integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) => {
+          const started = integrated().start(options);
+          const ready = integrated().events.findLast(
+            (event) => event.id === started.id && event.type === "ready",
+          );
+          const id = started.sessionId ?? (ready?.type === "ready" ? ready.sessionId : null);
+          if (id !== null && options.token !== undefined) tokens[id] = options.token;
+          return started;
+        },
         integratedTrust: async (options: Parameters<FakeIntegrated["trust"]>[0]) =>
           integrated().trust(options),
         integratedSend: async (
@@ -630,10 +647,12 @@ export async function installFakeCore(
           handler: Parameters<FakeIntegrated["subscribe"]>[0],
         ) => integrated().subscribe(handler),
         spawn: async (
-          spawnOptions: { session?: string },
+          spawnOptions: { session?: string; token?: string },
           onOutput: (bytes: Uint8Array) => void,
         ) => {
           const ptyId = `pty-${++ptyCount}`;
+          const sessionId = spawnOptions.session ?? `session-${ptyCount}`;
+          if (spawnOptions.token !== undefined) tokens[sessionId] = spawnOptions.token;
           // What each spawn asked for, and a way for a test to put bytes on
           // a session's terminal, __say.
           const w = window as unknown as {
@@ -645,10 +664,7 @@ export async function installFakeCore(
           (w.__outputs ??= {})[ptyId] = onOutput;
           w.__say ??= (id, text) =>
             w.__outputs?.[id]?.(new TextEncoder().encode(text));
-          return {
-            ptyId,
-            sessionId: spawnOptions.session ?? `session-${ptyCount}`,
-          };
+          return { ptyId, sessionId };
         },
         // A shell draws its prompt a moment after it is up.
         spawnShell: async (
@@ -858,35 +874,41 @@ export async function installFakeCore(
           return () => {};
         },
         onShowRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__showRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__showRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         onPresentRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__presentRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__presentRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         onDiffRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__diffRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__diffRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         onTerminalRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__terminalRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__terminalRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         onNotifyRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__notifyRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__notifyRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         // The conductor's calls, pushed by a test through the handler, and
         // the window's answers, read back from the list.
         onConductRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__conductRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__conductRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         onConductCancel: async (handler: (request: unknown) => void) => {
@@ -906,8 +928,9 @@ export async function installFakeCore(
         // The browser's own calls, pushed by a test through the handler,
         // and the window's answers, read back from the list.
         onBrowserRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__browserRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__browserRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         browserAnswer: async (
@@ -922,8 +945,9 @@ export async function installFakeCore(
         // The settings tools' calls, pushed by a test through the handler,
         // and the window's answers, read back from the list.
         onSettingsRequest: async (handler: (request: unknown) => void) => {
-          (window as unknown as Record<string, unknown>).__settingsRequest =
-            handler;
+          (window as unknown as Record<string, unknown>).__settingsRequest = (
+            request: { session?: string | null },
+          ) => handler(named(request));
           return () => {};
         },
         settingsAnswer: async (
