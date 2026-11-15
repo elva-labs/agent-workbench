@@ -675,8 +675,8 @@ export function askName(key: string, after: NonNullable<typeof afterNaming> = {}
   afterNaming = after;
 }
 
-/** The field for a path goes without one, by something else taking the
-    editor's place: what was to follow is told it was put away. */
+/** The field for a path goes without one being given: what was to follow
+    is told so. */
 function putNamingAway() {
   const after = afterNaming;
   editor.savingAs = null;
