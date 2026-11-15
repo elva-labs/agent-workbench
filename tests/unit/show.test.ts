@@ -286,10 +286,11 @@ describe("a call from a session the user is not looking at", () => {
     expect(workspace.active).toBe("/one");
   });
 
-  // A session the workbench started was told its id, so a request naming
-  // none is not from it: an agent run by hand in the project's directory
-  // has the same tools, and its line belongs on no row.
-  it("places a nameless call only on a session that was not told its id", async () => {
+  // Each session the workbench starts names itself by its token in every
+  // call, so a request naming none is from none of them: an agent run by
+  // hand in the project's directory has the same tools, and its line
+  // belongs on no row.
+  it("places a nameless call on no session, and a session's own by its token", async () => {
     workspace.open.push(repo("/one"));
     workspace.active = "/one";
     const a = create("/one");
@@ -301,10 +302,12 @@ describe("a call from a session the user is not looking at", () => {
     expect(sessions.all.map((session) => session.note)).toEqual([null, null]);
     await showRequested({ ...place("s9"), session: null });
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
-    // An agent that mints its own id was told none: the call is its.
+    // A Codex session whose id is not known yet is no exception.
     const c = create("/one", null, "codex");
     started(c.key, "pty-3", null);
     notified({ text: "Tests green", cwd: "/one", session: null });
+    expect(sessions.all.map((session) => session.note)).toEqual([null, null, null]);
+    notified({ text: "Tests green", cwd: "/one", session: c.token });
     expect(sessions.all.map((session) => session.note)).toEqual([
       null,
       null,

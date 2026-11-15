@@ -69,14 +69,17 @@ function save() {
   }
 }
 
-/** The session the request is for, by its agent's id: the one the request
-    names, when it is running in the project; else the one running deepest
-    in the directory the agent runs in; then the active session there; then
-    the project itself. A session whose id is not known yet cannot own
-    anything, since the id is what the list is kept by. */
+/** The session the request is for, by its agent's id: the one whose token
+    the request names, or whose id a plugin names, when it is running in
+    the project; else the one running deepest in the directory the agent
+    runs in; then the active session there; then the project itself. A
+    session whose id is not known yet cannot own anything, since the id is
+    what the list is kept by. */
 export function ownerFor(request: PresentRequest, project: string): string {
   const own = forProject(project).filter((session) => session.id !== null);
-  const named = own.find((session) => session.id === request.session);
+  const named =
+    own.find((session) => session.token === request.session) ??
+    own.find((session) => session.id === request.session);
   if (named !== undefined) return named.id!;
   const at = (session: {
     cwd: string | null;

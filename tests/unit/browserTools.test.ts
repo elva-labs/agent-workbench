@@ -142,12 +142,14 @@ function tab(id: number, url: string, overrides: Partial<BrowserTab> = {}): Brow
 
 let calls = 0;
 
+/** A call from the session the test names by its id, which its tools name
+    by its token; a name no row has is passed as it is. */
 function call(
   tool: BrowserRequest["tool"],
   args: Record<string, unknown> = {},
   extra: Partial<BrowserRequest> = {},
 ): BrowserRequest {
-  return {
+  const request: BrowserRequest = {
     id: `b${++calls}`,
     tool,
     arguments: args,
@@ -155,6 +157,8 @@ function call(
     session: null,
     ...extra,
   };
+  const row = sessions.all.find((session) => session.id !== null && session.id === request.session);
+  return row === undefined ? request : { ...request, session: row.token };
 }
 
 /** Drops every session but the one with the key given, as closing the

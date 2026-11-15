@@ -17,10 +17,18 @@
  * one level deep, and no more than the cap at a time, so a loop of agents
  * starting agents cannot run away with the machine.
  *
- * What a session started is remembered between runs, by session id, so a
- * caller resumed after the app was closed still finds its sessions: the
- * running ones are its to direct as before, and the ones that went with
- * the app are listed as stopped and can be resumed where they ran.
+ * Every session the workbench starts names itself in each call its tools
+ * make, by a token the window chose for it and gave its environment, and
+ * the caller is the session that token names. A call that names no session
+ * the workbench runs, as one from an agent it did not start does, is
+ * refused: these tools serve the workbench's own sessions and no other
+ * agent.
+ *
+ * What a session started is remembered between runs, by its token, which
+ * a session resumed keeps, so a caller resumed after the app was closed
+ * still finds its sessions: the running ones are its to direct as before,
+ * and the ones that went with the app are listed as stopped and can be
+ * resumed where they ran.
  *
  * A caller that follows a workflow starts sessions in its shape: each start
  * names a step of it, on a model the step allows, no more at once than a
@@ -47,6 +55,7 @@ import { core, type ConductRequest } from "$lib/core";
 import {
   nameTaken,
   byKey,
+  byToken,
   close,
   create,
   disown,
@@ -194,7 +203,7 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The question on screen: which call it holds, who asked, and what for. */
 export interface Ask {
-  request: ConductRequest;
+  request: Placed;
   /** What the calling session is called, for the title. */
   caller: string;
   project: string;
@@ -211,10 +220,6 @@ export interface Ask {
   login: Login | null;
   /** What the question says of the account, when it names it. */
   named: Named | null;
-  /** The call has no id and may come from a session another session
-      started, which may not start any. No standing answer is used or
-      given, and the question says so. */
-  unsure: boolean;
 }
 
 /** What a started session runs on: the account, by name, null for the
@@ -318,24 +323,26 @@ const RUNS_KEY = "workbench.runs";
 export const conductor = $state({
   asking: null as Ask | null,
   /** The session that started each row, by the row's key and the
-      starter's session id: the link for a row that has no id yet, and for
-      the rest until the window goes. */
+      starter's token: the link for a row that has no id yet, and for the
+      rest until the window goes. */
   startedBy: {} as Record<string, string>,
-  /** What each caller started, by the caller's session id, kept between
-      runs. A row whose id is here is the caller's whether or not it was
-      started in this run. */
+  /** What each caller started, by the caller's token, kept between runs.
+      A row whose id is here is the caller's whether or not it was started
+      in this run. Earlier versions kept a caller that named no session
+      under the folder it called from; such a list is kept as it is, and
+      is no caller's. */
   started: {} as Record<string, Started[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
   places: {} as Record<string, Place>,
-  /** What each caller has run by its workflow, by the caller's id. */
+  /** What each caller has run by its workflow, by the caller's token. */
   runs: {} as Record<string, Run>,
   /** The last start refused to a caller that follows a workflow, by the
       caller's row key, until it starts one or the user puts it away: the
       user sees why as well as the agent. */
   refusals: {} as Record<string, string>,
-  /** How many waits each caller has held, by the caller as its calls name
-      it: a caller with one is listening for its sessions itself. */
+  /** How many waits each caller has held, by the caller's token: a caller
+      with one is listening for its sessions itself. */
   listening: {} as Record<string, number>,
 });
 
@@ -565,15 +572,72 @@ function forget(caller: string, id: string) {
   saveStarted();
 }
 
+/** Whether a list is kept under a folder rather than a caller's token: an
+    earlier version's, for a caller whose calls named no session. */
+const byFolder = (caller: string) => /^(?:\/|ssh:\/\/|[A-Za-z]:[\\/])/.test(caller);
+
 /** The caller of each remembered session, by the session's id: the first
-    caller listed where two remember one. */
+    caller listed where two remember one. A list kept under a folder is no
+    caller's, so what it holds is the user's own unless a caller's list
+    holds it too. */
 const owners = $derived.by(() => {
   const index = new Map<string, string>();
-  for (const [caller, entries] of Object.entries(conductor.started))
+  for (const [caller, entries] of Object.entries(conductor.started)) {
+    if (byFolder(caller)) continue;
     for (const entry of entries)
       if (!index.has(entry.id)) index.set(entry.id, caller);
+  }
   return index;
 });
+
+/** A session open when the app last quit, as the window kept it. */
+export interface WasOpen {
+  project: string;
+  id: string;
+  agent: AgentId;
+  startIn: string | null;
+}
+
+/**
+ * Carries what an earlier version kept under a folder over to the session
+ * that kept it there, so an orchestration running when the app was updated
+ * goes on. Such a version kept what a caller that named no session started
+ * under the folder it called from, and the callers that named none were
+ * the Codex sessions. A folder that one Codex session among those open at
+ * the last quit ran in is that session's, and its list and its workflow's
+ * record are copied to the session's id, which is its token from now on.
+ * A folder where none ran, or several did, is left as it was, and what it
+ * holds is no caller's. The folder's own copy stays, for that earlier
+ * version to go on reading.
+ */
+export function carryOver(open: WasOpen[]) {
+  let moved = false;
+  const folders = new Set(
+    [...Object.keys(conductor.started), ...Object.keys(conductor.runs)].filter(byFolder),
+  );
+  for (const folder of folders) {
+    const ran = open.filter(
+      (entry) => entry.agent === "codex" && (entry.startIn ?? entry.project) === folder,
+    );
+    if (ran.length !== 1) continue;
+    const id = ran[0].id;
+    const kept = conductor.started[folder] ?? [];
+    const have = conductor.started[id] ?? [];
+    const added = kept.filter((entry) => !have.some((known) => known.id === entry.id));
+    if (added.length > 0) {
+      conductor.started[id] = [...have, ...added];
+      moved = true;
+    }
+    const run = conductor.runs[folder];
+    if (run !== undefined && conductor.runs[id] === undefined) {
+      conductor.runs[id] = structuredClone($state.snapshot(run)) as Run;
+      moved = true;
+    }
+  }
+  if (!moved) return;
+  saveStarted();
+  saveRuns();
+}
 
 /** The caller that started a session, by its id, when one is remembered. */
 function ownerOf(id: string | null): string | null {
@@ -691,44 +755,68 @@ export async function handle(request: ConductRequest): Promise<void> {
 }
 
 function run(request: ConductRequest): Answered | Promise<Answered> {
-  switch (request.tool) {
+  // The prompt hook asks for a note, and is given none for a call it
+  // cannot hold to a session; it never fails the user's message.
+  if (request.tool === "prompt") return promptNote(request);
+  const refusal = unplaced(request);
+  if (refusal !== null) return refused(refusal);
+  const call = request as Placed;
+  switch (call.tool) {
     case "projects":
-      return said(projectLines(request));
+      return said(projectLines(call));
     case "sessions":
-      return said(sessionLines(request));
+      return said(sessionLines(call));
     case "start":
-      return startSession(request);
+      return startSession(call);
     case "send":
-      return sendText(request);
+      return sendText(call);
     case "stop":
-      return stopSession(request);
+      return stopSession(call);
     case "wait":
-      return waitFor(request);
+      return waitFor(call);
     case "read":
-      return readSession(request);
-    case "prompt":
-      return promptNote(request);
+      return readSession(call);
     default:
-      return refused(`The workbench has no ${String(request.tool)} tool.`);
+      return refused(`The workbench has no ${String(call.tool)} tool.`);
   }
+}
+
+/** A call the workbench has placed: its token names a session it runs,
+    which is the caller. */
+export type Placed = ConductRequest & { session: string };
+
+/** What a call is told that names no session: each session the workbench
+    starts names itself in every call its tools make, so it is not taken
+    for one of them. */
+export const OUTSIDE =
+  "This call names no session, so the workbench cannot tell it comes from one of its sessions: each session it starts names itself in every call its tools make, and an agent it did not start names none. The tools that start and direct sessions are for the sessions the workbench runs. Start the agent from the workbench to use them.";
+
+/** What a call is told that names a session the workbench is not running:
+    one it never had, or one that has stopped and so cannot be calling. */
+export const UNKNOWN =
+  "This call names a session the workbench is not running, so it cannot tell what this call may do. The tools that start and direct sessions are for the sessions the workbench runs.";
+
+/** Why a call cannot be held to a session, when it cannot: it names none,
+    or names one the workbench is not running. Null for a call whose token
+    names a running session, which is the caller. */
+function unplaced(request: ConductRequest): string | null {
+  if (request.session === null) return OUTSIDE;
+  return callerRow(request) === null ? UNKNOWN : null;
+}
+
+/** The running session a call's token names, the caller. */
+function callerRow(request: ConductRequest): Session | null {
+  const row = byToken(request.session);
+  return row !== null && isLive(row) ? row : null;
 }
 
 /** Keeps a refused start where the user can see it, for a caller that
     follows a workflow, and clears it once a start goes through. */
 function noteRefusal(request: ConductRequest, error: string | null) {
-  const row =
-    callingSession(request) ??
-    (request.session === null ? followingHere(request.cwd) : null);
+  const row = callerRow(request);
   if (row === null) return;
   if (error === null) delete conductor.refusals[row.key];
   else if (row.workflow !== null) conductor.refusals[row.key] = error;
-}
-
-/** The one untold session where a call comes from that follows a workflow,
-    when there is exactly one. */
-function followingHere(cwd: string): Session | null {
-  const rows = untoldHere(cwd).filter((row) => row.workflow !== null);
-  return rows.length === 1 ? rows[0] : null;
 }
 
 /** Puts away the refusal shown on a caller's row. */
@@ -767,7 +855,7 @@ export function workflowTag(session: Session): WorkflowTag | null {
   const at = placeOf(session.key);
   if (at === null) return null;
   const caller = startedFor(session.key);
-  const workflow = caller === null ? null : (byId(caller)?.workflow ?? null);
+  const workflow = caller === null ? null : (byToken(caller)?.workflow ?? null);
   const role = `${at.step}${at.kind === "review" && at.round !== null ? ` round ${at.round}` : ""}`;
   const step = workflow?.steps.find((candidate) => sameName(candidate.name, at.step));
   const work =
@@ -792,7 +880,7 @@ export function workName(caller: string, id: string): string {
 }
 
 /** The open projects, the caller's own marked. */
-function projectLines(request: ConductRequest): string {
+function projectLines(request: Placed): string {
   if (workspace.open.length === 0)
     return "No projects are open in the workbench.";
   const here = projectOf(request.cwd);
@@ -899,22 +987,6 @@ export function watchStops(): () => void {
   });
 }
 
-/**
- * The callers a session is, as its calls name it: its id, and the
- * directory it runs in when it is the one session running there that was
- * not told its id, whose calls name no session. `row` is the session's
- * row, or null for a call naming a session the window does not have or
- * naming none; one naming none is the directory's caller when one such
- * session runs there.
- */
-function callersOf(session: string | null, row: Session | null, cwd: string): string[] {
-  const callers = session === null ? [] : [session];
-  const here = untoldHere(cwd);
-  if (here.length === 1 && (row === null ? session === null : here[0].key === row.key))
-    callers.push(cwd);
-  return callers;
-}
-
 /** Whether a started session is still at work: running, and not at rest
     in any way, which takes in one that has not begun yet. */
 function atWork(session: Session): boolean {
@@ -941,12 +1013,12 @@ export interface Note {
  * `ending`, which ends the wait for the message at once. Null when there
  * is nothing to say.
  */
-function reportNote(callers: string[], ending: boolean): Note | null {
-  const kids = [...new Set(callers.flatMap(startedBy))];
-  const holding = [...waiting.values()].filter((wait) => callers.includes(wait.caller));
+function reportNote(caller: string, ending: boolean): Note | null {
+  const kids = startedBy(caller);
+  const holding = [...waiting.values()].filter((wait) => wait.caller === caller);
   const watched = new Set(ending ? [] : holding.flatMap((wait) => wait.watched));
-  const lapsed = callers.some((caller) => cut.has(caller));
-  if (ending) endWaits(callers, USER_WROTE);
+  const lapsed = cut.has(caller);
+  if (ending) endWaits([caller], USER_WROTE);
   const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
   const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
   const name = (kid: Session) => oneLine(kid.id ?? label(kid));
@@ -961,7 +1033,7 @@ function reportNote(callers: string[], ending: boolean): Note | null {
     text: [REPORTS_HEAD, ...lines].join("\n"),
     deliver: () => {
       for (const [key, rest] of reported) tellAs(key, rest);
-      for (const caller of callers) cut.delete(caller);
+      cut.delete(caller);
       // A wait the message is about to cut short has had its still-out
       // line.
       for (const wait of holding) wait.noted = true;
@@ -970,19 +1042,21 @@ function reportNote(callers: string[], ending: boolean): Note | null {
 }
 
 /** The answer to a prompt hook's call as the user's message goes in: the
-    note for the caller the call is, told once the answer is left where
-    the hook reads it. The core leaves none once the hook has stopped
-    waiting, so a note the agent never read stays untold. The call is held
-    to the agent's own id, so an agent started from a starter's shell, with
-    its environment, gets nothing; a Codex caller whose id the window has
-    not learned yet is taken at its word. An integrated session is given
-    its note by the window, with the message itself. */
+    note for the session the call's token names, told once the answer is
+    left where the hook reads it. The core leaves none once the hook has
+    stopped waiting, so a note the agent never read stays untold. The call
+    is held to the agent's own id as well, so an agent started from a
+    starter's shell, which has the starter's token in its environment, gets
+    nothing; a Codex session whose id the window has not learned yet is
+    taken at its token's word. A call that names no session the workbench
+    runs gets nothing. An integrated session is given its note by the
+    window, with the message itself. */
 function promptNote(request: ConductRequest): Answered {
-  const row = request.session === null ? callingSession(request) : byId(request.session);
+  const row = callerRow(request);
   const own = text(request, "agentSession");
   if (row === null || row.kind === "integrated" || own === null) return said("");
   if (row.id !== own && !(row.id === null && row.agent === "codex")) return said("");
-  const note = reportNote(callersOf(request.session, row, request.cwd), false);
+  const note = reportNote(row.token, false);
   return note === null ? said("") : { ...said(note.text), delivered: note.deliver };
 }
 
@@ -1002,7 +1076,7 @@ function tellAs(key: string, rest: Rest | null) {
 notesFrom((key) => {
   const row = byKey(key);
   if (row === null) return null;
-  return reportNote(callersOf(row.id, row, row.startIn ?? row.project), true);
+  return reportNote(row.token, true);
 });
 
 /**
@@ -1013,11 +1087,8 @@ notesFrom((key) => {
 export function unheard(session: Session): Session[] {
   void heard.version;
   if (!isLive(session) || session.working || session.needs === "permission") return [];
-  const callers = callersOf(session.id, session, session.startIn ?? session.project);
-  if (callers.some((caller) => (conductor.listening[caller] ?? 0) > 0)) return [];
-  return [...new Set(callers.flatMap(startedBy))].filter((kid) =>
-    unheardMark(stops.get(kid.key)),
-  );
+  if ((conductor.listening[session.token] ?? 0) > 0) return [];
+  return startedBy(session.token).filter((kid) => unheardMark(stops.get(kid.key)));
 }
 
 /**
@@ -1028,7 +1099,7 @@ export function unheard(session: Session): Session[] {
  * caller started that are no longer open, from this run or an earlier one,
  * which a start with the session named brings back.
  */
-function sessionLines(request: ConductRequest): string {
+function sessionLines(request: Placed): string {
   const only = text(request, "project");
   const listed = sessions.all.filter(
     (session) =>
@@ -1106,7 +1177,7 @@ export function stateOf(session: Session): string {
 
 /** Starts a session for the caller, once the user allows it. With a
     session named, resumes one of the caller's own instead. */
-async function startSession(request: ConductRequest): Promise<Answered> {
+async function startSession(request: Placed): Promise<Answered> {
   const resuming = text(request, "session");
   if (resuming !== null) return resumeSession(request, resuming);
   const project = text(request, "project");
@@ -1160,7 +1231,7 @@ async function startSession(request: ConductRequest): Promise<Answered> {
     the account it runs under, which turns on the agent the step chose, the
     question, and the session itself. */
 async function startFitted(
-  request: ConductRequest,
+  request: Placed,
   project: string,
   prompt: string,
   name: string | null,
@@ -1297,19 +1368,17 @@ async function startFitted(
  * project's, the one for every project included, hands nothing on, and the
  * session runs under the account of the project it starts in. That is the
  * project's as well when the caller's chosen account cannot be handed on:
- * no session can be placed as the caller, the project is on another
- * machine than the caller, where the caller's login may not be, or the
- * settings no longer hold the account. An account handed on that keeps no
- * directory for the agent runs it on the agent's own, as a blank directory
- * does anywhere.
+ * the project is on another machine than the caller, where the caller's
+ * login may not be, or the settings no longer hold the account. An account
+ * handed on that keeps no directory for the agent runs it on the agent's
+ * own, as a blank directory does anywhere.
  *
  * Once there are accounts to tell apart, the account is named when it is
- * not the project's own, when the caller could not be placed or its chosen
- * account was not handed on, and when one handed on keeps no directory for
- * the agent.
+ * not the project's own, when the caller's chosen account was not handed
+ * on, and when one handed on keeps no directory for the agent.
  */
 function underFor(
-  request: ConductRequest,
+  request: Placed,
   project: string,
   agent: AgentId,
   wanted: string | null,
@@ -1329,17 +1398,10 @@ function underFor(
   return under(theirs, theirs !== null && dirFor(theirs, agent) === undefined);
 }
 
-/**
- * The session a call comes from: the one it names, else the one live
- * session running where the call does that was not told its id, and so
- * makes its calls without one, as a Codex session that was not resumed
- * does. Null when the call names a session the window does not have, and
- * when no such session or more than one runs there.
- */
-function callingSession(request: ConductRequest): Session | null {
-  if (request.session !== null) return byId(request.session);
-  const there = untoldHere(request.cwd);
-  return there.length === 1 ? there[0] : null;
+/** The session a placed call comes from, while it runs: the one its token
+    names. Null once that session has stopped. */
+function callingSession(request: Placed): Session | null {
+  return callerRow(request);
 }
 
 /** What a start in a workflow's shape comes to: where the session stands,
@@ -1388,7 +1450,7 @@ function stepsText(workflow: Workflow): string {
  * Each refusal says what would do.
  */
 function fitStart(
-  request: ConductRequest,
+  request: Placed,
   workflow: Workflow,
   caller: string,
 ): Fit | { refusal: string } {
@@ -1534,117 +1596,30 @@ function modelFor(
   };
 }
 
-/** The live rows running where a call came from. */
-function liveHere(cwd: string): Session[] {
-  return sessions.all.filter(
-    (session) => isLive(session) && (session.startIn ?? session.project) === cwd,
-  );
-}
-
-/** The live rows an agent that was not told its id may be calling from:
-    the ones running where the call came from. */
-function untoldHere(cwd: string): Session[] {
-  return liveHere(cwd).filter((session) => !session.told);
-}
-
-/** What a caller is told when the workbench cannot tell which session in
-    its directory is calling, and one that runs there follows a workflow. */
-export const UNPLACED =
-  "The workbench cannot tell which session in this directory is calling, and a session here follows a workflow, so it cannot hold this call to the workflow. Start sessions from a session in a directory of its own, such as a worktree.";
-
-/** What a call naming no session is told when no session the workbench
-    runs in its directory can be the caller, while a session follows a
-    workflow. */
-export const NOWHERE =
-  "The workbench runs no session in this directory that could be making this call, and a session follows a workflow, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.";
-
-/** What a call naming no session is told when several sessions the
-    workbench runs in its directory were not told their id, and so any of
-    them could be the caller, while a session follows a workflow. */
-export const AMBIGUOUS =
-  "The workbench cannot tell which of the sessions in this directory is calling, and a session follows a workflow, so it cannot tell what this call may do. Start sessions from a session in a directory of its own, such as a worktree.";
-
-/** Whether a running session follows a workflow. */
-function workflowRunning(): boolean {
-  return sessions.all.some((session) => isLive(session) && session.workflow !== null);
-}
-
-/** What a call is told that names a session the workbench does not run. */
-function unknownCaller(id: string): string {
-  return `The workbench runs no session ${id}, so it cannot tell what this call may do. Starting and sending are for the sessions it runs.`;
-}
-
 /** The workflow the caller follows, null for none, or why the call cannot
-    be held to one. A call naming a session the workbench does not run, or
-    one whose process is not running and so cannot be calling, is refused
-    while a session follows a workflow: it could be that session. One
-    naming none is the one session running in its directory that was not
-    told its id. Where that is not certain and a session there follows a
-    workflow, a session told its id among them, the call is refused rather
-    than let through unchecked. So is one from a directory where no such
-    session runs, and one from a directory where several do, while any
-    session follows a workflow. */
+    be held to one: its session has stopped since the call was placed, and
+    a session that is not running cannot be calling. */
 function callerFlow(
-  request: ConductRequest,
+  request: Placed,
 ): { workflow: Workflow | null } | { refusal: string } {
-  if (request.session !== null) {
-    const row = byId(request.session);
-    if (row !== null && isLive(row)) return { workflow: row.workflow };
-    return workflowRunning()
-      ? { refusal: unknownCaller(request.session) }
-      : { workflow: row?.workflow ?? null };
-  }
-  const here = untoldHere(request.cwd);
-  const following = liveHere(request.cwd).filter(
-    (session) => session.workflow !== null,
-  );
-  if (
-    here.length === 1 &&
-    following.every((session) => session.key === here[0].key)
-  )
-    return { workflow: here[0].workflow };
-  if (following.length > 0) return { refusal: UNPLACED };
-  if (here.length !== 1 && workflowRunning())
-    return { refusal: here.length === 0 ? NOWHERE : AMBIGUOUS };
-  return { workflow: null };
+  const row = callingSession(request);
+  if (row === null) return { refusal: UNKNOWN };
+  return { workflow: row.workflow };
 }
 
 const ONE_LEVEL =
   "A session that another session started cannot start sessions of its own.";
 
-/** Whether a call with no id, that cannot be placed, may come from a
-    session another session started while others there were not: the
-    standing answer of its directory is not one the call can use or give. */
-function maybeStarted(request: ConductRequest): boolean {
-  if (request.session !== null || callingSession(request) !== null) return false;
-  return untoldHere(request.cwd).some((row) => startedFor(row.key) !== null);
-}
-
 /** Why a caller may not start another session right now, when it may not:
     it has as many running as one may, or it was itself started by one. */
-function roomFor(request: ConductRequest): Answered | null {
+function roomFor(request: Placed): Answered | null {
   if (startedBy(callerOf(request)).filter(isLive).length >= CAP)
     return refused(
       `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
     );
   const calling = callingSession(request);
-  if (request.session !== null) {
-    if (calling !== null && startedFor(calling.key) !== null)
-      return refused(ONE_LEVEL);
-    return null;
-  }
-  if (calling !== null) {
-    if (startedFor(calling.key) !== null)
-      return refused(
-        `The workbench takes this call for ${label(calling)}, which another session started, in this directory, and a session that another started cannot start sessions of its own. If you are not that session, call from a directory of your own.`,
-      );
-    return null;
-  }
-  const here = untoldHere(request.cwd);
-  if (here.length > 1 && here.every((row) => startedFor(row.key) !== null))
-    return refused(
-      "The workbench cannot tell which session in this directory is calling, and every one that could be was started by another session, which cannot start sessions of its own. If you are not one of them, call from a directory of your own.",
-    );
+  if (calling === null) return refused(UNKNOWN);
+  if (startedFor(calling.key) !== null) return refused(ONE_LEVEL);
   return null;
 }
 
@@ -1658,7 +1633,7 @@ function roomFor(request: ConductRequest): Answered | null {
  * for the caller to send a line.
  */
 async function resumeSession(
-  request: ConductRequest,
+  request: Placed,
   id: string,
 ): Promise<Answered> {
   const caller = callerOf(request);
@@ -1831,7 +1806,7 @@ export function worktreeName(prompt: string): string {
   return cut.replace(/-+$/, "") || "session";
 }
 
-async function sendText(request: ConductRequest): Promise<Answered> {
+async function sendText(request: Placed): Promise<Answered> {
   const id = text(request, "session");
   const line = text(request, "text");
   if (id === null) return refused("Sending needs a session to send to.");
@@ -1949,7 +1924,7 @@ function finished(session: Session): boolean {
   return mark !== undefined && mark.worked && mark.rest === "quiet";
 }
 
-function stopSession(request: ConductRequest): Answered {
+function stopSession(request: Placed): Answered {
   const id = text(request, "session");
   if (id === null) return refused("Stopping needs a session to stop.");
   const session = byId(id);
@@ -1964,7 +1939,7 @@ function stopSession(request: ConductRequest): Answered {
  * permission, or it ends. With no session named, for whichever of the
  * caller's own does so first.
  */
-async function waitFor(request: ConductRequest): Promise<Answered> {
+async function waitFor(request: Placed): Promise<Answered> {
   const id = text(request, "session");
   const seconds = number(request, "seconds", WAIT_SECONDS, WAIT_MAX);
   let watched: Session[];
@@ -2001,7 +1976,7 @@ async function waitFor(request: ConductRequest): Promise<Answered> {
     rest, the seconds run out, the agent gives up on it, or the user's
     message ends it. */
 async function holdWait(
-  request: ConductRequest,
+  request: Placed,
   owner: string,
   watched: Session[],
   seconds: number,
@@ -2017,10 +1992,9 @@ async function holdWait(
     names.set(session.key, session.id ?? label(session));
   }
 
-  // The calling session's row, if this window has one: a wait held for a
-  // session that is no longer running has no one to hear it.
-  const caller = request.session === null ? null : byId(request.session);
-  const callerAt = caller?.key ?? null;
+  // The calling session's row: a wait held for a session that is no longer
+  // running has no one to hear it.
+  const callerAt = callingSession(request)?.key ?? null;
   let reported: string | null = null;
   let abandoned = false;
   let interrupted: string | null = null;
@@ -2111,7 +2085,7 @@ async function holdWait(
  * the user reads: the last lines of the session's terminal, as they are
  * drawn, box drawing and all.
  */
-function readSession(request: ConductRequest): Answered {
+function readSession(request: Placed): Answered {
   const id = text(request, "session");
   if (id === null) return refused("Reading needs a session to read.");
   const session = byId(id);
@@ -2205,7 +2179,7 @@ export function stopAll(sessionId: string) {
  * which is not leave to type into the one they are working in themselves,
  * and an agent takes its instructions from what it reads.
  */
-function mine(request: ConductRequest, session: Session): boolean {
+function mine(request: Placed, session: Session): boolean {
   return startedFor(session.key) === callerOf(request);
 }
 
@@ -2216,9 +2190,9 @@ function notMine(id: string): Answered {
   );
 }
 
-/** Who is calling: the session it runs as, else the directory it runs in. */
-function callerOf(request: ConductRequest): string {
-  return request.session ?? request.cwd;
+/** Who is calling: the token of the session the call names. */
+function callerOf(request: Placed): string {
+  return request.session;
 }
 
 function byId(sessionId: string): Session | null {
@@ -2240,7 +2214,7 @@ function agentOf(request: ConductRequest, project: string): AgentId {
  * while another is up waits behind it.
  */
 function askUser(
-  request: ConductRequest,
+  request: Placed,
   project: string,
   prompt: string,
   worktree: boolean,
@@ -2248,18 +2222,15 @@ function askUser(
   named: Named | null,
   round: Beyond | null = null,
 ): Promise<Choice> {
-  const unsure = maybeStarted(request);
   if (
     round === null &&
     login !== null &&
-    !unsure &&
     allowed.has(allowance(callerOf(request), project, login))
   )
     return Promise.resolve("allow");
   const session = callingSession(request);
   const ask: Ask = {
     request,
-    unsure,
     caller: session === null ? "A session" : label(session),
     project,
     prompt: prompt.split("\n")[0],
@@ -2291,7 +2262,6 @@ function answerAsk(choice: Choice) {
   if (
     ask !== null &&
     choice === "allow" &&
-    !ask.unsure &&
     ask.round === null &&
     ask.login !== null
   )

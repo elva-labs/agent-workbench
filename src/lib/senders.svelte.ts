@@ -12,7 +12,8 @@ const KEY = "workbench.senders";
 const KEEP = 1000;
 
 /** The session that sent each message another session sent, by the id
-    the message was sent under: a session's id, or the folder an agent
+    the message was sent under: the token the sending session's tools name
+    it by, or, sent before there were tokens, its id or the folder an agent
     outside the workbench called from. Kept between runs, so a message
     reads as its sender's after a restart too. A message is told to be
     another session's by its id alone, never by its words. */
@@ -66,7 +67,8 @@ export function starterOf(key: string): string | null {
 }
 
 export interface Sender {
-  /** The sending session's id, or the folder an outside agent called from. */
+  /** What the message was sent under: the sending session's token, or
+      its id or the folder an outside agent called from. */
   id: string;
   name: string;
   /** Its row, when the window has one to go to. */
@@ -80,15 +82,20 @@ export function sessionName(id: string): string | null {
   return row === undefined ? null : label(row);
 }
 
-/** Who sent a message: null for the user. */
+/** Who sent a message: null for the user. A sender the window has no row
+    for is named by the id the tools know it by. */
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
-  const row = sessions.all.find((candidate) => candidate.id === from) ?? null;
+  const row =
+    sessions.all.find((candidate) => candidate.token === from) ??
+    sessions.all.find((candidate) => candidate.id === from) ??
+    null;
+  const id = Object.entries(sessions.tokens).find(([, token]) => token === from)?.[0] ?? from;
   return {
     id: from,
     key: row?.key ?? null,
-    name: row !== null ? label(row) : from.startsWith("/") ? `an agent in ${lastSegment(from)}` : `session ${from}`,
+    name: row !== null ? label(row) : from.startsWith("/") ? `an agent in ${lastSegment(from)}` : `session ${id}`,
   };
 }
 

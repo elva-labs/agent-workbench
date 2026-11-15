@@ -28,7 +28,7 @@ import type {
 import { openFile } from "$lib/editor.svelte";
 import { showDiff, showRange } from "$lib/files.svelte";
 import { focusPane, layout, terminalVisible, toggleTerminal } from "$lib/layout.svelte";
-import { byKey, forProject, noted, sessions } from "$lib/sessions.svelte";
+import { byKey, forProject, isLive, noted, sessions } from "$lib/sessions.svelte";
 import { create as createShell } from "$lib/terminals.svelte";
 import { activate, watchRoot, workspace } from "$lib/workspace.svelte";
 
@@ -139,33 +139,34 @@ export function terminalRequested(request: TerminalRequest) {
   open();
 }
 
-/** The session a request is from: the one it names, else the one running
-    deepest where the agent runs, else the project's active one. A request
-    that names no session cannot be from a session whose agent was told its
-    id, so those are passed over: an agent started outside the workbench in
-    the project's directory, with the same tools, is not one of its rows. */
+/** The session a request is from: the one whose token it names, the live
+    one where a row that has stopped holds it too, or the one whose id a
+    plugin names; else the one running deepest where the agent runs, else
+    the project's active one. A request that names no session is from none
+    of the workbench's: each session it starts names itself in every call,
+    so an agent started outside it in the project's directory, with the
+    same tools, is not one of its rows. */
 export function sessionFor(
   request: { cwd: string; session: string | null },
   project: string,
 ) {
+  if (request.session === null) return null;
   const own = forProject(project);
-  const named = own.find(
-    (session) => session.id !== null && session.id === request.session,
-  );
+  const named =
+    own.find((session) => session.token === request.session && isLive(session)) ??
+    own.find((session) => session.token === request.session) ??
+    own.find((session) => session.id !== null && session.id === request.session);
   if (named !== undefined) return named;
-  const could = own.filter(
-    (session) => request.session !== null || !session.told,
-  );
   const at = (session: {
     cwd: string | null;
     startIn: string | null;
     project: string;
   }) => session.cwd ?? session.startIn ?? session.project;
-  const under = could
+  const under = own
     .filter((session) => within(request.cwd, at(session)))
     .sort((a, b) => at(b).length - at(a).length);
   if (under.length > 0) return under[0];
-  return could.find((session) => session.key === sessions.active) ?? null;
+  return own.find((session) => session.key === sessions.active) ?? null;
 }
 
 /** What each session's agent asked to open while the user was looking at
@@ -242,6 +243,6 @@ export function referenced(key: string, path: string, line: number) {
     to: line,
     note: null,
     cwd: base,
-    session: session.id,
+    session: session.token,
   });
 }

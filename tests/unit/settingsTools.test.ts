@@ -203,8 +203,9 @@ describe("a change", () => {
   });
 
   it("waits for the user, and is made when they allow it", async () => {
-    sessions.all = [{ id: "s-1", key: "k1", title: "Tidy the docs" } as never];
-    const done = handle(request("settings_change", { palette: "amber", reason: "warmer" }, "s-1"));
+    sessions.all = [{ id: "s-1", key: "k1", token: "t-1", title: "Tidy the docs" } as never];
+    // The session's tools name it by its token.
+    const done = handle(request("settings_change", { palette: "amber", reason: "warmer" }, "t-1"));
     await settle();
     expect(answers).toHaveLength(0);
     expect(theme.palette).toBe("teal");

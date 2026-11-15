@@ -116,6 +116,9 @@ export interface SpawnOptions {
   cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
+  /** What the session's tools name it by, given to the agent's
+      environment. */
+  token?: string;
   /** The first prompt, for a fresh session started with one. */
   prompt?: string;
   /** The model to run on, by the name the agent takes on its command
@@ -164,6 +167,8 @@ export interface IntegratedStartOptions {
   cwd?: string;
   /** Resume an existing session rather than starting a new one. */
   session?: string;
+  /** What the session's tools name it by, as for `spawn`. */
+  token?: string;
   /** The model to run on, by the name the agent takes. */
   model?: string;
   /** The mode to start in, one of those `ready` lists. */
@@ -593,7 +598,8 @@ export interface ShowRequest {
   to: number;
   note: string | null;
   cwd: string;
-  /** The agent's session id, when the agent's environment named one. */
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
@@ -616,6 +622,8 @@ export interface TerminalRequest {
 export interface NotifyRequest {
   text: string;
   cwd: string;
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
@@ -638,7 +646,8 @@ export interface ConductRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which project it is in. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -663,7 +672,8 @@ export interface BrowserRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which project it is in. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -677,7 +687,8 @@ export interface SettingsRequest {
   arguments: Record<string, unknown>;
   /** Where the calling agent runs, which says which machine waits. */
   cwd: string;
-  /** The session the calling agent runs as, when its environment named one. */
+  /** The token of the session the calling agent runs as, when its
+      environment named one. */
   session: string | null;
 }
 
@@ -865,7 +876,8 @@ export interface PresentRequest {
   files: string[];
   caption: string | null;
   cwd: string;
-  /** The agent's session id, when the agent's environment named one. */
+  /** The token of the session the agent runs as, when its environment
+      named one; from a plugin, the agent's own id for the session. */
   session: string | null;
 }
 
