@@ -936,18 +936,20 @@ fn conduct_call(
 /// How long a prompt hook waits for the window to say what the agent is
 /// told. The user's message waits with it, so it is short: a window that
 /// is there answers at once.
-pub const PROMPT_WAIT: Duration = Duration::from_secs(5);
+pub const PROMPT_WAIT: Duration = Duration::from_secs(2);
 
-/// The most of the hook's input that is read.
+/// How long before the hook stops waiting the window's answer must be
+/// left, which the core holds it to: the rest of the wait is for the
+/// answer to land and be read.
+const PROMPT_GRACE: Duration = Duration::from_millis(300);
+
+/// The most of the hook's input that is read; the rest is drained unread.
 const PROMPT_INPUT: u64 = 1024 * 1024;
 
 /// `agent-workbench-remote reports`, run by a session's prompt hook as the
 /// user's message goes in: prints what the sessions it started did since
 /// it last looked, for the agent to read ahead of the user's words, or
-/// nothing. Only an agent the workbench started has a window to ask: its
-/// environment names its session or its role. Any other agent, such as
-/// one run by hand in the project while the app is closed, is not held
-/// up waiting for an answer that cannot come.
+/// nothing.
 pub fn prompt_hook(home: &Path) {
     let named = |var: &str| {
         std::env::var(var)
@@ -956,26 +958,60 @@ pub fn prompt_hook(home: &Path) {
     };
     let session = named(crate::adapter::SESSION_VAR);
     let role = named(crate::adapter::ROLE_VAR);
+    let mut stdin = std::io::stdin();
     let mut input = String::new();
     let _ = std::io::Read::read_to_string(
-        &mut std::io::Read::take(std::io::stdin(), PROMPT_INPUT),
+        &mut std::io::Read::take(&mut stdin, PROMPT_INPUT),
         &mut input,
     );
-    if session.is_none() && role.is_none() {
-        return;
-    }
+    // The agent is not left writing into a pipe no one reads.
+    let _ = std::io::copy(&mut stdin, &mut std::io::sink());
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    if let Some(output) = prompt_reports(home, &cwd, &input, session.as_deref(), PROMPT_WAIT) {
+    if let Some(output) = prompt_output(
+        home,
+        &cwd,
+        &input,
+        session.as_deref(),
+        role.as_deref(),
+        PROMPT_WAIT,
+    ) {
         println!("{output}");
     }
+}
+
+/// What the prompt hook prints, given the session and role its environment
+/// names. Only an agent the workbench started has a window to ask: its
+/// environment names one or the other. Any other agent, such as one run by
+/// hand in the project while the app is closed, goes on at once, and so
+/// does every agent while no core here that hands the window its calls
+/// has said lately that it is there.
+pub fn prompt_output(
+    home: &Path,
+    cwd: &Path,
+    input: &str,
+    session: Option<&str>,
+    role: Option<&str>,
+    wait: Duration,
+) -> Option<String> {
+    if session.is_none() && role.is_none() {
+        return None;
+    }
+    if !show::answering(home) {
+        return None;
+    }
+    prompt_reports(home, cwd, input, session, wait)
 }
 
 /// Asks the window what the session is told as the user's message goes
 /// in, and answers with what the hook prints: the note as context for the
 /// prompt, in the shape both agents read from a prompt hook's output. None
 /// when there is nothing to tell or no answer came in time. `input` is
-/// what the agent gave the hook, which says where it runs; `cwd` stands in
-/// where it does not say.
+/// what the agent gave the hook: where it runs, with `cwd` standing in
+/// where it does not say, and the agent's own session id, which the
+/// window holds to the caller's, so an agent started from a starter's
+/// shell, with its environment, does not take the starter's note. The
+/// call carries the time after which the hook no longer reads an answer,
+/// and the core leaves none past it, so the window tells only what is read.
 pub fn prompt_reports(
     home: &Path,
     cwd: &Path,
@@ -983,6 +1019,7 @@ pub fn prompt_reports(
     session: Option<&str>,
     wait: Duration,
 ) -> Option<String> {
+    let started = Instant::now();
     let given: Value = serde_json::from_str(input).unwrap_or(Value::Null);
     let cwd = given
         .get("cwd")
@@ -992,19 +1029,24 @@ pub fn prompt_reports(
         .unwrap_or_else(|| cwd.to_path_buf());
     // The directory as the window names it, as for a tool call.
     let cwd = dunce::canonicalize(&cwd).unwrap_or(cwd);
+    let own = given
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty());
+    let deadline = show::now_ms() + wait.saturating_sub(PROMPT_GRACE).as_millis() as u64;
     let id = uuid::Uuid::new_v4().to_string();
     show::append(
         home,
         &Request::Conduct(ConductRequest {
             id: id.clone(),
             tool: show::CONDUCT_PROMPT.to_string(),
-            arguments: json!({}),
+            arguments: json!({ "deadline": deadline, "agentSession": own }),
             cwd: cwd.to_string_lossy().to_string(),
             session: session.map(str::to_string),
         }),
     )
     .ok()?;
-    let note = await_answer(home, &id, wait)?
+    let note = await_answer(home, &id, wait.saturating_sub(started.elapsed()))?
         .content
         .filter(|note| !note.trim().is_empty())?;
     Some(
@@ -2373,6 +2415,7 @@ mod tests {
             "cwd": project.to_string_lossy(),
         })
         .to_string();
+        let asked = show::now_ms();
         let output = prompt_reports(
             &home,
             Path::new("/elsewhere"),
@@ -2386,6 +2429,14 @@ mod tests {
         };
         assert_eq!(call.tool, show::CONDUCT_PROMPT);
         assert_eq!(call.session.as_deref(), Some("s-1"));
+        // The agent's own id, for the window to hold to the caller's.
+        assert_eq!(call.arguments["agentSession"], "s-1");
+        // The time past which no answer is read, short of the whole wait.
+        let deadline = call.arguments["deadline"].as_u64().unwrap();
+        assert!(
+            deadline >= asked + 9_000 && deadline < asked + 10_000,
+            "{deadline}"
+        );
         assert_eq!(
             call.cwd,
             dunce::canonicalize(&project).unwrap().to_string_lossy()
@@ -2420,6 +2471,67 @@ mod tests {
         // Input that says nowhere leaves the directory the hook runs in.
         assert_eq!(call.cwd, "/p");
         assert_eq!(call.session, None);
+        assert_eq!(call.arguments["agentSession"], Value::Null);
+    }
+
+    // An agent the workbench did not start, whose environment names neither
+    // a session nor a role, does not ask at all; nor does any agent while no
+    // core here has said lately that it hands the window its calls, as with
+    // the app closed or an app from before the prompt call.
+    #[test]
+    fn the_prompt_hook_asks_only_for_a_session_the_workbench_started_while_a_window_is_there() {
+        let home = home("prompt-gate");
+        std::fs::create_dir_all(home.join(".agent-workbench")).unwrap();
+        let quick = Duration::from_millis(300);
+        let started = Instant::now();
+        assert_eq!(
+            prompt_output(&home, Path::new("/p"), "{}", None, None, quick),
+            None
+        );
+        assert_eq!(
+            prompt_output(&home, Path::new("/p"), "{}", Some("s-1"), None, quick),
+            None
+        );
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert!(!show::requests_path(&home).exists());
+
+        show::beat(&home).unwrap();
+        assert_eq!(
+            prompt_output(&home, Path::new("/p"), "{}", None, None, quick),
+            None
+        );
+        assert!(!show::requests_path(&home).exists());
+        assert_eq!(
+            prompt_output(
+                &home,
+                Path::new("/p"),
+                "{}",
+                None,
+                Some("orchestrator"),
+                quick
+            ),
+            None
+        );
+        assert_eq!(logged(&home, r#""tool":"prompt""#), 1);
+        assert_eq!(
+            prompt_output(&home, Path::new("/p"), "{}", Some("s-1"), None, quick),
+            None
+        );
+        assert_eq!(logged(&home, r#""tool":"prompt""#), 2);
+
+        // A heartbeat gone stale is no window.
+        let old = std::time::SystemTime::now() - show::HEARTBEAT_STALE - Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(show::heartbeat_path(&home))
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        assert_eq!(
+            prompt_output(&home, Path::new("/p"), "{}", Some("s-1"), None, quick),
+            None
+        );
+        assert_eq!(logged(&home, r#""tool":"prompt""#), 2);
     }
 
     #[test]
