@@ -588,7 +588,7 @@ export function lastRun(
       const message = conversation.messages[entry.message];
       if (message !== undefined) {
         const from = who(message);
-        const said = spoken(message.text).text;
+        const said = spoken(message.text, from === null).text;
         out.push(from === null ? `The user said: ${said}` : `${capital(from)} said: ${said}`);
       }
     } else if (entry.kind === "agent") {
@@ -615,7 +615,9 @@ export function lastRun(
   }
   for (const message of conversation.waiting)
     if (message.state === "queued" || message.state === "sending")
-      out.push(`A message from ${who(message) ?? "the user"} waits for the turn: ${spoken(message.text).text}`);
+      out.push(
+        `A message from ${who(message) ?? "the user"} waits for the turn: ${spoken(message.text, who(message) === null).text}`,
+      );
   return out.slice(-lines).join("\n");
 }
 
