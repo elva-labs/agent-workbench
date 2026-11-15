@@ -246,10 +246,13 @@ export class GridFit extends FitAddon {
     // padding and the scrollbar's gutter when there is scrollback.
     const room = getComputedStyle(parent);
     const own = getComputedStyle(element);
-    const px = (style: CSSStyleDeclaration, name: string) => parseInt(style.getPropertyValue(name)) || 0;
+    const px = (style: CSSStyleDeclaration, name: string) => parseInt(style.getPropertyValue(name));
     const scrollbar = terminal.options.scrollback === 0 ? 0 : (terminal.options.overviewRuler?.width || SCROLLBAR);
-    const width = Math.max(0, px(room, "width")) - px(own, "padding-left") - px(own, "padding-right") - scrollbar;
-    const height = px(room, "height") - px(own, "padding-top") - px(own, "padding-bottom");
+    const width = Math.max(0, px(room, "width")) - (px(own, "padding-left") || 0) - (px(own, "padding-right") || 0) - scrollbar;
+    const height = px(room, "height") - (px(own, "padding-top") || 0) - (px(own, "padding-bottom") || 0);
+    // A box that is not laid out has no width or height in pixels, and a
+    // grid counted from nothing would be told to the process.
+    if (Number.isNaN(width) || Number.isNaN(height)) return undefined;
     return {
       cols: Math.max(2, Math.floor(width / cell.width)),
       rows: Math.max(1, Math.floor(height / cell.height)),

@@ -409,6 +409,24 @@ describe("GridFit", () => {
     expect(fitted(1024, 7, 7)).toEqual({ cols: Math.floor((1024 - 28 - 14) / 7), rows: Math.floor(600 / 16) });
   });
 
+  // A pane that is not laid out reports no width in pixels. The stock addon
+  // proposes nothing there, and a grid of two columns must not reach the pty.
+  it("proposes nothing for a box that is not laid out", () => {
+    const parent = document.createElement("div");
+    parent.style.display = "none";
+    const element = document.createElement("div");
+    parent.append(element);
+    document.body.append(parent);
+    const fit = new GridFit();
+    fit.activate({
+      element,
+      options: { scrollback: 10_000 },
+      _core: { _renderService: { dimensions: { device: { cell: { width: 7, height: 16 } } } } },
+    } as never);
+    expect(fit.proposeDimensions()).toBeUndefined();
+    parent.remove();
+  });
+
   it("proposes nothing before the terminal is open, or while its cell is unmeasured", () => {
     expect(new GridFit().proposeDimensions()).toBeUndefined();
     expect(fitted(1024, 0, 0)).toBeUndefined();
