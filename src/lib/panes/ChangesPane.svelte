@@ -25,7 +25,7 @@
   import { diskChanged, editor, keep as keepTab, keyOf, openFile, unsavedAt } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
-  import { onMount, untrack } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import {
     canDiff,
     canRender,
@@ -411,6 +411,14 @@
     }
   });
 
+  /** A mode picked with the pointer is for typing in: the keyboard goes to
+      the field, and stays there when it was there. Picked from the
+      keyboard, it stays on the modes, as in any radio group. */
+  function pickMode(e: MouseEvent, mode: "files" | "lines") {
+    setMode(mode);
+    if (e.detail > 0) field?.focus();
+  }
+
   function onFieldKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       // Once to clear, once more to leave, as the field's own convention.
@@ -447,16 +455,62 @@
     enterReview();
   }
 
+  /** The "⋯" menu and its button. Open, the menu has the keyboard on the
+      choice in force, or its first item; the arrows walk it, Enter picks,
+      Escape closes it back to the button and Tab closes it on the way on. */
+  let more = $state<HTMLDivElement | null>(null);
+
+  function menuItems(): HTMLButtonElement[] {
+    return [...(more?.querySelectorAll<HTMLButtonElement>("[role^='menuitem']:not(:disabled)") ?? [])];
+  }
+
+  function toggleMenu() {
+    menuOpen = !menuOpen;
+    if (!menuOpen) return;
+    void tick().then(() =>
+      (more?.querySelector<HTMLButtonElement>("[role='menuitemradio'][aria-checked='true']:not(:disabled)") ?? menuItems()[0])?.focus(),
+    );
+  }
+
+  /** The button again, once the menu that had the keyboard is gone, unless
+      what was picked took the keyboard somewhere else. */
+  function backToButton() {
+    void tick().then(() => {
+      const holder = document.activeElement;
+      if (holder === null || holder === document.body) more?.querySelector<HTMLButtonElement>("[data-testid='changes-menu']")?.focus();
+    });
+  }
+
   function choose(run: () => void) {
+    const keyboard = more?.querySelector(".menu")?.contains(document.activeElement) ?? false;
     run();
     menuOpen = false;
+    if (keyboard) backToButton();
   }
 
   function onMenuKeydown(e: KeyboardEvent) {
+    if (!menuOpen) return;
     if (e.key === "Escape") {
+      e.preventDefault();
       e.stopPropagation();
       menuOpen = false;
+      backToButton();
+      return;
     }
+    if (e.key === "Tab") {
+      menuOpen = false;
+      return;
+    }
+    const items = menuItems();
+    const at = items.indexOf(document.activeElement as HTMLButtonElement);
+    let next: HTMLButtonElement | undefined;
+    if (e.key === "ArrowDown") next = items[(at + 1) % items.length];
+    else if (e.key === "ArrowUp") next = items[(at - 1 + items.length) % items.length];
+    else if (e.key === "Home") next = items[0];
+    else if (e.key === "End") next = items[items.length - 1];
+    else return;
+    e.preventDefault();
+    next?.focus();
   }
 
   onMount(() => {
@@ -1375,7 +1429,8 @@
           role="radio"
           aria-checked={files.mode === "files"}
           class:on={files.mode === "files"}
-          onclick={() => setMode("files")}
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={(e) => pickMode(e, "files")}
           title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
           data-testid="mode-files">files</button
         >
@@ -1383,17 +1438,18 @@
           role="radio"
           aria-checked={files.mode === "lines"}
           class:on={files.mode === "lines"}
-          onclick={() => setMode("lines")}
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={(e) => pickMode(e, "lines")}
           title="Search inside the files ({describe(chordFor('findLines'))})"
           data-testid="mode-lines">lines</button
         >
       </span>
     </label>
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="more" onkeydown={onMenuKeydown}>
+    <div class="more" onkeydown={onMenuKeydown} bind:this={more}>
       <button
         class="tool"
-        onclick={() => (menuOpen = !menuOpen)}
+        onclick={toggleMenu}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         aria-label="More"

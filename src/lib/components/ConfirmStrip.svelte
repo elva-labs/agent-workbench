@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tabWithin } from "$lib/tabStops";
+
   /**
    * A question put in place before something is taken away: what goes and
    * what follows from it, with the destructive action and Cancel. Cancel
@@ -76,7 +78,13 @@
     };
   }
 
+  /** The strip holds the keyboard while it is up: Tab goes round its
+      buttons, and Escape cancels. */
   function keys(event: KeyboardEvent) {
+    if (event.key === "Tab") {
+      tabWithin(event, event.currentTarget as HTMLElement);
+      return;
+    }
     if (event.key !== "Escape") return;
     event.preventDefault();
     event.stopPropagation();

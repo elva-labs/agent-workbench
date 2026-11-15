@@ -58,7 +58,9 @@ the corner leave no room for the place in the workflow beside the title, so
 it goes there, and on macOS in the terminal look it is cut a few letters
 short. A click on the
 corner leaves the keyboard where it was, and neither a click nor Tab moves
-the pane focus.
+the pane focus. The switch is one stop for Tab, walked with the arrows, and
+a press from the keyboard that moves the corner to another header keeps the
+keyboard on it there.
 
 ## The status bar
 
@@ -160,9 +162,9 @@ and show nothing, so the dots stay with their heading and nothing moves
 when the pane opens again. Its header joins the header beside it into one row, and
 the line down the column's edge starts under that row.
 
-The folded column is one button. A click anywhere on it opens the pane and
-gives it the keyboard, and so does focusing the pane by its key or pressing
-<kbd>Cmd</kbd><kbd>B</kbd>. In a window too narrow for the pane, the fold is
+The folded column is one button, and a stop for Tab. A click anywhere on it,
+or <kbd>Enter</kbd> on it, opens the pane and gives it the keyboard, and so
+does focusing the pane by its key or pressing <kbd>Cmd</kbd><kbd>B</kbd>. In a window too narrow for the pane, the fold is
 all there is and there is nothing to open.
 
 Reviewing folds the pane as part of its shape, so opening it for real there
@@ -175,8 +177,9 @@ or <kbd>Cmd</kbd><kbd>1</kbd> draws the pane at its open width over the
 agent pane, with the column, the viewer and the agent exactly where they
 were and nothing resized. Every row is where it stands in the column, so
 the dots do not move and the names appear beside them. Picking a session
-puts the pane back; so does the pointer leaving it, <kbd>Esc</kbd>, or the
-chord again, and the keyboard then returns to the viewer. A pane peeked
+puts the pane back; so does the pointer leaving it, <kbd>Esc</kbd>,
+<kbd>Tab</kbd>, or the chord again, and the keyboard then returns to the
+viewer. A pane peeked
 from the keyboard stays while the pointer wanders.
 
 ## Forced is not chosen

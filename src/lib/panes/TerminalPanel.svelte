@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
   import Pane from "$lib/components/Pane.svelte";
@@ -9,8 +9,10 @@
     DEFAULT,
     MIN,
     applyLayout,
+    focusPane,
     hideTerminal,
     layout,
+    returnFocus,
     saveLayout,
     terminalVisible,
   } from "$lib/layout.svelte";
@@ -63,6 +65,34 @@
     if (current !== null) split(current.key);
   }
 
+  let rows = $state<HTMLDivElement | null>(null);
+
+  /** A row picks its shell and puts the keyboard in it, by a click as by
+      Enter or Space. A row that had the keyboard lets it go, since the
+      shell yields to a control of its own pane. */
+  function choose(key: string) {
+    select(key);
+    const holder = document.activeElement;
+    if (holder instanceof HTMLElement && rows?.contains(holder)) holder.blur();
+    focusPane("terminal");
+  }
+
+  /** Delete closes the shell under the keyboard, as its × does, and the
+      keyboard stays on the rows; with the last shell gone, it goes back to
+      the pane the panel hands the focus to. Only keys reach a row: a click
+      on one puts the keyboard in its shell. */
+  async function onRowKeydown(e: KeyboardEvent, key: string) {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    e.preventDefault();
+    close(key);
+    await tick();
+    const next =
+      rows?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') ??
+      rows?.querySelector<HTMLElement>('[role="option"]');
+    if (next) next.focus();
+    else returnFocus();
+  }
+
   /** Whether this shell has a neighbour on its left in the shown group. */
   function afterFirst(shell: Shell) {
     return shell.group === shown && groupOf(shell.key)[0] !== shell;
@@ -88,6 +118,80 @@
      list, where the tools are anyway. -->
 <Pane id="terminal" title="Terminal" bare>
   <div class="wrap">
+    <!-- The list comes before the shells, drawn on their right: a shell
+         keeps Tab, so the panel's own controls are reached first. -->
+    <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
+      <div class="top" data-tauri-drag-region>
+        <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
+        <button
+          class="tool"
+          onclick={another}
+          disabled={workspace.active === null}
+          aria-label="New terminal"
+          title="New terminal"
+          data-testid="new-terminal">+</button
+        >
+        <button
+          class="tool"
+          onclick={beside}
+          disabled={current === null}
+          aria-label="Split the current shell"
+          title="Split"
+          data-testid="split-terminal">⫿</button
+        >
+        <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
+      </div>
+
+      <!-- One row per shell, grouped: the rows under the first of a group are
+           the shells beside it. The rows are one stop, walked with the
+           arrows. A click, Enter or Space on a row goes to its shell, and
+           Delete closes it, as its × does. -->
+      <div class="rows" role="listbox" aria-label="Shells" bind:this={rows}>
+      {#each groups as group (group[0].group)}
+        <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
+          {#each group as shell, i (shell.key)}
+            <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
+              <button
+                class="name"
+                role="option"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => choose(shell.key)}
+                onkeydown={(e) => onRowKeydown(e, shell.key)}
+                aria-selected={shell.key === terminals.active}
+                aria-current={shell.key === terminals.active ? "true" : undefined}
+                data-testid="terminal-row"
+              >
+                <span class="dot {dot(shell)}"></span>
+                <span class="label">{label(shell)}</span>
+              </button>
+              <button
+                class="icon"
+                onclick={() => split(shell.key)}
+                aria-label="Split {label(shell)}"
+                title="Split"
+                data-testid="split-row">⫿</button
+              >
+              <button
+                class="icon"
+                onclick={() => close(shell.key)}
+                aria-label="Close {label(shell)}"
+                title="Close"
+                data-testid="close-terminal">×</button
+              >
+            </div>
+          {/each}
+        </div>
+      {/each}
+      </div>
+    </nav>
+
+    <Splitter
+      label="Resize the terminal list"
+      onDelta={resizeList}
+      onReset={resetList}
+      onCommit={saveLayout}
+    />
+
     <div class="shells" bind:clientWidth={shellsWidth}>
       <!-- Every shell stays mounted. The shown group's sit side by side in
            flow; the rest are parked underneath, hidden, at their old size. -->
@@ -139,69 +243,6 @@
       {/if}
     </div>
 
-    <Splitter
-      label="Resize the terminal list"
-      onDelta={resizeList}
-      onReset={resetList}
-      onCommit={saveLayout}
-    />
-
-    <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
-      <div class="top" data-tauri-drag-region>
-        <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
-        <button
-          class="tool"
-          onclick={another}
-          disabled={workspace.active === null}
-          aria-label="New terminal"
-          title="New terminal"
-          data-testid="new-terminal">+</button
-        >
-        <button
-          class="tool"
-          onclick={beside}
-          disabled={current === null}
-          aria-label="Split the current shell"
-          title="Split"
-          data-testid="split-terminal">⫿</button
-        >
-        <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
-      </div>
-
-      <!-- One row per shell, grouped: the rows under the first of a group are
-           the shells beside it. -->
-      {#each groups as group (group[0].group)}
-        <div class="group" class:on={group[0].group === shown} data-testid="terminal-group">
-          {#each group as shell, i (shell.key)}
-            <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
-              <button
-                class="name"
-                onclick={() => select(shell.key)}
-                aria-current={shell.key === terminals.active ? "true" : undefined}
-                data-testid="terminal-row"
-              >
-                <span class="dot {dot(shell)}"></span>
-                <span class="label">{label(shell)}</span>
-              </button>
-              <button
-                class="icon"
-                onclick={() => split(shell.key)}
-                aria-label="Split {label(shell)}"
-                title="Split"
-                data-testid="split-row">⫿</button
-              >
-              <button
-                class="icon"
-                onclick={() => close(shell.key)}
-                aria-label="Close {label(shell)}"
-                title="Close"
-                data-testid="close-terminal">×</button
-              >
-            </div>
-          {/each}
-        </div>
-      {/each}
-    </nav>
   </div>
 </Pane>
 
@@ -260,6 +301,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    flex-direction: row-reverse;
     background: var(--surface);
   }
 
@@ -299,7 +341,7 @@
     border-left: 1px solid var(--rule);
   }
 
-  .top + .group {
+  .top + .rows > .group:first-child {
     margin-top: 6px;
   }
 

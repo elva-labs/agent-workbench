@@ -1460,6 +1460,27 @@ describe("the window controls", () => {
     await fireEvent.click(screen.getByTestId("app-menu"));
     expect(fake.controls).toEqual(["menu"]);
   });
+
+  // Shift+Tab from the rows reaches the menu button before them. The pane
+  // leaves the keyboard there, and still takes it to the rows when it is
+  // asked for from another pane.
+  it("keep the keyboard on the menu button when Tab puts it there", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    layout.focus = "agent";
+    render(SessionsPane);
+    const menu = screen.getByTestId("app-menu");
+    menu.focus();
+    await tick();
+    expect(layout.focus).toBe("sessions");
+    expect(document.activeElement).toBe(menu);
+
+    focusPane("agent");
+    menu.blur();
+    await tick();
+    focusPane("sessions");
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("sessions-nav")));
+  });
 });
 
 describe("the changes toolbar", () => {

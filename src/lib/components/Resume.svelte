@@ -110,6 +110,7 @@
             class:cursor={index === cursor}
             role="option"
             aria-selected={index === cursor}
+            tabindex="-1"
             onclick={() => pickResume(entry)}
             title={shown(entry.title ?? entry.id)}
             data-testid="resume-row"

@@ -575,6 +575,33 @@ describe("closing with unsaved edits", () => {
     view.destroy();
   });
 
+  it("hands the keyboard back to the tab row when the row asked, and to the editor otherwise", async () => {
+    await openFile("docs/a.md");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "x" } });
+    const key = keyOf("/one", "docs/a.md");
+    editor.target = "tree";
+    const asks = editor.rowRequests;
+    closeTab(key, true);
+    expect(editor.asking).toEqual({ kind: "close", key, fromRow: true });
+    cancelAsk();
+    expect(editor.rowRequests).toBe(asks + 1);
+    expect(editor.target).toBe("tree");
+    closeTab(key, true);
+    closeWithoutSaving();
+    expect(editor.rowRequests).toBe(asks + 2);
+    expect(editor.tabs).toHaveLength(0);
+    await openFile("docs/a.md");
+    const again = mount();
+    again.dispatch({ changes: { from: 0, insert: "y" } });
+    closeTab(key);
+    cancelAsk();
+    expect(editor.rowRequests).toBe(asks + 2);
+    expect(editor.target).toBe("editor");
+    view.destroy();
+    again.destroy();
+  });
+
   it("saves and closes on the other answer", async () => {
     await openFile("docs/a.md");
     const view = mount();
