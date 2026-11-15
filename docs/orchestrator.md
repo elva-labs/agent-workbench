@@ -122,14 +122,28 @@ runs of the app too, so it is the same starter as before. The agent's own
 id is what it is resumed by, and what the tools name the sessions it
 started by; no tool answers with a token.
 
+A call whose token names a session the workbench is not running, one it
+never had or one that has stopped, cannot come from one of its sessions,
+and every one of the seven tools refuses it, with the reason, asking
+nothing.
+
 A call that names no session comes from an agent the workbench did not
 start, such as one run by hand in a project whose hooks are on, which has
-the same tools. A call whose token names a session the workbench is not
-running, one it never had or one that has stopped, cannot come from one of
-its sessions either. Either is refused by every one of the seven tools, with
-the reason, and nothing is asked: the tools serve the sessions the
-workbench runs. Such an agent is never taken for a session running where it
-calls from.
+the same tools. It is never taken for a session running where it calls
+from. It is a starter of its own, known by the directory it calls from: it
+lists, directs and resumes the sessions it started from there and no
+others, with a cap of its own, and follows no workflow. Every session it
+asks to start is put to the user, and the question says that an agent the
+workbench did not start, running in that directory, is asking, and offers
+Allow once or No: the workbench cannot tell which agent it is, so no
+standing answer is used or given. A session started by another that calls
+with its token taken out of its environment is such an agent too, and is
+asked about each time. The sessions such an agent starts run under the
+project's account, which the question and the answer name, and start none
+of their own. While any session follows a workflow it may list and look but
+not start, resume or send, since it cannot be held to the workflow. Two
+agents run by hand in one directory are one starter to the workbench, and
+share what they started there.
 
 The token is an identifier, not a secret: the workbench cannot see which
 process made a call. A tool server run by hand from a session's shell has
@@ -272,33 +286,37 @@ workflow or not.
 What this holds to is the session a call names, and the workbench cannot
 see which process made the call. A tool server run by hand from a
 session's shell has that session's token, or can be given another running
-session's, one that follows no workflow, and is then taken for that
-session, its starts asked about as that session's are. This is no wider
-than the shell itself: from it an agent can run another copy of itself, on
-any model, with no tool server and no question at all.
+session's, and is then taken for that session: held to its workflow when
+it follows one, and its starts asked about as that session's are. One
+given no token is an agent the workbench did not start, which may not start
+or send while a session follows a workflow. This is no wider than the shell
+itself: from it an agent can run another copy of itself, on any model,
+with no tool server and no question at all.
 
 ## What is remembered
 
-What a session started is written down under the starter's token, each by
-its session id, with the project, the worktree, the agent, the name and
+What a session started is written down under the starter's token, or for an
+agent the workbench did not start under the directory it called from, each
+by its session id, with the project, the worktree, the agent, the name and
 the account, and kept between runs beside the sessions the app knows as its
 own. Under a workflow, so are the step and round of each, and the rounds
 each piece has had; those go with the orchestrator once it is gone from its
-project's past sessions. An orchestrator closed and resumed keeps its
-token, so the sessions it started are still its own: the ones still
-running answer to its tools as before, and a row with one of its ids,
-resumed from the pane by hand, hangs under it all the same. When the app itself was closed, the orchestrator comes
-back with the other sessions that were open, and the sessions it started do
-not. `sessions` then lists them as stopped, after the running ones, and
-`start` with one of those ids in place of a project and prompt brings it
-back where it ran, in its worktree with its conversation. A prompt given
-with it is what the session goes on with; without one it comes up waiting
-for a line. The cap and the one-level rule apply, and a session whose
-worktree has since been cleaned up, or whose project is no longer open, is
-refused with the reason. A session the orchestrator stopped itself is not
-offered back: the stop said it was done with. The record lives with the
-window's other memory, so a wiped local storage forgets it, which only
-means the orchestrator starts afresh.
+project's past sessions, and so does its token. An orchestrator closed and
+resumed keeps its token, so the sessions it started are still its own: the
+ones still running answer to its tools as before, and a row with one of its
+ids, resumed from the pane by hand, hangs under it all the same. When the
+app itself was closed, the orchestrator comes back with the other sessions
+that were open, and the sessions it started do not. `sessions` then lists
+them as stopped, after the running ones, and `start` with one of those ids
+in place of a project and prompt brings it back where it ran, in its
+worktree with its conversation. A prompt given with it is what the session
+goes on with; without one it comes up waiting for a line. The cap and the
+one-level rule apply, and a session whose worktree has since been cleaned
+up, or whose project is no longer open, is refused with the reason. A
+session the orchestrator stopped itself is not offered back: the stop said
+it was done with. The record lives with the window's other memory, so a
+wiped local storage forgets it, which only means the orchestrator starts
+afresh.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
@@ -326,22 +344,26 @@ there under another account, or under the same account by an agent it keeps
 no directory for, is asked about again. A refusal is an answer the agent
 reads, not an error. Bringing back a session it already started is never
 asked about: the consent was given when the session was, and the resumed
-session is that one going on.
+session is that one going on. A start an agent the workbench did not start
+asks for is asked about every time, with Allow once or No, as under [who is
+calling](#who-is-calling).
 
 Once there are accounts to tell apart, the question names the account the
 session would run under when it is not the project's own, when the
-starter's chosen account could not be handed on, and when an account handed
-on keeps no directory for the agent being started. When the account it names keeps no directory for that agent, it
-says the agent uses its own. A round of review that would start a session
-names the account in the same cases, after the project. The answer the
-caller gets to its start names the account in the same cases and says when
-the agent uses its own directory, for a start for a step of a workflow as
-well as any other.
+starter's chosen account could not be handed on, when an account handed on
+keeps no directory for the agent being started, and for an agent the
+workbench did not start, which hands none on. When the account it names
+keeps no directory for that agent, it says the agent uses its own. A round
+of review that would start a session names the account in the same cases,
+after the project. The answer the caller gets to its start names the
+account in the same cases and says when the agent uses its own directory,
+for a start for a step of a workflow as well as any other.
 
 A session started by another may not start any of its own, and no session
 may have more than eight running at a time. Both hold by the token, so a
 session started by another is held to them from its first call, whatever
-its agent.
+its agent. An agent the workbench did not start has a cap of its own, by
+the directory it calls from.
 
 ![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
 
