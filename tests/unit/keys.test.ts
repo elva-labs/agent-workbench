@@ -326,6 +326,7 @@ describe("the chords that differ by platform", () => {
     resetKeys({ mac: true });
     const table: Record<string, unknown> = { ...PRESETS.default };
     delete table["terminal.new"];
+    delete table["focus.status"];
     return table as Record<string, ReturnType<typeof chord>>;
   };
 
@@ -374,5 +375,23 @@ describe("the chords that differ by platform", () => {
     // Each group stands together, once.
     const groups = ACTIONS.map(({ group }) => group).filter((group, at, all) => group !== all[at - 1]);
     expect(new Set(groups).size).toBe(groups.length);
+  });
+});
+
+describe("the status bar's chord", () => {
+  it("is 5 in both presets, on every platform", () => {
+    for (const mac of [true, false]) {
+      resetKeys({ mac });
+      expect(PRESETS.default["focus.status"]).toEqual(chord("5"));
+      expect(PRESETS.vim["focus.status"]).toEqual(chord("5"));
+    }
+  });
+
+  it("is given to a stored table that never had it", () => {
+    const table: Record<string, unknown> = { ...PRESETS.default };
+    delete table["focus.status"];
+    adoptKeys(table as Record<string, ReturnType<typeof chord>>);
+    expect(chordFor("focus.status")).toEqual(chord("5"));
+    expect(keys.preset).toBe("default");
   });
 });

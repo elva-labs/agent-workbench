@@ -21,6 +21,7 @@ default preset:
 | Keys                                                                    | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
 | <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back; while editing, see [the editor](#the-editor) |
+| <kbd>Cmd</kbd><kbd>5</kbd>                                              | The keyboard to the [status bar](#the-status-bar)           |
 | <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane                              |
 | <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the right pane: the changes, or the agent while editing |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd>                              | Agent or editor in the middle                               |
@@ -73,7 +74,7 @@ step on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>N</kbd> and <kbd>P</kbd>. The command
 palette opens on <kbd>Cmd</kbd><kbd>;</kbd> there, since
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> steps sessions. Going to a session
 or project stays on <kbd>Cmd</kbd><kbd>P</kbd>, and the editor's chords,
-close and a new shell's are the default's.
+close, a new shell's and the status bar's are the default's.
 
 A chord with <kbd>Alt</kbd> is read from the key's place on the keyboard,
 since on macOS <kbd>Option</kbd> turns a letter into another character.
@@ -265,7 +266,8 @@ control a stop as it is drawn, by one rule for the whole window:
   from the field and is no stop of its own.
 - **A terminal keeps Tab**, and so does the editor, where it indents. The
   terminal panel's list and its tools come before its shells, so they are
-  reached first.
+  reached first, and the status bar comes before the panel for the same
+  reason.
 - **A dialog, the palette and a question in a strip keep Tab inside**: past
   the last stop it comes round to the first. A question in a strip is one
   put in a pane before something is taken away, such as closing a tab with
@@ -452,8 +454,18 @@ keyboard elsewhere, such as one to another pane, puts either away and
 leaves the keyboard where the chord sent it. A change of the window's size
 leaves either open, above its control. <kbd>Tab</kbd> from a menu goes on
 to the next control of the bar, and from the popover stops on the
-allowance. The three are stops of their own after the rest of the window,
-WebKit included, and open on <kbd>Enter</kbd> or <kbd>Space</kbd>.
+allowance. The three are stops of their own, WebKit included, and open on
+<kbd>Enter</kbd> or <kbd>Space</kbd>.
+
+The bar is drawn along the window's foot but comes after the panes and
+before the terminal panel in the walk: the panel ends in a shell, which
+keeps Tab, so a walk that reaches the panel has passed the bar, whether the
+panel is open or not. A terminal or the editor may still stand before the
+bar and keep Tab, so <kbd>Cmd</kbd><kbd>5</kbd> puts the keyboard on the
+bar's first control from anywhere, in either mode; with nothing in the bar
+to take it, the bar says so. The pane keeps the focus while the keyboard is
+on the bar, and <kbd>Escape</kbd> on one of its controls gives the keyboard
+back to that pane.
 
 ## What focus looks like
 

@@ -64,6 +64,8 @@ export type Action =
   | { type: "close" }
   /** A new shell in the terminal panel, with the keyboard in it. */
   | { type: "newShell" }
+  /** The keyboard to the status bar's first control. */
+  | { type: "focusStatus" }
   /** Find in the file in the editor. */
   | { type: "findInFile" }
   /** The keyboard to the editor, from elsewhere in editor mode. */
@@ -121,6 +123,7 @@ const ACTION_OF: Record<ActionKey, Action> = {
   "focus.agent": { type: "focus", pane: "agent" },
   "focus.changes": { type: "focus", pane: "changes" },
   "focus.terminal": { type: "focus", pane: "terminal" },
+  "focus.status": { type: "focusStatus" },
   "toggle.sessions": { type: "toggle", pane: "sessions" },
   "toggle.changes": { type: "toggle", pane: "changes" },
   "toggle.terminal": { type: "toggleTerminal" },

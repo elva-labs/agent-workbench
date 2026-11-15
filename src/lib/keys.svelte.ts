@@ -18,6 +18,7 @@ export type ActionKey =
   | "focus.agent"
   | "focus.changes"
   | "focus.terminal"
+  | "focus.status"
   | "toggle.sessions"
   | "toggle.changes"
   | "toggle.terminal"
@@ -65,6 +66,7 @@ export const ACTIONS: ActionInfo[] = [
   { key: "focus.agent", label: "Focus agent", group: "Panes" },
   { key: "focus.changes", label: "Focus changes or files", group: "Panes" },
   { key: "focus.terminal", label: "Focus terminal", group: "Panes" },
+  { key: "focus.status", label: "Focus status bar", group: "Panes" },
   { key: "toggle.sessions", label: "Show or hide sessions", group: "Panes" },
   { key: "toggle.changes", label: "Show or hide the right pane", group: "Panes" },
   { key: "toggle.terminal", label: "Show or hide the terminal", group: "Panes" },
@@ -102,6 +104,7 @@ const MACOS: Record<PresetName, Keymap> = {
     "focus.agent": plain("2"),
     "focus.changes": plain("3"),
     "focus.terminal": plain("4"),
+    "focus.status": plain("5"),
     "toggle.sessions": plain("b"),
     "toggle.changes": plain("\\"),
     "toggle.terminal": plain("j"),
@@ -133,6 +136,7 @@ const MACOS: Record<PresetName, Keymap> = {
     "focus.agent": plain("k"),
     "focus.changes": plain("l"),
     "focus.terminal": plain("j"),
+    "focus.status": plain("5"),
     "toggle.sessions": plain("b"),
     "toggle.changes": plain("\\"),
     "toggle.terminal": shifted("j"),

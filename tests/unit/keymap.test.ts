@@ -497,3 +497,12 @@ describe("a new shell", () => {
     expect(resolveAction({ key: "D", ctrlKey: true, shiftKey: true }, off)).toEqual({ type: "cycleTheme" });
   });
 });
+
+describe("the status bar", () => {
+  it("takes the keyboard on Cmd+5 from anywhere, in both presets", () => {
+    expect(resolveAction(mod("5"), { focus: "terminal" })).toEqual({ type: "focusStatus" });
+    expect(resolveAction(mod("5"), { focus: "changes", editing: true, inEditor: true })).toEqual({ type: "focusStatus" });
+    applyPreset("vim");
+    expect(resolveAction(mod("5"), { focus: "agent" })).toEqual({ type: "focusStatus" });
+  });
+});

@@ -680,6 +680,17 @@
     focusPane("terminal");
   }
 
+  /** The keyboard to the status bar's first control, where it has one. */
+  function focusStatus() {
+    const bar = document.querySelector<HTMLElement>("[data-testid='status-bar']");
+    const first = bar?.querySelector<HTMLElement>("button:not(:disabled)") ?? null;
+    if (first === null) {
+      say("Nothing to change in the status bar");
+      return;
+    }
+    first.focus();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     const action = resolveAction(e, {
       focus: layout.focus,
@@ -689,11 +700,13 @@
       integrated: activeSession()?.kind === "integrated",
     });
     if (!action) return;
-    // Opening the palette and the jump move the keyboard, so with a dialog up
-    // they do nothing and the webview gets nothing from them either. The
-    // chord still puts an open palette away.
+    // Opening the palette, the jump and the chord to the status bar move
+    // the keyboard, so with a dialog up they do nothing and the webview
+    // gets nothing from them either. The chord still puts an open palette
+    // away.
     if (
       (action.type === "attention" ||
+        action.type === "focusStatus" ||
         ((action.type === "palette" || action.type === "goto") && !palette.open)) &&
       dialogUp()
     ) {
@@ -755,6 +768,9 @@
         break;
       case "newShell":
         newShell();
+        break;
+      case "focusStatus":
+        focusStatus();
         break;
       case "newFile":
         newFile();
@@ -954,6 +970,11 @@
     {/if}
   </main>
 
+  <!-- The status bar is drawn along the window's foot, and comes before
+       the terminal panel in the page so that Tab reaches its controls
+       before the panel's: the panel ends in a shell, which keeps Tab. -->
+  <StatusBar />
+
   <!-- Hidden rather than unmounted, for the same reason as the agent: the
        shells in it stay mounted, so hiding is free and showing is a fit. The
        panel and the bar above it go and come back together, in a group as
@@ -1002,9 +1023,6 @@
 <LeaveAsk />
 <RefusalBanner />
 <UserStyles />
-
-
-<StatusBar />
 
 <style>
   /* Wide enough that a pane's sharp corner stays clear of the window's
