@@ -528,7 +528,8 @@ project's folder in the account's configuration directory, and under the
 folders of the directories inside the project, a worktree among them, since
 the agent files a session by the folder it ran in. A session resumed in
 another folder is written there again under the same id, and the copy
-written last is read. Only a plain file is opened.
+written last is read. Only a plain file is opened, and a request that names
+no project names no transcript.
 
 The transcript comes back as the events a live session would have sent, in
 order, each with the time its entry was written: each message of the user's
@@ -556,7 +557,12 @@ reader is kept apart and reads defensively, as the title reader does: an
 entry it cannot read is skipped, never an error; a last line still being
 written is skipped; a line of more than a few dozen megabytes is passed
 over without being held; nothing written after the file was opened is read;
-and of a transcript larger than half a gigabyte only the end is read. Long
+and of a transcript larger than half a gigabyte only the end is read. It is
+read twice: once for each line's ids and parent alone, to find the lines
+that make up the conversation, and once for what those lines say, each made
+into its events and let go before the next, so no more than what is kept is
+held at once. The second reading reads the same bytes as the first, though
+the file grows between them. Long
 content is cut down further than a live session's and flagged: a tool's
 output and each string of its input to sixteen kilobytes, a changed file to
 sixty-four, and a block of text to a quarter of a megabyte; an image larger
@@ -606,9 +612,16 @@ has to do itself:
   the same id in each, so it is drawn once. The part of a turn still
   running that the transcript does not hold yet, such as a block still
   streaming, comes in the events that follow, and the snapshot says
-  whether the turn the history left open still runs. A resumed session's
-  past turns are read the same way, and the snapshot's time for when this
-  run began places it among them.
+  whether the turn the history left open still runs. Since what is read
+  holds part of the run being played, the window waits a few seconds for
+  the history before it plays the events, and lays a history that comes
+  later above them. A snapshot that fails, as for a session the core no
+  longer runs after a restart, says nothing runs from before, so all that
+  is read is from before and a turn it left open is over. A resumed
+  session's past turns are read the same way, and the snapshot's time for
+  when this run began places it among them. A session started on a
+  conversation it resumes does not wait: all it reads is from before, and
+  it goes above what the session says from the start.
 - **Content.** Images in a tool's result and a command's output kept apart
   from its errors or its exit code arrive as plain text. Long content is
   cut down and flagged.
