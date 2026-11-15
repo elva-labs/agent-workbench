@@ -1,8 +1,13 @@
 /**
  * Where a workflow's run stands, in words and pips, from what the conductor
  * keeps of it: the place of each session the orchestrator started, what
- * each of those is doing, the round question when one waits, and whether
- * the orchestrator itself is at work.
+ * each of those is doing, the round question when one waits, the pieces
+ * the user stopped at the limit, and whether the orchestrator itself is at
+ * work.
+ *
+ * It says what is known and no more. The workbench never learns whether a
+ * review passed, so a piece whose last review has finished is said to be
+ * that: "Review, round 2 of 4 done", never done with the run.
  *
  * A round is one pass of work and review. A review counts its rounds per
  * piece of work; work sent back after a round goes on in the next one, so
@@ -50,7 +55,18 @@ export interface RunWait {
   limit: number;
 }
 
-/** A step's pip: done, where the run stands now, or to come. */
+/** A piece the user stopped at the review's limit: "Stop at the limit"
+    was the answer to another round, and no round of it has started since. */
+export interface RunStop {
+  /** The review, by name. */
+  step: string;
+  /** The piece, by the id of the work session that began it. */
+  piece: string;
+  /** The rounds it had when it was stopped. */
+  round: number;
+}
+
+/** A step's pip: passed, where the run stands now, or to come. */
 export type Pip = "done" | "live" | "todo";
 
 /** One session in the popover's line for its step. */
@@ -67,6 +83,9 @@ export interface StepSession {
 export interface StepStanding {
   name: string;
   pip: Pip;
+  /** Passed with nothing run for it, as when the orchestrator did the
+      step itself. Its pip is grey all the same. */
+  skipped: boolean;
   /** The latest session of each piece in this step, in the order they
       were started. */
   sessions: StepSession[];
@@ -77,12 +96,15 @@ export interface RunSummary {
   workflow: string;
   steps: StepStanding[];
   /** What the chip says: the live step and its round, how many pieces
-      stand in each step, Done, or the round that waits on the user. */
+      stand in each step, the round that waits on the user, or where a
+      piece was stopped or came to rest. */
   text: string;
   /** A round past the limit waits on the user. */
   waits: boolean;
-  /** Every piece has come through the last step and nothing is at work. */
-  done: boolean;
+  /** Every piece has finished a round of the last step, and nothing is at
+      work, the orchestrator included: every pip is grey. Whether the last
+      review passed is not known. */
+  through: boolean;
   /** Nothing has been started for a step yet. */
   begun: boolean;
   /** The whole state in words, for a screen reader. */
@@ -159,21 +181,35 @@ function latest(items: Ranked[]): Ranked {
 
 const PIP_WORDS: Record<Pip, string> = { done: "done", live: "now", todo: "to come" };
 
+/** What the summary is made from. */
+export interface RunInput {
+  workflow: Workflow;
+  entries: RunEntry[];
+  /** The round question, while it waits on the user. */
+  wait: RunWait | null;
+  stops: RunStop[];
+  /** Whether the orchestrator itself is at work. */
+  directing: boolean;
+  /** The workflow's name as the header says it; its own when left out. */
+  name?: string;
+}
+
 /**
  * Where the run stands. Each piece of work stands in one step: where a
  * session of it is at work, or else where its latest session came to rest.
- * The chip names the steps that pieces at work stand in; with none at
- * work, the furthest step a piece rests in. The steps before the furthest
- * of those are done, and the run is done once the pieces rest past the
- * last step with the orchestrator at rest too.
+ *
+ * With pieces at work the chip names their steps. With none, it names the
+ * steps the pieces rest in, leaving out a piece that never reached the
+ * work a review checks, such as a plan the orchestrator did not carry on,
+ * once another piece has. A piece the user stopped at the limit says so.
+ * Once every piece has finished a round of the last step and the
+ * orchestrator rests too, every pip is grey and the words say the round
+ * that finished, since whether it passed is not known.
  */
-export function summarize(
-  workflow: Workflow,
-  entries: RunEntry[],
-  wait: RunWait | null,
-  directing: boolean,
-  name: string = workflow.name,
-): RunSummary {
+export function summarize(input: RunInput): RunSummary {
+  const { workflow, entries, wait, stops, directing } = input;
+  const name = input.name ?? workflow.name;
+  const last = workflow.steps.length - 1;
   const indexOf = (step: string) => workflow.steps.findIndex((candidate) => sameName(candidate.name, step));
   const ranked: Ranked[] = entries
     .map((entry) => ({ entry, index: indexOf(entry.place.step), round: entry.place.round ?? 1 }))
@@ -186,55 +222,106 @@ export function summarize(
     pieces.set(piece, [...(pieces.get(piece) ?? []), item]);
   }
 
-  /** Where each piece stands, and whether something of it is at work. */
-  const standing = [...pieces.values()].map((items) => {
+  /** Where the work a review checks begins: the first step a review sends
+      work back to, or the review itself. With no review, the last step. */
+  const reviews = workflow.steps.flatMap((step, index) => {
+    if (step.kind !== "review") return [];
+    const back = indexOf(step.backTo);
+    return [back >= 0 ? Math.min(back, index) : index];
+  });
+  const checked = reviews.length > 0 ? Math.min(...reviews) : last;
+
+  /** Where each piece stands, whether something of it is at work, and
+      whether the user stopped it at the limit. */
+  const standing = [...pieces.entries()].map(([piece, items]) => {
     const working = items.filter((item) => active(item.entry.doing));
-    return working.length > 0 ? { at: latest(working), working: true } : { at: latest(items), working: false };
+    const at = working.length > 0 ? latest(working) : latest(items);
+    const stop =
+      working.length > 0
+        ? null
+        : (stops.find((candidate) => candidate.piece === piece && sameName(candidate.step, at.entry.place.step)) ?? null);
+    return {
+      at,
+      working: working.length > 0,
+      stop,
+      reached: Math.max(...items.map((item) => item.index)) >= checked,
+    };
   });
 
   const working = standing.filter((piece) => piece.working);
-  const furthest = Math.max(-1, ...standing.map((piece) => piece.at.index));
-  const shown = working.length > 0 ? working : standing.filter((piece) => piece.at.index === furthest);
+  const resting = standing.filter((piece) => !piece.working);
+  const counted = resting.some((piece) => piece.reached) ? resting.filter((piece) => piece.reached) : resting;
   const begun = ranked.length > 0;
-  const waitAt = wait === null ? -1 : indexOf(wait.step);
-  const done = begun && wait === null && working.length === 0 && !directing && furthest === workflow.steps.length - 1;
+  const through =
+    begun &&
+    wait === null &&
+    working.length === 0 &&
+    !directing &&
+    counted.length > 0 &&
+    counted.every((piece) => piece.stop === null && piece.at.index === last);
+  const shown = working.length > 0 ? working : counted;
 
-  const live = new Set<number>(waitAt >= 0 ? [waitAt] : shown.map((piece) => piece.at.index));
+  const waitAt = wait === null ? -1 : indexOf(wait.step);
+  const live = new Set<number>(
+    through
+      ? []
+      : wait !== null
+        ? [...(waitAt >= 0 ? [waitAt] : []), ...working.map((piece) => piece.at.index)]
+        : shown.map((piece) => piece.at.index),
+  );
   const reach = Math.max(-1, ...live);
   const pipOf = (index: number): Pip =>
-    !begun ? "todo" : done ? "done" : live.has(index) ? "live" : index < reach ? "done" : "todo";
+    !begun ? "todo" : through ? "done" : live.has(index) ? "live" : index < reach ? "done" : "todo";
+
+  /** Of the review a stopped piece stands in, the most rounds there are. */
+  const ofStop = (stop: RunStop) => {
+    const review = workflow.steps.find((step) => sameName(step.name, stop.step));
+    return review?.kind === "review" ? ` of ${review.limit + 1}` : "";
+  };
+  const counts = (items: typeof shown) => {
+    const tally = new Map<number, number>();
+    for (const piece of items) tally.set(piece.at.index, (tally.get(piece.at.index) ?? 0) + 1);
+    return [...tally.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([index, count]) => `${count} in ${workflow.steps[index].name}`)
+      .join(", ");
+  };
 
   let text: string;
   if (wait !== null) text = `Round ${wait.done} of ${wait.limit + 1} done, asks you`;
   else if (!begun) text = name;
-  else if (done) text = "Done";
+  else if (through)
+    text =
+      counted.length === 1
+        ? `${placeLong(placeWords(workflow, counted[0].at.entry.place))} done`
+        : `${counted.length} done in ${workflow.steps[last].name}`;
+  else if (shown.length === 1 && shown[0].stop !== null)
+    text = `Stopped at round ${shown[0].stop.round}${ofStop(shown[0].stop)}`;
   else if (shown.length === 1) text = placeLong(placeWords(workflow, shown[0].at.entry.place));
-  else {
-    const counts = new Map<number, number>();
-    for (const piece of shown) counts.set(piece.at.index, (counts.get(piece.at.index) ?? 0) + 1);
-    text = [...counts.entries()]
-      .sort(([a], [b]) => a - b)
-      .map(([index, count]) => `${count} in ${workflow.steps[index].name}`)
-      .join(", ");
-  }
+  else text = counts(shown);
 
+  const stoppedAt = new Set(standing.flatMap((piece) => (piece.stop === null ? [] : [piece.at])));
   const steps: StepStanding[] = workflow.steps.map((step, index) => {
     const here = [...pieces.values()]
       .map((items) => items.filter((item) => item.index === index))
       .filter((items) => items.length > 0)
       .map(latest);
     const order = (item: Ranked) => ranked.indexOf(item);
+    const pip = pipOf(index);
     return {
       name: step.name,
-      pip: pipOf(index),
+      pip,
+      skipped: pip === "done" && here.length === 0,
       sessions: here
         .sort((a, b) => order(a) - order(b))
-        .map(({ entry }) => {
+        .map((item) => {
+          const { entry } = item;
           const round = roundText(placeWords(workflow, entry.place));
+          const doing = stoppedAt.has(item) ? "stopped at the limit" : entry.doing;
           return {
             key: entry.key,
             name: entry.name,
-            words: round === null ? entry.doing : `${round}, ${entry.doing}`,
+            words: round === null ? doing : `${round}, ${doing}`,
             round,
             doing: entry.doing,
           };
@@ -242,6 +329,7 @@ export function summarize(
     };
   });
 
-  const spoken = `${name}: ${text}. ${steps.map((step) => `${step.name} ${PIP_WORDS[step.pip]}`).join(", ")}.`;
-  return { workflow: name, steps, text, waits: wait !== null, done, begun, spoken };
+  const said = (step: StepStanding) => (step.skipped ? "skipped" : PIP_WORDS[step.pip]);
+  const spoken = `${name}: ${text}. ${steps.map((step) => `${step.name} ${said(step)}`).join(", ")}.`;
+  return { workflow: name, steps, text, waits: wait !== null, through, begun, spoken };
 }

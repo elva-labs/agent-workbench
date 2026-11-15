@@ -384,33 +384,55 @@ in a terminal and an integrated one.
 For the session that follows the workflow it is a chip: a pip for each step
 in order, grey once the run has passed it, in the accent where the run
 stands and empty for a step to come, and the words for where it stands.
+The chip says what the workbench knows and no more.
+
 Before anything is started the words are the workflow's name, marked
 deleted where it follows the copy it kept. Then they name the step where
-the work stands, with its round where it has one, "Review, round 2 of 4";
-with pieces of work in different steps, how many stand in each, "1 in Work,
-1 in Review"; and "Done" once the work has come through the last step and
-nothing is at work, the orchestrator included. A piece stands where a
-session of it is at work, or else where its latest session came to rest,
-and with nothing at work the chip names the furthest step a piece rests
-in. While a round past the limit waits on the user the chip turns to the
-accent and says so, "Round 4 of 4 done, asks you". A screen reader hears
-the same, with each step done, now or to come.
+the work stands, with its round where it has one, "Review, round 2 of 4",
+and with pieces of work in different steps, how many stand in each, "1 in
+Work, 1 in Review". A piece stands where a session of it is at work, or
+else where its latest session came to rest. With pieces at work the chip
+names their steps; with none, the steps the pieces rest in. A piece that
+never reached the work a review checks, such as a plan the orchestrator
+did not carry on into the work, is left out once another piece has.
+
+The workbench never learns whether a review passed. Once every piece has
+finished a round of the last step and nothing is at work, the orchestrator
+included, every pip is grey and the words say the round that finished,
+"Review, round 2 of 4 done", or how many pieces finished it, "2 done in
+Review". They never say the run is done.
+
+While a round past the limit waits on the user the chip turns to the
+accent and says so, "Round 4 of 4 done, asks you", with the step of any
+piece still at work lit beside it. A piece the user stopped there, with
+Stop at the limit, reads "Stopped at round 4 of 4" in the chip's own ink,
+its review lit, until another round of it goes ahead. A screen reader hears
+the same, with each step done, skipped, now or to come; a step passed with
+nothing run for it, as when the orchestrator did it itself, is grey and
+said to be skipped.
 
 A popover under the chip says what stands in each step: the latest session
 of each piece there, by its name, with its round and whether it is
-working, asking or done, and the name opens that session. The rules the
+working, asking, done or stopped at the limit, and the name opens that
+session; a step passed with nothing run for it says skipped. The rules the
 orchestrator was given are folded at its foot. It shows when the pointer
-rests on the chip, and a click, Enter or Space holds it open, with Tab
-going on into it; Escape, or a press elsewhere, puts it away, and Escape
+rests on the chip, and a click, Enter or Space holds it open, the one the
+pointer showed as well, with Tab going on into it; a second click puts it
+away; Escape, or a press elsewhere, puts it away, and Escape
 gives the keyboard back to the chip.
 
 A round is one pass of work and review. A review's round is counted as
-under [following a workflow](#following-a-workflow), and work its piece
-goes back to after a review, by a line, a resume with a prompt or a new
-start that carries the piece on, goes on in the next round, so work sent
-back once reads "Work, round 2 of 4". The most counts the first pass:
-a review that sends the work back three times at most has four rounds. A
-round of work is remembered with the run, as a review's is.
+under [following a workflow](#following-a-workflow). Work its piece goes
+back to once that review has come to rest, by a line, a resume with a
+prompt or a new start that carries the piece on, goes on in the next
+round, so work sent back once reads "Work, round 2 of 4". A line to the
+work while its review is still at it, such as an answer to the review's
+question, is no round of its own. The workbench cannot tell work sent back
+from a line after a review that passed, such as one asking for a commit,
+so that too reads as the next round. The most counts the first pass: a
+review that sends the work back three times at most has four rounds. A
+round of work is remembered with the run, as a review's is, and so is a
+stop at the limit.
 
 A session started for a step has a quiet tag in the chip's place: the
 workflow and its place, "Review, round 2 of 4". Its rules open in a popover
@@ -422,7 +444,8 @@ Where the header is short of room, a tag's workflow name is cut short and
 then left out, then the header's status, and the place, or the chip's
 words, stay whole until both have gone; only then are they cut short, and
 they go at a letter or two. The chip's pips stay until the title has given
-way (see [layout](layout.md)). A start the workflow refuses its
+way, and the words take no room once gone (see [layout](layout.md)). A
+start the workflow refuses its
 orchestrator is shown over the terminal in one line, whole while the
 pointer or the keyboard is on it, as well as answered to the agent, until
 a start goes through or the line is put away.

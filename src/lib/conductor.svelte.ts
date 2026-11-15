@@ -252,6 +252,8 @@ export interface Beyond {
   step: string;
   /** The session whose work it checks, by id, for the caller. */
   work: string;
+  /** The piece, by the id of the work session that began it. */
+  piece: string;
   /** What the user knows that work by: its row's name. */
   name: string;
   done: number;
@@ -333,6 +335,11 @@ export interface Place {
 export interface Run {
   places: Record<string, Place>;
   rounds: Record<string, number>;
+  /** The pieces the user stopped at a review's limit, by the review's
+      step and the piece as rounds are, with the rounds each had then,
+      until another round of the piece goes ahead. A version that does
+      not know it reads a run without it. */
+  stopped?: Record<string, number>;
 }
 
 const STARTED_KEY = "workbench.started";
@@ -400,8 +407,11 @@ function loadRuns() {
     const runs: Record<string, Run> = {};
     for (const [caller, run] of Object.entries(stored)) {
       if (typeof run !== "object" || run === null) continue;
-      const { places, rounds } = run as Record<string, unknown>;
+      const { places, rounds, stopped } = run as Record<string, unknown>;
       const kept: Run = { places: {}, rounds: {} };
+      for (const [key, count] of Object.entries(isRecord(stopped) ? stopped : {}))
+        if (typeof count === "number" && Number.isInteger(count) && count > 0 && key.includes("\n"))
+          (kept.stopped ??= {})[key] = count;
       for (const [id, place] of Object.entries(isRecord(places) ? places : {}))
         if (isPlace(place)) kept.places[id] = place;
       for (const [key, count] of Object.entries(
@@ -506,6 +516,22 @@ function uncountRound(caller: string, step: string, piece: string) {
   const left = (rounds[key] ?? 0) - 1;
   if (left > 0) rounds[key] = left;
   else delete rounds[key];
+  saveRuns();
+}
+
+/** Keeps that the user stopped a piece at a review's limit. */
+function stopAtLimit(caller: string, beyond: Beyond) {
+  const run = runOf(caller);
+  (run.stopped ??= {})[roundKey(beyond.step, beyond.piece)] = beyond.done;
+  saveRuns();
+}
+
+/** Another round of a piece has gone ahead, so it is no longer stopped. */
+function goneAhead(caller: string, step: string, piece: string) {
+  const stopped = conductor.runs[caller]?.stopped;
+  const key = roundKey(step, piece);
+  if (stopped === undefined || !(key in stopped)) return;
+  delete stopped[key];
   saveRuns();
 }
 
@@ -989,7 +1015,11 @@ export function runStanding(session: Session): RunSummary | null {
       ? { step: asking.round.step, done: asking.round.done, limit: asking.round.limit }
       : null;
   const name = session.workflowGone ? `${workflow.name} (deleted)` : workflow.name;
-  return summarize(workflow, entries, wait, session.working || session.needs !== null, name);
+  const stops = Object.entries(conductor.runs[caller]?.stopped ?? {}).map(([key, round]) => {
+    const cut = key.indexOf("\n");
+    return { step: key.slice(0, cut), piece: key.slice(cut + 1), round };
+  });
+  return summarize({ workflow, entries, wait, stops, directing: session.working || session.needs !== null, name });
 }
 
 /** What the user knows a session's work by: the name its row has, or had,
@@ -1386,7 +1416,8 @@ async function startFitted(
     named,
     beyond,
   );
-  if (answer === "no")
+  if (answer === "no") {
+    if (beyond !== null) stopAtLimit(callerOf(request), beyond);
     return {
       ...refused(
         beyond === null
@@ -1395,6 +1426,7 @@ async function startFitted(
       ),
       byUser: true,
     };
+  }
 
   let startIn: string | null = null;
   if (wants) {
@@ -1646,10 +1678,11 @@ function fitStart(
       round: done + 1,
       work: from,
     },
-    beyond: pastLimit(caller, step, from, done),
+    beyond: pastLimit(caller, step, from, piece, done),
     hold: () => {},
     release: (started) => {
       if (!started) uncountRound(caller, step.name, piece);
+      else goneAhead(caller, step.name, piece);
     },
   };
 }
@@ -1660,23 +1693,44 @@ function pastLimit(
   caller: string,
   step: ReviewStep,
   work: string,
+  piece: string,
   done: number,
 ): Beyond | null {
   return done > step.limit
-    ? { step: step.name, work, name: workName(caller, work), done, limit: step.limit }
+    ? { step: step.name, work, piece, name: workName(caller, work), done, limit: step.limit }
     : null;
 }
 
-/** The round a piece's work goes on in once a review sent back to its
-    step has had it: one past that review's rounds. Null before any. */
+/** The round a piece's work goes on in once a review that sends work back
+    to its step has had it and come to rest: one past that review's rounds.
+    Null before then, so a line to the work while its review is still at
+    it is no round of its own. Whether the review passed is not known, so
+    a line after a review that passed counts as work sent back all the
+    same. */
 function workRound(caller: string, workflow: Workflow, step: WorkStep, piece: string): number | null {
-  const had = Math.max(
-    0,
-    ...workflow.steps
-      .filter((candidate): candidate is ReviewStep => candidate.kind === "review" && sameName(candidate.backTo, step.name))
-      .map((review) => roundsOf(caller, review.name, piece)),
+  const reviews = workflow.steps.filter(
+    (candidate): candidate is ReviewStep => candidate.kind === "review" && sameName(candidate.backTo, step.name),
   );
-  return had === 0 ? null : had + 1;
+  let had = 0;
+  let review: ReviewStep | null = null;
+  for (const candidate of reviews) {
+    const count = roundsOf(caller, candidate.name, piece);
+    if (count > had) [had, review] = [count, candidate];
+  }
+  if (review === null || !reviewRested(caller, review, piece, had)) return null;
+  return had + 1;
+}
+
+/** Whether a piece's review has come to rest in a round: the session of
+    that round has worked and gone quiet, or is not running. A round
+    counted for a start still on its way has no session yet, and has not
+    come to rest. */
+function reviewRested(caller: string, review: ReviewStep, piece: string, round: number): boolean {
+  const ofRound = (at: Place | null) =>
+    at !== null && at.kind === "review" && at.piece === piece && at.round === round && sameName(at.step, review.name);
+  const rows = startedBy(caller).filter((row) => ofRound(placeOf(row.key)));
+  if (rows.length > 0) return rows.every((row) => !isLive(row) || finished(row));
+  return Object.values(conductor.runs[caller]?.places ?? {}).some(ofRound);
 }
 
 /** What the user is asked about a round past the limit, in the words
@@ -1862,11 +1916,12 @@ async function resumeSession(
     } else if (prompt !== null && at.piece !== null) {
       const piece = at.piece;
       const done = roundsOf(caller, step.name, piece);
-      beyond = pastLimit(caller, step, at.work ?? piece, done);
+      beyond = pastLimit(caller, step, at.work ?? piece, piece, done);
       countRound(caller, step.name, piece);
       goesOn = { ...at, round: done + 1 };
       release = (started) => {
         if (!started) uncountRound(caller, step.name, piece);
+        else goneAhead(caller, step.name, piece);
       };
     }
   }
@@ -1886,8 +1941,10 @@ async function resumeSession(
         null,
         beyond,
       )) === "no"
-    )
+    ) {
+      stopAtLimit(caller, beyond);
       return { ...refused(notAllowed(beyond)), byUser: true };
+    }
     if (worktree !== null && !(await treeStands(project, worktree)))
       return refused(
         `Session ${id} ran in the worktree ${worktree}, which is gone. Start a new session for the work instead.`,
@@ -2012,7 +2069,7 @@ async function sendText(request: Placed): Promise<Answered> {
     );
     if (review?.kind === "review") {
       const done = roundsOf(caller, review.name, at.piece);
-      const beyond = pastLimit(caller, review, at.work ?? at.piece, done);
+      const beyond = pastLimit(caller, review, at.work ?? at.piece, at.piece, done);
       if (
         beyond !== null &&
         (await askUser(
@@ -2024,10 +2081,13 @@ async function sendText(request: Placed): Promise<Answered> {
           null,
           beyond,
         )) === "no"
-      )
+      ) {
+        stopAtLimit(caller, beyond);
         return refused(notAllowed(beyond));
+      }
       if (!reachable(session)) return unreachable();
       countRound(caller, review.name, at.piece);
+      goneAhead(caller, review.name, at.piece);
       owed.delete(session.key);
       round = { ...at, round: done + 1 };
       conductor.places[session.key] = round;

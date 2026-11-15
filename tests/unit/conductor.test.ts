@@ -2692,6 +2692,7 @@ describe("starting in a workflow's shape", () => {
     expect(conductor.asking?.round).toEqual({
       step: "Review",
       work: "w1",
+      piece: "w1",
       name: "Fix the cache",
       done: 3,
       limit: 2,
@@ -3152,10 +3153,13 @@ describe("starting in a workflow's shape", () => {
     expect(runStanding(byKey(orch.key)!)!.steps[1].sessions[0].doing).toBe("asking");
     byKey(review.key)!.needs = null;
     byKey(review.key)!.working = false;
-    // Everything at rest, the orchestrator too: done.
+    // Everything at rest, the orchestrator too: the round that finished,
+    // every pip grey, and never a word of whether it passed.
     byKey(orch.key)!.working = false;
     flushSync();
-    expect(runStanding(byKey(orch.key)!)!.text).toBe("Done");
+    run = runStanding(byKey(orch.key)!)!;
+    expect(run.text).toBe("Review, round 1 of 4 done");
+    expect(run.steps.map((step) => step.pip)).toEqual(["done", "done"]);
     // A session that follows no workflow has no run.
     expect(runStanding(byKey(work.key)!)).toBeNull();
   });
@@ -3172,6 +3176,69 @@ describe("starting in a workflow's shape", () => {
       "running",
       "round 1 of 4, working",
     ]);
+  });
+
+  it("counts no round of work for a line while its review is still at it", async () => {
+    orchestrating();
+    const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    reviewed(work);
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    byKey(review.key)!.working = true;
+    flushSync();
+    // The review asks the work something, and the orchestrator passes on
+    // the answer: no send-back.
+    await sent("w1", "The reviewer asks which test covers it");
+    expect(placeOf(work.key)?.round).toBeNull();
+    byKey(review.key)!.working = false;
+    flushSync();
+    expect(placeOf(work.key)?.round).toBeNull();
+    // Once the review has come to rest, a line is the work sent back.
+    await sent("w1", "Make it smaller");
+    expect(placeOf(work.key)?.round).toBe(2);
+  });
+
+  it("keeps the user's stop at the limit with the run, and lets it go when another round goes ahead", async () => {
+    const orch = orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    await sent("r1", "Look again");
+    reviewed(review);
+    const asking = handle(call("send", { session: "r1", text: "And once more" }, { session: "orch" }));
+    await settle();
+    refuse();
+    await asking;
+    expect(conductor.runs[tok("orch")].stopped).toEqual({ "review\nw1": 2 });
+    byKey(orch.key)!.working = false;
+    flushSync();
+    let run = runStanding(byKey(orch.key)!)!;
+    expect(run.text).toBe("Stopped at round 2 of 2");
+    expect(run.waits).toBe(false);
+    // Kept between runs of the app.
+    loadStarted();
+    expect(conductor.runs[tok("orch")].stopped).toEqual({ "review\nw1": 2 });
+    // The user allows a round after all: the piece goes on.
+    const again = handle(call("send", { session: "r1", text: "One more look" }, { session: "orch" }));
+    await settle();
+    allow();
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await again;
+    expect(conductor.runs[tok("orch")].stopped).toEqual({});
+    run = runStanding(byKey(orch.key)!)!;
+    expect(run.text).not.toContain("Stopped");
+  });
+
+  it("keeps a stop when a review started past the limit is refused, and when one resumed is", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    await begun({ step: "Review", work: "w1" }, "r1");
+    await begun({ step: "Review", work: "w1" }, "r2");
+    const asking = handle(from({ step: "Review", work: "w1" }));
+    await settle();
+    refuse();
+    await asking;
+    expect(conductor.runs[tok("orch")].stopped).toEqual({ "review\nw1": 2 });
   });
 
   it("turns to the round question while it waits on the user", async () => {
@@ -3560,7 +3627,7 @@ describe("starting in a workflow's shape", () => {
   });
 
   it("asks about a round past the limit in words, however many rounds there were", () => {
-    const at = { step: "Review", work: "w1", name: "Fix the cache", limit: 1 };
+    const at = { step: "Review", work: "w1", piece: "w1", name: "Fix the cache", limit: 1 };
     expect(roundQuestion({ ...at, done: 2 })).toBe(
       "Review has run twice on Fix the cache, as many times as the workflow allows. Allow another round?",
     );
