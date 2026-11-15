@@ -131,8 +131,9 @@ test.describe("the session on screen", () => {
   });
 
   for (const appearance of ["light", "dark"])
-  test(`marks a window near its end, and one reached with when it resets, in words as well as tone, ${appearance}`, async ({ page }) => {
-    {
+    test(`marks a window near its end, and one reached with when it resets, in words as well as tone, ${appearance}`, async ({
+      page,
+    }) => {
       await open(page, { accounts: WORK, appearance });
       await expect(page.locator("html")).toHaveAttribute("data-theme", appearance);
       const ink = await token(page, "--ink-2");
@@ -161,8 +162,7 @@ test.describe("the session on screen", () => {
       await expect(reached).toHaveText("Week100%· resets in 40 min");
       expect(await style(reached, "color")).toBe(await token(page, "--del"));
       expect(Number(await style(reached, "font-weight"))).toBeGreaterThanOrEqual(600);
-    }
-  });
+    });
 
   test("takes 80% as near its end where the agent gives no reading, and draws a window past its reset as reset", async ({ page }) => {
     await open(page);
