@@ -2,7 +2,7 @@ import { flushSync } from "svelte";
 import type { SpawnOptions } from "$lib/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
-import { reopen } from "$lib/reopen.svelte";
+import { reopen, settleWhen, startup } from "$lib/reopen.svelte";
 import {
   activeSession,
   close,
@@ -84,6 +84,23 @@ function live(project: string, id: string) {
   started(session.key, `pty-${id}`, id);
   return session;
 }
+
+describe("settling the start", () => {
+  it("settles once the restore does, and when it fails on the way as well", async () => {
+    startup.settled = false;
+    await settleWhen(Promise.resolve());
+    expect(startup.settled).toBe(true);
+    startup.settled = false;
+    await settleWhen(Promise.reject(new Error("the restore threw")));
+    expect(startup.settled).toBe(true);
+  });
+
+  it("is settled by bringing the sessions back", () => {
+    startup.settled = false;
+    stop = reopen();
+    expect(startup.settled).toBe(true);
+  });
+});
 
 describe("keeping the record", () => {
   it("records the live sessions and the one on screen", () => {
