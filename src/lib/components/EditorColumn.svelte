@@ -12,10 +12,12 @@
    * disk's version against the editor's, Keep mine writes the editor's over
    * it, Load from disk drops the edits for it. A file that is gone, or that
    * cannot be read any more, says which, and offers what makes sense there.
+   * An untitled file being saved has the field for its path there.
    */
   import BrowserView from "$lib/components/BrowserView.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import CodeEditor from "$lib/components/CodeEditor.svelte";
+  import SaveAs from "$lib/components/SaveAs.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import { browser } from "$lib/browser.svelte";
   import { languageOf } from "$lib/codeEditor";
@@ -29,6 +31,7 @@
     compare,
     diskText,
     editor,
+    isUntitled,
     keepMine,
     loadFromDisk,
     otherKindShown,
@@ -64,6 +67,7 @@
   let asked = $derived(
     editor.asking?.kind === "close" ? (editor.buffers[editor.asking.key]?.path ?? null) : null,
   );
+  let untitled = $derived(isUntitled(editor.active));
 </script>
 
 {#snippet asking()}
@@ -80,6 +84,10 @@
         testid="close-unsaved"
       />
     </div>
+  {:else if editor.savingAs !== null && editor.savingAs.key === editor.active}
+    <div class="strip">
+      <SaveAs />
+    </div>
   {/if}
 {/snippet}
 
@@ -94,7 +102,7 @@
     {@render asking()}
     <div class="empty" data-testid="editor-empty">
       <b>No file open</b>
-      <span>Pick one in the tree, or start a new one with <kbd>{describe(chordFor("file.new"))}</kbd></span>
+      <span>Pick one in the tree, or start a new one with <kbd>{describe(chordFor("file.untitled"))}</kbd> or a double-click on the tab row</span>
     </div>
   {:else}
     {@render asking()}
@@ -179,6 +187,8 @@
             Unsaved, and changed on disk
           {:else if buffer.saving}
             Saving…
+          {:else if untitled}
+            Not saved yet <kbd>{describe(chordFor("file.save"))}</kbd>
           {:else if buffer.dirty}
             Unsaved <kbd>{describe(chordFor("file.save"))}</kbd>
           {:else}

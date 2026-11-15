@@ -27,6 +27,13 @@
  *
  * Nothing that holds the only copy of unsaved edits goes without a question:
  * a tab, a session or a project closed, the window closed or the app quit.
+ *
+ * An untitled file is a buffer with no file behind it, in a tab named
+ * Untitled, Untitled 2 and so on. No tree holds it, so nothing reads,
+ * watches or lists it, and the viewer's record, which the agent's tools
+ * read, names no file while it is in front. Saving it asks for a path in
+ * the tree first; once written it is that file, its tab and its history
+ * kept.
  */
 
 import { tick, untrack } from "svelte";
@@ -132,6 +139,25 @@ export interface Closing {
   close: () => void;
 }
 
+/** The path asked for before an untitled file is first written, while the
+    field for it is up over the editor. */
+export interface SaveAs {
+  /** The untitled file's buffer, or the file's once it is written. */
+  key: string;
+  /** What the field holds: a path from the top of the tree. */
+  value: string;
+  /** Why the path will not do, under the field. */
+  problem: string | null;
+  /** Being written. */
+  busy: boolean;
+  /** The path a file is already at, while the question whether to replace
+      it is up. */
+  replace: string | null;
+  /** Counts the times the field is put up, so it takes the keyboard each
+      time. */
+  session: number;
+}
+
 export const editor = $state({
   /** The tabs of the session on screen. */
   tabs: [] as Tab[],
@@ -159,7 +185,19 @@ export const editor = $state({
   comparing: false,
   /** The question before closing a session or a project, if one is up. */
   closing: null as Closing | null,
+  /** The path asked for before an untitled file is written, if the field
+      is up. */
+  savingAs: null as SaveAs | null,
 });
+
+/** The root an untitled file's tab and buffer carry: no tree's, so no
+    tree, watch or read reaches it. */
+export const UNTITLED = "";
+
+/** Whether a buffer's key is an untitled file's. */
+export function isUntitled(key: string | null): boolean {
+  return key !== null && key.startsWith(keyOf(UNTITLED, ""));
+}
 
 /** A file's key: the working tree and the path in it. */
 export function keyOf(root: string, path: string): string {
@@ -192,6 +230,18 @@ function bump(key: string) {
 /** Counts the reads of each buffer's file from disk, so an answer to an
     older read that comes back after a newer one is dropped. */
 const reads = new Map<string, number>();
+
+/** The folder each untitled file was started in, where saving it starts. */
+const homes = new Map<string, string | null>();
+
+/** What follows once the path asked for is given and the file written, or
+    the field put away without it; and whether the keyboard goes back to
+    the tab row rather than the editor. */
+let afterNaming: {
+  then?: (key: string) => void;
+  cancelled?: () => void;
+  fromRow?: boolean;
+} | null = null;
 
 /** Tabs whose session went while they held the only copy of unsaved
     edits, without the user being asked: they join the tabs shown next. */
@@ -394,6 +444,7 @@ function release(key: string) {
   onDisk.delete(key);
   generations.delete(key);
   reads.delete(key);
+  homes.delete(key);
 }
 
 export interface OpenOptions {
@@ -461,6 +512,7 @@ export async function activate(key: string, focus = true) {
     the one that was there: the answer is only ever about the tab shown. */
 function bringForward(key: string) {
   if (editor.asking?.kind === "close" && editor.asking.key !== key) editor.asking = null;
+  if (editor.savingAs !== null && editor.savingAs.key !== key) putNamingAway();
   editor.active = key;
 }
 
@@ -476,6 +528,7 @@ export function closeTab(key: string, fromRow = false) {
   const at = editor.tabs.findIndex((tab) => tabKey(tab) === key);
   if (at === -1) return;
   if (editor.buffers[key]?.dirty && !stillOpenElsewhere(key)) {
+    if (editor.savingAs !== null) putNamingAway();
     editor.active = key;
     editor.asking = fromRow ? { kind: "close", key, fromRow } : { kind: "close", key };
     void showInViewer();
@@ -490,6 +543,7 @@ function dropTab(key: string) {
   const at = editor.tabs.findIndex((tab) => tabKey(tab) === key);
   if (at === -1) return;
   if (editor.asking?.kind === "close" && editor.asking.key === key) editor.asking = null;
+  if (editor.savingAs?.key === key) putNamingAway();
   if (editor.comparing && editor.active === key) editor.comparing = false;
   editor.tabs.splice(at, 1);
   if (editor.active === key) {
@@ -522,6 +576,11 @@ export async function saveAndClose() {
   const asked = editor.asking;
   if (asked?.kind !== "close") return;
   editor.asking = null;
+  // An untitled file is asked its path first, and closes once written.
+  if (isUntitled(asked.key)) {
+    askName(asked.key, { then: (key) => dropTab(key), fromRow: asked.fromRow === true });
+    return;
+  }
   if (await save(asked.key)) dropTab(asked.key);
   backFrom(asked);
 }
@@ -531,6 +590,208 @@ export function cancelAsk() {
   const asked = editor.asking;
   editor.asking = null;
   backFrom(asked);
+}
+
+/** The names untitled files go by: Untitled, then Untitled 2 and on, the
+    lowest no open untitled file has. */
+function freeName(): string {
+  const taken = new Set(
+    Object.values(editor.buffers)
+      .filter((buffer) => buffer.root === UNTITLED)
+      .map((buffer) => buffer.path),
+  );
+  if (!taken.has("Untitled")) return "Untitled";
+  let number = 2;
+  while (taken.has(`Untitled ${number}`)) number += 1;
+  return `Untitled ${number}`;
+}
+
+/**
+ * A new untitled file in a tab after the one in front, brought to the
+ * front with the keyboard in it. `folder` is the folder of the tree that
+ * saving it starts in, null for the top. From agent mode the window flips
+ * to the editor first. Nothing without a project.
+ */
+export function openUntitled(folder: string | null) {
+  if (workspace.active === null) return;
+  enterEditor(() => {
+    const name = freeName();
+    const key = keyOf(UNTITLED, name);
+    editor.buffers[key] = {
+      root: UNTITLED,
+      path: name,
+      loading: false,
+      error: null,
+      stamp: null,
+      dirty: false,
+      saving: false,
+      changed: null,
+      failed: null,
+    };
+    const state = stateFor("");
+    states.set(key, state);
+    saved.set(key, state.doc);
+    homes.set(key, folder);
+    const at = editor.tabs.findIndex((tab) => tabKey(tab) === editor.active);
+    editor.tabs.splice(at === -1 ? editor.tabs.length : at + 1, 0, {
+      root: UNTITLED,
+      path: name,
+      preview: false,
+      view: "edit",
+      note: null,
+    });
+    bringForward(key);
+    focusFiles("editor");
+    void showInViewer();
+  });
+}
+
+/** Counts the times the field for a path is put up. */
+let namings = 0;
+
+/**
+ * Puts up the field for the path to write an untitled file to, over the
+ * editor with the file in front: the folder it was started in, and its
+ * name. `then` follows once it is written, with the file's key; `cancelled`
+ * once the field is put away without it.
+ */
+export function askName(key: string, after: NonNullable<typeof afterNaming> = {}) {
+  const buffer = editor.buffers[key];
+  if (buffer === undefined || buffer.root !== UNTITLED) return;
+  if (editor.asking?.kind === "close") editor.asking = null;
+  if (editor.active !== key && editor.tabs.some((tab) => tabKey(tab) === key)) bringForward(key);
+  if (editor.savingAs?.key === key) return;
+  if (editor.savingAs !== null) putNamingAway();
+  const folder = homes.get(key) ?? null;
+  namings += 1;
+  editor.savingAs = {
+    key,
+    value: folder === null ? buffer.path : `${folder}/${buffer.path}`,
+    problem: null,
+    busy: false,
+    replace: null,
+    session: namings,
+  };
+  afterNaming = after;
+}
+
+/** The field for a path goes without one, by something else taking the
+    editor's place: what was to follow is told it was put away. */
+function putNamingAway() {
+  const after = afterNaming;
+  editor.savingAs = null;
+  afterNaming = null;
+  after?.cancelled?.();
+}
+
+export function setSaveAsName(value: string) {
+  if (editor.savingAs === null) return;
+  editor.savingAs.value = value;
+  editor.savingAs.problem = null;
+}
+
+/** Escape, or Cancel, in the field: it goes, the file stays untitled, and
+    the keyboard goes back where it was asked from. */
+export function cancelSaveAs() {
+  const asked = editor.savingAs;
+  if (asked === null || asked.busy) return;
+  const fromRow = afterNaming?.fromRow === true;
+  putNamingAway();
+  if (fromRow) editor.rowRequests += 1;
+  else focusFiles("editor");
+}
+
+/** Cancel on the question whether to replace a file: back to the field,
+    the path as it was. */
+export function keepName() {
+  const asked = editor.savingAs;
+  if (asked === null || asked.busy) return;
+  asked.replace = null;
+  namings += 1;
+  asked.session = namings;
+}
+
+/**
+ * Writes an untitled file to `path` in the tree at `root`: only where
+ * nothing is, or over what is there with `overwrite`. Written, it is that
+ * file from then on. Answers the file's key, or null when something is at
+ * the path already; fails with why it could not be written.
+ */
+export async function writeUntitled(
+  key: string,
+  root: string,
+  path: string,
+  overwrite: boolean,
+): Promise<string | null> {
+  const buffer = editor.buffers[key];
+  const state = states.get(key);
+  if (buffer === undefined || state === undefined || buffer.root !== UNTITLED) return null;
+  const doc = state.doc;
+  buffer.saving = true;
+  try {
+    const result = await core().fileWrite(root, path, doc.toString(), null, overwrite);
+    if (!result.written) return null;
+    return becameFile(key, root, path, doc, result.stamp);
+  } finally {
+    const still = editor.buffers[key];
+    if (still !== undefined) still.saving = false;
+  }
+}
+
+/**
+ * An untitled file was written to `path`: every tab on it is a tab on the
+ * file, one beside a tab on that file already going, and its buffer is
+ * the file's, text, history and all. A file that was open already, with
+ * nothing unsaved, takes in what was written instead.
+ */
+function becameFile(from: string, root: string, path: string, doc: Text, stamp: string | null): string {
+  const to = keyOf(root, path);
+  const buffer = editor.buffers[from];
+  if (buffer === undefined) return to;
+  const retab = (tabs: Tab[]) => {
+    const at = tabs.findIndex((tab) => tabKey(tab) === from);
+    if (at === -1) return;
+    if (tabs.some((tab) => tabKey(tab) === to)) tabs.splice(at, 1);
+    else tabs[at] = { root, path, preview: false, view: "edit", note: null };
+  };
+  retab(editor.tabs);
+  for (const kept of owners.values()) {
+    retab(kept.tabs);
+    if (kept.active === from) kept.active = to;
+  }
+  retab(rescued);
+  if (editor.active === from) editor.active = to;
+  if (editor.savingAs?.key === from) editor.savingAs.key = to;
+  if (editor.buffers[to] !== undefined) {
+    release(from);
+    if (stamp !== null) takeIn(to, doc.toString(), stamp);
+    return to;
+  }
+  editor.buffers[to] = { ...buffer, root, path, saving: false };
+  delete editor.buffers[from];
+  for (const map of [states, saved, scrolls] as Map<string, unknown>[]) {
+    if (!map.has(from)) continue;
+    map.set(to, map.get(from));
+    map.delete(from);
+  }
+  homes.delete(from);
+  if (shown === from) shown = to;
+  wrote(to, doc, stamp);
+  return to;
+}
+
+/** The path was given and the file written: the field goes, the tree
+    marks the file, and what was to follow does, the keyboard back in the
+    editor or on the tab row. */
+export function endSaveAs(key: string) {
+  if (editor.savingAs?.key !== key) return;
+  const after = afterNaming;
+  editor.savingAs = null;
+  afterNaming = null;
+  void showInViewer();
+  after?.then?.(key);
+  if (after?.fromRow === true) editor.rowRequests += 1;
+  else focusFiles("editor");
 }
 
 /** Whether a session not on screen has a tab on the buffer. */
@@ -545,10 +806,15 @@ function stillOpenElsewhere(key: string): boolean {
  * Writes a buffer to disk, the file in front unless another is named. The
  * write expects what the buffer was read with; a disk that holds something
  * else answers that it did not write, and the bar over the editor says the
- * file changed. Answers whether it was written.
+ * file changed. Answers whether it was written. An untitled file is not
+ * written yet: the path is asked for first.
  */
 export async function save(key: string | null = editor.active): Promise<boolean> {
   if (key === null) return false;
+  if (isUntitled(key)) {
+    askName(key);
+    return false;
+  }
   const buffer = editor.buffers[key];
   const state = states.get(key);
   if (buffer === undefined || state === undefined || buffer.loading || buffer.error !== null) return false;
@@ -743,7 +1009,7 @@ function change(key: string, spec: TransactionSpec) {
  */
 async function recheck(key: string) {
   const buffer = editor.buffers[key];
-  if (buffer === undefined || buffer.loading || buffer.saving) return;
+  if (buffer === undefined || buffer.loading || buffer.saving || buffer.root === UNTITLED) return;
   if (buffer.error !== null && buffer.stamp === null) return;
   const generation = generations.get(key) ?? 0;
   const asked = (reads.get(key) ?? 0) + 1;
@@ -812,7 +1078,7 @@ export function watchedFiles(): string[] {
   const out: string[] = [];
   for (const tab of editor.tabs) {
     const buffer = editor.buffers[tabKey(tab)];
-    if (buffer === undefined || buffer.error !== null) continue;
+    if (buffer === undefined || buffer.error !== null || tab.root === UNTITLED) continue;
     out.push(watchedPath(tab.root, tab.path));
   }
   return out;
@@ -845,21 +1111,51 @@ export function leaveWithoutSaving() {
   void core().leaveConfirmed(asked.leave).catch(() => {});
 }
 
-/** Every unsaved file written, then the window closes or the app quits if
-    they all were. When one could not be, nothing goes: that file comes
-    forward with its bar or why, and the status bar says what stopped. */
+/** Every unsaved file written, each untitled one once its path is given,
+    then the window closes or the app quits if they all were. When one
+    could not be, nothing goes: that file comes forward with its bar or
+    why, and the status bar says what stopped. */
 export async function saveAllAndLeave() {
   const asked = editor.asking;
   if (asked?.kind !== "leave") return;
   editor.asking = null;
-  const keys = unsavedKeys();
-  const written = await Promise.all(keys.map((key) => save(key)));
-  const failed = keys.filter((_, at) => !written[at]);
-  if (failed.length === 0) {
+  await saveEvery(unsavedKeys(), asked.leave === "quit" ? "Quit stopped" : "The window stays open", () => {
     void core().leaveConfirmed(asked.leave).catch(() => {});
+  });
+}
+
+/**
+ * Writes every file of `keys` that has a name, then asks the path of each
+ * untitled one in turn, with that file in front, and does `done` once all
+ * are written. A file that could not be written, or an untitled one whose
+ * field was put away, stops it there: that file stays in front, and the
+ * status bar says what was stopped.
+ */
+async function saveEvery(keys: string[], what: string, done: () => void) {
+  const named = keys.filter((key) => !isUntitled(key));
+  const written = await Promise.all(named.map((key) => save(key)));
+  const failed = named.filter((_, at) => !written[at]);
+  if (failed.length > 0) {
+    stopped(what, failed);
     return;
   }
-  stopped(asked.leave === "quit" ? "Quit stopped" : "The window stays open", failed);
+  nameInTurn(keys.filter(isUntitled), what, done);
+}
+
+function nameInTurn(keys: string[], what: string, done: () => void) {
+  const at = keys.findIndex((key) => editor.buffers[key]?.dirty === true);
+  if (at === -1) {
+    done();
+    return;
+  }
+  const key = keys[at];
+  const name = editor.buffers[key].path;
+  bringOut(key, () =>
+    askName(key, {
+      then: () => nameInTurn(keys.slice(at + 1), what, done),
+      cancelled: () => say(`${what}: ${name} was not saved`),
+    }),
+  );
 }
 
 /** The user's answer to the window or the app going: stay. */
@@ -886,11 +1182,20 @@ function stopped(what: string, keys: string[]) {
         ? lastSegment(buffer.path) + " could not be saved"
         : `${lastSegment(buffer.path)} was not saved`;
   say(`${what}: ${why}`);
+  bringOut(key);
+}
+
+/** Brings a buffer's tab to the front beside whichever session is on
+    screen, in editor mode, then does `then`. */
+function bringOut(key: string, then?: () => void) {
+  const buffer = editor.buffers[key];
+  if (buffer === undefined) return;
   const show = () => {
     if (!editor.tabs.some((tab) => tabKey(tab) === key)) {
       editor.tabs.push({ root: buffer.root, path: buffer.path, preview: false, view: "edit", note: null });
     }
     void activate(key);
+    then?.();
   };
   if (layout.mode === "editing") show();
   else enterEditor(show);
@@ -952,10 +1257,7 @@ export async function closingSave() {
   const asked = editor.closing;
   if (asked === null) return;
   editor.closing = null;
-  const written = await Promise.all(asked.keys.map((key) => save(key)));
-  const failed = asked.keys.filter((_, at) => !written[at]);
-  if (failed.length === 0) asked.close();
-  else stopped(`${asked.what} stays open`, failed);
+  await saveEvery(asked.keys, `${asked.what} stays open`, asked.close);
 }
 
 export function closingDrop() {
@@ -1100,13 +1402,15 @@ const VIEWER: Record<TabView, View> = { edit: "content", diff: "diff", preview: 
 /**
  * Keeps the viewer's record on the tab in front while editing: the tree
  * marks the file, the diff and the rendering come from the viewer, and what
- * the agent's tools read of the screen names the file. With no tab, the
- * viewer holds nothing.
+ * the agent's tools read of the screen names the file. With no tab, or an
+ * untitled file in front, the viewer holds nothing.
  */
 async function showInViewer() {
   if (layout.mode !== "editing") return;
   const tab = activeTab();
-  if (tab === null) {
+  // An untitled file is in no tree: the viewer holds nothing, and the
+  // agent's tools are told of no file.
+  if (tab === null || tab.root === UNTITLED) {
     deselect();
     return;
   }
@@ -1229,6 +1533,7 @@ export async function ownerShown() {
     editor.reveal = null;
     editor.comparing = false;
     if (editor.asking?.kind === "close") editor.asking = null;
+    if (editor.savingAs !== null) putNamingAway();
   } else if (rescued.length === 0) {
     return;
   }
@@ -1307,9 +1612,13 @@ export function resetEditor() {
   editor.asking = null;
   editor.comparing = false;
   editor.closing = null;
+  editor.savingAs = null;
+  afterNaming = null;
+  namings = 0;
   onDisk.clear();
   generations.clear();
   reads.clear();
+  homes.clear();
   rescued = [];
 }
 

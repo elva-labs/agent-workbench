@@ -34,7 +34,7 @@
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
-  import { newFile } from "$lib/fileOps.svelte";
+  import { newFile, newUntitled } from "$lib/fileOps.svelte";
   import {
     activeTab,
     canSaveInFront,
@@ -361,12 +361,13 @@
   });
 
   // The File menu's items that cannot act are greyed out: Save without a
-  // file in front to save, New File without a project. Close Tab can always
-  // act on macOS, where with no tab it closes the window.
+  // file in front to save, either new file without a project. Close Tab
+  // can always act on macOS, where with no tab it closes the window.
   $effect(() => {
     void core()
       .menuEnabled({
         "file.new": workspace.active !== null,
+        "file.untitled": workspace.active !== null,
         "file.save": editing && canSaveInFront(),
         "file.close": isMac() || (editing && activeTab() !== null),
       })
@@ -637,6 +638,9 @@
       case "newFile":
         newFile();
         break;
+      case "newUntitled":
+        newUntitled();
+        break;
       case "findInFile":
         findInFile();
         break;
@@ -715,6 +719,7 @@
       with no tab to close is the window's close there. */
   function menuAction(action: string) {
     if (action === "file.new") newFile();
+    else if (action === "file.untitled") newUntitled();
     else if (action === "file.save" && editing) void save();
     else if (action === "file.close") closeFront();
   }

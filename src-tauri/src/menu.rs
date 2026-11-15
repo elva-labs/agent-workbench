@@ -9,9 +9,10 @@
 //! Choosing Settings either way tells the window, which opens its settings
 //! view.
 //!
-//! The editor's items, New File, Save and Close Tab, do what an action of
-//! the window's chord table does, so the window does it: the item says which
-//! action. On the menu bar each carries the chord the table gives its action,
+//! The editor's items, New File, New File in Tree, Save and Close Tab, do
+//! what an action of the window's chord table does, so the window does it:
+//! the item says which action. New File is an untitled file, named when it
+//! is saved; New File in Tree names one in the tree first. On the menu bar each carries the chord the table gives its action,
 //! sent over whenever the table changes, so a chord the user moves moves the
 //! item's with it and the bar never claims a chord the table gives elsewhere.
 //! The popup's items carry none: a menu attached to no window answers no
@@ -46,15 +47,17 @@ const CLOSE_WINDOW_ID: &str = "close-window";
 
 /// The editor's items: the action of the chord table each does, and its
 /// name in the menu. The id of each item is its action.
-const FILE_ITEMS: [(&str, &str); 3] = [
-    ("file.new", "New File"),
+const FILE_ITEMS: [(&str, &str); 4] = [
+    ("file.untitled", "New File"),
+    ("file.new", "New File in Tree…"),
     ("file.save", "Save"),
     ("file.close", "Close Tab"),
 ];
 
 /// The chords the table starts with for the editor's items, until the
 /// window sends its own.
-const FILE_DEFAULTS: [(&str, &str); 3] = [
+const FILE_DEFAULTS: [(&str, &str); 4] = [
+    ("file.untitled", "CmdOrCtrl+N"),
     ("file.new", "Alt+CmdOrCtrl+N"),
     ("file.save", "CmdOrCtrl+S"),
     ("file.close", "CmdOrCtrl+W"),
@@ -148,6 +151,7 @@ pub fn install(app: &App) -> tauri::Result<()> {
             &editing[0],
             &editing[1],
             &editing[2],
+            &editing[3],
             &PredefinedMenuItem::separator(handle)?,
             &settings_item(handle)?,
             &styles_off_item(handle)?,
@@ -274,10 +278,11 @@ fn menu_bar(app: &App) -> tauri::Result<Menu<Wry>> {
         true,
         &[
             &editing[0],
-            &PredefinedMenuItem::separator(handle)?,
             &editing[1],
             &PredefinedMenuItem::separator(handle)?,
             &editing[2],
+            &PredefinedMenuItem::separator(handle)?,
+            &editing[3],
         ],
     )?;
     *app.state::<FileItems>().0.lock().unwrap() = FILE_ITEMS

@@ -29,6 +29,9 @@ edge with tabs past it fades. The × on a tab, a middle-click, Close
 Tab in the File menu or <kbd>Cmd</kbd><kbd>W</kbd> closes it, and the tab
 beside it comes to the front.
 
+The row stays with no file open, and a double-click on it where no tab is
+starts an [untitled file](#untitled-files).
+
 ## The editor
 
 A plain editor: line numbers, the line the cursor is on, undo, and find in
@@ -68,6 +71,41 @@ the disk still holds that. Reading and writing go through the core, so a
 project on another machine is edited where it is; a write that fails part
 way leaves the old file whole, a read-only file is not written, and nothing
 in `.git` is. A save that cannot be made says why over that file's editor.
+
+## Untitled files
+
+A file can be started before it has a name, with <kbd>Cmd</kbd><kbd>N</kbd>,
+New File in the File menu, New untitled file in the command palette, or a
+double-click on the tab row where no tab is. From agent mode the window
+flips to the editor first. The file opens empty in a tab of its own after
+the one in front, with the keyboard in it, called Untitled, then Untitled 2
+and so on, the lowest number no open untitled file has. Its foot says it is
+plain text and not saved yet.
+
+Nothing is written until it is saved, and nothing outside the editor sees
+it: no tree lists it, nothing watches it, and with it in front the viewer's
+record, which the agent's selection tool reads, names no file. The agent
+cannot read it until it is saved. It is edited and searched like any file,
+with the edit view only, and carries the dot once something is typed in it.
+One with nothing typed closes without a question; one with text asks as any
+unsaved file does.
+
+Saving it, by <kbd>Cmd</kbd><kbd>S</kbd>, Save in the File menu or Save and
+close in a question, asks for a path first, in a field over the editor. The
+field holds a path from the top of the project: the folder the tree's
+cursor was in when the file was started, then its name, selected so that
+typing replaces it. <kbd>Enter</kbd> or Save writes it, slashes making the
+folders on the way, and <kbd>Esc</kbd> or Cancel puts the field away with
+the file still untitled. The field refuses what the tree's name field
+refuses, and a path that leaves the project: an absolute one, one from the
+home folder, or one that steps up out of the top. A path that holds a file
+already asks whether to replace it, and one open with unsaved edits is
+refused until they are saved or dropped. The field is the same on every
+platform and for a project on another machine.
+
+Once written it is that file: an ordinary tab on it, with its text, its
+cursor and its undo history, the tree showing it and the foot naming its
+language by its name.
 
 ## Changes on disk
 
@@ -110,6 +148,13 @@ changed on disk or could not be written, nothing is closed: that file comes
 forward in the editor with its bar or why, and the status bar says what was
 stopped.
 
+An untitled file with text is asked about in the same way. Save and close
+asks for its path, and closes it once written. Save all writes the files
+that have names, then asks each untitled file's path in turn with that file
+in front, and closes or quits once all are written; putting a field away
+stops it there, and the status bar says so. Untitled files are not kept
+across a restart, since the editor reopens no tabs.
+
 The core takes the window's question as heard only once it is drawn; if it
 is not drawn soon, the close or the quit goes through rather than keep the
 window open. The system's own ways of ending the app, logging out
@@ -119,22 +164,24 @@ tab with the only copy of unsaved edits to the tabs shown next.
 
 ## The File menu
 
-On macOS a File menu holds New File, Save and Close Tab, each showing and
-answering the chord its action has in the [chord table](focus-model.md):
-move a chord there and the menu's moves with it. Save is greyed out
-outside editor mode, or without a file in front to save, and New File
-without a project. Close Tab with no tab
+On macOS a File menu holds New File, New File in Tree, Save and Close Tab,
+each showing and answering the chord its action has in the [chord
+table](focus-model.md): move a chord there and the menu's moves with it.
+New File starts an [untitled file](#untitled-files), and New File in Tree
+names one in the tree first. Save is greyed out outside editor mode, or
+without a file in front to save, and both new files without a project.
+Close Tab with no tab
 in front, or in agent mode, closes the window, as its chord does in every
 Mac window. Close Window in the Window menu is on
 <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>, and Settings shows the chord the
 table gives it; when the table gives Shift+Cmd+W to an action, Close Window
 shows no chord. On Windows and Linux the menu button at the top left holds
-the same three items.
+the same four items.
 
 ## New files and the row menu
 
 A new file is named in a field in place in the tree, from the button heading
-the tree's column, the row menu, New File, or
+the tree's column, the row menu, New File in Tree, or
 <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>, which flips to the editor from
 agent mode. It goes in the folder the tree's cursor is in, or at the top
 until the cursor has been put somewhere or a file chosen. Enter makes the

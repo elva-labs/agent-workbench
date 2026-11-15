@@ -32,6 +32,7 @@ default preset:
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
 | <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
+| <kbd>Cmd</kbd><kbd>N</kbd>                                              | A new untitled file in the editor, from either mode         |
 | <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
 | <kbd>Cmd</kbd><kbd>S</kbd>                                              | Save the file in front, in editor mode                      |
 | <kbd>Cmd</kbd><kbd>W</kbd>                                              | Close the editor's tab in front, in editor mode             |
@@ -361,6 +362,13 @@ the same chords, so <kbd>Cmd</kbd><kbd>S</kbd> saves from a terminal too.
 Close Window is on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>W</kbd>. With the
 keyboard in a browser tab's page, the two are the app's only in editor
 mode; outside it they reach the menu as from anywhere else.
+
+A new untitled file, <kbd>Cmd</kbd><kbd>N</kbd>, is the app's in either
+mode and from anywhere on macOS, a terminal included, since a terminal has
+no use for Cmd. On Windows and Linux a terminal keeps
+<kbd>Ctrl</kbd><kbd>N</kbd>, the shell's next line of history, and the
+chord is the app's everywhere else: the editor, the tree, the lists and an
+integrated session's composer.
 
 <kbd>Esc</kbd> in the tree, the sessions pane or an integrated session's
 composer with no turn running hands the keyboard back to the editor, where
