@@ -55,6 +55,13 @@ describe("the seam's integrated sessions", () => {
     await seam.integratedConfigure("int-1", { model: "sonnet" });
     await seam.integratedConfigure("int-1", { mode: "acceptEdits", effort: "low" });
     await seam.integratedSnapshot("int-1");
+    await seam.integratedHistory({
+      agent: "claude-code",
+      project: "/repo",
+      cwd: "/repo/wt",
+      session: "s-1",
+      configDir: "~/.claude-work",
+    });
     await seam.integratedStop("int-1");
     expect(invoke.mock.calls).toEqual([
       [
@@ -101,6 +108,16 @@ describe("the seam's integrated sessions", () => {
         { id: "int-1", model: null, mode: "acceptEdits", effort: "low" },
       ],
       ["integrated_snapshot", { id: "int-1" }],
+      [
+        "integrated_history",
+        {
+          agent: "claude-code",
+          project: "/repo",
+          cwd: "/repo/wt",
+          session: "s-1",
+          configDir: "~/.claude-work",
+        },
+      ],
       ["integrated_stop", { id: "int-1" }],
     ]);
   });

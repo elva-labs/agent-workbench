@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   answer,
   compact,
@@ -27,6 +27,7 @@ import {
   reopened,
   reset as resetSessions,
   sessions,
+  wake,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
@@ -53,6 +54,8 @@ async function install(options: FakeIntegratedOptions = {}) {
       fake.reply(id, request, answers),
     integratedConfigure: async (id: string, settings: never) => fake.configure(id, settings),
     integratedSnapshot: async (id: string) => fake.snapshot(id),
+    integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) =>
+      fake.history(options),
     integratedStop: async (id: string) => fake.stop(id),
     onIntegratedEvent: async (handler: Parameters<FakeIntegrated["subscribe"]>[0]) =>
       fake.subscribe(handler),
@@ -80,6 +83,55 @@ async function started(options: { prompt?: string; resumedFrom?: string } = {}) 
   );
   await launch(session.key);
   return { session: byKey(session.key)!, key: session.key, handle: handleOf(session.key)! };
+}
+
+/** What the agent said in the main thread, block by block. */
+function agentTexts(conversation: ReturnType<typeof conversationOf>): string[] {
+  return conversation.entries.flatMap((entry) =>
+    entry.kind === "agent"
+      ? entry.parts.flatMap((part) => (part.kind === "text" ? [part.text] : []))
+      : [],
+  );
+}
+
+/** A past conversation as its transcript reads back: a question, a call
+    and an answer, a minute apart, on the model it ran on. */
+function written(at: number, words: string, answer: string, message = `m-${at}`) {
+  return [
+    {
+      at,
+      event: { type: "message" as const, message, state: "sent" as const, error: null, text: words, images: [] },
+    },
+    { at, model: "claude-haiku-5-5", event: { type: "turnStarted" as const, messages: [message] } },
+    {
+      at: at + 1_000,
+      event: { type: "toolStarted" as const, call: `c-${at}`, parent: null, name: "Bash", kind: "command" as const },
+    },
+    {
+      at: at + 2_000,
+      event: {
+        type: "toolFinished" as const,
+        call: `c-${at}`,
+        parent: null,
+        output: "ok",
+        error: false,
+        truncated: false,
+        changes: [],
+      },
+    },
+    { at: at + 3_000, event: { type: "text" as const, block: `b-${at}`, parent: null, text: answer, done: true } },
+    {
+      at: at + 3_000,
+      event: {
+        type: "turnEnded" as const,
+        outcome: "done" as const,
+        error: null,
+        totalCostUsd: null,
+        durationMs: 3_000,
+        usage: null,
+      },
+    },
+  ];
 }
 
 beforeEach(async () => {
@@ -117,7 +169,9 @@ describe("an integrated session behind its row", () => {
 
   it("resumes a past conversation by its id", async () => {
     const { session } = await started({ resumedFrom: "old-conversation" });
-    expect(fake.calls[0]).toMatchObject({ method: "start", options: { session: "old-conversation" } });
+    expect(fake.calls.find((call) => call.method === "start")).toMatchObject({
+      options: { session: "old-conversation" },
+    });
     expect(session.id).toBe("old-conversation");
   });
 
@@ -382,6 +436,125 @@ describe("the account's limits", () => {
   });
 });
 
+describe("what a resumed session said before", () => {
+  it("is read from its transcript and drawn above what this run says, with where this run began", async () => {
+    fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."));
+    const { session, handle } = await started({ resumedFrom: "old-conversation" });
+    expect(fake.calls[0]).toEqual({
+      method: "history",
+      options: { agent: "claude-code", project: PROJECT, session: "old-conversation" },
+    });
+    const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent"]);
+    const [said] = Object.values(conversation.messages);
+    expect(said).toMatchObject({ text: "Count the files", at: 1_000_000, state: "taken" });
+    expect(Object.values(conversation.turns)[0]).toMatchObject({ model: "claude-haiku-5-5", outcome: "done" });
+    const line = conversation.began!;
+    expect(line.after).toBe(conversation.entries[1].key);
+    send(session.key, "And the tests?");
+    fake.turn(handle, "Four of them.");
+    expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
+    expect(conversation.entries.findIndex((entry) => entry.key === line.after)).toBe(1);
+  });
+
+  it("draws the line at once and goes on under it while what it said before is read, which then goes above", async () => {
+    fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."));
+    fake.holdHistory();
+    const before = Date.now();
+    const { session, handle } = await started({ resumedFrom: "old-conversation" });
+    const conversation = conversationOf(session.key);
+    // The session runs and can be written to while the read is out.
+    expect(byKey(session.key)!.status).toBe("running");
+    expect(conversation.earlier).toBe("loading");
+    expect(conversation.began).toMatchObject({ after: null });
+    expect(conversation.began!.at).toBeGreaterThanOrEqual(before);
+    send(session.key, "And the tests?");
+    fake.turn(handle, "Four of them.");
+    expect(agentTexts(conversation)).toEqual(["Four of them."]);
+    fake.releaseHistory();
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent"]);
+    expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
+    expect(conversation.began!.after).toBe(conversation.entries[1].key);
+  });
+
+  it("after a restart, lays what it read as all from before, its open turn over and the line where the new run began", async () => {
+    // The app quit in the middle of a turn: its call has no result and the
+    // turn no end.
+    fake.transcript("old-conversation", [
+      ...written(1_000_000, "Count the files", "There are 12."),
+      {
+        at: 2_000_000,
+        event: { type: "message", message: "m-2", state: "sent", error: null, text: "Fix the count", images: [] },
+      },
+      { at: 2_000_000, event: { type: "turnStarted", messages: ["m-2"] } },
+      { at: 2_001_000, event: { type: "toolStarted", call: "c-open", parent: null, name: "Edit", kind: "edit" } },
+    ]);
+    fake.holdHistory();
+    const row = reopened(PROJECT, "old-conversation", "claude-code", null, null, null, "integrated");
+    // The core it ran in is gone, so its old handle answers nothing.
+    expect(await reattach(row.key, "int-9")).toBe(false);
+    const conversation = conversationOf(row.key);
+    expect(conversation.earlier).toBe("loading");
+    // The row in front starts at once, while the read is still out.
+    wake(row.key);
+    const before = Date.now();
+    await launch(row.key);
+    const handle = handleOf(row.key)!;
+    expect(conversation.began).toMatchObject({ after: null });
+    fake.notice(handle, "Fell back to another model");
+    fake.releaseHistory();
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent", "note"]);
+    expect(conversation.began!.after).toBe(conversation.entries[3].key);
+    expect(conversation.began!.at).toBeGreaterThanOrEqual(before);
+    expect(conversation.call("c-open")).toMatchObject({ done: true, error: true });
+    expect(conversation.current).toBeNull();
+    expect(conversation.working).toBe(false);
+    expect(byKey(row.key)!.working).toBe(false);
+  });
+
+  it("goes on under the run drawn here when it is resumed again, and is not read again", async () => {
+    const { session, handle } = await started();
+    send(session.key, "go");
+    fake.turn(handle, "first answer");
+    fake.end(handle, true);
+    const conversation = conversationOf(session.key);
+    const last = conversation.entries.at(-1)!.key;
+    await resume(session.key);
+    expect(fake.calls.filter((call) => call.method === "history")).toEqual([]);
+    expect(conversation.began?.after).toBe(last);
+    expect(conversation.earlier).toBeNull();
+  });
+
+  it("is not read for Codex, which says so as it did", async () => {
+    const session = create(PROJECT, "codex-thread", "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
+    expect(conversation.entries).toEqual([]);
+    expect(conversation.began).toBeNull();
+  });
+
+  it("is taken up after a reload with the line where a resumed run began", async () => {
+    fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."));
+    const before = await started({ resumedFrom: "old-conversation" });
+    send(before.key, "And the tests?");
+    fake.turn(before.handle, "Four of them.");
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "old-conversation", "claude-code", null, null, null, "integrated");
+    expect(await reattach(row.key, before.handle)).toBe(true);
+    const conversation = conversationOf(row.key);
+    expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
+    expect(conversation.began!.after).toBe(conversation.entries[1].key);
+    expect(conversation.late).toBe(false);
+  });
+});
+
 describe("a session the core still runs after a reload", () => {
   it("is taken up from its snapshot, with the events heard meanwhile", async () => {
     // The session as the window before the reload left it.
@@ -402,7 +575,15 @@ describe("a session the core still runs after a reload", () => {
     expect(session.status).toBe("running");
     expect(session.needs).toBe("permission");
     const conversation = conversationOf(row.key);
-    expect(conversation.late).toBe(true);
+    // What was said before is read back, and what was heard meanwhile is
+    // drawn once, in the turn that still runs.
+    expect(conversation.late).toBe(false);
+    expect(conversation.earlier).toBe("read");
+    expect(conversation.entries.map((entry) => entry.kind)).toEqual(["user", "agent"]);
+    expect(Object.values(conversation.messages).map((message) => message.text)).toEqual(["first"]);
+    expect(agentTexts(conversation)).toEqual(["meanwhile"]);
+    expect(conversation.current).not.toBeNull();
+    expect(conversation.began).toBeNull();
     expect(conversation.open.map((open) => open.request)).toEqual([request]);
     // A start waits for the attach and starts nothing.
     await launch(row.key);

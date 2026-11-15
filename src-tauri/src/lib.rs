@@ -390,6 +390,50 @@ async fn integrated_snapshot(
     .await
 }
 
+/// What a conversation said and did before, read on the machine the
+/// project is on, with the host put back on the paths it names for a
+/// project elsewhere. Null for an agent whose history is not read.
+#[tauri::command]
+async fn integrated_history(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.integrated_history(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            &session,
+            config_dir.as_deref(),
+        )),
+        Route::Remote { host, rest } => {
+            let history = remotes.connection(&host)?.call(
+                "integrated_history",
+                json!({
+                    "agent": agent,
+                    "project": rest,
+                    "cwd": cwd,
+                    "session": session,
+                    "configDir": config_dir,
+                }),
+            )?;
+            Ok(remote::history_homeward(&host, history))
+        }
+    })
+    .await
+}
+
 #[tauri::command]
 async fn integrated_stop(
     core: State<'_, Arc<Core>>,
@@ -1719,6 +1763,7 @@ pub fn run() {
             integrated_reply,
             integrated_configure,
             integrated_snapshot,
+            integrated_history,
             integrated_stop,
             settings_get,
             settings_set,

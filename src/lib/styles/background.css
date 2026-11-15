@@ -1,0 +1,126 @@
+/*
+ * A background of the user's own, behind the chrome.
+ *
+ * While one shows, the window stamps data-background on <html> and writes,
+ * for each appearance and look, what it paints:
+ *
+ *   --tint-backdrop   the gradient and its grain, fixed to the window, so
+ *                     every tinted part shows its own piece of one picture;
+ *   --tint-side, --tint-surf, --tint-status, --tint-frame
+ *                     each tinted part's own ground, let through by the
+ *                     strength: the sessions pane and the settings' tab
+ *                     column, the headers, the status bar, and the terminal
+ *                     look's ground between its boxes;
+ *   --tint-line, --tint-line-strong
+ *                     the ink at the one amount every line in the window
+ *                     takes, and the stronger marks such as a tag's outline;
+ *   --tint-fill, --tint-fill-accent
+ *                     the ink and the accent let through, for a hovered or
+ *                     chosen row and a field, so they stay part of the tint;
+ *   --tint-ink and the other text tokens
+ *                     each text a step stronger where the tint needs it.
+ *
+ * A tinted part lays its ground over the backdrop. In the modern look those
+ * are the sessions pane, the pane headers, the status bar, and the
+ * settings' title row and tab column; in the terminal look, the ground
+ * between the boxes and the status bar. Every surface that holds text to
+ * read stays solid. The parts with no name of their own, the frame, the
+ * resize bars and the folded sessions pane's edge, carry their rules
+ * themselves.
+ */
+
+/* A line on or beside a tinted part follows the background: the ink let
+   through, so it takes the colour of whatever it crosses. The terminal
+   look's boxes keep the rules inside them as they are; their outline, the
+   gap between them and the status rule lie on the ground. */
+:root[data-background][data-look="modern"] {
+  --divider: var(--tint-line);
+}
+
+:root[data-background]:not([data-look]) {
+  --pane-border: var(--tint-line);
+  --splitter: var(--tint-line);
+  --status-rule: var(--tint-line);
+}
+
+/* A box's rule lies over the ground outside it rather than its own
+   surface, so it is tinted like the rest of the ground. */
+:root[data-background]:not([data-look]) section[data-pane] {
+  background-clip: padding-box;
+}
+
+/* Text, marks and fills on a tinted part take the guard's colours. */
+:root[data-background][data-look="modern"]
+  :is(
+    [data-pane="sessions"],
+    section[data-pane] > header,
+    [data-testid="settings"] > header,
+    [data-testid="settings"] nav
+  ),
+:root[data-background] [data-testid="status-bar"] {
+  --ink: var(--tint-ink);
+  --ink-2: var(--tint-ink-2);
+  --ink-3: var(--tint-ink-3);
+  --accent: var(--tint-accent);
+  --add: var(--tint-add);
+  --del: var(--tint-del);
+  --ansi-yellow: var(--tint-ansi-yellow);
+  --rule: var(--tint-line);
+  --rule-strong: var(--tint-line-strong);
+  --surface-2: var(--tint-fill);
+  --field-bg: var(--tint-fill);
+  --accent-soft: var(--tint-fill-accent);
+  --hover: var(--tint-fill);
+}
+
+:root[data-background][data-look="modern"]
+  :is(
+    [data-pane="sessions"],
+    section[data-pane] > header,
+    [data-testid="settings"] > header,
+    [data-testid="settings"] nav
+  ) {
+  --title-color: var(--tint-ink);
+  --title-color-on: var(--tint-accent);
+  --heading-color: var(--tint-ink);
+}
+
+/* A pane's edge in the modern look is a pixel of its own ground around
+   what it holds, so the rule under a header stops a pixel short of the line
+   beside it. With a background the edge carries that pixel of the rule, and
+   lines meet without a gap. The header row is as tall as the sessions
+   pane's header, given on the frame. */
+:root[data-background][data-look="modern"] section[data-pane]:not([data-pane="terminal"]) {
+  --edge-rule:
+    linear-gradient(var(--tint-line), var(--tint-line)) 0 var(--head-h, 0px) / 1px 1px no-repeat border-box,
+    linear-gradient(var(--tint-line), var(--tint-line)) 100% var(--head-h, 0px) / 1px 1px no-repeat border-box;
+}
+
+/* The tinted parts of the modern look. */
+:root[data-background][data-look="modern"] [data-pane="sessions"] {
+  background: var(--edge-rule), linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+}
+
+:root[data-background][data-look="modern"] [data-testid="settings"] nav {
+  background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
+}
+
+:root[data-background][data-look="modern"] section[data-pane]:not([data-pane="sessions"]) > header,
+:root[data-background][data-look="modern"] [data-testid="settings"] > header {
+  background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
+}
+
+/* Beside the header row a pane's edge takes the headers' tint, and below
+   it the pane's own ground, as the edge does without a background. */
+:root[data-background][data-look="modern"] section[data-pane]:not([data-pane="sessions"], [data-pane="terminal"]) {
+  background:
+    var(--edge-rule),
+    linear-gradient(var(--tint-surf) calc(var(--head-h, 0px) + 1px), var(--pane-bg) calc(var(--head-h, 0px) + 1px))
+      border-box,
+    var(--tint-backdrop);
+}
+
+/* The status bar, in either look. */
+:root[data-background] [data-testid="status-bar"] {
+  background: linear-gradient(var(--tint-status), var(--tint-status)), var(--tint-backdrop);
+}

@@ -3,6 +3,8 @@ import type {
   IntegratedEvent,
   IntegratedEventBody,
   IntegratedFileChange,
+  IntegratedHistory,
+  IntegratedHistoryOptions,
   IntegratedImage,
   IntegratedLimitWindow,
   IntegratedPlanStep,
@@ -38,6 +40,7 @@ export type IntegratedCall =
       settings: { model?: string; mode?: string; effort?: string };
     }
   | { method: "snapshot"; id: string }
+  | { method: "history"; options: IntegratedHistoryOptions }
   | { method: "stop"; id: string };
 
 /** How the scripted agent behaves. `holding`: it takes no message while a
@@ -103,8 +106,21 @@ export interface FakeIntegrated {
     settings: { model?: string; mode?: string; effort?: string },
   ): IntegratedSettings;
   snapshot(id: string): IntegratedSnapshot;
+  /** What the agent wrote down of a conversation, as the core reads it
+      back: the messages it took, its turns with the model each ran on,
+      and what it said and did in whole, each with when; nothing of what
+      only streamed. Null for Codex, whose history is not read. */
+  history(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
+
+  /** Writes a past conversation into the transcript of `session` ahead
+      of anything said in it since. */
+  transcript(session: string, items: IntegratedHistory["items"]): void;
+  /** Holds the answer to every read of a history until `releaseHistory`;
+      what is read is what the transcript held when asked. */
+  holdHistory(): void;
+  releaseHistory(): void;
 
   /** Says anything at all for a session, under the core's rules. */
   emit(id: string, event: IntegratedEventBody): void;
@@ -278,7 +294,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     ended: boolean;
     /** The last limits event. */
     limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
+    /** When it started, for a conversation it resumed. */
+    resumedAt: number | null;
   };
+  type Written = IntegratedHistory["items"][number];
   // The core's limits on what goes to the window.
   const OUTPUT_KEEP = 64 * 1024;
   const CONTENT_KEEP = 256 * 1024;
@@ -327,6 +346,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
+  /** Each conversation's transcript, by its id. */
+  const transcripts = new Map<string, Written[]>();
+  let historyHeld: { wait: Promise<void>; release: () => void } | null = null;
   let count = 0;
   /** How deep in its own calls the fake is, and whether it is playing
       back what was kept across a reload. */
@@ -441,6 +463,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         state: null,
         ended: false,
         limits: null,
+        resumedAt: startOptions.session ? Date.now() : null,
       });
       fake.calls.push({ method: "start", options: startOptions, id });
       // Before the caller has the id, as the core's own may arrive. An
@@ -600,7 +623,34 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           return told ? [told] : [];
         }),
         limits: session.limits,
+        resumedAt: session.resumedAt,
       };
+    },
+
+    async history(historyOptions) {
+      fake.calls.push({ method: "history", options: historyOptions });
+      if (historyOptions.agent === "codex") return null;
+      // Read when asked; a held read only answers late.
+      const items = JSON.parse(JSON.stringify(transcripts.get(historyOptions.session) ?? [])) as Written[];
+      if (historyHeld !== null) await historyHeld.wait;
+      return { items, cut: false };
+    },
+
+    transcript(session, items) {
+      transcripts.set(session, [...items, ...(transcripts.get(session) ?? [])]);
+    },
+
+    holdHistory() {
+      if (historyHeld !== null) return;
+      let release = () => {};
+      const wait = new Promise<void>((resolve) => (release = resolve));
+      historyHeld = { wait, release };
+    },
+
+    releaseHistory() {
+      const held = historyHeld;
+      historyHeld = null;
+      held?.release();
     },
 
     stop(id) {
@@ -637,6 +687,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     emit(id, body) {
       const session = sessions.get(id);
       if (!session || session.ended) return;
+      const told = new Map(session.told);
       switch (body.type) {
         case "ready":
         case "configured":
@@ -764,6 +815,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           session.ended = true;
           break;
       }
+      remember(session, body, told);
       const event = { ...body, id } as IntegratedEvent;
       fake.events.push(event);
       for (const handler of handlers) handler(event);
@@ -979,6 +1031,54 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     return session;
   }
 
+  /** Writes down what the agent writes into its transcript of an event:
+      a message when a turn takes it, with what it said, the turn with the
+      model it runs on, and what is said and done in whole. */
+  function remember(session: Session, body: IntegratedEventBody, told: Map<string, Told>) {
+    const conversation = session.sessionId ?? session.ready?.sessionId;
+    if (!conversation) return;
+    let written = transcripts.get(conversation);
+    if (written === undefined) {
+      written = [];
+      transcripts.set(conversation, written);
+    }
+    const write = (event: IntegratedEventBody, model?: string | null) =>
+      written.push({ at: Date.now(), event, ...(model ? { model } : {}) });
+    const said = (message: string) => told.get(message);
+    switch (body.type) {
+      case "turnStarted":
+        for (const message of body.messages)
+          write({
+            type: "message",
+            message,
+            state: "sent",
+            error: null,
+            text: said(message)?.text ?? null,
+            images: said(message)?.images ?? [],
+          });
+        write(body, session.settings.model);
+        break;
+      case "message":
+        if (body.state === "taken")
+          write({ ...body, text: said(body.message)?.text ?? body.text, images: said(body.message)?.images ?? [] });
+        break;
+      case "text":
+      case "thinking":
+        if (body.done) write(body);
+        break;
+      case "toolInput":
+        if (body.delta === null) write(body);
+        break;
+      case "toolStarted":
+      case "toolFinished":
+      case "plan":
+      case "turnEnded":
+      case "compacted":
+        write(body);
+        break;
+    }
+  }
+
   /** A message event after the first, with nothing of what it said. */
   function movedOn(message: string, state: "taken" | "dropped") {
     return { type: "message" as const, message, state, text: null, images: [] };
@@ -998,6 +1098,15 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       if (!which(parent)) continue;
       session.open.delete(call);
       session.streamed.delete(call);
+      remember(session, {
+        type: "toolFinished",
+        call,
+        parent,
+        output: "",
+        error: true,
+        truncated: false,
+        changes: [],
+      }, new Map());
       say(id, {
         type: "toolFinished",
         call,
@@ -1092,7 +1201,11 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     const own = fake as unknown as Record<string, (...args: unknown[]) => unknown>;
     for (const name of Object.keys(own)) {
       const call = own[name];
-      if (typeof call !== "function" || name === "subscribe" || name === "snapshot") continue;
+      if (
+        typeof call !== "function" ||
+        ["subscribe", "snapshot", "history", "holdHistory", "releaseHistory"].includes(name)
+      )
+        continue;
       own[name] = (...args: unknown[]) => {
         if (depth === 0 && !replaying) {
           log.push({ name, args });

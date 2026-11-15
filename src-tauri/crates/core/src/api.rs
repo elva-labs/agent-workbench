@@ -689,6 +689,31 @@ impl Core {
         crate::integrated::snapshot(&self.integrated, id)
     }
 
+    /// What a conversation said and did before, read from where its agent
+    /// keeps it under the account whose configuration directory is given,
+    /// or the agent's own: the session's transcript in the project, or in
+    /// the folder under it the session ran in. None for an agent whose
+    /// history is not read here; empty where there is none to read.
+    pub fn integrated_history(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: &str,
+        config_dir: Option<&str>,
+    ) -> Option<crate::integrated::History> {
+        let home = self.home.as_ref()?;
+        match agent {
+            "claude-code" => Some(crate::claude_history::read_session(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                project,
+                cwd,
+                session,
+            )),
+            _ => None,
+        }
+    }
+
     /// Stops every integrated session, and waits a few seconds for them to
     /// be gone: for the end of the app or the daemon.
     pub fn integrated_stop_all(&self) {

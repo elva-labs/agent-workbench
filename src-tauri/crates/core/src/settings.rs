@@ -22,6 +22,11 @@
 //! each a token the stylesheets are written in. Only those tokens are taken,
 //! colours only as hex and measures only as pixels, so what a theme can do
 //! to the window is recolour and reshape it and nothing else.
+//!
+//! Each palette and each theme may keep a background of the user's own,
+//! by its name: one to three dots, each a hue and how much colour, a
+//! harmony, a strength and grain. Only numbers within their ranges are
+//! taken; how light it paints is the window's, for each appearance.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -106,6 +111,26 @@ pub const SHAPE_TOKENS: &[(&str, u32)] = &[
 /// How many themes the file may hold, and how long a theme's label may be.
 const MOST_THEMES: usize = 32;
 const LONGEST_LABEL: usize = 40;
+
+/// How a background's dots stand to one another: each harmony with the
+/// number of dots it holds, and free, which holds any number.
+pub const HARMONIES: &[(&str, Option<usize>)] = &[
+    ("single", Some(1)),
+    ("complementary", Some(2)),
+    ("analogous", Some(3)),
+    ("triad", Some(3)),
+    ("free", None),
+];
+/// How many dots a background has at most, and the least strength it
+/// shows at.
+const MOST_DOTS: usize = 3;
+const LEAST_STRENGTH: f64 = 0.1;
+/// What a background left without a strength or grain starts with.
+const FIRST_STRENGTH: f64 = 0.6;
+const FIRST_GRAIN: f64 = 0.25;
+/// How many backgrounds the file may hold: one for each palette and each
+/// theme, with room to spare.
+const MOST_BACKGROUNDS: usize = 64;
 
 pub fn settings_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("settings.json")
@@ -216,6 +241,9 @@ pub struct Settings {
     pub inactive_after: String,
     /// The user's own themes, by name. A palette may name one.
     pub themes: BTreeMap<String, Theme>,
+    /// The background each palette or theme keeps, by its name, with
+    /// every field filled in.
+    pub backgrounds: BTreeMap<String, Value>,
     /// Whether the user's own stylesheet is laid over the app's.
     pub user_styles: bool,
     /// Whether a session that starts waiting for the user while the window
@@ -247,6 +275,7 @@ impl Default for Settings {
             integrated: Vec::new(),
             inactive_after: "week".into(),
             themes: BTreeMap::new(),
+            backgrounds: BTreeMap::new(),
             user_styles: false,
             notifications: true,
             chime: false,
@@ -505,7 +534,14 @@ fn account(name: &str, value: &Value) -> Result<Account, String> {
 
 /// The settings that are tables of entries, read one entry at a time. The
 /// rest are single values.
-const TABLES: &[&str] = &["keys", "hooks", "accounts", "themes", "workflows"];
+const TABLES: &[&str] = &[
+    "keys",
+    "hooks",
+    "accounts",
+    "themes",
+    "backgrounds",
+    "workflows",
+];
 
 /// Whether the settings hold again the entry an unread one stands for. A
 /// whole field that was not the shape it should be is held by any value of
@@ -515,6 +551,7 @@ fn holds(settings: &Settings, entry: &UnreadEntry) -> bool {
     match (entry.field.as_str(), entry.section.as_str()) {
         ("keys", "") if !name.is_empty() => settings.keys.contains_key(name),
         ("themes", "") if !name.is_empty() => settings.themes.contains_key(name),
+        ("backgrounds", "") if !name.is_empty() => settings.backgrounds.contains_key(name),
         ("hooks", "overrides") => settings.hooks.overrides.contains_key(name),
         ("accounts", "list") => settings.accounts.list.contains_key(name),
         ("accounts", "overrides") => settings.accounts.overrides.contains_key(name),
@@ -768,6 +805,145 @@ fn themes_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<Stri
     themes
 }
 
+/// A number a background holds, within its range.
+fn within(value: Option<&Value>, least: f64, most: f64) -> Option<f64> {
+    value
+        .and_then(Value::as_f64)
+        .filter(|number| number.is_finite() && (least..=most).contains(number))
+}
+
+/// A background as the settings keep it, with what it leaves out filled
+/// in, or the reason it will not do. It is kept by the name of a palette
+/// or of a theme.
+fn background(name: &str, value: &Value) -> Result<Value, String> {
+    if !PALETTES.contains(&name) && !is_theme_name(name) {
+        return Err(format!(
+            "{name:?} is not a palette's or a theme's name, which a background is kept by"
+        ));
+    }
+    let fields = value.as_object().ok_or(format!(
+        "the background of {name} is a table of dots, a harmony, a strength and grain"
+    ))?;
+    if let Some(other) = fields
+        .keys()
+        .find(|field| !["dots", "harmony", "strength", "grain"].contains(&field.as_str()))
+    {
+        return Err(format!(
+            "a background has dots, harmony, strength and grain, not {other}"
+        ));
+    }
+    let dots = fields
+        .get("dots")
+        .and_then(Value::as_array)
+        .filter(|dots| (1..=MOST_DOTS).contains(&dots.len()))
+        .ok_or(format!(
+            "the background of {name} has one to {MOST_DOTS} dots"
+        ))?;
+    let mut kept = Vec::new();
+    for dot in dots {
+        let shape = "a dot is a hue from 0 up to 360 degrees and a chroma from 0 to 1";
+        let table = dot.as_object().filter(|table| {
+            table.len() == 2 && table.contains_key("hue") && table.contains_key("chroma")
+        });
+        let hue = table.and_then(|table| within(table.get("hue"), 0.0, 360.0));
+        let chroma = table.and_then(|table| within(table.get("chroma"), 0.0, 1.0));
+        match (table, hue, chroma) {
+            (Some(table), Some(hue), Some(_)) if hue < 360.0 => {
+                kept.push(serde_json::json!({ "hue": table["hue"], "chroma": table["chroma"] }))
+            }
+            _ => return Err(shape.to_string()),
+        }
+    }
+    let harmony = match fields.get("harmony") {
+        None => "free",
+        Some(value) => {
+            let named = value.as_str().unwrap_or_default();
+            HARMONIES
+                .iter()
+                .find(|(known, _)| *known == named)
+                .map(|(known, _)| *known)
+                .ok_or(format!(
+                    "harmony is one of {}, not {value}",
+                    HARMONIES
+                        .iter()
+                        .map(|(known, _)| *known)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))?
+        }
+    };
+    let holds = HARMONIES
+        .iter()
+        .find(|(known, _)| *known == harmony)
+        .and_then(|(_, holds)| *holds);
+    if let Some(count) = holds.filter(|count| *count != kept.len()) {
+        return Err(format!(
+            "a {harmony} harmony holds {count} {}; free holds any number",
+            if count == 1 { "dot" } else { "dots" }
+        ));
+    }
+    let strength = match fields.get("strength") {
+        None => serde_json::json!(FIRST_STRENGTH),
+        Some(given) => within(Some(given), LEAST_STRENGTH, 1.0)
+            .map(|_| given.clone())
+            .ok_or(format!("strength is from {LEAST_STRENGTH} to 1"))?,
+    };
+    let grain = match fields.get("grain") {
+        None => serde_json::json!(FIRST_GRAIN),
+        Some(given) => within(Some(given), 0.0, 1.0)
+            .map(|_| given.clone())
+            .ok_or("grain is from 0 to 1")?,
+    };
+    Ok(serde_json::json!({
+        "dots": kept,
+        "harmony": harmony,
+        "strength": strength,
+        "grain": grain,
+    }))
+}
+
+/// The backgrounds a value holds: all of them, or the reason one will not do.
+fn backgrounds(value: &Value) -> Result<BTreeMap<String, Value>, String> {
+    let table = value
+        .as_object()
+        .ok_or("backgrounds is a table of backgrounds by palette or theme")?;
+    if table.len() > MOST_BACKGROUNDS {
+        return Err(format!(
+            "the settings hold {MOST_BACKGROUNDS} backgrounds at most"
+        ));
+    }
+    table
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), background(name, value)?)))
+        .collect()
+}
+
+/// The backgrounds that read, each entry on its own; the rest are unread.
+fn backgrounds_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<String, Value> {
+    let mut kept = BTreeMap::new();
+    let Some(table) = value.as_object() else {
+        let reason = "backgrounds is a table of backgrounds by palette or theme".to_string();
+        unused(unread, "backgrounds", "", "", reason, value);
+        return kept;
+    };
+    for (name, value) in table {
+        let read = if kept.len() >= MOST_BACKGROUNDS {
+            Err(format!(
+                "the settings hold {MOST_BACKGROUNDS} backgrounds at most"
+            ))
+        } else {
+            background(name, value)
+        };
+        match read {
+            Ok(background) => {
+                kept.insert(name.clone(), background);
+            }
+            Err(reason) => unused(unread, "backgrounds", "", name, reason, value),
+        }
+    }
+    kept
+}
+
 /// The agents a value names as running integrated, each once, in the order
 /// the adapters list them, or why it will not do. Which agents can is the
 /// adapters' to say.
@@ -821,6 +997,11 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             let before = settings.clone();
             settings.themes = themes(value)?;
             mend(&before, settings, "themes");
+        }
+        "backgrounds" => {
+            let before = settings.clone();
+            settings.backgrounds = backgrounds(value)?;
+            mend(&before, settings, "backgrounds");
         }
         "userStyles" => {
             settings.user_styles = value.as_bool().ok_or("userStyles is true or false")?;
@@ -914,6 +1095,8 @@ pub fn parse(text: &str) -> Option<Settings> {
             settings.accounts = accounts_lenient(value, &mut unread);
         } else if field == "themes" {
             settings.themes = themes_lenient(value, &mut unread);
+        } else if field == "backgrounds" {
+            settings.backgrounds = backgrounds_lenient(value, &mut unread);
         } else if field == "workflows" {
             if value.is_object() && value.get("list").is_none_or(Value::is_array) {
                 settings.workflows = workflow::read_lenient(value);
@@ -945,8 +1128,8 @@ pub fn parse(text: &str) -> Option<Settings> {
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys, hooks, accounts, workflows and themes are replaced
-/// whole.
+/// fields it changes; keys, hooks, accounts, workflows, themes and
+/// backgrounds are replaced whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
@@ -2069,6 +2252,119 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("not a theme's name"), "{error}");
+    }
+
+    fn lagoon() -> Value {
+        json!({
+            "dots": [{ "hue": 192, "chroma": 0.9 }, { "hue": 252, "chroma": 0.8 }],
+            "harmony": "free",
+            "strength": 0.6,
+            "grain": 0.25
+        })
+    }
+
+    #[test]
+    fn a_palette_and_a_theme_each_keep_a_background_with_every_field_filled_in() {
+        let next = apply(
+            &Settings::default(),
+            &json!({
+                "themes": { "dusk": dusk() },
+                "backgrounds": {
+                    "teal": lagoon(),
+                    "dusk": { "dots": [{ "hue": 10.5, "chroma": 0 }] }
+                }
+            }),
+        )
+        .unwrap();
+        assert_eq!(next.backgrounds["teal"], lagoon());
+        assert_eq!(
+            next.backgrounds["dusk"],
+            json!({
+                "dots": [{ "hue": 10.5, "chroma": 0 }],
+                "harmony": "free",
+                "strength": 0.6,
+                "grain": 0.25
+            })
+        );
+        let text = serde_json::to_string(&next).unwrap();
+        assert_eq!(parse(&text).unwrap().backgrounds, next.backgrounds);
+    }
+
+    #[test]
+    fn a_background_takes_only_what_it_may_and_says_why() {
+        let bad = |background: Value| {
+            apply(
+                &Settings::default(),
+                &json!({ "backgrounds": { "teal": background } }),
+            )
+            .unwrap_err()
+        };
+        assert!(bad(json!("blue")).contains("table of dots"));
+        assert!(bad(json!({ "dots": [] })).contains("one to 3 dots"));
+        assert!(
+            bad(json!({ "dots": [{ "hue": 360, "chroma": 1 }] })).contains("hue from 0 up to 360")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1.5 }] })).contains("chroma from 0 to 1")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1, "light": 2 }] })).contains("a dot is")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1 }], "colour": 1 })).contains("not colour")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1 }], "harmony": "tetrad" }))
+                .contains("harmony is one of")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1 }], "harmony": "triad" }))
+                .contains("triad harmony holds 3 dots")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1 }], "strength": 0.05 }))
+                .contains("strength is from 0.1 to 1")
+        );
+        assert!(
+            bad(json!({ "dots": [{ "hue": 1, "chroma": 1 }], "grain": -1 }))
+                .contains("grain is from 0 to 1")
+        );
+        let error = apply(
+            &Settings::default(),
+            &json!({ "backgrounds": { "Not A Name": lagoon() } }),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("not a palette's or a theme's name"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_file_keeps_the_backgrounds_that_read_and_sets_the_rest_aside() {
+        let settings = parse(
+            r#"{ "backgrounds": { "teal": { "dots": [{ "hue": 30, "chroma": 1 }] }, "rose": { "dots": "pink" } } }"#,
+        )
+        .unwrap();
+        assert_eq!(settings.backgrounds.keys().collect::<Vec<_>>(), ["teal"]);
+        let set_aside = &settings.unread_entries[0];
+        assert_eq!(
+            (set_aside.field.as_str(), set_aside.name.as_str()),
+            ("backgrounds", "rose")
+        );
+        assert_eq!(set_aside.entry, json!({ "dots": "pink" }));
+        // Writing the backgrounds again mends the entry it names.
+        let next = apply(
+            &settings,
+            &json!({ "backgrounds": { "teal": lagoon(), "rose": lagoon() } }),
+        )
+        .unwrap();
+        assert!(next.unread_entries.is_empty());
+        // A file from before backgrounds has none.
+        assert!(parse(r#"{ "palette": "rose" }"#)
+            .unwrap()
+            .backgrounds
+            .is_empty());
     }
 
     #[test]

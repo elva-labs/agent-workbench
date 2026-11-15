@@ -1,6 +1,7 @@
 import type {
   IntegratedEventBody,
   IntegratedFileChange,
+  IntegratedHistory,
   IntegratedImage,
   IntegratedPlanStep,
   IntegratedQuestion,
@@ -31,7 +32,21 @@ import { asks, phraseText } from "$lib/thread";
  * or a subagent that a window coming late never saw start. None of these
  * is an error here: what is known is drawn, and nothing waits for what will
  * not come.
+ *
+ * What the conversation said before the window took it up, read from where
+ * the agent keeps it, comes as the same events with the time each
+ * happened, and is laid above whatever the thread already holds. What it
+ * holds twice, a call, a block or a message both read and heard, is drawn
+ * once, by its id.
  */
+
+/** Where a run of a conversation began: `at`, when, or null where no run
+    has begun since, and `since`, the time from which what was read belongs
+    to it, or null where all of it is from before. */
+export interface Run {
+  at: number | null;
+  since: number | null;
+}
 
 export type MessageState =
   /** Handed to the core, with no word back yet. */
@@ -236,6 +251,17 @@ export class Conversation {
   ended = $state<{ code: number | null; clean: boolean } | null>(null);
   /** Rebuilt from a snapshot: the turns before it are in the transcript. */
   late = $state(false);
+  /** Where reading what was said before stands: not asked for, on its
+      way, laid in the thread, or not read, for an agent whose history is
+      not read here or a read that failed. */
+  earlier = $state<"loading" | "read" | "unread" | null>(null);
+  /** What was read leaves out the start of the conversation, it being
+      too long to hold. */
+  earlierCut = $state(false);
+  /** Where this run of a conversation it resumed began: after the entry
+      with this key, or at the top while nothing before it is drawn, at
+      this time. */
+  began = $state<{ after: string | null; at: number } | null>(null);
   /** How many messages this window has sent. */
   sentHere = $state(0);
   /** A model chosen while a turn ran, which the turn after it runs on. */
@@ -340,9 +366,97 @@ export class Conversation {
     this.compacting = false;
   }
 
-  /** Every event of the session, in the order it came. */
-  apply(event: IntegratedEventBody) {
-    const now = this.#clock();
+  /** This run begins after what the thread holds now; with nothing in
+      it, there is nothing before it to set it apart from. */
+  beganHere(at: number) {
+    const last = this.entries[this.entries.length - 1];
+    this.began = last === undefined ? null : { after: last.key, at };
+  }
+
+  /** This run begins before what was said before is in: its line stands
+      at the top, what this run says goes under it, and what was said
+      before goes above it once read. */
+  beganAbove(at: number) {
+    this.began = { after: null, at };
+  }
+
+  /** What was said before was not read: no line stands for it. */
+  unread() {
+    this.earlier = "unread";
+    if (this.began?.after === null) this.began = null;
+  }
+
+  /**
+   * Lays what the conversation said and did before above what the thread
+   * holds, each event at the time it happened, and marks where `run`
+   * began: before the first of the main thread's events from its `since`
+   * on, or after all of it, where a line already stands at the top or the
+   * run has a time. A turn left open by what was read is this run's,
+   * which the session's own events and snapshot settle, unless all of it
+   * is from before, or the thread already has a turn running: then it is
+   * over, and with all of it from before its calls with no finish failed.
+   */
+  lay(history: IntegratedHistory, run: Run | null) {
+    const later = this.entries;
+    const running = this.current;
+    this.entries = [];
+    this.current = null;
+    let after: string | null | undefined;
+    for (const item of history.items) {
+      const main = !("parent" in item.event) || item.event.parent === null;
+      if (after === undefined && run !== null && run.since !== null && main && item.at >= run.since)
+        after = this.entries[this.entries.length - 1]?.key ?? null;
+      this.apply(item.event, item.at);
+      if (item.event.type === "turnStarted" && item.model !== undefined) {
+        const turn = this.turn;
+        if (turn !== null) turn.model = item.model;
+      }
+    }
+    if (after === undefined) after = this.entries[this.entries.length - 1]?.key ?? null;
+    const left = this.current;
+    this.entries = [...this.entries, ...later];
+    this.current = running;
+    if (left !== null) {
+      const over = run !== null && run.since === null;
+      if (over || running !== null || later.length > 0) this.#endRead(left, over);
+      else this.current = left;
+    }
+    if (run !== null && run.since !== null) {
+      if (after !== null) this.began = { after, at: run.at ?? run.since };
+    } else if (run !== null) {
+      const at = this.began?.after === null ? this.began.at : run.at;
+      if (at !== null) this.began = { after, at };
+    }
+    this.earlierCut = history.cut;
+    this.earlier = "read";
+    this.late = false;
+  }
+
+  /** Ends a turn that was read with no end: its blocks are whole, and
+      with `failed` its calls with no finish failed, as the core says of a
+      live session's when its turn ends. */
+  #endRead(id: number, failed: boolean) {
+    const turn = this.turns[id];
+    if (turn === undefined) return;
+    turn.endedAt = turn.endedAt ?? turn.startedAt;
+    for (const entry of this.entries) {
+      if (entry.kind !== "agent" || entry.turn !== id) continue;
+      for (const part of entry.parts) {
+        if ((part.kind === "text" || part.kind === "thinking") && !part.done) part.done = true;
+        if (failed && part.kind === "tool" && !part.done) {
+          part.done = true;
+          part.error = true;
+          part.result = part.output;
+          part.inputDone = true;
+        }
+      }
+    }
+  }
+
+  /** Every event of the session, in the order it came, at the time it
+      happened: now, unless it says. */
+  apply(event: IntegratedEventBody, at?: number) {
+    const now = at ?? this.#clock();
     switch (event.type) {
       case "ready":
         this.sessionId = event.sessionId;
