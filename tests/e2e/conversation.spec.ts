@@ -818,6 +818,45 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await expect(page.getByTestId("composer-input")).toBeFocused();
   });
 
+  test("Escape puts the tag's rules away wherever the keyboard is, and never stops the turn", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    const input = page.getByTestId("composer-input");
+    await expect(input).toBeEnabled();
+    await input.fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await agent(page, `f.startTurn("${H}");`);
+    const status = page.locator(`${AGENT} header .meta`);
+    await expect(status).toHaveText("working");
+    const rules = page.getByTestId("workflow-rules");
+    const interrupted = async () => (await calls(page)).some((call) => call.method === "interrupt");
+
+    // Opened by a click that leaves the keyboard in the composer, as a
+    // click does in the macOS webview.
+    await expect(input).toBeFocused();
+    await page.getByTestId("workflow-tag").dispatchEvent("click");
+    await expect(rules).toBeVisible();
+    await expect(input).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(rules).toHaveCount(0);
+    expect(await interrupted()).toBe(false);
+    await expect(status).toHaveText("working");
+    await expect(input).toBeFocused();
+
+    // Shown by the pointer resting on the tag, the same.
+    await page.getByTestId("workflow-tag").hover();
+    await expect(rules).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(rules).toHaveCount(0);
+    expect(await interrupted()).toBe(false);
+
+    // With no rules open, Escape is the composer's, and stops the turn.
+    await page.mouse.move(700, 500);
+    await page.keyboard.press("Escape");
+    await expect.poll(interrupted).toBe(true);
+  });
+
   test("the agent pane offers a terminal session beside New session, alone", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");

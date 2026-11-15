@@ -392,7 +392,7 @@ header's status, and the place stays whole until both have gone; only
 then is it cut short, and it goes with its tag at a letter or two, before
 the title gives way (see [layout](layout.md)). The rules for that place open in a popover under the tag when
 the pointer rests on it, or on a click, Enter or Space, and Escape puts
-them away. For the orchestrator they are its instructions. For a session
+them away wherever the keyboard is, without reaching the agent. For the orchestrator they are its instructions. For a session
 started for a step they are what the step allows, in the words of its
 settings: the models it may use, how many sessions it runs at once, and
 for a review when the work passes, and where and how often it sends the
