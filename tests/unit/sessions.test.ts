@@ -1299,17 +1299,29 @@ describe("working, and waiting for you", () => {
       expect(keysStillIn(session.key, 5000)).toBe(5000);
       vi.advanceTimersByTime(2000);
       expect(keysStillIn(session.key, 5000)).toBe(3000);
-      // Enter sends the line; Ctrl+C and Ctrl+U empty it.
+      // Enter alone is no sign the line went: the agent's prompt hook is.
       typed("pty-keys", "\r");
-      expect(drafting(session.key)).toBe(false);
-      typed("pty-keys", "more\x03");
-      expect(drafting(session.key)).toBe(false);
-      typed("pty-keys", "sent\rand more");
       expect(drafting(session.key)).toBe(true);
-      typed("pty-keys", "\x15");
+      exact("keys-id", "prompt");
       expect(drafting(session.key)).toBe(false);
-      // Backspace and the arrows may leave words; what the terminal sends
-      // on its own, focus and the mouse, is no key of the user's.
+      // A newline, by Ctrl+J, a backslash before Enter or Alt+Enter, is
+      // still the line, and the prompt hook of a turn something else began
+      // leaves it.
+      for (const keys of [["more", "\n"], ["more", "\\", "\r"], ["more", "\x1b\r"]]) {
+        for (const key of keys) typed("pty-keys", key);
+        exact("keys-id", "prompt");
+        expect(drafting(session.key)).toBe(true);
+        typed("pty-keys", "\x03");
+        expect(drafting(session.key)).toBe(false);
+      }
+      // Ctrl+U empties one line of several, and leaves the rest.
+      typed("pty-keys", "a\nb\x15");
+      expect(drafting(session.key)).toBe(true);
+      // Ctrl+C empties the line; Backspace and the arrows may leave words;
+      // what the terminal sends on its own, focus and the mouse, is no key
+      // of the user's.
+      typed("pty-keys", "\x03");
+      expect(drafting(session.key)).toBe(false);
       typed("pty-keys", "\x1b[A");
       expect(drafting(session.key)).toBe(true);
       typed("pty-keys", "\x03");

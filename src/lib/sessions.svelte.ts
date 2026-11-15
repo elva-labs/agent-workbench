@@ -1730,18 +1730,24 @@ export function isViewed(session: Session): boolean {
 /** When the user last pressed a key in each session's terminal, by the
     row's key. */
 const pressed = new Map<string, number>();
-/** The sessions whose terminal line the user's keys may have left words
-    in, by the row's key: typed into since Enter sent the line or Ctrl+C or
-    Ctrl+U emptied it. */
+/** The last two characters of the user's keys in each session's terminal,
+    by the row's key: whether the last was an Enter that sends the line. */
+const lastKeys = new Map<string, string>();
+/** The sessions whose terminal the user's keys may have left words in, by
+    the row's key: typed into since the agent last took a line in, as its
+    prompt hook says, or since Ctrl+C emptied the line. Enter is no sign the
+    line went: Ctrl+J, a backslash before Enter and Alt+Enter each add a
+    newline to the agent's input, Ctrl+U empties only the current line of
+    several, and a command such as /config opens a panel the next keys
+    would answer, with no prompt hook for any of them. */
 const drafts = $state<Record<string, true>>({});
 
 /** What a terminal sends on its own, which is no key of the user's: focus
     going in or out, and the mouse. */
 // eslint-disable-next-line no-control-regex
 const REPORT = /^\x1b\[(?:I|O|M|<)/;
-/** Enter, which sends the line, and Ctrl+C and Ctrl+U, which empty it. */
-// eslint-disable-next-line no-control-regex
-const ENDS_LINE = /[\r\n\x03\x15]/g;
+/** Ctrl+C, which empties the agent's input or closes what it has open. */
+const EMPTIES = "\x03";
 
 /** The user typed into a pty. A line sent is the agent spoken to: from
     then on what it writes back can be work. */
@@ -1751,12 +1757,31 @@ export function typed(ptyId: string, data: string) {
   if (data.includes("\r") || data.includes("\n")) session.engaged = true;
   if (REPORT.test(data)) return;
   pressed.set(session.key, Date.now());
-  // What follows the last key that ends the line is on the line now;
-  // any other key, Backspace and Escape among them, may have left words.
-  const ends = [...data.matchAll(ENDS_LINE)].at(-1);
-  const rest = ends === undefined ? data : data.slice(ends.index + 1);
-  if (ends !== undefined && rest === "") delete drafts[session.key];
+  lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
+  if (data.endsWith(EMPTIES)) delete drafts[session.key];
   else drafts[session.key] = true;
+}
+
+/** The workbench typed a line into a pty and sent it, as `send` does: the
+    agent has been spoken to, by no key of the user's, and how its last
+    turn ended no longer says it is idle. A line that sets off no prompt
+    hook, a command such as /config, leaves that unknown until a turn of
+    the agent's ends. */
+export function spokenTo(ptyId: string) {
+  const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
+  if (session === undefined) return;
+  session.engaged = true;
+  session.turnEnd = null;
+}
+
+/** The agent in a terminal took a line in, as its prompt hook says. The
+    user's keys have left nothing on its line when the last of them was an
+    Enter that sends, not one after a backslash or Escape, which adds a
+    newline. */
+function tookLine(key: string) {
+  const last = lastKeys.get(key);
+  // eslint-disable-next-line no-control-regex
+  if (last === undefined || (last.endsWith("\r") && !/[\\\x1b]\r$/.test(last))) delete drafts[key];
 }
 
 /** Whether the user's keys may have left words on a session's terminal
@@ -2001,6 +2026,7 @@ export function exact(
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
       session.note = null;
+      tookLine(session.key);
       changed(session);
       beganTurn(session);
       break;
@@ -2119,6 +2145,7 @@ export function nextNeedingYou(): Session | null {
 export function reset() {
   pendingActivity.clear();
   pressed.clear();
+  lastKeys.clear();
   for (const key of Object.keys(drafts)) delete drafts[key];
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();

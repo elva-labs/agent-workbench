@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, send, userWaiting } from "$lib/integrated.svelte";
 import { byKey, create, forProject, label, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
 import { defaultWorkflow } from "$lib/workflows.svelte";
@@ -429,6 +429,26 @@ describe("the orchestrator's tools with an integrated session", () => {
         // Told as it is sent, and its row says what woke it.
         expect(unheard(byKey(key)!)).toEqual([]);
         expect(conductor.woken[key]?.by).toEqual([{ key: kid.key, name: label(kid), rest: "quiet" }]);
+      });
+
+      it("is woken though another session started it, and not again until a turn it did not start once it has been woken WAKES_MAX times", async () => {
+        const { key, kid, handle: core } = await idle();
+        const top = create(A, null, "claude-code", null);
+        started(top.key, "pty-top", "top-1");
+        conductor.startedBy[key] = byKey(top.key)!.token;
+        for (let wake = 1; wake <= WAKES_MAX + 1; wake++) {
+          kid.working = true;
+          flushSync();
+          kid.working = false;
+          flushSync();
+          await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+          expect(wakes()).toHaveLength(Math.min(wake, WAKES_MAX));
+          if (wake > WAKES_MAX) break;
+          // The wake's turn, which it ends itself.
+          fake.turn(core, "Looked at it.");
+          flushSync();
+        }
+        expect(unheard(byKey(key)!)).toEqual([kid]);
       });
 
       it("waits while the user writes in its composer", async () => {
