@@ -446,6 +446,58 @@ for (const linux of [false, true]) {
   });
 }
 
+for (const linux of [false, true]) {
+  const platform = linux ? "as Linux" : "as the platform it runs on";
+  test.describe(`a restart in editor mode, ${platform}`, () => {
+    test("draws the widths saved from its first frame, and tells the agent no new size", async ({ page }) => {
+      if (linux) await asLinux(page);
+      await page.addInitScript(() => {
+        if (sessionStorage.getItem("seeded") !== null) return;
+        sessionStorage.setItem("seeded", "1");
+        localStorage.setItem(
+          "workbench.layout",
+          JSON.stringify({ editing: true, editTree: 300, editAgent: 500, editAgentDragged: true }),
+        );
+      });
+      await open(page, 1728);
+      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await page.getByTestId("start-agent").click();
+      const cols = () =>
+        page.evaluate(
+          () =>
+            (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
+              .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+        );
+      await expect.poll(cols).toBeGreaterThan(0);
+
+      // The tree's and the agent's widths on every frame from the start of
+      // the page that the reload brings up.
+      await page.addInitScript(() => {
+        const seen: string[] = [];
+        (window as unknown as { __widths: string[] }).__widths = seen;
+        const sample = () => {
+          const tree = document.querySelector("[data-testid='tree-column']");
+          const agent = document.querySelector("section[data-pane='agent']");
+          if (tree !== null && agent !== null) {
+            seen.push(`${Math.round(tree.getBoundingClientRect().width)}/${Math.round(agent.getBoundingClientRect().width)}`);
+          }
+          if (seen.length < 30) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      });
+      await page.reload();
+      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect.poll(cols).toBeGreaterThan(0);
+      await page.waitForTimeout(400);
+      const resizes = await page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0);
+      expect(resizes).toBe(0);
+      const widths = await page.evaluate(() => (window as unknown as { __widths: string[] }).__widths);
+      expect(widths.length).toBeGreaterThan(0);
+      expect(new Set(widths).size).toBe(1);
+    });
+  });
+}
+
 test.describe("the flip back onto what was presented", () => {
   test("lands in reviewing in one step, the viewer's column at its width at once", async ({ page }) => {
     await open(page, 1728);

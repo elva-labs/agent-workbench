@@ -723,6 +723,10 @@ export function loadLayout() {
     const editAgentDragged = dragged(v.editAgentDragged, v.editAgent, DEFAULT.editAgent);
     layout.editAgent = editAgentDragged ? v.editAgent : defaultEditAgent();
     layout.editAgentDragged = editAgentDragged;
+    // Drawn as read until the layout is laid out for the window, so the
+    // first frame after a restart draws them, not the defaults.
+    layout.editTreeDrawn = layout.editTree;
+    layout.editAgentDrawn = layout.editAgent;
     if (typeof v.agentChosen === "boolean") layout.agentChosen = v.agentChosen;
     if (v.editing === true) layout.mode = "editing";
     if (typeof v.reviewTouched === "boolean")

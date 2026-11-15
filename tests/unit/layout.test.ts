@@ -1173,3 +1173,15 @@ describe("a width the window squeezes while editing", () => {
     expect(layout.editTreeDrawn).toBe(drawn - 10);
   });
 });
+
+describe("the editing widths read across a restart", () => {
+  it("are drawn as read until the layout is laid out for the window", () => {
+    localStorage.setItem(
+      "workbench.layout",
+      JSON.stringify({ editing: true, editTree: 300, editAgent: 500, editAgentDragged: true }),
+    );
+    loadLayout();
+    expect(layout.editTreeDrawn).toBe(300);
+    expect(layout.editAgentDrawn).toBe(500);
+  });
+});
