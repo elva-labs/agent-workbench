@@ -18,7 +18,13 @@
        yes lets this one through. -->
   <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
-    <p class="where" data-testid="conduct-round">{roundQuestion(ask.round)}</p>
+    <p class="where">
+      In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
+      {#if ask.named !== null}
+        <span data-testid="conduct-account">{accountWords(ask.named)}</span>
+      {/if}
+      <span data-testid="conduct-round">{roundQuestion(ask.round)}</span>
+    </p>
     {#if ask.prompt !== ""}<p class="prompt">{ask.prompt}</p>{/if}
     <div class="actions">
       <button class="go" onclick={() => answer(once)} data-testid="conduct-allow-round">Allow one more round</button>

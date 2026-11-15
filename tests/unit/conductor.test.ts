@@ -60,6 +60,8 @@ import {
   reset as resetAccounts,
 } from "$lib/accounts.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
+import { render } from "@testing-library/svelte";
+import ConductAsk from "$lib/components/ConductAsk.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
@@ -2780,6 +2782,49 @@ describe("starting in a workflow's shape", () => {
       expect(last().content).toContain(
         `Started session w1 for step "Work" in ${B}, under the Home account.`,
       );
+    });
+
+    it("is named on the question for a round past the limit, with the project", async () => {
+      const C = "/home/ada/dev/three";
+      workspace.open.push(repo(C));
+      accounts.overrides[B] = "Home";
+      accounts.overrides[C] = "Home";
+      orchestratingAs("Work", limitOne());
+      await asked({ step: "Work" }, "w1");
+      for (const round of [1, 2]) {
+        await asked({ step: "Review", work: "w1" }, `r${round}`);
+        ended({ id: `pty-r${round}`, code: 0, clean: true });
+        flushSync();
+      }
+      expect(allowedProjects("orch")).toEqual([B]);
+
+      // A third review, in a project the caller was never allowed, under
+      // an account that is not that project's.
+      const answering = handle(from({ step: "Review", work: "w1", project: C }));
+      await settle();
+      expect(conductor.asking?.round?.done).toBe(2);
+      expect(conductor.asking?.project).toBe(C);
+      const card = render(ConductAsk);
+      expect(card.getByTestId("conduct-ask").textContent?.replace(/\s+/g, " ").trim()).toContain(
+        `In ${C}. Under the Work account, not the project's own. Review has run twice on`,
+      );
+      expect(card.getByTestId("conduct-account")).toHaveTextContent(
+        "Under the Work account, not the project's own.",
+      );
+      once();
+      flushSync();
+      card.unmount();
+      await settle();
+      const row = forProject(C).at(-1)!;
+      started(row.key, "pty-r3", "r3");
+      flushSync();
+      await answering;
+      expect(row.account).toBe("Work");
+      expect(last().content).toContain(
+        `for step "Review" round 3, reviewing session w1 in ${C}, under the Work account.`,
+      );
+      // One round allowed is no standing answer.
+      expect(allowedProjects("orch")).toEqual([B]);
     });
 
     it("is checked against the agent the step chooses", async () => {
