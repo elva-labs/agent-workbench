@@ -207,9 +207,15 @@ control a stop as it is drawn, by one rule for the whole window:
   terminal panel's list and its tools come before its shells, so they are
   reached first.
 - **A dialog, the palette and a question in a strip keep Tab inside**: past
-  the last stop it comes round to the first. A pane that is narrowed away,
-  hidden, or under a dialog takes no Tab, and a peeked sessions pane goes
-  back when Tab leaves it rather than let Tab reach the pane under it.
+  the last stop it comes round to the first. A question in a strip is one
+  put in a pane before something is taken away, such as closing a tab with
+  unsaved edits; it takes the keyboard when it opens. The questions shown
+  over the agent pane, whether an agent may start a session or change a
+  setting, take neither the keyboard nor Tab: the keyboard stays with the
+  agent, and their buttons are stops in reading order. A pane that is
+  narrowed away, hidden, or under a dialog takes no Tab, and a peeked
+  sessions pane goes back when Tab leaves it rather than let Tab reach the
+  pane under it.
 - **Wherever Tab lands is drawn** in the look's own way: a ring in the
   accent, a list's cursor on its row, a splitter's line lit, a field's
   caret.
@@ -365,8 +371,8 @@ the editor.
 The name field in the tree, the row menu and the confirm strips over the
 editor and the tree hold the keyboard while they are up: the arrows walk the
 menu, <kbd>Enter</kbd> picks or makes, <kbd>Esc</kbd> backs out, and the
-strips start on Cancel. When they go, the keyboard goes back to the tree or
-the editor it came from.
+strips start on Cancel. When they go, the keyboard goes back to the tree,
+the editor or the tab row it came from.
 
 ## What focus looks like
 

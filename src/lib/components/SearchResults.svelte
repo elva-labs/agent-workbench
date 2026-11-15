@@ -67,7 +67,10 @@
     </div>
     {#each group.hits as hit (hit.line)}
       {@const p = parts(hit.text)}
-      <button class="hit" role="option" aria-selected="false" onclick={() => onOpen(hit.path, hit.line)} data-testid="search-hit">
+      <!-- No hit is ever chosen, so none says it is not, which a screen
+           reader would read out on each. -->
+      <!-- svelte-ignore a11y_role_has_required_aria_props -->
+      <button class="hit" role="option" onclick={() => onOpen(hit.path, hit.line)} data-testid="search-hit">
         <span class="num">{hit.line}</span>
         <span class="text">{p.before}<mark>{p.match}</mark>{p.after}</span>
       </button>

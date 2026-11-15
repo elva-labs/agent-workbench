@@ -165,8 +165,10 @@ test("presses a header button by Enter, and walks its menu with the arrows", asy
 
 test("walks the lines found as one stop, with Up and Down", async ({ page }) => {
   await open(page);
+  // A mode picked with the pointer is for typing in: the field has the keyboard.
   await page.getByTestId("mode-lines").click();
-  await page.getByTestId("search-field").fill("use std");
+  await expect(page.getByTestId("search-field")).toBeFocused();
+  await page.keyboard.type("use std");
   await expect(page.getByTestId("search-hit")).toHaveCount(3);
   await page.getByTestId("search-field").focus();
   expect(await walk(page, "Tab", 3)).toEqual(["mode-lines", "changes-menu", "search-hit"]);
@@ -315,6 +317,13 @@ test("walks a dialog's own buttons round its ends", async ({ page }) => {
   await expect(page.getByTestId("remote-token")).toBeFocused();
   expect(await walk(page, "Tab", 5)).toEqual(["remote-pair", "remote-host", "remote-connect", "remote-close", "remote-token"]);
   expect(await walk(page, "Shift+Tab", 2)).toEqual(["remote-close", "remote-connect"]);
+  // Connecting puts the folders in place of the fields, with the keyboard.
+  await page.getByTestId("remote-host").fill("lab");
+  await page.getByTestId("remote-connect").focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("remote-dir").first()).toBeFocused();
+  await expect.poll(() => ringed(page)).toBe(true);
+  expect(await walk(page, "Tab", 2)).toEqual(["remote-open", "remote-close"]);
 });
 
 test("keeps Tab in the palette's field", async ({ page }) => {
@@ -407,6 +416,24 @@ test("goes round a question in a strip, starting on Cancel", async ({ page }) =>
   expect(await walk(page, "Shift+Tab", 1)).toEqual([round[1]]);
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("close-unsaved")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toBeFocused();
+
+  // Asked by Delete on the tab row, it gives the keyboard back to the row.
+  const tab = page.locator("[data-testid='editor-tab'][data-path='README.md']");
+  await page.getByTestId("search-field").focus();
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Shift+Tab");
+  await expect(tab).toBeFocused();
+  await page.keyboard.press("Delete");
+  await expect(page.getByTestId("close-unsaved-cancel")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("close-unsaved")).toHaveCount(0);
+  await expect(tab).toBeFocused();
+  await expect.poll(() => ringed(page)).toBe(true);
+  await page.keyboard.press("Delete");
+  await page.getByTestId("close-unsaved-confirm").click();
+  await expect(page.getByTestId("editor-tab")).toHaveCount(0);
+  await expect(page.locator(TREE)).toBeFocused();
 });
 
 test("reaches the terminal panel's own controls before its shell", async ({ page }) => {

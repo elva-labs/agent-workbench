@@ -101,20 +101,35 @@
     e.preventDefault();
   }
 
-  /** The keyboard stays on the row, on the tab that comes to the front, or
-      goes to the tree when none is left; a question about unsaved edits
-      takes it instead. */
-  async function closeByKey(key: string) {
-    closeTab(key);
-    await tick();
-    const holder = document.activeElement;
-    if (holder !== null && holder !== document.body) return;
+  /** The keyboard on the row, on the tab in front, or in the tree when
+      no tab is left. */
+  function toRow() {
     const next =
       strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
       strip?.querySelector<HTMLElement>('[role="tab"]');
     if (next) next.focus();
     else focusFiles("tree");
   }
+
+  /** The keyboard stays on the row, on the tab that comes to the front, or
+      goes to the tree when none is left; a question about unsaved edits
+      takes it instead, and gives it back to the row once answered. */
+  async function closeByKey(key: string) {
+    closeTab(key, true);
+    await tick();
+    const holder = document.activeElement;
+    if (holder !== null && holder !== document.body) return;
+    toRow();
+  }
+
+  // A question asked from the row was answered: the keyboard comes back.
+  let answered = editor.rowRequests;
+  $effect(() => {
+    const asks = editor.rowRequests;
+    if (asks === answered) return;
+    answered = asks;
+    void tick().then(toRow);
+  });
 
   function onAuxClick(e: MouseEvent, key: string) {
     if (e.button !== 1) return;

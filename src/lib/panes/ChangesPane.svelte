@@ -411,6 +411,14 @@
     }
   });
 
+  /** A mode picked with the pointer is for typing in: the keyboard goes to
+      the field, and stays there when it was there. Picked from the
+      keyboard, it stays on the modes, as in any radio group. */
+  function pickMode(e: MouseEvent, mode: "files" | "lines") {
+    setMode(mode);
+    if (e.detail > 0) field?.focus();
+  }
+
   function onFieldKeydown(e: KeyboardEvent) {
     if (e.key === "Escape") {
       // Once to clear, once more to leave, as the field's own convention.
@@ -1421,7 +1429,8 @@
           role="radio"
           aria-checked={files.mode === "files"}
           class:on={files.mode === "files"}
-          onclick={() => setMode("files")}
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={(e) => pickMode(e, "files")}
           title="Narrow the tree to paths holding the text ({describe(chordFor('find'))})"
           data-testid="mode-files">files</button
         >
@@ -1429,7 +1438,8 @@
           role="radio"
           aria-checked={files.mode === "lines"}
           class:on={files.mode === "lines"}
-          onclick={() => setMode("lines")}
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={(e) => pickMode(e, "lines")}
           title="Search inside the files ({describe(chordFor('findLines'))})"
           data-testid="mode-lines">lines</button
         >

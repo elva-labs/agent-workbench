@@ -113,7 +113,9 @@ export interface Buffer {
 /** A question put over the editor before something is lost: closing a
     tab with unsaved edits, or the window or the app with any. */
 export type Ask =
-  | { kind: "close"; key: string }
+  /** Closing a tab with unsaved edits; `fromRow` when a key on the tab row
+      asked, so the keyboard goes back there once it is answered. */
+  | { kind: "close"; key: string; fromRow?: boolean }
   /** The core's question numbered `generation`, about the window or the app. */
   | { kind: "leave"; leave: "window" | "quit"; generation: number };
 
@@ -149,6 +151,9 @@ export const editor = $state({
   size: DEFAULT_SIZE as number,
   /** The question over the editor, if one is up. */
   asking: null as Ask | null,
+  /** Counts the asks for the keyboard on the tab row, on the tab in front:
+      a question asked from the row was answered. */
+  rowRequests: 0,
   /** The disk's version shown against the editor's, for the file in front
       when it changed on disk under unsaved edits. */
   comparing: false,
@@ -467,12 +472,12 @@ export function keep(key: string) {
 
 /** Closes a tab, bringing the one beside it to the front. A tab whose
     file has unsaved edits that no other session has open asks first. */
-export function closeTab(key: string) {
+export function closeTab(key: string, fromRow = false) {
   const at = editor.tabs.findIndex((tab) => tabKey(tab) === key);
   if (at === -1) return;
   if (editor.buffers[key]?.dirty && !stillOpenElsewhere(key)) {
     editor.active = key;
-    editor.asking = { kind: "close", key };
+    editor.asking = fromRow ? { kind: "close", key, fromRow } : { kind: "close", key };
     void showInViewer();
     return;
   }
@@ -495,6 +500,13 @@ function dropTab(key: string) {
   void showInViewer();
 }
 
+/** The keyboard goes back to where a question was asked from: the tab
+    row, or else the editor. */
+function backFrom(asked: Ask | null) {
+  if (asked?.kind === "close" && asked.fromRow === true) editor.rowRequests += 1;
+  else focusFiles("editor");
+}
+
 /** The confirm strip's answer to closing a tab with unsaved edits. */
 export function closeWithoutSaving() {
   const asked = editor.asking;
@@ -503,7 +515,7 @@ export function closeWithoutSaving() {
   const buffer = editor.buffers[asked.key];
   if (buffer !== undefined && !stillOpenElsewhere(asked.key)) buffer.dirty = false;
   dropTab(asked.key);
-  focusFiles("editor");
+  backFrom(asked);
 }
 
 export async function saveAndClose() {
@@ -511,13 +523,14 @@ export async function saveAndClose() {
   if (asked?.kind !== "close") return;
   editor.asking = null;
   if (await save(asked.key)) dropTab(asked.key);
-  focusFiles("editor");
+  backFrom(asked);
 }
 
-/** Puts the question away, and the keyboard back in the editor. */
+/** Puts the question away, and the keyboard back where it was asked. */
 export function cancelAsk() {
+  const asked = editor.asking;
   editor.asking = null;
-  focusFiles("editor");
+  backFrom(asked);
 }
 
 /** Whether a session not on screen has a tab on the buffer. */
