@@ -808,6 +808,18 @@ pub struct Launch<'a> {
     pub tool_server: Option<&'a Path>,
     /// Whether the session directs the others.
     pub orchestrator: bool,
+    /// What a session that follows a workflow is told: the workflow's
+    /// instructions, added to what the agent tells itself, from the first
+    /// turn and on every resume.
+    pub instructions: Option<&'a str>,
+    /// Whether the agent's own ways of handing work to agents the user
+    /// cannot see are taken away, so that the workbench's start tool is the
+    /// one way the session delegates.
+    pub start_only: bool,
+    /// For a resumed session, whether what it is told now differs from what
+    /// its conversation was first given, no instructions at all among
+    /// them, so an agent that records what it was first told lets go of it.
+    pub afresh: bool,
 }
 
 /// How one agent is started and spoken to as an integrated session.
@@ -3825,6 +3837,9 @@ mod tests {
             config_dir: None,
             tool_server: None,
             orchestrator: false,
+            instructions: None,
+            start_only: false,
+            afresh: false,
         };
         let sessions = Arc::new(Sessions::default());
         for (session, said) in [(None, None), (Some("resumed"), Some("resumed".to_string()))] {

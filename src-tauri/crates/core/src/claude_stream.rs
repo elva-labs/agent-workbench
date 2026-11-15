@@ -19,7 +19,8 @@ use std::time::Instant;
 use serde_json::{json, Value};
 
 use crate::adapter::{
-    prepare_process, process, CLAUDE_CONFIG_VAR, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR,
+    prepare_process, process, CLAUDE_CONFIG_VAR, CLAUDE_SUBAGENT_TOOLS, ORCHESTRATOR_ROLE,
+    ROLE_VAR, SESSION_VAR,
 };
 use crate::env::find_on_path;
 use crate::hook;
@@ -158,6 +159,23 @@ impl Protocol for ClaudeStream {
             command.args(["--session-id", session]);
         }
         let mut files = Vec::new();
+        // A session that follows a workflow is started as a terminal one
+        // is: its own ways to hand work out taken away, a list another flag
+        // ends, and the instructions read from a file of the session's own,
+        // so no line of them passes through a command interpreter.
+        if launch.start_only {
+            command.arg("--disallowedTools").args(CLAUDE_SUBAGENT_TOOLS);
+        }
+        if let Some(instructions) = launch.instructions {
+            let file = private_file("told", "md");
+            write_private(&file, instructions.as_bytes())
+                .map_err(|e| format!("could not write {}: {e}", file.display()))?;
+            command.arg("--append-system-prompt-file").arg(&file);
+            files.push(file);
+        }
+        if launch.resume && launch.afresh {
+            command.args(["--system-prompt-snapshot", "off"]);
+        }
         if let Some(server) = launch.tool_server {
             let config = json!({
                 "mcpServers": {
@@ -169,14 +187,14 @@ impl Protocol for ClaudeStream {
                 }
             });
             // A file of the session's own rather than an argument, so that
-            // no JSON passes through a command interpreter. Its name cannot
-            // be guessed, it is made new, and only its owner can read it.
-            let file = std::env::temp_dir().join(format!(
-                "agent-workbench-mcp-{}.json",
-                uuid::Uuid::new_v4().simple()
-            ));
-            write_private(&file, config.to_string().as_bytes())
-                .map_err(|e| format!("could not write {}: {e}", file.display()))?;
+            // no JSON passes through a command interpreter.
+            let file = private_file("mcp", "json");
+            write_private(&file, config.to_string().as_bytes()).map_err(|e| {
+                for written in &files {
+                    let _ = std::fs::remove_file(written);
+                }
+                format!("could not write {}: {e}", file.display())
+            })?;
             // Last, since the flag takes as many values as follow it.
             command.arg("--mcp-config").arg(&file);
             files.push(file);
@@ -226,6 +244,15 @@ impl Protocol for ClaudeStream {
     ) -> Result<(), String> {
         hook::claude_trust(&state_file(home, config_dir, env), folder)
     }
+}
+
+/// Where a file of one session's own goes: a name that cannot be guessed,
+/// in the system's temporary folder. It goes when the session ends.
+fn private_file(what: &str, extension: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "agent-workbench-{what}-{}.{extension}",
+        uuid::Uuid::new_v4().simple()
+    ))
 }
 
 /// Writes a file that must not exist yet, readable by its owner alone.

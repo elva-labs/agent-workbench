@@ -23,6 +23,9 @@ fn launch_with<'a>(
         config_dir: None,
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     adjust(&mut launch);
     AppServer::new(&launch)
@@ -181,6 +184,34 @@ fn completed(status: &str) -> Value {
         json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": status, "items": [],
                "durationMs": 547, "error": null}}),
     )
+}
+
+#[test]
+fn a_setting_as_codex_spells_it_goes_into_the_thread_s_configuration_as_tables() {
+    let mut config = Map::new();
+    config.insert("model_reasoning_effort".into(), json!("low"));
+    for setting in CODEX_NO_SUBAGENTS {
+        set(&mut config, setting);
+    }
+    // One that names a table another setting made goes into it; one whose
+    // path runs through a value replaces the value with a table, as Codex
+    // does with a setting on its command line.
+    set(&mut config, "model_reasoning_effort.x=1");
+    set(&mut config, "features.web_search=true");
+    // One that does not read is left out.
+    set(&mut config, "features.broken=not json");
+    set(&mut config, "no value");
+    assert_eq!(
+        Value::Object(config),
+        json!({
+            "model_reasoning_effort": {"x": 1},
+            "features": {
+                "multi_agent": false,
+                "multi_agent_v2": {"disable_native_tools": true},
+                "web_search": true,
+            },
+        })
+    );
 }
 
 #[test]
@@ -1718,6 +1749,9 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         config_dir: Some(&home),
         tool_server: None,
         orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
     };
     let prepared = CODEX_APP_SERVER.command(&launch).unwrap();
     assert!(prepared.files.is_empty());
@@ -1832,6 +1866,7 @@ const USES: &[(&str, &str, &[&str])] = &[
         &["read-only", "workspace-write", "danger-full-access"],
     ),
     ("request thread/start", "config", &[]),
+    ("request thread/start", "developerInstructions", &[]),
     ("request thread/resume", "threadId", &[]),
     ("request thread/resume", "excludeTurns", &[]),
     ("request thread/resume", "cwd", &[]),
@@ -1848,6 +1883,7 @@ const USES: &[(&str, &str, &[&str])] = &[
         &["read-only", "workspace-write", "danger-full-access"],
     ),
     ("request thread/resume", "config", &[]),
+    ("request thread/resume", "developerInstructions", &[]),
     ("response thread/start", "thread.id", &[]),
     ("response thread/start", "model", &[]),
     ("response thread/start", "reasoningEffort", &[]),

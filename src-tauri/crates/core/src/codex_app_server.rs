@@ -30,7 +30,8 @@ use std::time::Instant;
 use serde_json::{json, Map, Value};
 
 use crate::adapter::{
-    prepare_process, process, CODEX_HOME_VAR, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR,
+    prepare_process, process, CODEX_HOME_VAR, CODEX_NO_SUBAGENTS, ORCHESTRATOR_ROLE, ROLE_VAR,
+    SESSION_VAR,
 };
 use crate::env::find_on_path;
 use crate::hook;
@@ -649,6 +650,11 @@ struct AppServer {
     /// server is given.
     token: Option<String>,
     orchestrator: bool,
+    /// A workflow's instructions, given as developer instructions in the
+    /// thread's start or resume.
+    instructions: Option<String>,
+    /// Whether Codex's own subagent tools are turned off for the thread.
+    start_only: bool,
 
     next: i64,
     sent: HashMap<i64, Sent>,
@@ -1058,6 +1064,34 @@ fn questions(params: &Value) -> (Vec<Question>, Vec<String>) {
         .unzip()
 }
 
+/// Puts a setting, as Codex spells one on its command line, `a.b=value`,
+/// into a thread's configuration as the tables its name spells. One that
+/// does not read is left out.
+fn set(config: &mut Map<String, Value>, setting: &str) {
+    let Some((path, value)) = setting.split_once('=') else {
+        return;
+    };
+    let Ok(value) = serde_json::from_str::<Value>(value) else {
+        return;
+    };
+    let mut keys: Vec<&str> = path.split('.').collect();
+    let Some(last) = keys.pop() else {
+        return;
+    };
+    let mut table = config;
+    for key in keys {
+        let entry = table.entry(key).or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        let Some(inner) = entry.as_object_mut() else {
+            return;
+        };
+        table = inner;
+    }
+    table.insert(last.to_string(), value);
+}
+
 impl AppServer {
     fn new(launch: &Launch) -> Self {
         Self {
@@ -1072,6 +1106,8 @@ impl AppServer {
             tool_server: launch.tool_server.map(Path::to_path_buf),
             token: launch.token.map(str::to_string),
             orchestrator: launch.orchestrator,
+            instructions: launch.instructions.map(str::to_string),
+            start_only: launch.start_only,
             next: 0,
             sent: HashMap::new(),
             version: None,
@@ -1197,9 +1233,21 @@ impl AppServer {
             params["approvalPolicy"] = json!(mode.approval);
             params["sandbox"] = json!(mode.sandbox);
         }
+        // A workflow's instructions go in the message that starts or resumes
+        // the thread, never on a command line, so nothing cuts them short.
+        if let Some(instructions) = &self.instructions {
+            params["developerInstructions"] = json!(instructions);
+        }
         let mut config = Map::new();
         if let Some(effort) = &self.start_effort {
             config.insert("model_reasoning_effort".into(), json!(effort));
+        }
+        // The same settings a terminal session under a workflow is started
+        // with, as the tables their names spell.
+        if self.start_only {
+            for setting in CODEX_NO_SUBAGENTS {
+                set(&mut config, setting);
+            }
         }
         if let Some(server) = &self.tool_server {
             let mut env = Map::new();
