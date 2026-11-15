@@ -409,7 +409,7 @@
         {:else if shown !== null && shown.harmony === "free" && shown.dots.length > 1}
           Free: each colour moves on its own.
         {:else if shown !== null && shown.dots.length > 1}
-          Minus takes away the marked colour.
+          Minus removes the marked colour.
         {/if}
       </span>
     </div>
@@ -647,11 +647,13 @@
     outline-offset: 4px;
   }
 
+  /* The plus and the minus, and under them a line about the pad when it
+     has something to say. */
   .dots-tools {
     display: flex;
-    align-items: flex-start;
+    flex-wrap: wrap;
+    align-items: center;
     gap: 4px;
-    min-height: 34px;
   }
 
   .tool {
@@ -696,7 +698,7 @@
   }
 
   .word {
-    padding: 2px 0 0 4px;
+    flex: 1 0 100%;
     font-size: 11.5px;
     line-height: 1.35;
     color: var(--ink-3);
@@ -947,8 +949,6 @@
     box-shadow: 0 0 0 2px var(--accent);
   }
 
-  input[type="range"]:disabled {
-    opacity: 0.45;
   /* A contrast theme leaves out the colours a slider is drawn with here,
      so the system draws the sliders itself. */
   @media (forced-colors: active) {
@@ -960,6 +960,8 @@
     }
   }
 
+  input[type="range"]:disabled {
+    opacity: 0.45;
     cursor: default;
   }
 

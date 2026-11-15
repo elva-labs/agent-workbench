@@ -123,7 +123,7 @@ test("adds and removes a colour, and the last one taken away leaves none", async
   // The one the minus takes is marked on the pad and named by the minus.
   await expect(page.getByTestId("background-dot").nth(2)).toHaveClass(/chosen/);
   await expect(page.getByTestId("background-remove")).toHaveAccessibleName("Remove colour 3");
-  await expect(page.getByTestId("background-word")).toContainText("Minus takes away the marked colour");
+  await expect(page.getByTestId("background-word")).toContainText("Minus removes the marked colour");
   for (const left of [2, 1, 0]) {
     await page.getByTestId("background-remove").click();
     await expect(page.getByTestId("background-dot")).toHaveCount(left);
