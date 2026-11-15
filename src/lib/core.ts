@@ -635,6 +635,8 @@ export interface SessionEvent {
   kind: "prompt" | "stop" | "delegated" | "permission" | "idle";
   /** With a stop, the first line of what the agent last said. */
   note?: string;
+  /** With a stop, that the user cut the turn short. */
+  cut?: boolean;
 }
 
 /** A place in a file the agent asked to show, through the daemon's MCP

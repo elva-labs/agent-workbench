@@ -13,6 +13,10 @@ import {
   OUTCOME_ASK,
   REPORTS_HEAD,
   USER_WROTE,
+  KEEP_WAITING,
+  WAIT_EARLY,
+  WAKE_AFTER,
+  WAKE_QUIET,
   accountWords,
   allow,
   allowedProjects,
@@ -59,6 +63,7 @@ import {
   reset as resetSessions,
   sessions,
   started as cameUp,
+  typed,
   WORK_BYTES,
   WORK_WINDOWS,
   type Session,
@@ -94,6 +99,8 @@ let worktreeFails: string | null = null;
 /** An answer the core will not leave, as for a prompt hook that stopped
     waiting. */
 let answerRefused: string | null = null;
+/** A pty the core cannot write to, as one whose process has gone. */
+let writeFails: string | null = null;
 /** The worktrees each project has, as the core lists them. */
 let standing: Record<string, string[]> = {};
 /** The past sessions each project's agents list. */
@@ -125,6 +132,7 @@ vi.mock("$lib/core", () => ({
       }));
     },
     async write(id: string, data: string) {
+      if (id === writeFails) throw "the process has gone";
       written.push([id, data]);
     },
     async kill(id: string) {
@@ -309,6 +317,7 @@ beforeEach(() => {
   worktrees.length = 0;
   worktreeFails = null;
   answerRefused = null;
+  writeFails = null;
   standing = {};
   past = {};
   calls = 0;
@@ -1901,6 +1910,231 @@ describe("what a starter's row says it has to read", () => {
   }
 });
 
+describe("waking an idle starter", () => {
+  /** A starter in a terminal that ended its last turn itself, as its hooks
+      say. */
+  function idleStarter(id = "caller-1", ptyId = "pty-0") {
+    const row = live(A, ptyId, id);
+    exact(id, "prompt");
+    exact(id, "stop");
+    flushSync();
+    return row;
+  }
+
+  /** A session the starter started, at work. */
+  function atWork(ptyId: string, id: string, caller = "caller-1") {
+    const row = own(A, ptyId, id, caller);
+    row.working = true;
+    flushSync();
+    return row;
+  }
+
+  function stops(row: Session, note: string | null = null) {
+    row.working = false;
+    row.note = note;
+    flushSync();
+  }
+
+  /** Everything typed into a pty, joined. */
+  const typedInto = (ptyId: string) =>
+    written
+      .filter(([id]) => id === ptyId)
+      .map(([, data]) => data)
+      .join("");
+
+  /** The wake's time, and the time it takes to type a long line in pieces
+      and send it. */
+  const wakeGoes = () => vi.advanceTimersByTimeAsync(WAKE_AFTER + 2000);
+
+  it("types into an idle starter what a wait would have said, as the workbench's, on one line", async () => {
+    const starter = idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    stops(kid, "the cache is fixed");
+    expect(unheard(starter)).toEqual([kid]);
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER - 1);
+    expect(typedInto("pty-0")).toBe("");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 stopped working. Its last line: the cache is fixed\r`,
+    );
+    // Its row says so, and what it was woken for counts as told: the row
+    // has nothing unheard, its prompt hook has nothing to add, and a wait
+    // does not say it again.
+    expect(conductor.woken[starter.key]?.by.map((by) => by.key)).toEqual([kid.key]);
+    expect(unheard(starter)).toEqual([]);
+    await handle(call("prompt", { agentSession: "caller-1" }, { session: "caller-1" }));
+    expect(last().content).toBe("");
+    const again = handle(call("wait", { seconds: 5 }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    await again;
+    expect(last().content).toContain("Nothing happened");
+  });
+
+  it("puts sessions that come to rest close together in one message, and names the ones still at work", async () => {
+    idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    atWork("pty-3", "sid-3");
+    stops(one);
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER / 2);
+    exact("sid-2", "permission");
+    flushSync();
+    expect(two.needs).toBe("permission");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 stopped working. It has left no line. | Session sid-2 is asking for permission. It has left no line. | Still at work: sid-3. Call wait to hear from them.\r`,
+    );
+    expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(1);
+  });
+
+  it("leaves a starter that is working, waiting or asking alone, and wakes it once its turn ends", async () => {
+    const starter = idleStarter();
+    exact("caller-1", "prompt");
+    const kid = atWork("pty-1", "sid-1");
+    stops(kid);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe("");
+    // Asking the user for a permission is no time to type either.
+    exact("caller-1", "permission");
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe("");
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    expect(starter.turnEnd).toBe("done");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+  });
+
+  it("leaves a starter holding a wait to hear it from the wait", async () => {
+    idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    const waiting = handle(call("wait", {}, { session: "caller-1" }));
+    await settle();
+    stops(kid);
+    await waiting;
+    expect(last().content).toBe("Session sid-1 stopped working. It has left no line.");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe("");
+  });
+
+  it("does not wake a starter whose turn the user cut short, until a turn of theirs has ended", async () => {
+    const starter = live(A, "pty-0", "caller-1");
+    // The user's Escape ends a turn and fires no hook: the screen went
+    // still while the hooks said working.
+    exact("caller-1", "prompt");
+    starter.working = false;
+    flushSync();
+    const kid = atWork("pty-1", "sid-1");
+    stops(kid);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe("");
+    // An agent that says the user cut its turn short is not woken either.
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop", null, true);
+    flushSync();
+    expect(starter.turnEnd).toBe("cut");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe("");
+    // The user writes to it, and its turn ends as the agent ends it.
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+  });
+
+  it("never types while the user has words on the starter's line, nor straight after a key of theirs", async () => {
+    idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    typed("pty-0", "fix th");
+    stops(kid);
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER + WAKE_QUIET + 5000);
+    expect(typedInto("pty-0")).toBe("");
+    // Ctrl+U empties the line; the wake waits for the keys to be still.
+    typed("pty-0", "\x15");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+    expect(typedInto("pty-0")).toBe("");
+    await vi.advanceTimersByTimeAsync(WAKE_QUIET - WAKE_AFTER + 2000);
+    expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+  });
+
+  it("does not wake a starter again for what it was woken for", async () => {
+    const starter = idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    stops(kid);
+    await wakeGoes();
+    // The wake's turn, which ends with nothing new from the session.
+    exact("caller-1", "prompt");
+    flushSync();
+    expect(conductor.woken[starter.key]).toBeDefined();
+    exact("caller-1", "stop");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(1);
+    // Its mark stays through the wake's turn, and goes with the user's.
+    expect(conductor.woken[starter.key]).toBeDefined();
+    exact("caller-1", "prompt");
+    flushSync();
+    expect(conductor.woken[starter.key]).toBeUndefined();
+    // The session coming to rest again is news, and wakes it again.
+    exact("caller-1", "stop");
+    kid.working = true;
+    flushSync();
+    stops(kid);
+    await wakeGoes();
+    expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(2);
+  });
+
+  it("never wakes a session another started, so two that started each other cannot wake each other", async () => {
+    const one = idleStarter("caller-1", "pty-a");
+    const two = idleStarter("caller-2", "pty-b");
+    conductor.startedBy[one.key] = two.token;
+    conductor.startedBy[two.key] = one.token;
+    one.working = true;
+    two.working = true;
+    flushSync();
+    one.working = false;
+    flushSync();
+    two.working = false;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(typedInto("pty-a")).toBe("");
+    expect(typedInto("pty-b")).toBe("");
+  });
+
+  it("wakes no one for an agent the workbench did not start, nor for a rest the window did not see begin", async () => {
+    const starter = idleStarter();
+    // A session an agent run outside the workbench started.
+    const outside = atWork("pty-1", "sid-1", outsideCaller(A));
+    stops(outside);
+    // One that was already asking when the window first saw it, as after a
+    // reload: the row says the starter has not heard, and the next wait
+    // tells it, but nothing wakes it.
+    const asking = own(A, "pty-2", "sid-2", "caller-1");
+    asking.needs = "permission";
+    flushSync();
+    expect(unheard(starter)).toEqual([asking]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(written).toEqual([]);
+  });
+
+  it("leaves what it was woken for untold when the line never reaches it, and does not try again until its next turn", async () => {
+    const starter = idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    writeFails = "pty-0";
+    stops(kid);
+    await wakeGoes();
+    expect(conductor.woken[starter.key]).toBeUndefined();
+    expect(starter.turnEnd).toBeNull();
+    expect(unheard(starter)).toEqual([kid]);
+    await handle(call("wait", { session: "sid-1" }, { session: "caller-1" }));
+    expect(last().content).toBe("Session sid-1 stopped working. It has left no line.");
+  });
+});
+
 describe("waiting", () => {
   it("comes back when the session stops working", async () => {
     const row = own(A, "pty-1", "sid-1");
@@ -2163,17 +2397,84 @@ describe("waiting", () => {
     );
   });
 
-  it("gives up after the seconds it was given", async () => {
+  it("gives up a moment before the seconds it was given, so the core still waits for the answer", async () => {
     own(A, "pty-1", "sid-1");
-    const answering = handle(call("wait", { session: "sid-1", seconds: 5 }));
-    await vi.advanceTimersByTimeAsync(4000);
+    const answering = handle(call("wait", { session: "sid-1", seconds: 10 }));
+    await vi.advanceTimersByTimeAsync(10_000 - WAIT_EARLY - 1);
     expect(answers).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1);
     await answering;
     expect(last().error).toBeNull();
     expect(last().content).toBe(
-      "Nothing happened within 5 seconds: no session stopped and none asked anything.",
+      "Nothing happened within 10 seconds: no session stopped and none asked anything.",
     );
+    // A short wait gives up no sooner than halfway through.
+    const short = handle(call("wait", { session: "sid-1", seconds: 2 }));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(answers).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await short;
+    expect(last().content).toContain("Nothing happened within 2 seconds");
+  });
+
+  it("answers the next wait with a stop that lands after one gave up", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    row.working = true;
+    flushSync();
+    const first = handle(call("wait", { session: "sid-1", seconds: 10 }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    await first;
+    expect(last().content).toContain("Nothing happened");
+    // In the moment the core would still have been waiting, had the window
+    // waited the whole ten seconds.
+    row.working = false;
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }));
+    expect(last().content).toBe("Session sid-1 stopped working. It has left no line.");
+  });
+
+  it("answers the next wait with a stop that landed while the caller handled the last one", async () => {
+    const one = own(A, "pty-1", "sid-1", "caller-1");
+    const two = own(A, "pty-2", "sid-2", "caller-1");
+    one.working = true;
+    two.working = true;
+    flushSync();
+    const first = handle(call("wait", {}, { session: "caller-1" }));
+    await settle();
+    one.working = false;
+    one.note = "the cache is fixed";
+    flushSync();
+    await first;
+    expect(last().content).toBe("Session sid-1 stopped working. Its last line: the cache is fixed");
+    // The caller is busy with that answer, holding no wait, when the other
+    // stops; it sends the first a line and waits again.
+    two.working = false;
+    two.note = "the tests pass";
+    flushSync();
+    const sending = handle(call("send", { session: "sid-1", text: "Merge it" }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await sending;
+    one.working = true;
+    flushSync();
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toBe("Session sid-2 stopped working. Its last line: the tests pass");
+  });
+
+  it("answers two stops that land together one wait after the other", async () => {
+    const one = own(A, "pty-1", "sid-1", "caller-1");
+    const two = own(A, "pty-2", "sid-2", "caller-1");
+    one.working = true;
+    two.working = true;
+    flushSync();
+    const first = handle(call("wait", {}, { session: "caller-1" }));
+    await settle();
+    one.working = false;
+    two.working = false;
+    flushSync();
+    await first;
+    expect(last().content).toContain("Session sid-1 stopped working.");
+    await handle(call("wait", {}, { session: "caller-1" }));
+    expect(last().content).toContain("Session sid-2 stopped working.");
   });
 
   it("refuses a wait for nothing it has", async () => {

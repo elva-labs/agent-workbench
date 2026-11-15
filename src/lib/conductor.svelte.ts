@@ -61,7 +61,9 @@ import {
   create,
   disown,
   defaultAgent,
+  drafting,
   isLive,
+  keysStillIn,
   label,
   onDirected,
   onForgotten,
@@ -82,10 +84,12 @@ import {
   handleOf,
   notesFrom,
   send as sendIntegrated,
+  sendAsWorkbench,
   userWaiting,
+  userWriting,
 } from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
-import { OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
+import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsYou } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
@@ -101,6 +105,21 @@ export const WAIT_MAX = 1800;
 /** How long a start waits for the new session to come up and say its id.
     Inside the minute the core gives the window to answer. */
 export const START_WAIT = 30_000;
+/** How much sooner than the seconds it was given a wait answers that
+    nothing happened: the core counts them from before the window heard
+    of the call, and a stop told after the core gave up would reach no
+    one. A wait never answers sooner than halfway through its seconds. */
+export const WAIT_EARLY = 2000;
+/** How long after a session comes to rest the session that started it is
+    woken, when it is idle: the sessions that come to rest meanwhile go in
+    the same message. */
+export const WAKE_AFTER = 3000;
+/** How long the user's keys in a starter's terminal have been still
+    before the workbench types into it. */
+export const WAKE_QUIET = 5000;
+/** What the answer to a start ends with. */
+export const KEEP_WAITING =
+  "Keep calling wait until all the sessions you started are done, and do not hand the turn back while any is running unless you need the user.";
 /** How much of a session's screen the read tool answers with when the
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
@@ -352,7 +371,18 @@ export const conductor = $state({
   /** How many waits each caller has held, by the caller's token: a caller
       with one is listening for its sessions itself. */
   listening: {} as Record<string, number>,
+  /** The starters the workbench woke, by the row's key, until a turn
+      begins that it did not start. */
+  woken: {} as Record<string, Woken>,
 });
+
+/** A starter the workbench woke: the sessions it was woken for, by their
+    row's key, with the name the row had then and how it was at rest, and
+    when. */
+export interface Woken {
+  by: { key: string; name: string; rest: "quiet" | "permission" | "ended" }[];
+  at: number;
+}
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
     nothing remembered rather than a broken pane. */
@@ -957,9 +987,12 @@ type Rest = "ended" | "permission" | "quiet";
  * key: whether it has worked, how it is at rest now, if it is, and how it
  * was at rest when the caller was last told. A stop is untold while the two
  * differ, so a session that goes from one kind of rest to another is
- * reported again, and one that works again starts over.
+ * reported again, and one that works again starts over. Whether it has
+ * been seen not at rest in this window's run, too: a rest that began
+ * before the window first saw the session, as after a reload, wakes no
+ * one.
  */
-type Mark = { worked: boolean; rest: Rest | null; told: Rest | null };
+type Mark = { worked: boolean; rest: Rest | null; told: Rest | null; seen: boolean };
 
 const stops = new Map<string, Mark>();
 
@@ -980,7 +1013,7 @@ function observe(session: Session) {
     if (stops.delete(key)) moved();
     return;
   }
-  const mark = stops.get(key) ?? { worked: false, rest: null, told: null };
+  const mark = stops.get(key) ?? { worked: false, rest: null, told: null, seen: false };
   const before = unheardMark(stops.get(key));
   stops.set(key, mark);
   if (!isLive(session)) mark.rest = "ended";
@@ -990,6 +1023,7 @@ function observe(session: Session) {
     mark.rest = null;
     mark.told = null;
   } else mark.rest = mark.worked ? "quiet" : null;
+  if (mark.rest === null) mark.seen = true;
   if (unheardMark(mark) !== before) moved();
 }
 
@@ -1018,13 +1052,21 @@ function tell(key: string) {
 
 /**
  * Notes stops as the rows change, so one that lands while no wait is
- * running is still there for the next call. Called once by the page;
- * the function it returns stops the watching.
+ * running is still there for the next call, and wakes a starter that is
+ * idle for the stops it has not heard. Called once by the page; the
+ * function it returns stops the watching.
  */
 export function watchStops(): () => void {
-  return $effect.root(() => {
+  const stop = $effect.root(() => {
     $effect(observeAll);
+    $effect(planWakes);
+    $effect(followTurns);
   });
+  return () => {
+    stop();
+    for (const timer of wakes.values()) clearTimeout(timer);
+    wakes.clear();
+  };
 }
 
 /** Whether a started session is still at work: running, and not at rest
@@ -1129,6 +1171,186 @@ export function unheard(session: Session): Session[] {
   if (!isLive(session) || session.working || session.needs === "permission") return [];
   if ((conductor.listening[session.token] ?? 0) > 0) return [];
   return startedBy(session.token).filter((kid) => unheardMark(stops.get(kid.key)));
+}
+
+/**
+ * Waking a starter.
+ *
+ * A session that started others and handed its turn back hears nothing of
+ * them until it calls wait or the user writes to it. So once one of them
+ * comes to rest, and its starter is idle, the workbench sends the starter
+ * what a wait would have answered, as its own message, and the starter
+ * takes the work up from there. The sessions that come to rest within a
+ * moment of each other go in one message.
+ *
+ * Idle is narrow. The starter is running, ended its last turn itself, as
+ * its hooks or its events say, and holds no wait; it is not asking for
+ * anything; the user is not writing to it, in its composer or with keys in
+ * its terminal that Enter has not sent; and, in a terminal, the user's
+ * keys there have been still a while. A turn the user cut short leaves it
+ * unwoken until a turn of theirs ends. A session started by another is
+ * never woken, so two sessions that started each other cannot wake each
+ * other in turn, and an agent the workbench did not start has no row to
+ * wake.
+ *
+ * What it is woken for counts as told the moment it is sent, so the prompt
+ * hook the message sets off has nothing to say again, and a window
+ * reloaded afterwards does not send it twice; a message that never
+ * reaches the agent leaves it untold. A rest the window did not see begin
+ * wakes no one.
+ */
+
+/** The wakes on their way, by the starter's row key. */
+const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+/** Starters whose wake is being typed or sent. */
+const waking = new Set<string>();
+/** Starters whose next turn is the one their wake began. */
+const wakeTurns = new Set<string>();
+/** How each woken starter's last turn ended, as last seen, so a turn
+    beginning is seen. */
+const turnsSeen = new Map<string, Session["turnEnd"]>();
+
+/** Whether a session is idle in the way a wake asks. */
+function wakeable(starter: Session): boolean {
+  if (starter.status !== "running" || starter.working || starter.needs !== null) return false;
+  if (starter.turnEnd !== "done" || startedFor(starter.key) !== null) return false;
+  if ((conductor.listening[starter.token] ?? 0) > 0) return false;
+  if (starter.kind === "integrated")
+    return handleOf(starter.key) !== null && !userWriting(starter.key);
+  return starter.ptyId !== null && !drafting(starter.key);
+}
+
+/** The sessions a starter is woken for: the ones it started that came to
+    rest, while the window watched, without its having heard. */
+function wakeNews(starter: Session): Session[] {
+  return startedBy(starter.token).filter((kid) => {
+    const mark = stops.get(kid.key);
+    return unheardMark(mark) && mark!.seen;
+  });
+}
+
+/** Sets a wake on its way for each starter that is idle with something to
+    hear, and calls back the ones whose starter is no longer so. */
+function planWakes() {
+  void heard.version;
+  const due = new Set(
+    sessions.all
+      .filter((starter) => wakeable(starter) && wakeNews(starter).length > 0)
+      .map((starter) => starter.key),
+  );
+  for (const [key, timer] of wakes)
+    if (!due.has(key)) {
+      clearTimeout(timer);
+      wakes.delete(key);
+    }
+  for (const key of due)
+    if (!wakes.has(key) && !waking.has(key))
+      wakes.set(key, setTimeout(() => void wakeUp(key), WAKE_AFTER));
+}
+
+/** A wake's time has come: it goes when the starter is still idle, later
+    while the user's keys in its terminal have not been still long. */
+async function wakeUp(key: string) {
+  wakes.delete(key);
+  const starter = byKey(key);
+  if (starter === null || !wakeable(starter)) return;
+  const news = wakeNews(starter);
+  if (news.length === 0) return;
+  const still = starter.kind === "terminal" ? keysStillIn(key, WAKE_QUIET) : 0;
+  if (still > 0) {
+    wakes.set(key, setTimeout(() => void wakeUp(key), still));
+    return;
+  }
+  waking.add(key);
+  try {
+    await wake(starter, news);
+  } finally {
+    waking.delete(key);
+    moved();
+  }
+}
+
+/**
+ * Sends a starter what the sessions it is woken for did, in the words a
+ * wait answers with, and which of the rest are still at work. An
+ * integrated starter is sent it as the workbench's message; one in a
+ * terminal has it typed in on one line, as send types a line.
+ */
+async function wake(starter: Session, news: Session[]) {
+  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
+  const lines = news.map((kid) => restText(kid, name(kid)));
+  const out = startedBy(starter.token).filter(atWork);
+  if (out.length > 0) lines.push(atWorkLine(either(out.map(name), "and")));
+  const told = news.map((kid) => {
+    const mark = stops.get(kid.key)!;
+    return { key: kid.key, rest: mark.rest, before: mark.told };
+  });
+  for (const { key, rest } of told) tellAs(key, rest);
+  const lost = () => {
+    for (const { key, rest, before } of told) untell(key, rest, before);
+    gaveUp(starter.key);
+  };
+  conductor.woken[starter.key] = {
+    by: news.map((kid) => ({ key: kid.key, name: label(kid), rest: stops.get(kid.key)!.rest! })),
+    at: Date.now(),
+  };
+  wakeTurns.add(starter.key);
+  turnsSeen.set(starter.key, starter.turnEnd);
+  if (starter.kind === "integrated") {
+    if (sendAsWorkbench(starter.key, [REPORTS_HEAD, ...lines].join("\n"), lost) === null) lost();
+    return;
+  }
+  try {
+    await typeLine(starter.key, starter.ptyId!, oneLine(`${REPORTS_HEAD} ${lines.join(" | ")}`));
+  } catch {
+    lost();
+  }
+}
+
+/** Takes back a stop counted told by a wake that never reached the
+    starter, unless it has been told or come to rest another way since. */
+function untell(key: string, rest: Rest | null, before: Rest | null) {
+  const mark = stops.get(key);
+  if (mark === undefined || mark.rest !== rest || mark.told !== rest) return;
+  mark.told = before;
+  moved();
+}
+
+/** A wake that never reached the starter: it is not woken again until a
+    turn of its own has ended, so a starter that cannot be reached is not
+    tried over and over. */
+function gaveUp(key: string) {
+  delete conductor.woken[key];
+  wakeTurns.delete(key);
+  turnsSeen.delete(key);
+  const row = byKey(key);
+  if (row !== null) row.turnEnd = null;
+}
+
+/** Keeps a woken starter's mark while the turn its wake began runs and
+    after, and lets it go once a turn begins that the workbench did not
+    start: the user's. */
+function followTurns() {
+  for (const key of Object.keys(conductor.woken)) {
+    const row = byKey(key);
+    if (row === null) {
+      delete conductor.woken[key];
+      wakeTurns.delete(key);
+      turnsSeen.delete(key);
+      continue;
+    }
+    const before = turnsSeen.get(key) ?? null;
+    turnsSeen.set(key, row.turnEnd);
+    if (before === null || row.turnEnd !== null) continue;
+    if (wakeTurns.delete(key)) continue;
+    delete conductor.woken[key];
+    turnsSeen.delete(key);
+  }
+}
+
+/** The starter's mark: the sessions it was woken for, while it is kept. */
+export function wokenBy(session: Session): Woken | null {
+  return conductor.woken[session.key] ?? null;
 }
 
 /**
@@ -1387,14 +1609,14 @@ async function startFitted(
       : "";
   if (fit === null)
     return said(
-      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
+      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} Call wait to hear how it goes.`,
+    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
   );
 }
 
@@ -1824,7 +2046,7 @@ async function resumeSession(
     return said(
       prompt === null
         ? `Resumed session ${id} in ${where}. It has its conversation and is waiting. Send it a line to go on, then call wait.`
-        : `Resumed session ${id}${round} in ${where}. It has its conversation and the prompt. Call wait to hear how it goes.`,
+        : `Resumed session ${id}${round} in ${where}. It has its conversation and the prompt. ${KEEP_WAITING}`,
     );
   } finally {
     release(started);
@@ -2121,7 +2343,7 @@ async function holdWait(
         settle(again.text);
       }
     },
-    seconds * 1000,
+    Math.max(seconds * 1000 - WAIT_EARLY, seconds * 500),
     null,
   );
   waiting.delete(request.id);
@@ -2500,4 +2722,10 @@ export function resetConductor() {
   given.clear();
   cut.clear();
   conductor.listening = {};
+  for (const timer of wakes.values()) clearTimeout(timer);
+  wakes.clear();
+  waking.clear();
+  wakeTurns.clear();
+  turnsSeen.clear();
+  conductor.woken = {};
 }

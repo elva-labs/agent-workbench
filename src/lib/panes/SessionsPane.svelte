@@ -60,7 +60,7 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { placeOf, startedFor, unheard } from "$lib/conductor.svelte";
+  import { placeOf, startedFor, unheard, wokenBy, type Woken } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
@@ -528,6 +528,27 @@
       isInstalled(starter.project) ||
       starter.project === orchestrator.dir;
     return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. It hears on its next wait${told ? ", or with your next message" : ""}.`;
+  }
+
+  /** What a woken starter's row says woke it: the session, or the first
+      and how many more. Each by the name its row has now, or had then. */
+  function wokenWords(woken: Woken): string {
+    const [first, ...rest] = woken.by.map(wokenName);
+    if (rest.length === 0) return `woken by ${first}`;
+    return rest.length === 1 ? `woken by ${first} and ${rest[0]}` : `woken by ${first} and ${rest.length} more`;
+  }
+
+  function wokenName(by: Woken["by"][number]): string {
+    const row = byKey(by.key);
+    return row === null ? by.name : label(row);
+  }
+
+  function wokenTitle(starter: Session, woken: Woken): string {
+    const what = (by: Woken["by"][number]) =>
+      `${wokenName(by)} ${by.rest === "ended" ? "ended" : by.rest === "permission" ? "asked for permission" : "stopped"}`;
+    const list = woken.by.map(what);
+    const said = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+    return `${label(starter)} was idle, so the workbench sent it what happened: ${said}.`;
   }
 
   function toggleKids(key: string) {
@@ -1158,6 +1179,7 @@
 {#snippet sessionRow(session: Session)}
   {@const kids = childrenOf(session)}
   {@const news = unheard(session)}
+  {@const woken = wokenBy(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
   {@const line = folded
     ? startedWords(kids)
@@ -1225,6 +1247,13 @@
                   class:permission={kid.needs === "permission"}
                 ></span>{/each}
             </span>
+          {:else if news.length === 0 && woken !== null}
+            <!-- The workbench woke it, idle, with what the sessions it
+                 started did: which, quietly where the model stands, until a
+                 turn of the user's begins. -->
+            <span class="meta woken" title={wokenTitle(session, woken)} data-testid="starter-woken"
+              >{wokenWords(woken)}</span
+            >
           {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
           {/if}
@@ -1233,7 +1262,9 @@
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
       <span class="state told"
-        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}</span
+        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, {wokenWords(
+            woken,
+          )}{/if}</span
       >
     </button>
     {#if kids.length > 0}
@@ -2581,6 +2612,17 @@
     padding-left: 10px;
     white-space: nowrap;
     color: var(--ink-3);
+  }
+
+  /* What woke a starter gives way before the line beside it, cut short,
+     and never takes more than about half of it. */
+  .meta.woken {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 55%;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* A starter keeps the end of its second line for its chevron. */

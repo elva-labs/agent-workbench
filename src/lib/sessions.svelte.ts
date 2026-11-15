@@ -134,6 +134,11 @@ export interface Session {
   /** The agent ended its turn with subagents of its own still running,
       whose report starts its next one: working, with a still screen. */
   delegated: boolean;
+  /** How the agent's last turn ended, where its hooks or its events say:
+      done, as the agent itself ended it, or cut short by the user. Null
+      while a turn runs, before the first, and where nothing says, as for
+      a terminal session without hooks. */
+  turnEnd: "done" | "cut" | null;
   /** When the row last changed what it says: started working, went quiet,
       asked, was looked at, ended. The palette and the chord to the next
       session that needs you order by it. */
@@ -1391,6 +1396,7 @@ function row(
     exact: false,
     needs: null,
     delegated: false,
+    turnEnd: null,
     changedAt: Date.now(),
     exitCode: null,
     error: null,
@@ -1720,12 +1726,49 @@ export function isViewed(session: Session): boolean {
   return attention.focused && sessions.active === session.key;
 }
 
+/** When the user last pressed a key in each session's terminal, by the
+    row's key. */
+const pressed = new Map<string, number>();
+/** The sessions whose terminal line the user's keys may have left words
+    in, by the row's key: typed into since Enter sent the line or Ctrl+C or
+    Ctrl+U emptied it. */
+const drafts = $state<Record<string, true>>({});
+
+/** What a terminal sends on its own, which is no key of the user's: focus
+    going in or out, and the mouse. */
+// eslint-disable-next-line no-control-regex
+const REPORT = /^\x1b\[(?:I|O|M|<)/;
+/** Enter, which sends the line, and Ctrl+C and Ctrl+U, which empty it. */
+// eslint-disable-next-line no-control-regex
+const ENDS_LINE = /[\r\n\x03\x15]/g;
+
 /** The user typed into a pty. A line sent is the agent spoken to: from
     then on what it writes back can be work. */
 export function typed(ptyId: string, data: string) {
-  if (!data.includes("\r") && !data.includes("\n")) return;
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
-  if (session !== undefined) session.engaged = true;
+  if (session === undefined) return;
+  if (data.includes("\r") || data.includes("\n")) session.engaged = true;
+  if (REPORT.test(data)) return;
+  pressed.set(session.key, Date.now());
+  // What follows the last key that ends the line is on the line now;
+  // any other key, Backspace and Escape among them, may have left words.
+  const ends = [...data.matchAll(ENDS_LINE)].at(-1);
+  const rest = ends === undefined ? data : data.slice(ends.index + 1);
+  if (ends !== undefined && rest === "") delete drafts[session.key];
+  else drafts[session.key] = true;
+}
+
+/** Whether the user's keys may have left words on a session's terminal
+    line that they have not sent. */
+export function drafting(key: string): boolean {
+  return drafts[key] === true;
+}
+
+/** How long until the user's keys in a session's terminal have been still
+    for `quiet` milliseconds: nothing once they have. */
+export function keysStillIn(key: string, quiet: number, now = Date.now()): number {
+  const at = pressed.get(key);
+  return at === undefined ? 0 : Math.max(0, at + quiet - now);
 }
 
 /** Bytes arrived for a session. */
@@ -1892,22 +1935,24 @@ export function noted(key: string, text: string) {
 // bound also covers hooks from sessions outside this window.
 const pendingActivity = new Map<
   string,
-  { kind: SessionEvent["kind"]; note: string | null }
+  { kind: SessionEvent["kind"]; note: string | null; cut: boolean }
 >();
 
 function replayActivity(sessionId: string) {
   const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
-  if (pending !== undefined) exact(sessionId, pending.kind, pending.note);
+  if (pending !== undefined) exact(sessionId, pending.kind, pending.note, pending.cut);
 }
 
 /** A hook or rollout reports a turn transition. With a stop comes the
     first line of what the agent said, which the row takes when the agent
-    left no line of its own through its notify tool. */
+    left no line of its own through its notify tool, and whether the user
+    cut the turn short. */
 export function exact(
   sessionId: string,
   kind: SessionEvent["kind"],
   note: string | null = null,
+  cut = false,
 ) {
   // An integrated session's state comes from its own events, and the
   // hooks that fire for it are left alone.
@@ -1921,7 +1966,7 @@ export function exact(
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, { kind, note });
+    pendingActivity.set(sessionId, { kind, note, cut });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -1938,6 +1983,7 @@ export function exact(
       session.working = true;
       session.needs = null;
       session.delegated = false;
+      session.turnEnd = null;
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
       session.note = null;
@@ -1947,6 +1993,9 @@ export function exact(
       session.working = false;
       session.needs = null;
       session.delegated = false;
+      // A turn the user cut short stays so, though a hook of the agent's
+      // own may call its end a stop as well.
+      session.turnEnd = cut || session.turnEnd === "cut" ? "cut" : "done";
       changed(session);
       if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
@@ -2054,6 +2103,8 @@ export function nextNeedingYou(): Session | null {
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
   pendingActivity.clear();
+  pressed.clear();
+  for (const key of Object.keys(drafts)) delete drafts[key];
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
   for (const pulse of pulses.values()) {

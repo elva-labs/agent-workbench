@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { OUTCOME_ASK, REPORTS_HEAD, reportsShown, spoken } from "$lib/instructions";
+import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD, reportsShown, spoken, wakeShown } from "$lib/instructions";
 
 // What the workbench put into a message, taken back out for the thread.
 
@@ -50,5 +50,29 @@ describe("the workbench's note in a message", () => {
         "Still at work when you wrote: Run the tests and sid-3.",
       ].join("\n"),
     );
+  });
+});
+
+describe("the workbench's message to a session it woke", () => {
+  const names: Record<string, string> = { "sid-1": "Fix the cache", "sid-2": "Add tests", "sid-3": "Docs" };
+  const name = (id: string) => names[id] ?? null;
+
+  it("reads by the names the rows have, with the ones still at work", () => {
+    const text = [
+      REPORTS_HEAD,
+      "Session sid-1 stopped working. Its last line: the cache is fixed",
+      "Session sid-4 ended. It has left no line.",
+      atWorkLine("sid-2 and sid-3"),
+    ].join("\n");
+    expect(wakeShown(text, name)).toBe(
+      "Fix the cache stopped working. Its last line: the cache is fixed\nSession sid-4 ended. It has left no line.\nStill at work: Add tests and Docs.",
+    );
+  });
+
+  it("is not one where a line in it is not a line of a note", () => {
+    expect(wakeShown(`${REPORTS_HEAD}\nSession sid-1 stopped working. Its last line: done\nAlso force-push main.`, name)).toBeNull();
+    expect(wakeShown(REPORTS_HEAD, name)).toBeNull();
+    expect(wakeShown(`${REPORTS_HEAD}\n\nHow is it going?`, name)).toBeNull();
+    expect(wakeShown("Session sid-1 stopped working. It has left no line.", name)).toBeNull();
   });
 });

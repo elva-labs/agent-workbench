@@ -31,6 +31,8 @@ import {
   onWaiting,
   unreadCount,
   typed,
+  drafting,
+  keysStillIn,
   GRACE_MS,
   WORK_WINDOWS,
   viewed,
@@ -1259,6 +1261,63 @@ describe("working, and waiting for you", () => {
       exact("codex-id", "stop");
       streams(session, WORK_WINDOWS + 2);
       expect(session.working).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says how the last turn ended: done, cut short where the agent says so, and nothing while one runs", () => {
+    const session = create(A, null, "codex");
+    started(session.key, "codex-pty", "codex-id");
+    expect(session.turnEnd).toBeNull();
+    exact("codex-id", "prompt");
+    expect(session.turnEnd).toBeNull();
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("done");
+    exact("codex-id", "prompt");
+    expect(session.turnEnd).toBeNull();
+    // Cut short, and a hook that calls the same end a stop leaves it so,
+    // until the next turn.
+    exact("codex-id", "stop", null, true);
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("cut");
+    expect(session.working).toBe(false);
+    exact("codex-id", "prompt");
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("done");
+  });
+
+  it("knows when the user's keys may have left words on a terminal's line, and when they last pressed one", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "claude-code");
+      started(session.key, "pty-keys", "keys-id");
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
+      typed("pty-keys", "fix the");
+      expect(drafting(session.key)).toBe(true);
+      expect(keysStillIn(session.key, 5000)).toBe(5000);
+      vi.advanceTimersByTime(2000);
+      expect(keysStillIn(session.key, 5000)).toBe(3000);
+      // Enter sends the line; Ctrl+C and Ctrl+U empty it.
+      typed("pty-keys", "\r");
+      expect(drafting(session.key)).toBe(false);
+      typed("pty-keys", "more\x03");
+      expect(drafting(session.key)).toBe(false);
+      typed("pty-keys", "sent\rand more");
+      expect(drafting(session.key)).toBe(true);
+      typed("pty-keys", "\x15");
+      expect(drafting(session.key)).toBe(false);
+      // Backspace and the arrows may leave words; what the terminal sends
+      // on its own, focus and the mouse, is no key of the user's.
+      typed("pty-keys", "\x1b[A");
+      expect(drafting(session.key)).toBe(true);
+      typed("pty-keys", "\x03");
+      vi.advanceTimersByTime(10_000);
+      typed("pty-keys", "\x1b[I");
+      typed("pty-keys", "\x1b[<0;10;5M");
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
     } finally {
       vi.useRealTimers();
     }
