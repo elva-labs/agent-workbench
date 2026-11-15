@@ -177,11 +177,11 @@ the same way.
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
-| Compact | Compacts the conversation, the way the agent does it. Claude Code is sent a compact command as a message of its own, and Codex is asked to compact its thread; either way the turn it starts names no message of the window's. |
+| Compact | Compacts the conversation, the way the agent does it, with what the summary should keep where the agent takes that. Claude Code is sent a compact command as a message of its own, with those words after it, and Codex is asked to compact its thread, refusing words since it takes none; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
-| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, the messages no turn has taken yet, and the account's limits as they were last told. It answers once every event that went out before it has, so it reflects those events and none after. |
+| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, and the account's limits as they were last told. It answers once every event that went out before it has, so it reflects those events and none after. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
@@ -252,8 +252,18 @@ naming the session and its kind:
 - **ready**, once, before anything else: the conversation's id, the model,
   mode and effort, the agent's version, and what it offers: models (each
   with the efforts it takes), modes, the efforts of the model it runs on,
-  and its slash commands. A mode can be one the list does not hold, when it
-  comes from the user's own configuration.
+  and its slash commands and skills. A mode can be one the list does not
+  hold, when it comes from the user's own configuration.
+- **commands**: the slash commands and skills changed, or the agent said
+  more of which is which; all of them as they now are. Each has its name,
+  what it does, the hint of what it takes after its name, whether it is a
+  skill, whether it is the agent's own, and where one that is not comes
+  from. Claude Code lists them together when it starts, with where one
+  comes from written into its description, which the core takes out; the
+  start of each turn names which are skills, and until the first does,
+  those that are not the agent's own count as skills. Commands that work
+  only in the agent's own terminal are left out, as are those whose name
+  begins with an underscore. Codex lists none.
 - **configured**: the model, the mode or the effort changed.
 - **message**: a sent message went to the agent with nothing ahead of it,
   is queued behind a running turn, was taken into the running turn, or

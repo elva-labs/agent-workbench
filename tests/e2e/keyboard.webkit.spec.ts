@@ -131,3 +131,17 @@ test("reaches the sign-in card's button by Tab, and Resume once a session ends",
   await agent(page, `f.end("int-2", true);`);
   await expect(page.getByTestId("resume-session")).toBeFocused();
 });
+
+test("completes a slash command with Tab, and Tab moves on once the menu is away", async ({ page }) => {
+  await open(page);
+  const input = page.getByTestId("composer-input");
+  await expect(input).toBeFocused();
+  await page.keyboard.type("/ru");
+  await expect(page.getByTestId("slash-menu")).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(input).toHaveValue("/run ");
+  await expect(input).toBeFocused();
+  await expect(page.getByTestId("slash-menu")).toHaveCount(0);
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("attach");
+});
