@@ -653,7 +653,6 @@ for (const width of [300, 240, 180]) {
   });
 }
 
-/** The started rows, each given way in its turn within the pane. */
 // Short of room, the starter's count of what it has not heard gives way
 // before the line beside it: the words go, then the dot and the count,
 // and the line and the accent's asking stand. On a started line the mark
@@ -754,6 +753,7 @@ for (const width of [300, 240, 180]) {
   });
 }
 
+/** The started rows, each given way in its turn within the pane. */
 async function fits(page: Page, width: number) {
   for (const started of await page.getByTestId("started-session").all()) {
     const row = (await started.boundingBox())!;
