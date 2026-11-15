@@ -180,17 +180,15 @@ mod tests {
 
     #[test]
     fn the_launch_environment_names_the_agents_own_directory() {
-        let home = Path::new("/home/ada");
+        // Absolute where the test runs: a path with no drive is relative on
+        // Windows.
+        let root = if cfg!(windows) { "C:\\" } else { "/" };
+        let home = &Path::new(root).join("home").join("ada");
+        let shell = Path::new(root).join("srv").join("shell-claude");
         let named = |dir: &str| HashMap::from([(CLAUDE_CONFIG_VAR.to_string(), dir.to_string())]);
-        let env = named("/srv/shell-claude");
-        assert_eq!(
-            claude_dir(home, None, &env),
-            PathBuf::from("/srv/shell-claude")
-        );
-        assert_eq!(
-            claude_json(home, None, &env),
-            PathBuf::from("/srv/shell-claude/.claude.json")
-        );
+        let env = named(&shell.to_string_lossy());
+        assert_eq!(claude_dir(home, None, &env), shell);
+        assert_eq!(claude_json(home, None, &env), shell.join(".claude.json"));
         let tilde = named("~/.claude-shell");
         assert_eq!(claude_dir(home, None, &tilde), home.join(".claude-shell"));
 
@@ -212,7 +210,7 @@ mod tests {
         assert_eq!(
             claude_jsons(home, &accounts, &env),
             vec![
-                PathBuf::from("/srv/shell-claude/.claude.json"),
+                shell.join(".claude.json"),
                 home.join(".claude-work").join(".claude.json")
             ]
         );
