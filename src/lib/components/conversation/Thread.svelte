@@ -6,6 +6,7 @@
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { shareFolds } from "$lib/folds";
+  import { renderSaid } from "$lib/media.svelte";
   import { goTo } from "$lib/workspace.svelte";
   import Copy from "./Copy.svelte";
   import Icon from "./Icon.svelte";
@@ -25,11 +26,12 @@
    * The thread stays at its foot while it is there and new content comes,
    * and stays where the user scrolled to otherwise, with a way back down.
    *
-   * Only the entries in and near the view are drawn; the space of the
-   * others stands above and below them at the height they were drawn at,
-   * or at the height drawn entries average before they ever were. What the
-   * reader looks at stays where it is when anything drawn above it changes
-   * height or entries come above it.
+   * A long thread draws only the entries in and near the view; the space
+   * of the others stands above and below them at the height they were
+   * drawn at, or at the height drawn entries average before they ever
+   * were. What the reader looks at stays where it is when anything drawn
+   * above it changes height or entries come above it. A short one is drawn
+   * whole.
    */
   interface Props {
     conversation: Conversation;
@@ -119,6 +121,13 @@
     untrack(() => {
       heard();
       if (!pinned) behind = true;
+      // In a long thread its size changes as rows are drawn around the
+      // view, so new content is followed here rather than by its size.
+      else if (windowed)
+        void tick().then(() => {
+          if (pinned && scroller !== null) toEnd(scroller);
+        });
+      announce();
     });
   });
 
@@ -134,9 +143,9 @@
       heard();
       // Which rows to draw is worked out again a frame on: drawing them
       // now would change the size this has just been told of.
-      requestAnimationFrame(look);
-      if (!pinned) {
-        keep();
+      if (windowed) requestAnimationFrame(look);
+      if (!pinned || (windowed && !atFoot())) {
+        if (windowed) keep();
         return;
       }
       // A fold the user opened in the thread grows it; the space shrinking
@@ -175,9 +184,23 @@
     ownTop = node.scrollTop;
   }
 
+  /** Whether a long thread is at its foot to follow it: it follows, and it
+      has not been laid out yet, or the view is where the thread last put
+      it or within two screens of the foot. A view something else moved far
+      from the foot, a screen reader, a find bar or a selection being
+      dragged, has the rows around it drawn, and goes back to the foot only
+      for what comes next. */
+  function atFoot(): boolean {
+    if (!pinned || scroller === null) return false;
+    if (anchor === null || scroller.scrollTop === ownTop) return true;
+    return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < Math.max(800, 2 * scroller.clientHeight);
+  }
+
   /** When the user last scrolled the thread themselves: the wheel, a
       touch, a key that scrolls, or the scrollbar. */
   let scrolledBy = Number.NEGATIVE_INFINITY;
+  /** The scroll bar is held down, for as long as it is. */
+  let dragging = false;
   const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
   /** Where the foot was when the user last scrolled: a scroll can be heard
@@ -260,6 +283,23 @@
     }
     let all = items();
     const at = all.indexOf(document.activeElement as HTMLElement);
+    // On the thread itself, Home and End scroll to the first and the last
+    // here: the browser would scroll toward a height the thread no longer
+    // has once it draws the rows there.
+    if (windowed && at === -1 && (e.key === "Home" || e.key === "End") && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      e.preventDefault();
+      userScrolls();
+      const home = e.key === "Home";
+      if (!home) {
+        pinned = true;
+        behind = false;
+      }
+      await reveal(rows[home ? 0 : rows.length - 1].key, home ? "start" : "end");
+      if (home) scroller.scrollTop = 0;
+      else toEnd(scroller);
+      look();
+      return;
+    }
     const walk = ["ArrowDown", "ArrowUp"].includes(e.key) || (at !== -1 && ["Home", "End"].includes(e.key));
     if (!walk || all.length === 0 || e.metaKey || e.ctrlKey || e.altKey) {
       if (SCROLL_KEYS.has(e.key)) userScrolls();
@@ -292,6 +332,14 @@
     }
     if (next === undefined) return;
     userScrolls();
+    // An item kept drawn far from the view is brought to it as a row not
+    // drawn would be, so the rows around it are drawn as it comes.
+    const row = windowed ? next.closest<HTMLElement>("[data-row]") : null;
+    if (row !== null && scroller !== null) {
+      const view = scroller.getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      if (box.bottom < view.top || box.top > view.bottom) await reveal(row.dataset.row!);
+    }
     next.focus({ preventScroll: true });
     next.scrollIntoView({ block: "nearest" });
   }
@@ -356,6 +404,11 @@
   let rows = $derived(conversation.entries.filter(draws));
   let rowAt = $derived(new Map(rows.map((entry, at) => [entry.key, at])));
 
+  /** A thread of no more rows than this is drawn whole, as it costs
+      little, and everything in it can be selected and read out at once. */
+  const WHOLE_ROWS = 80;
+  let windowed = $derived(rows.length > WHOLE_ROWS);
+
   /** The rows drawn, from the first to the last by key. Null until the
       thread has been looked at: then the last rows are drawn. */
   let win = $state<{ first: string; last: string; from: number; to: number } | null>(null);
@@ -370,6 +423,7 @@
   /** The rows drawn, as indices: from the first to just after the last. */
   function range(): { from: number; to: number } {
     const count = rows.length;
+    if (!windowed) return { from: 0, to: count };
     if (win === null) return { from: Math.max(0, count - FIRST_DRAWN), to: count };
     const from = rowAt.get(win.first) ?? Math.min(win.from, count);
     const last = rowAt.get(win.last);
@@ -391,10 +445,31 @@
   const HELD_REACH = 150;
   /** The row being brought into view, which stays drawn until it is. */
   let sought: string | null = null;
-  /** The row at the top of the view and how far below the top it stood,
-      when the thread was last looked at, and where it was scrolled to. */
-  let anchor: { key: string; offset: number } | null = null;
+  /** What stood at the top of the view and how far below the top, when
+      the thread was last looked at, and where it was scrolled to: the
+      first row reaching into the view, and the innermost block of it that
+      does, so the line read is what stays when the row reflows. */
+  let anchor: { key: string; offset: number; block: Element; blockOffset: number } | null = null;
   let lookedTop = 0;
+
+
+  /** The innermost block of a row that reaches into the view from above. */
+  function blockAt(row: Element, top: number): Element {
+    let at = row;
+    for (let depth = 0; depth < 12; depth++) {
+      let next: Element | null = null;
+      for (const child of at.children) {
+        const box = child.getBoundingClientRect();
+        if (box.height > 0 && box.bottom > top) {
+          next = child;
+          break;
+        }
+      }
+      if (next === null) break;
+      at = next;
+    }
+    return at;
+  }
 
   function rowNodes(): HTMLElement[] {
     return box === null ? [] : [...box.querySelectorAll<HTMLElement>(":scope > [data-row]")];
@@ -452,7 +527,7 @@
    * the keyboard leaves a row before it goes.
    */
   function look() {
-    if (scroller === null || box === null) return;
+    if (scroller === null || box === null || !windowed) return;
     const view = scroller.getBoundingClientRect();
     const nodes = rowNodes();
     anchor = null;
@@ -460,7 +535,10 @@
       const drawnAt = node.getBoundingClientRect();
       const key = node.dataset.row!;
       if (drawnAt.height > 0) heights.set(key, drawnAt.height);
-      if (anchor === null && drawnAt.bottom > view.top) anchor = { key, offset: drawnAt.top - view.top };
+      if (anchor === null && drawnAt.bottom > view.top) {
+        const block = blockAt(node, view.top);
+        anchor = { key, offset: drawnAt.top - view.top, block, blockOffset: block.getBoundingClientRect().top - view.top };
+      }
     }
     if (guess === null && heights.size > 0) {
       let total = 0;
@@ -478,7 +556,9 @@
     const gap = gapOf();
     let from: number;
     let to: number;
-    if (pinned) {
+    // The foot is drawn while the thread follows it and the view is there;
+    // anywhere else, what is drawn is what is around the view.
+    if (atFoot()) {
       to = count;
       from = count;
       let filled = 0;
@@ -511,12 +591,20 @@
       }
       to = Math.max(to, from + 1);
     }
-    if (held !== null) {
-      const first = rowAt.get(held[0]);
-      const last = rowAt.get(held[1]);
-      if (first !== undefined && last !== undefined && Math.max(to, last + 1) - Math.min(from, first) <= to - from + HELD_REACH) {
-        from = Math.min(from, first);
-        to = Math.max(to, last + 1);
+    // The rows a selection lies in, and the row the keyboard is on, stay
+    // drawn while the view is not far from them.
+    const active = document.activeElement;
+    const focused =
+      active instanceof HTMLElement && box.contains(active) ? active.closest<HTMLElement>("[data-row]")?.dataset.row : undefined;
+    const kept: [string, string][] = [];
+    if (held !== null) kept.push(held);
+    if (focused !== undefined) kept.push([focused, focused]);
+    for (const [first, last] of kept) {
+      const lo = rowAt.get(first);
+      const hi = rowAt.get(last);
+      if (lo !== undefined && hi !== undefined && Math.max(to, hi + 1) - Math.min(from, lo) <= to - from + HELD_REACH) {
+        from = Math.min(from, lo);
+        to = Math.max(to, hi + 1);
       }
     }
     const aim = sought === null ? undefined : rowAt.get(sought);
@@ -533,13 +621,10 @@
       return;
     }
     paint(true);
-    // The keyboard does not go with a row the thread stops drawing.
-    const active = document.activeElement;
-    if (active instanceof HTMLElement && box.contains(active)) {
-      const row = active.closest<HTMLElement>("[data-row]");
-      const at = row === null ? undefined : rowAt.get(row.dataset.row!);
-      if (at !== undefined && (at < from || at >= to)) scroller.focus({ preventScroll: true });
-    }
+    // The keyboard does not go with a row the thread stops drawing, which
+    // it does only once the view is far from it.
+    const at = focused === undefined ? undefined : rowAt.get(focused);
+    if (at !== undefined && (at < from || at >= to)) scroller.focus({ preventScroll: true });
     win = next;
   }
 
@@ -552,9 +637,13 @@
     if (scroller === null || anchor === null || scroller.scrollTop !== lookedTop) return;
     const node = box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(anchor.key)}"]`);
     if (node === null || node === undefined) return;
-    const moved = node.getBoundingClientRect().top - scroller.getBoundingClientRect().top - anchor.offset;
+    // The block that stood there, or the row it was in when that block has
+    // been drawn again since.
+    const [kept, offset] = node.contains(anchor.block) ? [anchor.block, anchor.blockOffset] : [node, anchor.offset];
+    const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
     if (Math.abs(moved) < 0.5) return;
-    if (performance.now() - scrolledBy < 1000 && range().from > 0 && space.above - moved >= 0) {
+    const scrolling = dragging || performance.now() - scrolledBy < 1000;
+    if (scrolling && range().from > 0 && space.above - moved >= 0) {
       space.above -= moved;
       paint();
       return;
@@ -568,15 +657,35 @@
   // follows, what the reader looked at otherwise; then the rows for where
   // that leaves the view.
   let settling = 0;
+  /** The last row when the rows drawn last changed. */
+  let footThenKey: string | null = null;
   $effect(() => {
     void drawn;
     void win;
     untrack(() => {
       if (scroller === null) return;
+      if (!windowed) {
+        // Drawn whole, the thread is as a page is: the browser keeps the
+        // reader's place, and its size says when to follow the foot. What
+        // is drawn is kept as the window, so a thread that grows long goes
+        // on from it.
+        const first = rows[0]?.key;
+        const last = rows[rows.length - 1]?.key;
+        if (first === undefined || last === undefined) win = null;
+        else if (win?.first !== first || win.last !== last) win = { first, last, from: 0, to: rows.length };
+        space = { above: 0, below: 0, base: 0 };
+        paint();
+        return;
+      }
       paint();
       // Where the user has scrolled counts before the thread moves.
       heard();
-      if (pinned && performance.now() - touched > 400) toEnd(scroller);
+      // At its foot, the thread goes on to it, but not as a fold the user
+      // opened there grows.
+      const foot = rows[rows.length - 1]?.key ?? null;
+      const came = foot !== footThenKey;
+      footThenKey = foot;
+      if (atFoot() && (came || performance.now() - touched > 400)) toEnd(scroller);
       else keep();
       // Drawing rows can call for others; a few rounds settle it.
       if (settling++ < 8) look();
@@ -638,6 +747,45 @@
     return find();
   }
 
+  /**
+   * What a screen reader hears of a long thread. Its log says nothing
+   * itself there, since rows drawn as the reader scrolls would be read out
+   * as if they had just come; what comes while the thread is open is said
+   * here instead: a message, a block of the agent's text once it is whole,
+   * and a note.
+   */
+  let said = $state("");
+  const opened = Date.now();
+  const told = new Set<string>();
+
+  function plain(markdown: string): string {
+    const made = document.createElement("template");
+    made.innerHTML = renderSaid(markdown);
+    return (made.content.textContent ?? "").trim();
+  }
+
+  function announce() {
+    if (!windowed) return;
+    const fresh: string[] = [];
+    const tell = (key: string, at: number | null, text: string) => {
+      if (told.has(key) || at === null || at < opened || text === "") return;
+      told.add(key);
+      fresh.push(text);
+    };
+    const entries = conversation.entries;
+    for (let at = Math.max(0, entries.length - 12); at < entries.length; at++) {
+      const entry = entries[at];
+      if (entry.kind === "user") {
+        const message = conversation.messages[entry.message];
+        if (message !== undefined) tell(`m:${message.id}`, message.at, spoken(message.text, sender?.(message) == null).text);
+      } else if (entry.kind === "agent") {
+        for (const part of entry.parts)
+          if (part.kind === "text" && part.done) tell(`b:${part.block}`, part.at, plain(part.text));
+      } else if (entry.kind === "note") tell(`n:${entry.key}`, entry.at, entry.text);
+    }
+    if (fresh.length > 0) said = fresh.join("\n\n");
+  }
+
   /** Where this run began, when its line stands at the top: nothing
       before it is drawn yet, or nothing was found. */
   let beganAtTop = $derived(conversation.began !== null && conversation.began.after === null);
@@ -676,6 +824,7 @@
 <div
   class="thread"
   class:foot={conversation.earlier === "loading" || conversation.earlier === "read"}
+  class:windowed
   bind:this={scroller}
   onscroll={() => {
     onscroll();
@@ -683,13 +832,25 @@
   }}
   onpointerdown={(e) => {
     touched = performance.now();
-    // A press on the scrollbar itself scrolls.
-    if (e.target === scroller) userScrolls();
+    // A press on the scrollbar itself scrolls, until it is let go.
+    if (e.target === scroller) {
+      userScrolls();
+      dragging = true;
+      const up = () => {
+        dragging = false;
+        userScrolls();
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+      };
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    }
   }}
   onkeydown={onThreadKey}
   onwheel={userScrolls}
   ontouchmove={userScrolls}
   role="log"
+  aria-live={windowed ? "off" : undefined}
   aria-label="The conversation"
   data-testid="thread"
   tabindex="0"
@@ -778,6 +939,8 @@
     {/each}
   </div>
 </div>
+
+<p class="told" aria-live="polite" data-testid="thread-said">{said}</p>
 
 {#if behind}
   <button class="latest" tabindex="0" onclick={toFoot} data-testid="jump-latest">
@@ -888,14 +1051,30 @@
     flex-direction: column;
   }
 
-  /* The thread keeps the reader's place itself, the same in every engine,
-     as rows are drawn and left out around the view. */
   .thread {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    overflow-anchor: none;
     padding: 22px 24px 12px;
+  }
+
+  /* A long thread keeps the reader's place itself, the same in every
+     engine, as rows are drawn and left out around the view. */
+  .thread.windowed,
+  .thread.windowed :global(*) {
+    overflow-anchor: none;
+  }
+
+  /* Heard, not seen. */
+  .told {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: pre-wrap;
   }
 
   @container conversation (max-width: 520px) {

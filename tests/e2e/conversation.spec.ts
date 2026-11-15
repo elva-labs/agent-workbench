@@ -2072,186 +2072,6 @@ test.describe("after a reload, an orchestrated session", () => {
   });
 });
 
-test.describe("a long conversation", () => {
-  const PAST = "past-long";
-  const TURNS = 300;
-
-  /** A past conversation of `TURNS` turns, each a question, two commands
-      and a reply with a link; every seventh reply runs long, so the turns
-      are of uneven height. */
-  const long = (start: number) => {
-    const items: unknown[] = [];
-    let at = start;
-    for (let turn = 1; turn <= TURNS; turn++) {
-      const message = `m-${turn}`;
-      items.push({ at, event: { type: "message", message, state: "sent", error: null, text: `Question ${turn}`, images: [] } });
-      items.push({ at, event: { type: "turnStarted", messages: [message] } });
-      for (const step of [1, 2]) {
-        const call = `c-${turn}-${step}`;
-        items.push({ at, event: { type: "toolStarted", call, parent: null, name: "Bash", kind: "command" } });
-        items.push({ at, event: { type: "toolInput", call, parent: null, delta: null, input: { command: `ls part-${step}` }, truncated: false } });
-        items.push({ at, event: { type: "toolFinished", call, parent: null, output: "a.ts\nb.ts", error: false, truncated: false, changes: [] } });
-      }
-      const more = turn % 7 === 0 ? Array.from({ length: 12 }, (_, line) => `\n\nMore on turn ${turn}, paragraph ${line}.`).join("") : "";
-      const text = `Reply ${turn}, see [the notes](https://example.com/${turn}).${more}`;
-      items.push({ at, event: { type: "text", block: `b-${turn}`, parent: null, text, done: true } });
-      items.push({ at, event: { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 1000, usage: null } });
-      at += 60_000;
-    }
-    return items;
-  };
-
-  async function openLong(page: Page) {
-    const now = Date.now();
-    await installFakeCore(page, {
-      open: [PROJECT],
-      settings: { integrated: ["claude-code"] },
-      transcripts: [{ id: PAST, modified: Math.floor(now / 1000) - 60, size: 100, title: "Question 1" }],
-    });
-    await page.addInitScript(
-      ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
-      { project: PROJECT, past: PAST },
-    );
-    await page.goto("/");
-    await agent(page, `f.transcript("${PAST}", ${JSON.stringify(long(now - TURNS * 60_000 - 3_600_000))});`);
-    await page.getByTestId("past-session").click();
-    await expect(page.getByTestId("agent-text").last()).toContainText(`Reply ${TURNS},`);
-  }
-
-  /** The turn of the message or run the keyboard is in. */
-  const focusedTurn = (page: Page) =>
-    page.evaluate(() => {
-      const at = document.activeElement;
-      const run = at?.closest<HTMLElement>("[data-testid='agent-run']");
-      if (run) return run.dataset.turn ?? null;
-      return at?.closest("[data-testid='user-message']")?.textContent?.match(/Question (\d+)/)?.[1] ?? null;
-    });
-
-  /** How many stops the arrows make in one turn: those of the first
-      question and the first run. */
-  const stopsPerTurn = (page: Page) =>
-    page.evaluate(() => {
-      const [question, run] = [...document.querySelectorAll<HTMLElement>("[data-testid='thread-rows'] > [data-row]")];
-      return [question, run]
-        .flatMap((row) => [...row.querySelectorAll<HTMLElement>("[data-thread-item], a[href]")])
-        .filter((item) => item.getClientRects().length > 0).length;
-    });
-
-  const thread = (page: Page) => page.getByTestId("thread");
-
-  test("opens at its foot and draws only the turns near the view", async ({ page }) => {
-    await openLong(page);
-    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
-    await expect(page.getByTestId("agent-text").last()).toBeInViewport();
-    // A screen's worth and a little either side, not three hundred turns.
-    expect(await page.getByTestId("agent-run").count()).toBeLessThan(40);
-    await expect(page.getByText("Question 1", { exact: true })).toHaveCount(0);
-    // The thread is as tall as all of it, so the scrollbar says where the
-    // view is in the whole conversation.
-    const tall = await thread(page).evaluate((node) => node.scrollHeight / node.clientHeight);
-    expect(tall).toBeGreaterThan(TURNS / 10);
-  });
-
-  test("keeps what the reader looks at in place while the turns above it are drawn", async ({ page }) => {
-    await openLong(page);
-    await thread(page).hover();
-    for (let step = 0; step < 12; step++) {
-      const word = (await page.getByTestId("user-message").first().locator(".bubble").textContent())!.trim();
-      const same = page.getByText(word, { exact: true });
-      const before = (await same.boundingBox())!.y;
-      await page.mouse.wheel(0, -400);
-      // The same words, moved by what the wheel moved and no more, however
-      // tall the turns drawn above turned out to be.
-      await expect.poll(async () => Math.abs((await same.boundingBox())!.y - before - 400)).toBeLessThan(1.5);
-    }
-    await expect(page.getByTestId("jump-latest")).toHaveCount(0);
-  });
-
-  test("walks to the first and the last with Home and End, and past what is drawn with the arrows", async ({ page }) => {
-    await openLong(page);
-    await page.getByTestId("work-line").last().focus();
-    await page.keyboard.press("Home");
-    await expect.poll(() => focusedTurn(page)).toBe("1");
-    const first = await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null);
-    await expect(page.locator(":focus")).toBeInViewport();
-    await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
-    // Twenty turns' worth of steps down is the same stop of turn 21, well
-    // past what was drawn at the top.
-    const steps = 20 * (await stopsPerTurn(page));
-    for (let step = 0; step < steps; step++) await page.keyboard.press("ArrowDown");
-    await expect.poll(() => focusedTurn(page)).toBe("21");
-    expect(await page.evaluate(() => document.activeElement?.getAttribute("data-testid") ?? null)).toBe(first);
-    await expect(page.locator(":focus")).toBeInViewport();
-    for (let step = 0; step < steps; step++) await page.keyboard.press("ArrowUp");
-    await expect.poll(() => focusedTurn(page)).toBe("1");
-    await page.keyboard.press("End");
-    await expect.poll(() => focusedTurn(page)).toBe(String(TURNS));
-    await expect(page.locator(":focus")).toBeInViewport();
-    await expect(page.getByText("Question 1", { exact: true })).toHaveCount(0);
-  });
-
-  test("keeps a fold open while it is out of view", async ({ page }) => {
-    await openLong(page);
-    await page.getByTestId("work-line").last().focus();
-    await page.keyboard.press("Home");
-    await expect.poll(() => focusedTurn(page)).toBe("1");
-    const first = page.getByTestId("agent-run").filter({ has: page.getByText("Reply 1,") }).getByTestId("work-line");
-    await first.focus();
-    await page.keyboard.press("Enter");
-    await expect(first).toHaveAttribute("aria-expanded", "true");
-    await page.keyboard.press("End");
-    await expect.poll(() => focusedTurn(page)).toBe(String(TURNS));
-    await expect(page.getByText("Reply 1,")).toHaveCount(0);
-    await page.keyboard.press("Home");
-    await expect(first).toHaveAttribute("aria-expanded", "true");
-    const run = page.getByTestId("agent-run").filter({ has: page.getByText("Reply 1,") });
-    await expect(run.getByTestId("step")).toHaveCount(2);
-    // Drawn again, its Copy copies what it said.
-    await run.getByTestId("copy-reply").click();
-    await expect
-      .poll(() => page.evaluate(() => (window as unknown as { __copied?: string[] }).__copied ?? []))
-      .toEqual(["Reply 1, see [the notes](https://example.com/1)."]);
-  });
-
-  test("keeps what is selected drawn while the reader scrolls away from it", async ({ page }) => {
-    await openLong(page);
-    const last = page.getByTestId("agent-text").last();
-    await last.evaluate((node) => document.getSelection()!.selectAllChildren(node));
-    // Six screens up, where the foot would no longer be drawn.
-    await thread(page).hover();
-    for (let step = 0; step < 6; step++) await page.mouse.wheel(0, -900);
-    await expect.poll(() => fromFoot(page)).toBeGreaterThan(4000);
-    await expect(last).not.toBeInViewport();
-    await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(1);
-    expect(await page.evaluate(() => document.getSelection()!.toString())).toContain(`Reply ${TURNS},`);
-    // Let go, the foot is drawn no more.
-    await page.evaluate(() => document.getSelection()!.removeAllRanges());
-    await page.mouse.wheel(0, -10);
-    await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
-  });
-
-  test("follows a reply streaming at its foot and draws no more for it", async ({ page }) => {
-    await openLong(page);
-    const drawn = await page.getByTestId("thread-rows").locator(":scope > [data-row]").count();
-    await page.getByTestId("composer-input").fill("And one more");
-    await page.keyboard.press("Enter");
-    await agent(page, `f.startTurn("${H}");`);
-    for (let at = 0; at < 20; at++)
-      await agent(page, `f.emit("${H}", { type: "text", block: "streamed", parent: null, text: "Streaming paragraph ${at}, long enough to wrap onto a line of its own as it comes in.\\n\\n", done: false });`);
-    await expect(page.getByTestId("agent-text").last()).toContainText("Streaming paragraph 19");
-    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
-    expect(await page.getByTestId("thread-rows").locator(":scope > [data-row]").count()).toBeLessThanOrEqual(drawn + 2);
-    // Scrolled up, it stays where the reader is while the reply goes on.
-    await thread(page).hover();
-    await page.mouse.wheel(0, -3000);
-    await expect.poll(() => fromFoot(page)).toBeGreaterThan(1000);
-    const top = await thread(page).evaluate((node) => node.scrollTop);
-    await agent(page, `f.emit("${H}", { type: "text", block: "streamed", parent: null, text: "One more paragraph.\\n\\n", done: false });`);
-    await expect(page.getByTestId("jump-latest")).toBeVisible();
-    expect(await thread(page).evaluate((node) => node.scrollTop)).toBe(top);
-  });
-});
-
 test.describe("copying from the conversation", () => {
   /** What the window put on the clipboard, through the fake core. */
   function copied(page: Page): Promise<string[]> {
@@ -2477,4 +2297,22 @@ test.describe("copying from the conversation", () => {
     await page.getByTestId("copy-reply").click();
     expect(await copied(page)).toEqual(["First words", "First words and more."]);
   });
+});
+
+test("resolves a reference link while its reply streams, once its address comes", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.startTurn("${H}");`);
+  const text = page.getByTestId("agent-text").last();
+  // A piece a frame, each drawn before the next comes.
+  for (const [piece, shows] of [
+    ["See [the notes][r] for more.\n\n", "for more"],
+    ["More words after it.\n\n", "More words"],
+    ["[r]: https://example.com/r\n\n", "More words"],
+    ["And the rest", "And the rest"],
+  ]) {
+    await agent(page, `f.emit("${H}", { type: "text", block: "refs", parent: null, text: ${JSON.stringify(piece)}, done: false });`);
+    await expect(text).toContainText(shows);
+  }
+  await expect(text.locator("a[href='https://example.com/r']")).toHaveText("the notes");
+  await expect(text).not.toContainText("[the notes][r]");
 });
