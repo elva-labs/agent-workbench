@@ -3,6 +3,7 @@ import type {
   IntegratedEventBody,
   IntegratedFileChange,
   IntegratedImage,
+  IntegratedLimitWindow,
   IntegratedPlanStep,
   IntegratedQuestion,
   IntegratedSettings,
@@ -66,14 +67,14 @@ export interface FakeIntegratedOptions {
     session working, a task the agent says it reports keeps the session
     working until its report's turn ends, long output is cut down and says
     so, and a snapshot holds what a window that comes late cannot read
-    elsewhere. `ready` goes out before `start` returns, as it may from the
-    core, and an interrupt's end of turn comes after the call. What the
-    agent says within a turn is the test's to script, through `emit` and
-    the helpers built on it. A session started with no model says the
-    model it resolved its default to, as the core does. A session of Codex
-    is shaped as the core's Codex driver says one is: it makes its own ids,
-    offers its own models and modes, and withdraws what a turn asked when
-    the turn ends, with no answer. */
+    elsewhere, the account's last limits among it. `ready` goes out before
+    `start` returns, as it may from the core, and an interrupt's end of
+    turn comes after the call. What the agent says within a turn is the
+    test's to script, through `emit` and the helpers built on it. A session
+    started with no model says the model it resolved its default to, as the
+    core does. A session of Codex is shaped as the core's Codex driver says
+    one is: it makes its own ids, offers its own models and modes, and
+    withdraws what a turn asked when the turn ends, with no answer. */
 export interface FakeIntegrated {
   /** Every call, in order. */
   calls: IntegratedCall[];
@@ -195,6 +196,16 @@ export interface FakeIntegrated {
   compaction(id: string, reason?: "asked" | "full"): void;
   /** What the conversation takes of the context window, and its size. */
   context(id: string, used: number | null, size: number | null): void;
+  /** The account's limits as the agent reports them, whole: each window
+      with no model, reset time or severity unless it says otherwise,
+      under no plan, taken now by a read. A push names `readAt`, the time
+      of the read before it, or null where there was none. The agent is
+      the session's. */
+  limits(
+    id: string,
+    windows: (Pick<IntegratedLimitWindow, "kind" | "percent"> & Partial<IntegratedLimitWindow>)[],
+    options?: { plan?: string | null; takenAt?: number; readAt?: number | null },
+  ): void;
   /** Something the agent says outside a turn. */
   notice(id: string, message: string, level?: "info" | "warning"): void;
   /** The agent drops a message it was sent: refused, discarded or
@@ -253,6 +264,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     handed: string | null;
     state: string | null;
     ended: boolean;
+    /** The last limits event. */
+    limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
   };
   // The core's limits on what goes to the window.
   const OUTPUT_KEEP = 64 * 1024;
@@ -396,6 +409,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         handed: null,
         state: null,
         ended: false,
+        limits: null,
       });
       fake.calls.push({ method: "start", options: startOptions, id });
       // Before the caller has the id, as the core's own may arrive. An
@@ -550,6 +564,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           const told = session.told.get(message);
           return told ? [told] : [];
         }),
+        limits: session.limits,
       };
     },
 
@@ -691,6 +706,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           break;
         case "compacted":
           session.compacting = false;
+          break;
+        case "limits":
+          session.limits = body;
           break;
         case "ended":
           session.ended = true;
@@ -839,6 +857,24 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
     context(id, used, size) {
       fake.emit(id, { type: "context", used, size });
+    },
+
+    limits(id, windows, limitOptions = {}) {
+      const session = live(id);
+      const takenAt = limitOptions.takenAt ?? Math.floor(Date.now() / 1000);
+      fake.emit(id, {
+        type: "limits",
+        agent: session.codex ? "codex" : "claude-code",
+        plan: limitOptions.plan ?? null,
+        windows: windows.map((window) => ({
+          model: null,
+          resetsAt: null,
+          severity: null,
+          ...window,
+        })),
+        readAt: limitOptions.readAt === undefined ? takenAt : limitOptions.readAt,
+        takenAt,
+      });
     },
 
     notice(id, message, level = "info") {
