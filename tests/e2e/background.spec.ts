@@ -76,16 +76,16 @@ test("in the terminal look tints only the ground between the boxes and the statu
   expect(blueish(ground)).toBeGreaterThan(4);
   expect(inside).toEqual([255, 255, 255]);
   // The boxes stay as they are: the rule under a box's header lies between
-  // two solid surfaces and keeps its colour, while the box's outline lies on
-  // the ground and takes the background's.
+  // two solid surfaces and keeps its colour, while the outline of a box
+  // without the keyboard lies on the ground and takes the background's.
   const rules = () =>
-    page.evaluate((agent) => {
-      const box = document.querySelector<HTMLElement>(agent)!;
-      return {
-        head: getComputedStyle(box.querySelector(":scope > header")!).borderBottomColor,
-        outline: getComputedStyle(box).borderTopColor,
-      };
-    }, AGENT);
+    page.evaluate(
+      ([agent, sessions]) => ({
+        head: getComputedStyle(document.querySelector(`${agent} > header`)!).borderBottomColor,
+        outline: getComputedStyle(document.querySelector(sessions)!).borderTopColor,
+      }),
+      [AGENT, SESSIONS],
+    );
   const tinted = await rules();
   await page.emulateMedia({ contrast: "more" });
   await expect.poll(async () => (await rules()).outline).not.toBe(tinted.outline);
