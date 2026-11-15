@@ -822,6 +822,12 @@
     if (!here || !nav || nav.contains(document.activeElement)) return;
     // A question in the pane keeps the keyboard it was given.
     if (closingStrip?.contains(document.activeElement)) return;
+    // So does a stop in the header: the menu button off macOS, which Tab
+    // reaches before the rows. The header's tools are no stops; the rows
+    // walk them, and a click on one gives the rows the keyboard.
+    const owner = document.activeElement;
+    const header = nav.closest("section")?.querySelector(":scope > header");
+    if (owner instanceof HTMLElement && owner.tabIndex >= 0 && header?.contains(owner)) return;
     if (arrived) cursor = null;
     nav.focus();
   });
