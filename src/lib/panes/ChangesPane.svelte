@@ -1184,7 +1184,9 @@
               </button>
               {#if layout.processesOpen}
                 {#if processes.rows.length === 0}
-                  <p class="section-empty" data-testid="processes-empty">Nothing running under the sessions.</p>
+                  <p class="section-empty" data-testid="processes-empty">
+                    {activeSession() === null ? "Nothing running in the project's shells." : "Nothing running under this session or its shells."}
+                  </p>
                 {:else}
                   <ul class="rows">
                     {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}

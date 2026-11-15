@@ -7,7 +7,7 @@ import {
   resetProcesses,
   stop,
 } from "$lib/processes.svelte";
-import { create, reset as resetSessions, started } from "$lib/sessions.svelte";
+import { create, reset as resetSessions, select, sessions, started } from "$lib/sessions.svelte";
 import {
   create as createShell,
   reset as resetShells,
@@ -62,20 +62,49 @@ beforeEach(() => {
 });
 
 describe("what is looked under", () => {
-  it("is the active project's running sessions and shells, by name", () => {
+  it("is the session on screen while it runs, and its running shells, by name", () => {
     const session = create("/one");
     started(session.key, "pty-1", "s1");
-    const other = create("/two");
+    const other = create("/one");
     started(other.key, "pty-2", "s2");
-    const shell = createShell({ project: "/one", session: null });
+    select(session.key);
+    const shell = createShell({ project: "/one", session: session.key });
     shellStarted(shell.key, "pty-3");
-    const starting = create("/one");
-    expect(starting.ptyId).toBeNull();
+    const theirs = createShell({ project: "/one", session: other.key });
+    shellStarted(theirs.key, "pty-4");
+    const own = createShell({ project: "/one", session: null });
+    shellStarted(own.key, "pty-5");
+    createShell({ project: "/one", session: session.key });
     expect(owners()).toEqual([
       { ptyId: "pty-1", owner: "session 1" },
       { ptyId: "pty-3", owner: "shell 1" },
     ]);
+    select(other.key);
+    expect(owners()).toEqual([
+      { ptyId: "pty-2", owner: "session 2" },
+      { ptyId: "pty-4", owner: "shell 1" },
+    ]);
+  });
+
+  it("is the project's own shells with no session on screen", () => {
+    const session = create("/one");
+    started(session.key, "pty-1", "s1");
+    const theirs = createShell({ project: "/one", session: session.key });
+    shellStarted(theirs.key, "pty-2");
+    const own = createShell({ project: "/one", session: null });
+    shellStarted(own.key, "pty-3");
+    const elsewhere = createShell({ project: "/two", session: null });
+    shellStarted(elsewhere.key, "pty-4");
+    sessions.active = null;
+    expect(owners()).toEqual([{ ptyId: "pty-3", owner: "shell 1" }]);
     workspace.active = null;
+    expect(owners()).toEqual([]);
+  });
+
+  it("leaves out a session that is not running", () => {
+    const starting = create("/one");
+    select(starting.key);
+    expect(starting.ptyId).toBeNull();
     expect(owners()).toEqual([]);
   });
 });
@@ -84,7 +113,7 @@ describe("the list", () => {
   it("gathers what runs under each, named for its owner, and skips a pty that went", async () => {
     const session = create("/one");
     started(session.key, "pty-1", "s1");
-    const shell = createShell({ project: "/one", session: null });
+    const shell = createShell({ project: "/one", session: session.key });
     shellStarted(shell.key, "pty-gone");
     under["pty-1"] = [
       process(10, "node server.js"),

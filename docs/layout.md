@@ -401,12 +401,14 @@ remembered, and the open ones share the height.
 
 **Media** is what the agent has presented for the session on screen, one
 row per set of files under its caption, opening in the viewer. **Processes** is
-what runs under the project's sessions and shells: the dev server the agent
-typed for you, the test run it started, each with what it runs under, how
-long it has run, its share of a CPU and its memory, read every couple of
-seconds while the section is open and less often while it is folded. A
-stop button on the row ends the process, and nothing outside a session's
-own tree can be reached from there. **Browser** is the embedded browser's
+what runs under the session on screen and its shells, or with no session
+on screen under the project's own shells: the dev server the agent typed
+for you, the test run it started, each with what it runs under, how long it
+has run, its share of a CPU and its memory, read every couple of seconds
+while the section is open and less often while it is folded. Switching
+session switches the list at once. A stop button on the row ends the
+process, and nothing outside a session's or a shell's own tree can be
+reached from there. **Browser** is the embedded browser's
 tabs for the session on screen, one row per tab, standing even with none
 open since it is where a tab is opened from; see [browser](browser.md). A
 plugin that sends sections adds a fold of its own under those three;

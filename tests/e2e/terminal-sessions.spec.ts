@@ -6,7 +6,9 @@ import { PROJECT, installFakeCore } from "./fake";
  * follows and cycles through the shells of the session on screen, each
  * session keeps its own in front, and switching stops nothing. Closing a
  * session closes its shells, asking first while one has something running.
- * A shell opened with no session on screen belongs to the project.
+ * A shell opened with no session on screen belongs to the project. The
+ * processes fold lists what runs under the session on screen and its
+ * shells.
  */
 
 const TERMINAL = "section[data-pane='terminal']";
@@ -198,4 +200,38 @@ test("asks before Close project while a shell that started in it is busy, naming
   await expect(strip).toHaveCount(0);
   await expect(page.locator(SESSION)).toHaveCount(1);
   await expect(page.locator(SLOT)).toHaveCount(2);
+});
+
+test("lists in the processes fold what runs under the session on screen and its shells", async ({ page }) => {
+  await twoSessions(page);
+  const ptys = await page.evaluate(() =>
+    ((window as unknown as { __spawns?: { ptyId: string }[] }).__spawns ?? []).map((spawn) => spawn.ptyId),
+  );
+  expect(ptys).toHaveLength(2);
+  await running(page, ptys[0], "node one.js");
+  await running(page, ptys[1], "node two.js");
+  await page.keyboard.press(`${MOD}+j`);
+  await running(page, await typeInto(page, "a"), "npm run dev");
+
+  await page.getByTestId("processes-fold").click();
+  const rows = page.getByTestId("process-row");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("node two.js");
+  await expect(rows.nth(0)).toContainText("session 2");
+  await expect(rows.nth(1)).toContainText("npm run dev");
+  await expect(rows.nth(1)).toContainText("shell 1");
+  await expect(page.getByTestId("processes-fold")).toContainText("Processes (2)");
+
+  await named(page, "session 1").click();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.nth(0)).toContainText("node one.js");
+  await expect(page.getByTestId("processes-fold")).toContainText("Processes (1)");
+});
+
+test("says whose processes an empty fold means", async ({ page }) => {
+  await page.getByTestId("processes-fold").click();
+  await page.keyboard.press(`${MOD}+j`);
+  await expect(page.getByTestId("processes-empty")).toHaveText("Nothing running in the project's shells.");
+  await page.getByTestId("new-session").click();
+  await expect(page.getByTestId("processes-empty")).toHaveText("Nothing running under this session or its shells.");
 });
