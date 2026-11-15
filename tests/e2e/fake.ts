@@ -186,6 +186,7 @@ export async function installFakeCore(
       // picks a menu item through `__menuAction`.
       const leave = {
         unsaved: false,
+        running: false,
         allowed: false,
         asked: 0,
         heard: 0,
@@ -197,7 +198,7 @@ export async function installFakeCore(
       };
       (window as unknown as Record<string, unknown>).__quit = () => {
         const w = window as unknown as { __windowControls?: string[] };
-        if (leave.unsaved && !leave.allowed) askToLeave("quit");
+        if ((leave.unsaved || leave.running) && !leave.allowed) askToLeave("quit");
         else (w.__windowControls ??= []).push("quit");
       };
       (window as unknown as Record<string, unknown>).__leave = leave;
@@ -566,10 +567,11 @@ export async function installFakeCore(
         setWindowTitle: async () => {},
         openUrl: async () => {},
         // The window's close goes through the core's question while the
-        // editor says it holds unsaved edits, as the core's does.
+        // editor says it holds unsaved edits or sessions run, as the
+        // core's does.
         windowControl: async (action: string) => {
           const w = window as unknown as { __windowControls?: string[] };
-          if (action === "close" && leave.unsaved && !leave.allowed) {
+          if (action === "close" && (leave.unsaved || leave.running) && !leave.allowed) {
             askToLeave("window");
             return;
           }
@@ -1447,6 +1449,9 @@ export async function installFakeCore(
         setUnsaved: async (unsaved: boolean) => {
           leave.unsaved = unsaved;
         },
+        setRunning: async (running: boolean) => {
+          leave.running = running;
+        },
         onLeaveRequested: async (handler: (ask: { kind: string; generation: number }) => void) => {
           leave.handler = handler;
           return () => {};
@@ -1468,6 +1473,9 @@ export async function installFakeCore(
         },
         menuEnabled: async (state: Record<string, boolean>) => {
           (window as unknown as Record<string, unknown>).__menuEnabled = state;
+        },
+        menuText: async (state: Record<string, string>) => {
+          (window as unknown as Record<string, unknown>).__menuText = state;
         },
         settingsGet: async () => {
           const found = readSettings();

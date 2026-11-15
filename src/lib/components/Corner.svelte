@@ -1,3 +1,11 @@
+<script module lang="ts">
+  /** The corner's control that had the keyboard when its corner went: the
+      corner stands at the end of the rightmost header, so hiding the right
+      pane or flipping the mode moves it to another, and the keyboard goes
+      with it. */
+  let carried: string | null = null;
+</script>
+
 <script lang="ts">
   /**
    * The window's top right corner: the button that shows and hides the right
@@ -6,6 +14,7 @@
    * modes whatever the panes under it do. It is window chrome rather than
    * part of the pane it sits in: pressing it leaves the keyboard where it is.
    */
+  import { tick } from "svelte";
   import { flipMode, toggleRight } from "$lib/editor.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
   import { layout } from "$lib/layout.svelte";
@@ -22,20 +31,45 @@
     e.stopPropagation();
   }
 
-  function pick(toEditor: boolean) {
-    if (toEditor !== editing) flipMode();
+  let corner: HTMLDivElement;
+
+  /** Runs what a control does, noting first which control had the
+      keyboard: what it does may move the corner, and the keyboard goes
+      with it. */
+  function act(run: () => void) {
+    const holder = document.activeElement;
+    carried = holder instanceof HTMLElement && corner.contains(holder) ? (holder.dataset.testid ?? null) : null;
+    run();
+    void tick().then(() => (carried = null));
   }
+
+  function pick(toEditor: boolean) {
+    if (toEditor !== editing) act(flipMode);
+  }
+
+  // A corner that comes in place of one whose control had the keyboard
+  // takes it, unless something else took it on the way.
+  $effect(() => {
+    const id = carried;
+    if (id === null) return;
+    carried = null;
+    void tick().then(() => {
+      const holder = document.activeElement;
+      if (holder === null || holder === document.body)
+        corner.querySelector<HTMLElement>(`[data-testid='${id}']`)?.focus();
+    });
+  });
 </script>
 
 <!-- Focus moving in by Tab stays where the pane focus was: the corner is
      the window's, not the pane's it stands in. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="corner" data-testid="corner" onfocusin={(e) => e.stopPropagation()}>
+<div class="corner" data-testid="corner" onfocusin={(e) => e.stopPropagation()} bind:this={corner}>
   <button
     class="right"
     class:off={!rightShown}
     onpointerdown={chrome}
-    onclick={toggleRight}
+    onclick={() => act(toggleRight)}
     aria-pressed={rightShown}
     aria-label="Show or hide the right pane"
     title={rightTitle}

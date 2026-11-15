@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-24.04
     needs: checks
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Every place that carries the version, suffix included, before
       # anything is built from them: the app refuses a daemon whose version
@@ -95,7 +95,7 @@ jobs:
             os: macos-latest
             target: x86_64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - uses: dtolnay/rust-toolchain@stable
@@ -148,7 +148,7 @@ jobs:
           daemon="src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote"
           codesign --force --options runtime --timestamp --sign "$identity" "$daemon"
           codesign --verify --verbose=2 "$daemon"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: daemon-${{ matrix.name }}
           path: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote
@@ -195,7 +195,7 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A version with a pre-release suffix is left out of the two formats
       # that cannot carry it: the MSI takes numeric versions only, and an
@@ -219,7 +219,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -235,7 +235,7 @@ jobs:
 
       # Every daemon build goes into the app's resources, at the path the
       # app looks for one to send to a machine.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: daemon-*
           path: daemons
@@ -336,7 +336,7 @@ jobs:
 
       - name: Build (signed)
         if: steps.signing.outputs.apple == 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           APPLE_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -349,7 +349,7 @@ jobs:
       # and Windows shows a SmartScreen warning.
       - name: Build (unsigned)
         if: steps.signing.outputs.apple != 'true'
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -400,7 +400,7 @@ jobs:
 
       # A run started by hand builds but releases nothing: the bundles are
       # kept as artifacts to try out.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
         with:
           name: bundles-${{ matrix.target }}

@@ -227,6 +227,13 @@ body {
   outline-offset: -2px;
 }
 
+/* A check box is filled in the accent once checked, so its ring stands
+   outside it. */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline-offset: 2px;
+}
+
 /* The webview is chrome, not a document: no text selection or drag outside
    the panes that own real content. */
 .no-select {

@@ -713,15 +713,26 @@ describe("the real app", () => {
     );
     // Leave things as they were: the shell closed, the panel hidden. The
     // row's close button shows on hover, which the driver does not do.
-    for (const id of ["close-terminal", "hide-terminal"]) {
-      await driver.executeScript(
+    // While the sleep runs in the shell, closing it asks first.
+    const press = (id: string) =>
+      driver.executeScript(
         (id: string) =>
           document
             .querySelector<HTMLButtonElement>(`[data-testid='${id}']`)
             ?.click(),
         id,
       );
-    }
+    await press("close-terminal");
+    await driver.wait(
+      async () =>
+        (await driver.findElements(By.css("[data-testid='close-shell-confirm']")))
+          .length > 0 ||
+        (await driver.findElements(By.css("[data-testid='close-terminal']")))
+          .length === 0,
+      10_000,
+    );
+    await press("close-shell-confirm");
+    await press("hide-terminal");
     await driver.wait(
       async () =>
         (await driver.findElements(By.css("[data-testid='close-terminal']")))

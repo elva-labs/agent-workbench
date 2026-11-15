@@ -24,6 +24,7 @@
     type ActionKey,
     type PresetName,
   } from "$lib/keys.svelte";
+  import { closeAlso } from "$lib/keymap";
   import { returnFocus } from "$lib/layout.svelte";
   import { closeSettings, settings } from "$lib/settings.svelte";
   import {
@@ -121,9 +122,10 @@
     remembered = next;
   }
 
-  /** The arrows walk the list from whichever tab has the keyboard, along it
-      and across it, and the tab they reach takes both the column and the
-      keyboard. A chord being recorded owns every key, so they stand down. */
+  /** The tabs are one stop for Tab, on the tab shown. The arrows walk the
+      list from whichever tab has the keyboard, along it and across it, and
+      the tab they reach takes both the column and the keyboard. A chord
+      being recorded owns every key, so they stand down. */
   function onTabKeys(e: KeyboardEvent, index: number) {
     if (recording !== null) return;
     const step =
@@ -346,6 +348,10 @@
     problem = text === null ? null : { action, text };
   }
 
+  /** Off macOS, the close chord with Shift added, which closes from a
+      terminal too. */
+  const also = $derived(closeAlso());
+
   const groups = $derived(
     ACTIONS.reduce<{ name: string; actions: typeof ACTIONS }[]>((out, action) => {
       const last = out[out.length - 1];
@@ -386,6 +392,7 @@
             class="tab"
             class:on={tab === item.name}
             aria-current={tab === item.name ? "page" : undefined}
+            tabindex={tab === item.name ? 0 : -1}
             onclick={() => show(item.name)}
             onkeydown={(e) => onTabKeys(e, index)}
             data-testid="settings-tab-{item.name}">{item.label}</button
@@ -1060,7 +1067,12 @@
                 <tr class="group"><th colspan="3">{group.name}</th></tr>
                 {#each group.actions as action (action.key)}
                   <tr class:problem={problem?.action === action.key}>
-                    <td class="label">{action.label}</td>
+                    <td class="label"
+                      >{action.label}{#if action.key === "file.close" && also !== null}<span
+                          class="also"
+                          data-testid="chord-also">Also {describe(also)}, which works in a terminal</span
+                        >{/if}</td
+                    >
                     <td>
                       <button
                         class="chord"
@@ -1548,6 +1560,12 @@
 
   .bindings td.label {
     width: 60%;
+  }
+
+  .also {
+    display: block;
+    font-size: 11.5px;
+    color: var(--ink-3);
   }
 
   .chord {

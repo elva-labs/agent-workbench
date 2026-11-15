@@ -19,6 +19,7 @@
     activeTab,
     closeTab,
     editor,
+    focusFiles,
     keep,
     otherKindShown,
     setTabView,
@@ -90,6 +91,46 @@
     return { name, folder: cut === -1 ? null : lastSegment(tab.path.slice(0, cut)) };
   }
 
+  /** The tabs are one stop, walked with the arrows. Enter or Space brings
+      the tab under the keyboard to the front, as a click does, and Delete
+      closes it, as its × does. */
+  function onTabKeydown(e: KeyboardEvent, key: string) {
+    if (e.key === "Enter" || e.key === " ") void activate(key);
+    else if (e.key === "Delete" || e.key === "Backspace") void closeByKey(key);
+    else return;
+    e.preventDefault();
+  }
+
+  /** The keyboard on the row, on the tab in front, or in the tree when
+      no tab is left. */
+  function toRow() {
+    const next =
+      strip?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ??
+      strip?.querySelector<HTMLElement>('[role="tab"]');
+    if (next) next.focus();
+    else focusFiles("tree");
+  }
+
+  /** The keyboard stays on the row, on the tab that comes to the front, or
+      goes to the tree when none is left; a question about unsaved edits
+      takes it instead, and gives it back to the row once answered. */
+  async function closeByKey(key: string) {
+    closeTab(key, true);
+    await tick();
+    const holder = document.activeElement;
+    if (holder !== null && holder !== document.body) return;
+    toRow();
+  }
+
+  // A question asked from the row was answered: the keyboard comes back.
+  let answered = editor.rowRequests;
+  $effect(() => {
+    const asks = editor.rowRequests;
+    if (asks === answered) return;
+    answered = asks;
+    void tick().then(toRow);
+  });
+
   function onAuxClick(e: MouseEvent, key: string) {
     if (e.button !== 1) return;
     e.preventDefault();
@@ -111,21 +152,21 @@
       {@const key = tabKey(tab)}
       {@const label = named(tab)}
       {@const dirty = editor.buffers[key]?.dirty === true}
+      <!-- The tab index is the app's rule for a tab list: the tab in front
+           is the row's one stop. -->
+      <!-- svelte-ignore a11y_interactive_supports_focus -->
       <div
         class="tab"
         class:on={!other && editor.active === key}
         class:preview={tab.preview}
         class:dirty
         role="tab"
-        tabindex="-1"
         aria-selected={!other && editor.active === key}
         title={tab.path}
         onclick={() => void activate(key)}
         ondblclick={() => keep(key)}
         onauxclick={(e) => onAuxClick(e, key)}
-        onkeydown={(e) => {
-          if (e.key === "Enter") void activate(key);
-        }}
+        onkeydown={(e) => onTabKeydown(e, key)}
         data-testid="editor-tab"
         data-path={tab.path}
         data-key={key}

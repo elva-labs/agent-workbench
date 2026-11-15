@@ -116,7 +116,7 @@
     problem = null;
     await tick();
     document
-      .querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-pressed="true"], [data-testid="workflow-new"]')
+      .querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-selected="true"], [data-testid="workflow-new"]')
       ?.focus();
   }
 
@@ -204,7 +204,7 @@
     const next =
       own ??
       document.querySelector<HTMLElement>('[data-testid="workflow-unread-remove"]') ??
-      document.querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-pressed="true"], [data-testid="workflow-new"]');
+      document.querySelector<HTMLElement>('[data-testid="workflow-chip"][aria-selected="true"], [data-testid="workflow-new"]');
     next?.focus();
   }
 
@@ -313,13 +313,16 @@
       A workflow says which model a session starts on, and which models it may hand work and review to.
     </p>
 
-    <div class="picker" role="group" aria-label="Workflows" data-testid="workflow-picker">
+    <!-- The workflows are one stop for Tab, walked with the arrows; New
+         workflow is a stop of its own after them. -->
+    <div class="picker" role="tablist" aria-label="Workflows" data-testid="workflow-picker">
       {#each workflows.list as workflow (workflow.name)}
         <button
           type="button"
           class="chip"
           class:on={current?.name === workflow.name}
-          aria-pressed={current?.name === workflow.name}
+          role="tab"
+          aria-selected={current?.name === workflow.name}
           onclick={() => choose(workflow.name)}
           data-testid="workflow-chip"
           data-workflow={workflow.name}
@@ -328,7 +331,7 @@
           {#if workflows.default === workflow.name}<span class="tag" data-testid="workflow-default-tag">default</span>{/if}
         </button>
       {/each}
-      <button type="button" class="chip new" onclick={create} data-testid="workflow-new">
+      <button type="button" class="chip new" tabindex="0" onclick={create} data-testid="workflow-new">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3.5v9M3.5 8h9" /></svg>New workflow
       </button>
     </div>
@@ -679,14 +682,20 @@
     padding: 0 2px 2px 0;
   }
 
+  /* A part that scrolls clips what is drawn past its edges, so it keeps
+     room round its content for the focus ring of a control at the edge,
+     and stands out by as much, so the content stays where it is. */
   .rest,
   .below {
     min-height: 0;
     overflow-y: auto;
+    padding: 4px 4px 0;
+    margin: -4px -4px 0;
   }
 
   .rest {
     grid-area: rest;
+    padding-bottom: 4px;
   }
 
   .below {

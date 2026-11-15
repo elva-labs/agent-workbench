@@ -76,22 +76,39 @@ jobs:
     name: Frontend
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run check
       - run: npm run test:unit
+
+  # The browser tests take a quarter of an hour on one runner, so they run
+  # as four parts side by side, each a share of the same suite.
+  browser:
+    name: Browser tests (${{ matrix.part }} of 4)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
-      - run: npm run test:e2e
+      - run: npm run test:e2e -- --shard=${{ matrix.part }}/4
         env:
           CI: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.part }}
           path: playwright-report
           retention-days: 7
 
@@ -107,7 +124,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.gate.outputs.other == 'true' && '["ubuntu-24.04", "windows-latest", "macos-latest"]' || '["ubuntu-24.04"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -134,14 +151,14 @@ jobs:
     name: Real app (Linux)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and driver dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
             webkit2gtk-driver xvfb openbox xdotool imagemagick dunst
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -150,7 +167,7 @@ jobs:
         with:
           workspaces: src-tauri
       - name: tauri-driver
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: tauri-driver
         with:
           path: ~/.cargo/bin/tauri-driver
@@ -165,7 +182,7 @@ jobs:
           CI: true
       - name: Photograph the window
         run: scripts/smoke.sh smoke.png
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: smoke-linux
           path: smoke.png
@@ -181,8 +198,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.other == 'true'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

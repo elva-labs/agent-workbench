@@ -1,32 +1,40 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
+  import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import Pane from "$lib/components/Pane.svelte";
   import Splitter from "$lib/components/Splitter.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
+  import { chordFor, describe } from "$lib/keys.svelte";
   import {
     DEFAULT,
     MIN,
     applyLayout,
+    focusPane,
     hideTerminal,
     layout,
+    returnFocus,
     saveLayout,
     terminalVisible,
   } from "$lib/layout.svelte";
   import {
     activeShell,
-    close,
+    byKey,
+    closeAsked,
+    closeAsking,
     create,
     equalize,
     forProject,
     groupOf,
     groupsFor,
+    keepAsked,
     label,
     launch,
     resizeSplit,
     select,
     share,
+    shortCommand,
     shownGroup,
     split,
     statusMessage,
@@ -63,6 +71,77 @@
     if (current !== null) split(current.key);
   }
 
+  let rows = $state<HTMLDivElement | null>(null);
+
+  /** A row picks its shell and puts the keyboard in it, by a click as by
+      Enter or Space. A row that had the keyboard lets it go, since the
+      shell yields to a control of its own pane. */
+  function choose(key: string) {
+    select(key);
+    const holder = document.activeElement;
+    if (holder instanceof HTMLElement && rows?.contains(holder)) holder.blur();
+    focusPane("terminal");
+  }
+
+  /** Delete closes the shell under the keyboard, as its × does, and the
+      keyboard stays on the rows; with the last shell gone, it goes back to
+      the pane the panel hands the focus to. A shell with something running
+      in it asks first, and the keyboard comes back to the rows once that
+      is answered. Only keys reach a row: a click on one puts the keyboard
+      in its shell. */
+  async function onRowKeydown(e: KeyboardEvent, key: string) {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+    e.preventDefault();
+    if (await closeAsking(key, true)) await backToRows();
+  }
+
+  /** The keyboard on the row of the shell in front, or the first, or with
+      none left where the panel hands it. */
+  async function backToRows() {
+    await tick();
+    const next =
+      rows?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]') ??
+      rows?.querySelector<HTMLElement>('[role="option"]');
+    if (next) next.focus();
+    else returnFocus();
+  }
+
+  let asked = $derived(terminals.asking);
+  let askedShell = $derived(asked === null ? null : byKey(asked.key));
+  let askStrip = $state<HTMLDivElement | null>(null);
+
+  // A close asked again while the question is up puts the keyboard back on
+  // its Cancel, where the answer is.
+  $effect(() => {
+    if (terminals.askRequests === 0) return;
+    untrack(() => askStrip?.querySelector<HTMLElement>("[data-testid='close-shell-cancel']")?.focus());
+  });
+
+  // The question goes, closing nothing, with the panel, as the editor's
+  // goes when its pane folds.
+  $effect(() => {
+    if (!terminalVisible() && terminals.asking !== null) untrack(keepAsked);
+  });
+
+  let askDetail = $derived.by(() => {
+    if (asked === null) return "";
+    const [first, ...rest] = asked.running;
+    return rest.length === 0
+      ? `“${shortCommand(first)}” is still running in it. Closing the shell stops it.`
+      : `“${shortCommand(first)}” and ${rest.length}\u00a0more are still running in it. Closing the shell stops them.`;
+  });
+
+  /** The question answered: the keyboard goes back to the rows when a key
+      there asked, else to the shell in front, or where the panel hands it
+      once the last has gone. */
+  async function answered(close: boolean) {
+    const fromRow = asked?.fromRow ?? false;
+    if (close) closeAsked();
+    else keepAsked();
+    if (fromRow) await backToRows();
+    else returnFocus();
+  }
+
   /** Whether this shell has a neighbour on its left in the shown group. */
   function afterFirst(shell: Shell) {
     return shell.group === shown && groupOf(shell.key)[0] !== shell;
@@ -88,6 +167,80 @@
      list, where the tools are anyway. -->
 <Pane id="terminal" title="Terminal" bare>
   <div class="wrap">
+    <!-- The list comes before the shells, drawn on their right: a shell
+         keeps Tab, so the panel's own controls are reached first. -->
+    <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
+      <div class="top" data-tauri-drag-region>
+        <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
+        <button
+          class="tool"
+          onclick={another}
+          disabled={workspace.active === null}
+          aria-label="New shell"
+          title="New shell ({describe(chordFor("terminal.new"))})"
+          data-testid="new-terminal">+</button
+        >
+        <button
+          class="tool"
+          onclick={beside}
+          disabled={current === null}
+          aria-label="Split the current shell"
+          title="Split"
+          data-testid="split-terminal">⫿</button
+        >
+        <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
+      </div>
+
+      <!-- One row per shell, grouped: the rows under the first of a group are
+           the shells beside it. The rows are one stop, walked with the
+           arrows. A click, Enter or Space on a row goes to its shell, and
+           Delete closes it, as its × does. -->
+      <div class="rows" role="listbox" aria-label="Shells" bind:this={rows}>
+      {#each groups as group (group[0].group)}
+        <div class="group" class:on={group[0].group === shown} role="group" data-testid="terminal-group">
+          {#each group as shell, i (shell.key)}
+            <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
+              <button
+                class="name"
+                role="option"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => choose(shell.key)}
+                onkeydown={(e) => onRowKeydown(e, shell.key)}
+                aria-selected={shell.key === terminals.active}
+                aria-current={shell.key === terminals.active ? "true" : undefined}
+                data-testid="terminal-row"
+              >
+                <span class="dot {dot(shell)}"></span>
+                <span class="label">{label(shell)}</span>
+              </button>
+              <button
+                class="icon"
+                onclick={() => split(shell.key)}
+                aria-label="Split {label(shell)}"
+                title="Split"
+                data-testid="split-row">⫿</button
+              >
+              <button
+                class="icon"
+                onclick={() => void closeAsking(shell.key)}
+                aria-label="Close {label(shell)}"
+                title="Close"
+                data-testid="close-terminal">×</button
+              >
+            </div>
+          {/each}
+        </div>
+      {/each}
+      </div>
+    </nav>
+
+    <Splitter
+      label="Resize the terminal list"
+      onDelta={resizeList}
+      onReset={resetList}
+      onCommit={saveLayout}
+    />
+
     <div class="shells" bind:clientWidth={shellsWidth}>
       <!-- Every shell stays mounted. The shown group's sit side by side in
            flow; the rest are parked underneath, hidden, at their old size. -->
@@ -127,81 +280,33 @@
       {:else if current === null}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">No shell open in this project.</p>
-          <button onclick={another} data-testid="start-terminal">New terminal</button>
+          <button onclick={another} data-testid="start-terminal">New shell</button>
         </div>
       {:else if current.status !== "running"}
         <div class="overlay" data-testid="terminal-status">
           <p class="message">{statusMessage(current)}</p>
           {#if current.status !== "starting"}
-            <button onclick={another} data-testid="start-terminal">New terminal</button>
+            <button onclick={another} data-testid="start-terminal">New shell</button>
           {/if}
+        </div>
+      {/if}
+
+      <!-- Closing a shell with something running in it asks first, over
+           the shells, where it is read before what runs under it. -->
+      {#if asked !== null && askedShell !== null}
+        <div class="ask" bind:this={askStrip} data-testid="close-shell-ask">
+          <ConfirmStrip
+            question="Close {label(askedShell)}?"
+            detail={askDetail}
+            action="Close shell"
+            onConfirm={() => void answered(true)}
+            onCancel={() => void answered(false)}
+            testid="close-shell"
+          />
         </div>
       {/if}
     </div>
 
-    <Splitter
-      label="Resize the terminal list"
-      onDelta={resizeList}
-      onReset={resetList}
-      onCommit={saveLayout}
-    />
-
-    <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
-      <div class="top" data-tauri-drag-region>
-        <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
-        <button
-          class="tool"
-          onclick={another}
-          disabled={workspace.active === null}
-          aria-label="New terminal"
-          title="New terminal"
-          data-testid="new-terminal">+</button
-        >
-        <button
-          class="tool"
-          onclick={beside}
-          disabled={current === null}
-          aria-label="Split the current shell"
-          title="Split"
-          data-testid="split-terminal">⫿</button
-        >
-        <button class="tool" onclick={hideTerminal} data-testid="hide-terminal">hide</button>
-      </div>
-
-      <!-- One row per shell, grouped: the rows under the first of a group are
-           the shells beside it. -->
-      {#each groups as group (group[0].group)}
-        <div class="group" class:on={group[0].group === shown} data-testid="terminal-group">
-          {#each group as shell, i (shell.key)}
-            <div class="row" class:beside={i > 0} class:on={shell.key === terminals.active}>
-              <button
-                class="name"
-                onclick={() => select(shell.key)}
-                aria-current={shell.key === terminals.active ? "true" : undefined}
-                data-testid="terminal-row"
-              >
-                <span class="dot {dot(shell)}"></span>
-                <span class="label">{label(shell)}</span>
-              </button>
-              <button
-                class="icon"
-                onclick={() => split(shell.key)}
-                aria-label="Split {label(shell)}"
-                title="Split"
-                data-testid="split-row">⫿</button
-              >
-              <button
-                class="icon"
-                onclick={() => close(shell.key)}
-                aria-label="Close {label(shell)}"
-                title="Close"
-                data-testid="close-terminal">×</button
-              >
-            </div>
-          {/each}
-        </div>
-      {/each}
-    </nav>
   </div>
 </Pane>
 
@@ -260,6 +365,7 @@
     flex: 1;
     min-height: 0;
     display: flex;
+    flex-direction: row-reverse;
     background: var(--surface);
   }
 
@@ -299,7 +405,7 @@
     border-left: 1px solid var(--rule);
   }
 
-  .top + .group {
+  .top + .rows > .group:first-child {
     margin-top: 6px;
   }
 
@@ -419,6 +525,15 @@
     font-size: 12.5px;
     color: var(--ink-2);
     max-width: 64ch;
+  }
+
+  .ask {
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 2;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--surface);
   }
 
   .overlay button {
