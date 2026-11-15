@@ -608,7 +608,7 @@ export interface WasOpen {
  * under the folder it called from, and the callers that named none were
  * the Codex sessions. A folder that one Codex session among those open at
  * the last quit ran in is that session's, and its list and its workflow's
- * record are copied to the session's id, which is its token from now on.
+ * record are copied to the session's id, which is its token.
  * A folder where none ran, or several did, is left as it was: what it
  * holds was started by another session, and no call acts on it. The
  * folder's own copy stays, for that earlier version to go on reading.
