@@ -648,7 +648,7 @@
               the conversation and the agent works behind it, with the same login, settings, hooks
               and tools. An agent the workbench can drive this way offers the choice. A session that
               is running keeps the way it started, and a single new one can be started the other way
-              from the agent pane.
+              from the agent pane, the palette or the project's menu.
             </p>
             <div class="projects kinds">
               {#each installed().length > 0 ? installed() : AGENTS as id (id)}
@@ -679,6 +679,10 @@
                 </div>
               {/each}
             </div>
+            <p class="note" data-testid="session-kind-workflow">
+              A session that follows a workflow runs in a terminal, whichever is chosen here, since
+              that is how its orchestrator is told the workflow.
+            </p>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">

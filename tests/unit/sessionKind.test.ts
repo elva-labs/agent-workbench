@@ -16,7 +16,9 @@ import {
   close,
   create,
   exact,
+  newSessionKind,
   onIntegratedClose,
+  otherWay,
   reopened,
   reset as resetSessions,
   sessions,
@@ -230,5 +232,24 @@ describe("a session under a workflow", () => {
     sessions.workflows["without"] = { workflow: null, told: "1. Direct the work.", project: PROJECT };
     expect(create(PROJECT, "without", "claude-code").kind).toBe("terminal");
     expect(create(PROJECT, "without", "claude-code", null, null, null, null, null).kind).toBe("terminal");
+  });
+
+  it("makes the other way from New session integrated, alone, where New session is a terminal", () => {
+    workspace.open.push({ path: PROJECT, name: "demo", repository: PROJECT, isGit: true });
+    expect(newSessionKind(PROJECT)).toBe("terminal");
+    expect(otherWay(PROJECT)).toBe("integrated");
+    setKind("claude-code", "integrated");
+    expect(newSessionKind(PROJECT)).toBe("integrated");
+    expect(otherWay(PROJECT)).toBe("terminal");
+    // Under a workflow New session is a terminal whatever the setting.
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
+    expect(newSessionKind(PROJECT)).toBe("terminal");
+    expect(otherWay(PROJECT)).toBe("integrated");
+    const once = create(PROJECT, null, "claude-code", null, null, null, null, null, otherWay(PROJECT)!);
+    expect(once.kind).toBe("integrated");
+    expect(once.workflow).toBeNull();
+    // An agent that runs one way only has no other way.
+    sessions.preferred[PROJECT] = "codex";
+    expect(otherWay(PROJECT)).toBeNull();
   });
 });

@@ -9,6 +9,7 @@
     close as closeSession,
     create,
     defaultAgent,
+    otherWay,
     historyFor,
     historyLabel,
     isLive,
@@ -63,7 +64,6 @@
   } from "$lib/layout.svelte";
   import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
-  import { otherKind } from "$lib/sessionKind.svelte";
   import { shown } from "$lib/unseen";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
@@ -359,10 +359,10 @@
     if (projectMenu === null) return [];
     const path = projectMenu.path;
     const agent = defaultAgent(path);
-    const other = otherKind(agent);
+    const other = otherWay(path);
     return [
       { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
-      // One session the way the agent's setting does not run them.
+      // One session the other way from New session, alone.
       ...(other === null
         ? []
         : [
@@ -372,7 +372,7 @@
               disabled: !isReady(),
               run: () => {
                 wake(path);
-                startSession(path, agent, accountOf(path), undefined, other);
+                startSession(path, agent, accountOf(path), null, other);
               },
             },
           ]),

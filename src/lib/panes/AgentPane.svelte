@@ -25,6 +25,7 @@
     create,
     defaultAgent,
     label,
+    otherWay,
     launch,
     rang,
     sessions,
@@ -35,7 +36,7 @@
     wake,
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
-  import { otherKind, type SessionKind } from "$lib/sessionKind.svelte";
+  import type { SessionKind } from "$lib/sessionKind.svelte";
   import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, workflowTag } from "$lib/conductor.svelte";
@@ -188,15 +189,15 @@
   /** The agent a new session here starts with, and the other way it can
       run, when it has one. */
   let firstAgent = $derived(workspace.active === null ? null : defaultAgent(workspace.active));
-  let other = $derived(firstAgent === null ? null : otherKind(firstAgent));
+  let other = $derived(workspace.active === null ? null : otherWay(workspace.active));
 
-  /** One session started the other way from the agent's setting. */
+  /** One session started the other way from New session, alone. */
   function startOther(kind: SessionKind) {
     choosing = false;
     const project = workspace.active;
     if (project === null || firstAgent === null) return;
     touch(project);
-    create(project, null, firstAgent, null, null, null, accountOf(project), undefined, kind);
+    create(project, null, firstAgent, null, null, null, accountOf(project), null, kind);
   }
 
   /** Escape backs out of the choice while one of its buttons has focus.

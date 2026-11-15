@@ -1,4 +1,3 @@
-import { otherKind } from "$lib/sessionKind.svelte";
 import { tick } from "svelte";
 import { ACTIONS, chordFor, describe, type ActionKey } from "$lib/keys.svelte";
 import { actionFor, type Action } from "$lib/keymap";
@@ -28,6 +27,7 @@ import {
 } from "$lib/workflows.svelte";
 import {
   defaultAgent,
+  otherWay,
   label,
   sessions,
   waitingOnYou,
@@ -346,14 +346,14 @@ export function commandItems(query: string): PaletteItem[] {
     chord: "",
   });
   const here = onScreen();
-  const other = here === null ? null : otherKind(defaultAgent(here));
+  const other = here === null ? null : otherWay(here);
   const commands: PaletteItem[] = [
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
     ...(here === null
       ? []
       : [command("newHere", `New session in ${projectLabel(here)}`)]),
-    // The way the agent's setting does not run sessions, for one session
-    // in the project on screen.
+    // The other way from New session's, for one session in the project on
+    // screen, alone.
     ...(other === null
       ? []
       : [
@@ -708,9 +708,9 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
           const here = onScreen();
           if (here === null) return { type: "stay" };
           const agent = defaultAgent(here);
-          const kind = otherKind(agent);
+          const kind = otherWay(here);
           if (kind === null) return { type: "stay" };
-          return { type: "close", then: () => startSession(here, agent, accountOf(here), undefined, kind) };
+          return { type: "close", then: () => startSession(here, agent, accountOf(here), null, kind) };
         }
         case "open":
           return { type: "close", then: () => void pick() };

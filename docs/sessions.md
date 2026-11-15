@@ -309,20 +309,23 @@ worktree.
 How an agent's sessions run is a setting per agent, a terminal to begin
 with; see [settings](settings.md#sessions). An agent runs integrated only
 where the core says it can drive it in messages, and the rest run in a
-terminal. A single new session can be started the other way, for the
-agent the project used last: from the project's ⋯ menu, under its New
-session; from the palette, beside New session in the project on screen;
-and, with no session on screen, from the agent pane beside its New session
-button. The + and New session start the agent's own way, so nothing is
-asked of someone who never changes it. An integrated session is driven through the core in messages, as
-[integrated](integrated.md) describes, and is a row like any other: it is
-listed, stopped with its ×, brought back after a restart and resumed the
-same way. A session under a
+terminal. A session under a
 [workflow](orchestrator.md#following-a-workflow) runs in a terminal
 whatever the setting, since its orchestrator is told the workflow as its
-process starts, and so does one resumed from a session that followed one.
-A session started integrated by name is a pick, as an agent picked is, and
-runs alone whatever the project follows.
+process starts, and so does a resumed one that was ever told one, with it
+or without it now; the settings say so beside the choice. A single new
+session can be started the other way from New session's, for the agent the
+project used last: from the project's ⋯ menu, under its New session; from
+the palette, beside New session in the project on screen; and, with no
+session on screen, from the agent pane beside its New session button.
+Where the project's workflow makes New session a terminal, that is an
+integrated session. Started the other way, a session is a pick, as an
+agent picked is, and runs alone whatever the project follows. The + and
+New session start the agent's own way, or the project's workflow, so
+nothing is asked of someone who never changes it. An integrated session is
+driven through the core in messages, as [integrated](integrated.md)
+describes, and is a row like any other: it is listed, stopped with its ×,
+brought back after a restart and resumed the same way.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,

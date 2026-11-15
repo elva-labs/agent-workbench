@@ -26,7 +26,7 @@ import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
-import { kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { bareName, mixesScripts, readsAsYou, shown } from "$lib/unseen";
 
 /**
@@ -459,6 +459,21 @@ export function defaultAgent(project: string): AgentId {
   if (preferred !== undefined && installed().includes(preferred))
     return preferred;
   return installed()[0] ?? "claude-code";
+}
+
+/** How New session in the project runs: in a terminal under the project's
+    workflow, otherwise the way the agent's setting says. */
+export function newSessionKind(project: string): SessionKind {
+  return workflowOf(project) !== null ? "terminal" : kindFor(defaultAgent(project));
+}
+
+/** The other way to start one session in the project, for the agent New
+    session starts with: integrated where New session runs in a terminal,
+    a terminal where it runs integrated. Null for an agent that runs only
+    one way. Started this way it runs alone, whatever the project follows. */
+export function otherWay(project: string): SessionKind | null {
+  if (!canIntegrate(defaultAgent(project))) return null;
+  return newSessionKind(project) === "integrated" ? "terminal" : "integrated";
 }
 
 function prefer(project: string, agent: AgentId) {

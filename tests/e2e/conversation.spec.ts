@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
 
 // An integrated session as the user meets it: the conversation the agent
 // pane draws in place of a terminal, driven by the fake core's scripted
@@ -739,6 +739,77 @@ test.describe("a session of an agent shaped as Codex is", () => {
     await agent(page, `f.emit("${H}", { type: "error", kind: "notLoggedIn", message: "Not logged in" }); f.end("${H}", false);`);
     await expect(page.getByTestId("login-gate")).toContainText("Codex is not signed in");
     await expect(page.getByTestId("login-gate").locator("code")).toHaveText("codex login");
+  });
+});
+
+test.describe("under a workflow, with Claude Code set to run integrated", () => {
+  // New session follows the project's workflow, and so runs in a terminal:
+  // the other way offered is the integrated session the setting asks for,
+  // alone.
+  const UNDER = { open: [PROJECT], settings: { ...WITH_WORKFLOW, integrated: ["claude-code"] } };
+
+  test("the agent pane offers an integrated session beside a New session that is the workflow's terminal", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await expect(page.getByTestId("start-agent")).toHaveText("New session");
+    await expect(page.getByTestId("start-other")).toHaveText("New integrated session");
+    await page.getByTestId("start-other").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    // Started the other way, it is a pick: it follows no workflow.
+    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    // New session is the workflow's orchestrator, in a terminal: the
+    // choice it opens stands on the workflow.
+    await page.getByTestId("new-session").click();
+    await page.keyboard.press("Enter");
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    await expect(page.getByTestId("workflow-tag")).toBeVisible();
+    await expect(page.getByTestId("conversation")).toBeHidden();
+  });
+
+  test("the agent pane's New session starts the workflow's orchestrator in a terminal", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    await expect(page.getByTestId("workflow-tag")).toBeVisible();
+    await expect(page.getByTestId("conversation")).toHaveCount(0);
+  });
+
+  test("the palette offers an integrated session, never a terminal beside New session", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.getByTestId("go-to").click();
+    await page.getByTestId("palette-field").fill(">new");
+    const rows = page.getByTestId("palette-label");
+    await expect(rows.filter({ hasText: "New session in demo" })).toHaveCount(1);
+    await expect(rows.filter({ hasText: "in a terminal" })).toHaveCount(0);
+    await rows.filter({ hasText: "New integrated session in demo" }).click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+  });
+
+  test("the project menu offers an integrated session", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await page.locator(`[data-row="project:${PROJECT}"]`).hover();
+    await page.getByTestId("project-more").click();
+    await expect(page.getByTestId("project-menu-new")).toHaveText("New session");
+    await expect(page.getByTestId("project-menu-other")).toHaveText("New integrated session");
+    await page.getByTestId("project-menu-other").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+  });
+
+  test("the settings say once that a session under a workflow runs in a terminal", async ({ page }) => {
+    await installFakeCore(page, UNDER);
+    await page.goto("/");
+    await expect(page.getByTestId("agent-status")).toBeVisible();
+    await page.keyboard.press("ControlOrMeta+,");
+    await page.getByTestId("settings-tab-sessions").click();
+    await expect(page.getByTestId("session-kind-workflow")).toHaveText(
+      "A session that follows a workflow runs in a terminal, whichever is chosen here, since that is how its orchestrator is told the workflow.",
+    );
+    await expect(page.getByText("follows a workflow runs in a terminal")).toHaveCount(1);
   });
 });
 
