@@ -70,6 +70,7 @@ import {
   followHistory,
   launch,
   workflowFor,
+  byToken,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
@@ -956,6 +957,73 @@ describe("an agent that mints its own id", () => {
   it("falls back to an installed agent when the preferred one is gone", () => {
     create(A, null, "codex");
     expect(defaultAgent(A)).toBe("claude-code");
+  });
+});
+
+describe("the token a session's tools name it by", () => {
+  beforeEach(() => {
+    localStorage.removeItem("workbench.tokens");
+  });
+
+  const codexToo = () =>
+    applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+
+  it("is the window's own, given to the agent as it starts, and is not the agent's id", async () => {
+    const session = create(A);
+    const token = session.token;
+    expect(token).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    await launch(session.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.token).toBe(token);
+    expect(session.id).toBe("sid-1");
+    expect(session.token).toBe(token);
+    // Two sessions in one folder are two tokens.
+    expect(create(A).token).not.toBe(token);
+  });
+
+  it("names a Codex session from the start, and is kept by its id once that is known", async () => {
+    codexToo();
+    const session = create(A, null, "codex");
+    const token = session.token;
+    expect(started(session.key, "pty-1", null)).toBe(true);
+    expect(session.id).toBeNull();
+    expect(byToken(token)?.key).toBe(session.key);
+    identified("pty-1", "cx-1", null);
+    expect(session.token).toBe(token);
+    expect(sessions.tokens["cx-1"]).toBe(token);
+  });
+
+  it("is the same for the session resumed, after a restart too", async () => {
+    codexToo();
+    const session = create(A, null, "codex");
+    started(session.key, "pty-1", null);
+    identified("pty-1", "cx-1", null);
+    const token = session.token;
+    close(session.key);
+    reset();
+    loadRemembered();
+    const back = create(A, "cx-1", "codex");
+    expect(back.token).toBe(token);
+    await launch(back.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "cx-1", token });
+  });
+
+  it("is the agent's id for a session from before there were tokens, which needs nothing kept", () => {
+    const back = create(A, "old-1");
+    expect(back.token).toBe("old-1");
+    started(back.key, "pty-1", "old-1");
+    expect(sessions.tokens["old-1"]).toBeUndefined();
+  });
+
+  it("is never one that a live row holds already", () => {
+    const first = create(A, "sid-9");
+    started(first.key, "pty-1", "sid-9");
+    const second = create(A, "sid-9");
+    expect(second.token).not.toBe(first.token);
+    // A row that has stopped gives its token up to the one resumed.
+    ended({ id: "pty-1", code: 0, clean: true });
+    const third = create(A, "sid-9");
+    expect(third.token).toBe(first.token);
+    expect(byToken(first.token)?.key).toBe(third.key);
   });
 });
 

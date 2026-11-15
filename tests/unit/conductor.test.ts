@@ -3433,3 +3433,143 @@ describe("starting in a workflow's shape", () => {
     expect(placeOf(child.key)).toBeNull();
   });
 });
+
+describe("sessions told apart by their tokens", () => {
+  beforeEach(() => {
+    for (const key of ["workbench.mine", "workbench.names", "workbench.workflows", "workbench.agents"])
+      localStorage.removeItem(key);
+  });
+
+  /** A Codex session whose id the window does not know yet. */
+  function codexIn(project: string = A) {
+    const row = create(project, null, "codex", null, null, null, null, null);
+    cameUp(row.key, `pty-codex-${row.key}`, null);
+    return row;
+  }
+
+  /** The window came back after the app was closed, with what it keeps of
+      the sessions as well as what callers started. */
+  function restartedWithTokens() {
+    restarted();
+    loadRemembered();
+  }
+
+  it("keeps two sessions in one folder apart: each with its own sessions, standing answer and cap", async () => {
+    const one = codexIn();
+    const two = codexIn();
+    const kid = await startAllowed(call("start", { project: B, prompt: "One" }, { session: one.token }), "pty-1", "sid-1");
+    expect(startedFor(kid.key)).toBe(one.token);
+    expect(allowedProjects(one.token)).toEqual([B]);
+    expect(allowedProjects(two.token)).toEqual([]);
+    // The other lists none of the first's and reaches none of them.
+    await handle(call("sessions", {}, { session: two.token }));
+    expect(last().content).toBe("You have started no sessions.");
+    for (const tool of ["send", "stop", "read", "wait"] as const) {
+      await handle(call(tool, { session: "sid-1", text: "hi" }, { session: two.token }));
+      expect(last().error).toContain("Session sid-1 was not started by you.");
+    }
+    expect(byKey(kid.key)).not.toBeNull();
+    // It is asked about its own start, the first's answer being the first's.
+    const asked = handle(call("start", { project: B, prompt: "Two" }, { session: two.token }));
+    expect(conductor.asking?.caller).toBe(label(two));
+    refuse();
+    await asked;
+    // The cap is each one's own.
+    for (let n = 1; n < CAP; n += 1) own(B, `pty-cap-${n}`, `cap-${n}`, one.token);
+    await handle(call("start", { project: B, prompt: "Ninth" }, { session: one.token }));
+    expect(last().error).toContain(`${CAP} sessions running already`);
+    const room = handle(call("start", { project: B, prompt: "First" }, { session: two.token }));
+    expect(conductor.asking).not.toBeNull();
+    refuse();
+    await room;
+  });
+
+  it("lets a session resumed after a restart go on owning what it started, and no other session there", async () => {
+    const orch = codexIn();
+    const token = orch.token;
+    await startAllowed(call("start", { project: B, prompt: "Fix it" }, { session: token }), "pty-kid", "kid-1");
+    // The window learns the Codex session's id after it has started one.
+    identified(orch.ptyId!, "codex-orch", null);
+    restartedWithTokens();
+    const back = create(A, "codex-orch", "codex", null, null, null, null, null);
+    expect(back.token).toBe(token);
+    cameUp(back.key, "pty-back", "codex-orch");
+    await handle(call("sessions", {}, { session: token }));
+    expect(last().content).toContain("kid-1");
+    expect(last().content).toContain("resume it with start, naming session kid-1");
+    const row = await resumed(call("start", { session: "kid-1", prompt: "Go on" }, { session: token }), "pty-kid-2");
+    expect(last().error).toBeNull();
+    expect(startedFor(row.key)).toBe(token);
+    // Another Codex session in the same folder is not it.
+    const other = codexIn();
+    await handle(call("stop", { session: "kid-1" }, { session: other.token }));
+    expect(last().error).toContain("Session kid-1 was not started by you.");
+    await handle(call("stop", { session: "kid-1" }, { session: token }));
+    expect(last().content).toBe("Stopped session kid-1.");
+  });
+
+  it("goes on with what an earlier version kept under a caller's id", async () => {
+    localStorage.setItem(
+      "workbench.started",
+      JSON.stringify({
+        "orch-old": [{ id: "kid-old", project: B, worktree: null, agent: "claude-code", name: "Fix it" }],
+      }),
+    );
+    restartedWithTokens();
+    const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    expect(back.token).toBe("orch-old");
+    cameUp(back.key, "pty-back", "orch-old");
+    await handle(call("sessions", {}, { session: "orch-old" }));
+    expect(last().content).toContain("kid-old");
+    const row = await resumed(call("start", { session: "kid-old" }, { session: "orch-old" }), "pty-kid");
+    expect(last().error).toBeNull();
+    expect(startedFor(row.key)).toBe("orch-old");
+  });
+
+  it("carries what an earlier version kept under a folder to the one Codex session open there", async () => {
+    const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
+    localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")], [B]: [entry("kid-b")] }));
+    localStorage.setItem(
+      "workbench.runs",
+      JSON.stringify({
+        [A]: { places: { "kid-a": { step: "Work", kind: "work", piece: "kid-a", round: null, work: null } }, rounds: {} },
+      }),
+    );
+    restartedWithTokens();
+    // Open at the last quit: one Codex session in A, and two in B with a
+    // Claude Code one beside them.
+    carryOver([
+      { project: A, id: "codex-a", agent: "codex", startIn: null },
+      { project: B, id: "codex-b1", agent: "codex", startIn: null },
+      { project: B, id: "codex-b2", agent: "codex", startIn: null },
+      { project: B, id: "claude-b", agent: "claude-code", startIn: null },
+    ]);
+    const kept = JSON.parse(localStorage.getItem("workbench.started")!) as Record<string, { id: string }[]>;
+    expect(kept["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
+    // The folder's own copy stays, for the version before to read.
+    expect(kept[A].map((known) => known.id)).toEqual(["kid-a"]);
+    expect(kept["codex-b1"]).toBeUndefined();
+    expect(kept["codex-b2"]).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem("workbench.runs")!)["codex-a"].places["kid-a"].step).toBe("Work");
+    // The session comes back named by its id, and what it started is its.
+    const back = create(A, "codex-a", "codex", null, null, null, null, null);
+    cameUp(back.key, "pty-a", "codex-a");
+    await handle(call("sessions", {}, { session: "codex-a" }));
+    expect(last().content).toContain("kid-a");
+    // What a folder with two such sessions kept is no caller's: the
+    // session it holds is the user's own, and no call reaches it.
+    const kid = create(B, "kid-b", "codex", null, null, null, null, null);
+    cameUp(kid.key, "pty-kid-b", "kid-b");
+    expect(startedFor(kid.key)).toBeNull();
+    const b1 = create(B, "codex-b1", "codex", null, null, null, null, null);
+    cameUp(b1.key, "pty-b1", "codex-b1");
+    await handle(call("stop", { session: "kid-b" }, { session: "codex-b1" }));
+    expect(last().error).toContain("Session kid-b was not started by you.");
+    await handle(raw("stop", { session: "kid-b" }, { cwd: B }));
+    expect(last().error).toBe(OUTSIDE);
+    expect(byKey(kid.key)).not.toBeNull();
+    // Carried once: a second look changes nothing.
+    carryOver([{ project: A, id: "codex-a", agent: "codex", startIn: null }]);
+    expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
+  });
+});
