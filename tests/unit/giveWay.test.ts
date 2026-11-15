@@ -38,6 +38,20 @@ describe("what gives way in a row", () => {
     }
   });
 
+  it("takes a step for a part over by a fraction of a pixel, which the whole-number width hides", () => {
+    const node = row(() => 940, parts, 400);
+    const last = document.createElement("span");
+    node.append(last);
+    node.getBoundingClientRect = () => ({ right: 952 }) as DOMRect;
+    // Past the row's inner edge, 940 from its left, while every part is
+    // drawn; inside it once the first step is taken.
+    last.getBoundingClientRect = () => ({ right: node.dataset.fit === "" ? 940.4 : 780 }) as DOMRect;
+    node.style.paddingRight = "12px";
+    const action = fits(node, steps);
+    expect(node.dataset.fit).toBe("chrome");
+    action.destroy();
+  });
+
   it("gives parts back when the row has room again", () => {
     let width = 450;
     const node = row(() => width, parts, 400);

@@ -391,6 +391,34 @@ test.describe("a narrow window", () => {
     await expect(bar(page)).toHaveAttribute("data-fit", "");
   });
 
+  test("cuts nothing short before every step is taken, not by a fraction of a pixel", async ({ page }) => {
+    await open(page, { accounts: WORK });
+    await report(page, THREE);
+    const fit = async (width: number) => {
+      await settled(page, width);
+      return (await bar(page).getAttribute("data-fit")) ?? "";
+    };
+    // The bar's width in whole pixels hides a part over by less than half
+    // of one; a quarter pixel more padding at a time brings that about
+    // whatever the font's widths.
+    for (const extra of [0, 0.25, 0.5, 0.75]) {
+      await bar(page).evaluate((node, extra) => (node.style.paddingLeft = `${12 + extra}px`), extra);
+      let [low, high] = [400, 1440];
+      while (high - low > 1) {
+        const middle = Math.floor((low + high) / 2);
+        if ((await fit(middle)) === "") high = middle;
+        else low = middle;
+      }
+      expect(await fit(high)).toBe("");
+      const cut = await page.evaluate(() => {
+        const who = document.querySelector("[data-testid='account-readout']")!.getBoundingClientRect();
+        const name = document.querySelector("[data-testid='account-readout'] .name")!.getBoundingClientRect();
+        return name.right - who.right;
+      });
+      expect(cut, `${extra} px more at ${high}`).toBeLessThanOrEqual(0.01);
+    }
+  });
+
   test("takes no step for a word in passing, which is drawn over the parts before it", async ({ page }) => {
     await open(page, { accounts: WORK });
     await report(page, [

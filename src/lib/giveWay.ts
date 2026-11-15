@@ -79,11 +79,24 @@ export function keeps(node: HTMLElement) {
  * stand where they will be drawn.
  */
 export function fits(node: HTMLElement, steps: string[]) {
+  /** The row's parts run past its inner edge. `scrollWidth` is a whole
+      number, so a part over by a fraction of a pixel, which would still
+      cut a part short, is found by the parts' own edges. */
+  function over(): boolean {
+    if (node.scrollWidth > node.clientWidth) return true;
+    const style = getComputedStyle(node);
+    const inner =
+      node.getBoundingClientRect().right -
+      (parseFloat(style.paddingRight) || 0) -
+      (parseFloat(style.borderRightWidth) || 0);
+    return [...node.children].some((part) => part.getBoundingClientRect().right > inner + 0.01);
+  }
+
   function measure() {
     node.dataset.measuring = "";
     const taken: string[] = [];
     node.dataset.fit = "";
-    while (node.scrollWidth > node.clientWidth && taken.length < steps.length) {
+    while (over() && taken.length < steps.length) {
       taken.push(steps[taken.length]);
       node.dataset.fit = taken.join(" ");
     }
