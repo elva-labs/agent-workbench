@@ -286,14 +286,16 @@ async fn integrated_compact(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     id: String,
+    instructions: Option<String>,
 ) -> Result<Value, String> {
+    let told = instructions.clone();
     routed(
         Arc::clone(&core),
         Arc::clone(&remotes),
         route(&id),
         "integrated_compact",
-        |rest| json!({ "id": rest }),
-        |core, id| core.integrated_compact(id),
+        move |rest| json!({ "id": rest, "instructions": told }),
+        move |core, id| core.integrated_compact(id, instructions.as_deref()),
     )
     .await
 }

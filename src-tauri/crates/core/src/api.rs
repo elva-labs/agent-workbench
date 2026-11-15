@@ -634,11 +634,20 @@ impl Core {
             .map(|_| ())
     }
 
-    /// Compacts the conversation, in the agent's own way. Comes back once
+    /// Compacts the conversation, in the agent's own way, with what the
+    /// summary should keep where the agent takes that. Comes back once
     /// asked; the compaction's events follow.
-    pub fn integrated_compact(&self, id: &str) -> Result<(), String> {
-        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::Compact)
-            .map(|_| ())
+    pub fn integrated_compact(&self, id: &str, instructions: Option<&str>) -> Result<(), String> {
+        let instructions = instructions
+            .map(str::trim)
+            .filter(|words| !words.is_empty())
+            .map(str::to_string);
+        crate::integrated::control(
+            &self.integrated,
+            id,
+            &crate::integrated::Control::Compact { instructions },
+        )
+        .map(|_| ())
     }
 
     /// Answers a permission request the session asked.

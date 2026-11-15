@@ -146,7 +146,8 @@ pub enum Event {
     /// is known yet, and `configured` follows when any changes. `models`,
     /// `modes` and `efforts` are what the agent offers to switch to, the
     /// efforts being those of the model it runs on; `commands` are the
-    /// slash commands it takes in a message.
+    /// slash commands and skills it takes in a message, as far as it has
+    /// said which is which, and `commands` follows when that changes.
     Ready {
         session_id: String,
         model: Option<String>,
@@ -166,6 +167,9 @@ pub enum Event {
         effort: Option<String>,
         efforts: Vec<String>,
     },
+    /// The slash commands and skills changed, or the agent said more of
+    /// which is which. All of them, as they now are.
+    Commands { commands: Vec<CommandInfo> },
     /// Where a message the window sent stands, between `send` and the turn
     /// that answers it: `sent` when it went to the agent with nothing ahead
     /// of it, `queued` while it waits behind a turn already running,
@@ -421,6 +425,13 @@ pub struct CommandInfo {
     pub description: Option<String>,
     /// What the command takes after its name, for a placeholder.
     pub hint: Option<String>,
+    /// A skill rather than a command, as far as the agent has said.
+    pub skill: bool,
+    /// The agent's own, rather than the user's, a project's or a plugin's.
+    pub builtin: bool,
+    /// Where one that is not the agent's own comes from, in the agent's
+    /// words: a project, the user, a plugin's name.
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -842,8 +853,11 @@ pub const UNTRUSTED: &str = "untrusted";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Control {
     Interrupt,
-    /// Compact the conversation, in whatever way the agent does it.
-    Compact,
+    /// Compact the conversation, in whatever way the agent does it, with
+    /// what the summary should keep where the agent takes that.
+    Compact {
+        instructions: Option<String>,
+    },
     SetModel(String),
     SetMode(String),
     SetEffort(String),
@@ -958,12 +972,13 @@ pub struct Settings {
 ///
 /// `state` is the session's state and `turn` whether a turn runs;
 /// `settings` what it runs on and `efforts` the efforts of the model it is
-/// on; `ready` the ready event as it went out, null before the agent was
-/// ready; `requests` every permission request and question still waiting
-/// for an answer, each as it was asked; `messages` every message sent and
-/// not yet taken into a turn, in the order sent, each as its first message
-/// event told it, with its text and images; `limits` the account's limits
-/// as the last limits event told them, null before one went out.
+/// on; `ready` the ready event as it went out, with the commands as they
+/// now are, null before the agent was ready; `requests` every permission
+/// request and question still waiting for an answer, each as it was asked;
+/// `messages` every message sent and not yet taken into a turn, in the
+/// order sent, each as its first message event told it, with its text and
+/// images; `limits` the account's limits as the last limits event told
+/// them, null before one went out.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -1025,7 +1040,7 @@ struct Tracker {
     settings: Settings,
     /// The efforts of the model the session is on, as the events last said.
     efforts: Vec<String>,
-    /// The ready event, as it went out.
+    /// The ready event, as it went out, with the commands as they now are.
     ready: Option<Event>,
     /// The last limits event, as it went out.
     limits: Option<Event>,
@@ -1109,6 +1124,11 @@ impl Tracker {
                 self.efforts = efforts.clone();
                 if matches!(event, Event::Ready { .. }) {
                     self.ready = Some(event.clone());
+                }
+            }
+            Event::Commands { commands: now } => {
+                if let Some(Event::Ready { commands, .. }) = &mut self.ready {
+                    commands.clone_from(now);
                 }
             }
             Event::TurnStarted { messages } => {
@@ -3082,6 +3102,16 @@ mod tests {
                     efforts: vec![],
                     commands: vec![],
                 }],
+                (Some("commands"), Some(name)) => vec![Event::Commands {
+                    commands: vec![CommandInfo {
+                        name: name.to_string(),
+                        description: None,
+                        hint: None,
+                        skill: true,
+                        builtin: false,
+                        source: None,
+                    }],
+                }],
                 (Some("drop"), Some(message)) => vec![Event::message(
                     message,
                     MessageState::Dropped,
@@ -3164,7 +3194,7 @@ mod tests {
                         key: key.clone(),
                     })
                 }
-                Control::Compact => {
+                Control::Compact { .. } => {
                     return Ok(Sending::Line {
                         line: "compact".into(),
                     })
@@ -3558,6 +3588,22 @@ mod tests {
     }
 
     #[test]
+    fn the_snapshot_s_ready_event_holds_the_commands_as_they_now_are() {
+        let bench = Bench::new(fake());
+        bench.live.take("ready");
+        bench.live.take("commands review");
+        let json = serde_json::to_value(snapshot(&bench.sessions, "int-bench").unwrap()).unwrap();
+        assert_eq!(json["ready"]["type"], "ready");
+        assert_eq!(
+            json["ready"]["commands"],
+            serde_json::json!([{
+                "name": "review", "description": null, "hint": null,
+                "skill": true, "builtin": false, "source": null,
+            }])
+        );
+    }
+
+    #[test]
     fn the_snapshot_holds_the_limits_last_told() {
         let limits = |percent: f64| Event::Limits {
             agent: "claude-code".into(),
@@ -3651,7 +3697,12 @@ mod tests {
     #[test]
     fn a_request_the_agent_answers_with_events_alone_is_done_once_written() {
         let bench = Bench::new(fake());
-        let done = control(&bench.sessions, "int-bench", &Control::Compact).unwrap();
+        let done = control(
+            &bench.sessions,
+            "int-bench",
+            &Control::Compact { instructions: None },
+        )
+        .unwrap();
         assert_eq!(done, Value::Null);
         assert_eq!(bench.next().as_deref(), Some("compact"));
     }
