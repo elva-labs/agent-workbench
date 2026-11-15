@@ -58,7 +58,7 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { placeOf, startedFor } from "$lib/conductor.svelte";
+  import { placeOf, startedFor, unheard } from "$lib/conductor.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
@@ -507,6 +507,18 @@
     ]
       .filter((part) => part !== null)
       .join(", ");
+  }
+
+  /** What a starter's row says of the sessions it started that stopped,
+      asked or ended since it last looked: how many, and on hover which. */
+  function newsWords(news: Session[]): string {
+    return news.length === 1 ? "1 new report" : `${news.length} new reports`;
+  }
+
+  function newsTitle(news: Session[]): string {
+    const what = (kid: Session) =>
+      !isLive(kid) ? "ended" : kid.needs === "permission" ? "is asking" : "stopped";
+    return `Since it last looked: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}.`;
   }
 
   function toggleKids(key: string) {
@@ -1082,8 +1094,11 @@
      at the end of its second line that folds them away. -->
 {#snippet sessionRow(session: Session)}
   {@const kids = childrenOf(session)}
+  {@const news = unheard(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
-  {@const line = folded ? startedWords(kids) : (session.note ?? (kids.length > 0 ? startedWords(kids) : null))}
+  {@const line = folded
+    ? startedWords(kids)
+    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : null))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"
@@ -1125,6 +1140,11 @@
             title={line}
             data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
           >
+          {#if news.length > 0}
+            <!-- What it has not heard from the sessions it started, while it
+                 is idle with no wait held, quietly where the model stands. -->
+            <span class="meta news" title={newsTitle(news)} data-testid="starter-news">{newsWords(news)}</span>
+          {/if}
           {#if folded}
             <!-- Folded, each session it started is a dot where the model
                  stands otherwise. -->
@@ -1136,14 +1156,16 @@
                   class:permission={kid.needs === "permission"}
                 ></span>{/each}
             </span>
-          {:else if session.model !== null}
+          {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
           {/if}
         </span>
       {/if}
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
-      <span class="state told">{statusLabel(session)}</span>
+      <span class="state told"
+        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}</span
+      >
     </button>
     {#if kids.length > 0}
       <button
@@ -1179,6 +1201,7 @@
      stand. Delete does nothing on these rows; their own × stops them. -->
 {#snippet rail(parent: Session)}
   {@const kids = childrenOf(parent)}
+  {@const news = unheard(parent)}
   {#if kids.length > 0 && !collapsed[parent.key]}
     <div class="kids" data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
@@ -1226,6 +1249,11 @@
             </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
+            {/if}
+            {#if news.includes(kid)}
+              <!-- The report its starter has not heard, which the starter's
+                   row counts. -->
+              <span class="news-mark" title="Its starter has not seen this yet" data-testid="started-news"></span>
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told">{statusLabel(kid)}</span>
@@ -2974,6 +3002,32 @@
 
   .model.asking {
     color: var(--accent);
+  }
+
+  /* What a starter has not heard from the sessions it started: a step
+     above the model it stands in for, with a small mark in the accent. It
+     is the starter's to read, not yours to answer, so it stays quiet. */
+  .meta.news {
+    color: var(--ink-2);
+  }
+
+  .meta.news::before,
+  .news-mark {
+    content: "";
+    flex: none;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .meta.news::before {
+    margin-right: 2px;
+  }
+
+  /* On the started session's own line, beside its time. */
+  .news-mark {
+    margin-left: 8px;
   }
 
   /* A starter folded: a small dot for each session it started. */

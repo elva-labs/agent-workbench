@@ -1489,6 +1489,49 @@ test("shows a message another session sent under that session, and never the wor
   await expect(page.locator("[data-testid='conversation']:visible").getByTestId("user-message")).toHaveCount(0);
 });
 
+test("gives an integrated starter what it has not heard with the user's message, folded under the user's words", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("sessions-menu").click();
+  await page.getByTestId("menu-orchestrator").click();
+  await expect(page.getByTestId("conversation")).toBeVisible();
+  await page.evaluate(
+    (project) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: "o-1",
+        tool: "start",
+        arguments: { project, prompt: "Count the files" },
+        cwd: project,
+        session: "integrated-session-1",
+      }),
+    PROJECT,
+  );
+  await page.getByTestId("conduct-allow").click();
+  await expect(page.getByTestId("started-session")).toHaveCount(1);
+  // The session it started finishes while it is idle.
+  await agent(page, `f.turn("int-2", "There are 214 files under src.");`);
+  await expect(page.getByTestId("starter-news")).toHaveText("1 new report");
+  const view = page.locator("[data-testid='conversation']:visible");
+  await view.getByTestId("composer-input").fill("How is it going?");
+  await page.keyboard.press("Enter");
+  const message = view.getByTestId("user-message").last();
+  await expect(message.locator(".bubble")).toHaveText("How is it going?");
+  // The agent was sent the note ahead of the user's words.
+  const sent = (await calls(page)).filter((made) => made.method === "send").at(-1)!;
+  expect(sent.id).toBe("int-1");
+  expect(sent.text).toBe(
+    "From the workbench, not the user, on the sessions you started:\nSession integrated-session-2 stopped working. Its last line: There are 214 files under src.\n\nHow is it going?",
+  );
+  // It is behind a fold of its own, under the words, and the row is quiet.
+  await expect(message.getByTestId("workbench-reports-text")).toHaveCount(0);
+  await message.getByTestId("workbench-reports").click();
+  const note = message.getByTestId("workbench-reports-text");
+  await expect(note).toHaveText("Session integrated-session-2 stopped working. Its last line: There are 214 files under src.");
+  const bubble = (await message.locator(".bubble").boundingBox())!;
+  expect((await note.boundingBox())!.y).toBeGreaterThan(bubble.y + bubble.height);
+  await expect(page.getByTestId("starter-news")).toHaveCount(0);
+});
+
 test.describe("a request too long for its line", () => {
   /** Whether an element sits wholly inside the dock's box, in sight. */
   const inSight = (page: Page, testid: string) =>

@@ -296,6 +296,63 @@ test.describe("the orchestrator", () => {
     await expect(summary).toHaveText("1 running");
   });
 
+  test("says on the starter's row what it has not heard, quietly, until it is told", async ({
+    page,
+  }) => {
+    await orchestrate(page);
+    const event = (sessionId: string, kind: string) =>
+      page.evaluate(
+        ({ sessionId, kind }) =>
+          (
+            window as unknown as {
+              __sessionEvent?: (event: {
+                sessionId: string;
+                kind: string;
+              }) => void;
+            }
+          ).__sessionEvent?.({ sessionId, kind }),
+        { sessionId, kind },
+      );
+    const news = page.getByTestId("starter-news");
+    const mark = page.getByTestId("started-news");
+    await expect(news).toHaveCount(0);
+
+    // The session it started stops while it is idle with no wait held: its
+    // row says so where the model stands, and the started line is marked.
+    await event("session-3", "prompt");
+    await event("session-3", "stop");
+    await expect(news).toHaveText("1 new report");
+    const name = await page.getByTestId("started-session").locator(".label").textContent();
+    await expect(news).toHaveAttribute("title", `Since it last looked: ${name} stopped.`);
+    await expect(mark).toBeVisible();
+    const summary = (await page.getByTestId("orchestrator-summary").boundingBox())!;
+    const box = (await news.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(summary.x + summary.width);
+    expect(Math.abs(box.y + box.height / 2 - (summary.y + summary.height / 2))).toBeLessThan(4);
+    // Quiet: in the hand of the line, not the accent that asks for you.
+    const colours = await page.evaluate(() => {
+      const of = (selector: string) => getComputedStyle(document.querySelector(selector)!).color;
+      return { news: of("[data-testid='starter-news']"), name: of(".session.starter .label") };
+    });
+    expect(colours.news).not.toBe(colours.name);
+
+    // While the starter works it may yet look, so the row says nothing.
+    await event("session-2", "prompt");
+    await expect(news).toHaveCount(0);
+    await event("session-2", "stop");
+    await expect(news).toHaveText("1 new report");
+
+    // The user's message tells it, through its prompt hook, and the row
+    // goes quiet.
+    await push(page, { id: "p-1", tool: "prompt", session: "session-2" });
+    await expect.poll(() => answerTo(page, "p-1")).not.toBeNull();
+    expect((await answerTo(page, "p-1"))!.content).toBe(
+      "From the workbench, not the user, on the sessions you started:\nSession session-3 stopped working. It has left no line.",
+    );
+    await expect(news).toHaveCount(0);
+    await expect(mark).toHaveCount(0);
+  });
+
   test("keeps a started session running when Delete lands on its row", async ({
     page,
   }) => {
