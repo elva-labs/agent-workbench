@@ -264,7 +264,13 @@ naming the session and its kind:
   start of each turn names which are skills, and until the first does,
   those that are not the agent's own count as skills. Commands that work
   only in the agent's own terminal are left out, as are those whose name
-  begins with an underscore. Codex lists none.
+  begins with an underscore or holds a space, and of two by one name the
+  agent's own is kept. An MCP server's prompt, which Claude Code lists as
+  the server and the prompt joined by a colon, is given the name a message
+  calls it by, `mcp__`, the server and the prompt joined by two
+  underscores, each with what is not a letter, a digit, an underscore or a
+  dash made an underscore; it counts as a command with the server as its
+  source, and goes once a turn's start does not name it. Codex lists none.
 - **configured**: the model, the mode or the effort changed.
 - **message**: a sent message went to the agent with nothing ahead of it,
   is queued behind a running turn, was taken into the running turn, or
@@ -300,7 +306,9 @@ naming the session and its kind:
   work as a whole, was over. A finished task says whether the agent
   reports it in a turn of its own.
 - **compacting** and **compacted**, which says whether it was asked for or
-  the context window was full.
+  the context window was full, or **compact failed**, with the agent's
+  reason where it gives one, when the conversation is left as it was. A
+  compaction is over with the turn it runs in either way.
 - **context**: how much of the model's context window the conversation
   takes, and how big the window is, where the agent says.
 - **limits**: the usage limits of the account the session runs under,

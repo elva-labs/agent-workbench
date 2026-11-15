@@ -451,28 +451,32 @@ the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
 takes it. While the agent waits on an answer the composer says Up reaches
 it, and a lone digit sent then goes only on a second Enter, so it is not
-sent as a message by surprise.
+sent as a message by surprise. A message that was not delivered, refused
+by the agent or never sent, can be put back in the composer. What is being
+written stays with its session while another is on screen. The keys are in
+[focus](focus-model.md#an-integrated-session).
 
 A slash typed as the first thing in the composer opens a menu over the
 thread of the agent's slash commands, then its skills, for an agent that
 lists them, as Claude Code does; Codex lists none, so there a slash is
 text. Each shows its argument hint, what it does, and where it comes from:
-built in, a project, the user or a plugin. Typing narrows the list to
-names that begin with what was typed, then names with a later word that
-does, and marks the letters that match; the first is marked. Taking one
-puts it in the composer with a space after it, and its argument hint waits
-in grey after the caret until something is typed; a second Enter sends it.
-Before the agent has listed its commands the menu says so and fills in
-place once it has, and a word nothing matches is said to go as a message;
-the menu closes at the first space. Which entries are skills the agent
+built in, a project, the user, a plugin or an MCP server. Typing narrows
+the list to names that begin with what was typed, then names with a later
+word that does, and marks the letters that match; the first is marked.
+Taking one puts it in the composer with a space after it, and its argument
+hint waits in grey after the caret until something is typed; a second
+Enter sends it. Before the agent has listed its commands the menu says so
+and fills in place once it has, and until then a message that begins with
+a slash is not sent. A word nothing matches is said to go as a message,
+and the menu closes at the first space. Which entries are skills the agent
 says when its first turn starts, so until then those that are not its own
-are listed as skills. The compact command does not go as a message: the
-conversation is compacted through the agent's own compaction, with any
-words after the command for the summary to keep, and while a turn runs
-the composer says it waits for the turn to end. A message that was not delivered, refused by
-the agent or never sent, can be put back in the composer. What is being written
-stays with its session while another is on screen. The keys are in
-[focus](focus-model.md#an-integrated-session).
+are listed as skills. An MCP server's prompt is offered by the name a
+message gives it, which starts with `mcp__`. The compact command does not
+go as a message: the conversation is compacted through the agent's own
+compaction, with any words after the command for the summary to keep, and
+while a turn runs the composer says it waits for the turn to end. A
+compaction that fails says so in the thread, with the agent's reason, and
+words that could not be sent to compact go back in the composer.
 
 The row's id is the conversation's id as the agent says it once ready, so
 the agent's own tools find the row. Its state, working, asking or idle,
