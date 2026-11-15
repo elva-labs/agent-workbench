@@ -141,6 +141,23 @@ pub fn snapshot_homeward(host: &str, mut snapshot: Value) -> Value {
     snapshot
 }
 
+/// A conversation's history from a remote core, with the host put back on
+/// the paths its events name, as on the events of a live session.
+pub fn history_homeward(host: &str, mut history: Value) -> Value {
+    if let Some(items) = history.get_mut("items").and_then(Value::as_array_mut) {
+        for item in items {
+            if let Some(event) = item.get_mut("event") {
+                *event = homeward(
+                    host,
+                    workbench_core::integrated::INTEGRATED_EVENT,
+                    event.take(),
+                );
+            }
+        }
+    }
+    history
+}
+
 /// An event from a remote core, with the host put back on whatever names
 /// a pty or a path.
 pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
@@ -571,6 +588,22 @@ mod tests {
             json!({"id": "int-1", "type": "text", "changes": null}),
         );
         assert_eq!(text["changes"], Value::Null);
+        let history = history_homeward(
+            "lab",
+            json!({"cut": false, "items": [
+                {"at": 1, "event": {"type": "toolFinished", "call": "c", "changes": [
+                    {"path": "/srv/a.rs", "kind": "update", "to": null},
+                ]}},
+                {"at": 2, "model": "m", "event": {"type": "turnStarted", "messages": []}},
+            ]}),
+        );
+        assert_eq!(
+            history["items"][0]["event"]["changes"][0]["path"],
+            "ssh://lab/srv/a.rs"
+        );
+        assert_eq!(history["items"][1]["model"], "m");
+        assert!(history["items"][1]["event"].get("id").is_none());
+        assert_eq!(history_homeward("lab", Value::Null), Value::Null);
         integrated_started("gone", "ssh://gone#int-1");
         integrated_started("gone", "ssh://gone#int-2");
         integrated_heard("gone", &json!({"id": "ssh://gone#int-2", "type": "ended"}));

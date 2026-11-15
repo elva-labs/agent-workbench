@@ -75,7 +75,7 @@ name, which Codex files the threads it starts under, then reads the
 account, the models Codex offers and the efforts each takes, and the
 user's configuration as Codex sees it from the session's folder, and
 starts a thread in that folder, or resumes the one asked for without its
-past turns, which the window reads from the transcript. The thread starts
+past turns, which the window does not draw. The thread starts
 with the model, the effort and the mode the session asked for, and with
 approvals sent to the window whoever the user's own configuration names to
 review them. A start that names no mode runs in the mode the user's
@@ -181,7 +181,8 @@ the same way.
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
-| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, the messages no turn has taken yet, and the account's limits as they were last told. It answers once every event that went out before it has, so it reflects those events and none after. |
+| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
+| History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running, and answers with none for an agent whose history is not read, which Codex's is not. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
@@ -519,6 +520,55 @@ Codex's own sub-agents, which it keeps as threads of their own, and forms
 an MCP server asks the user to fill in from a schema. A question the agent
 asks covers options and words of the user's own, not such a form.
 
+## History
+
+What a Claude Code conversation said before is read from its transcript,
+the file the agent writes as it goes. The workbench looks for it under the
+project's folder in the account's configuration directory, and under the
+folders of the directories inside the project, a worktree among them, since
+the agent files a session by the folder it ran in. A session resumed in
+another folder is written there again under the same id, and the copy
+written last is read. Only a plain file is opened, and a request that names
+no project names no transcript.
+
+The transcript comes back as the events a live session would have sent, in
+order, each with the time its entry was written: each message of the user's
+with its text and images, each turn with the model it ran on and how long it
+took, text and thinking whole, tool calls with their input, result and the
+files they changed, plans, and compactions. A message the user sent while
+the agent worked is taken into the turn it was in. Something the agent was
+told by itself, such as that background work finished, begins a turn with
+no message, and an interrupted turn ends as interrupted. A call left with
+no result when its turn ended failed, as a live session's does. What a
+subagent said and did is read from its own transcript, beside the
+session's, and goes under the call that started it.
+
+A transcript can hold turns the user went back on. The conversation is the
+line from the last entry back through each entry's parent to the first,
+past a compaction to what it compacted, with the results of calls the agent
+made at once, which hang off their calls. Where that line breaks off at a
+parent the transcript does not hold, every entry is kept in the order
+written. A last turn with no end in the transcript, no stop of the agent's
+own and no note of how long it took, is left open, as one that may still
+run.
+
+The format is internal to the agent and changes between versions, so the
+reader is kept apart and reads defensively, as the title reader does: an
+entry it cannot read is skipped, never an error; a last line still being
+written is skipped; a line of more than a few dozen megabytes is passed
+over without being held; nothing written after the file was opened is read;
+and of a transcript larger than half a gigabyte only the end is read. It is
+read twice: once for each line's ids and parent alone, to find the lines
+that make up the conversation, and once for what those lines say, each made
+into its events and let go before the next, so no more than what is kept is
+held at once. The second reading reads the same bytes as the first, though
+the file grows between them. Long
+content is cut down further than a live session's and flagged: a tool's
+output and each string of its input to sixteen kilobytes, a changed file to
+sixty-four, and a block of text to a quarter of a megabyte; an image larger
+than four megabytes is left out; and a history of more than thirty-two
+megabytes in all leaves out its first turns and says so.
+
 ## Drawing a conversation
 
 What a window that draws an integrated session can rely on, and what it
@@ -553,14 +603,25 @@ has to do itself:
   messages are closed first, then the session ends.
 - **History.** No event is kept or played back. A window that comes to a
   session late, after a reload or as a second window, listens first and
-  then asks for a snapshot, and draws from it what no transcript holds:
-  the state, the settings and what the agent offers, the requests waiting
-  for an answer, which it can still answer, the messages that wait for a
-  turn, and the account's limits. Every turn the agent has begun, and
-  what was said in it, is read from the agent's transcript, as are a
-  resumed session's past turns. The part of a turn still running that the
-  transcript does not hold yet, such as a block still streaming, comes in
-  the events that follow.
+  then asks for a snapshot and for the history. It lays the history first,
+  then the events it heard meanwhile, then the snapshot, which says what
+  no transcript holds: the state, the settings and what the agent offers,
+  the requests waiting for an answer, which it can still answer, the
+  messages that wait for a turn, and the account's limits. What both the
+  history and the events hold, a call, a block of text or a message, has
+  the same id in each, so it is drawn once. The part of a turn still
+  running that the transcript does not hold yet, such as a block still
+  streaming, comes in the events that follow, and the snapshot says
+  whether the turn the history left open still runs. Since what is read
+  holds part of the run being played, the window waits a few seconds for
+  the history before it plays the events, and lays a history that comes
+  later above them. A snapshot that fails, as for a session the core no
+  longer runs after a restart, says nothing runs from before, so all that
+  is read is from before and a turn it left open is over. A resumed
+  session's past turns are read the same way, and the snapshot's time for
+  when this run began places it among them. A session started on a
+  conversation it resumes does not wait: all it reads is from before, and
+  it goes above what the session says from the start.
 - **Content.** Images in a tool's result and a command's output kept apart
   from its errors or its exit code arrive as plain text. Long content is
   cut down and flagged.
