@@ -148,7 +148,7 @@ jobs:
           daemon="src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote"
           codesign --force --options runtime --timestamp --sign "$identity" "$daemon"
           codesign --verify --verbose=2 "$daemon"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: daemon-${{ matrix.name }}
           path: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote
@@ -235,7 +235,7 @@ jobs:
 
       # Every daemon build goes into the app's resources, at the path the
       # app looks for one to send to a machine.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: daemon-*
           path: daemons
@@ -400,7 +400,7 @@ jobs:
 
       # A run started by hand builds but releases nothing: the bundles are
       # kept as artifacts to try out.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: github.event_name == 'workflow_dispatch'
         with:
           name: bundles-${{ matrix.target }}
