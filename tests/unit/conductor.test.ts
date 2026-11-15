@@ -1671,6 +1671,21 @@ describe("telling a starter as the user writes to it", () => {
     expect(last().content).toBe(lines[1]);
   });
 
+  it("keeps a session's name to one line, where it has no id to go by", async () => {
+    const row = own(A, "pty-1", "sid-1", "caller-1");
+    row.id = null;
+    row.title = "Fix\nthe cache";
+    row.working = true;
+    flushSync();
+    row.working = false;
+    flushSync();
+    await prompt();
+    expect(last().content!.split("\n")).toEqual([
+      REPORTS_HEAD,
+      "Session Fix the cache stopped working. It has left no line.",
+    ]);
+  });
+
   it("says nothing to a session that started none, nor of another caller's", async () => {
     stoppedOne("pty-1", "sid-1");
     live(A, "pty-9", "caller-2");

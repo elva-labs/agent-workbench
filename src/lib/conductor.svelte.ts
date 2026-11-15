@@ -949,7 +949,7 @@ function reportNote(callers: string[], ending: boolean): Note | null {
   if (ending) endWaits(callers, USER_WROTE);
   const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
   const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
-  const name = (kid: Session) => kid.id ?? label(kid);
+  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
   const lines = news.map((kid) => restText(kid, name(kid)));
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
@@ -2144,8 +2144,10 @@ export function oneLine(text: string): string {
 }
 
 /** What a session at rest is doing, in the words a wait answers with: it
-    ended, it is asking for permission, or it stopped working. */
-function restText(session: Session, name: string): string {
+    ended, it is asking for permission, or it stopped working. Its name goes
+    on one line, as its last line does. */
+function restText(session: Session, called: string): string {
+  const name = oneLine(called);
   if (!isLive(session))
     return `Session ${name} ${stateOf(session)}. ${lastLine(session)}`;
   if (session.needs === "permission")
