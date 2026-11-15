@@ -888,8 +888,14 @@ export class Conversation {
     if (turn === null) return;
     turn.endedAt = now;
     turn.retrying = null;
-    for (const entry of this.entries)
-      if (entry.kind === "agent" && entry.turn === turn.id) this.#closeParts(entry.parts, now);
+    // No run of a turn numbered before this one stands after this one's
+    // first run, so the walk back from the end stops at such a run.
+    for (let at = this.entries.length - 1; at >= 0; at--) {
+      const entry = this.entries[at];
+      if (entry.kind !== "agent") continue;
+      if (entry.turn === turn.id) this.#closeParts(entry.parts, now);
+      else if (entry.turn < turn.id) break;
+    }
     this.current = null;
     this.interrupting = false;
   }
