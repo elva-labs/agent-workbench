@@ -400,7 +400,14 @@ function paintBackground() {
     light: coloursOf(theme.palette, "light", theme.themes),
     dark: coloursOf(theme.palette, "dark", theme.themes),
   };
-  const css = backgroundCss(background, colours, imagesOf(background));
+  // While one is being picked, only what is on screen is worked out.
+  const only = theme.preview === null ? null : { appearance: resolvedTheme(), look: theme.look };
+  const css = backgroundCss(
+    background,
+    colours,
+    imagesOf(background, only === null ? ["light", "dark"] : [only.appearance]),
+    only,
+  );
   if (sheet.textContent !== css) sheet.textContent = css;
   root.dataset.background = "";
 }

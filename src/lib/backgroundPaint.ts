@@ -81,21 +81,30 @@ function valuesOf(painted: Painted, appearance: Appearance, images: Images): Rec
 }
 
 /** The stylesheet for a background: what it paints in each appearance and
-    look, worked out for the palette's colours in each appearance. */
+    look, worked out for the palette's colours in each appearance. While a
+    background is being picked only the appearance and look on screen are
+    worked out, so the window keeps up with the pointer. */
 export function backgroundCss(
   background: Background,
   colours: Record<Appearance, Record<string, string>>,
   images: Images,
+  only: { appearance: Appearance; look: Look } | null = null,
 ): string {
   const named: Record<string, string> = {};
   if (images.light !== null) named["tint-image-light"] = `url("${images.light}")`;
   if (images.dark !== null) named["tint-image-dark"] = `url("${images.dark}")`;
   if (images.grain !== null) named["tint-grain"] = `url("${images.grain}")`;
   let css = Object.keys(named).length > 0 ? block(":root[data-background]", named) : "";
-  const dark = LOOKS.map((look) => [look, valuesOf(paintOf(background, "dark", look, colours.dark), "dark", images)] as const);
-  for (const look of LOOKS) {
-    css += block(SELECTORS[look], valuesOf(paintOf(background, "light", look, colours.light), "light", images));
-  }
+  const looks = only === null ? LOOKS : [only.look];
+  const sets = (appearance: Appearance) =>
+    only !== null && only.appearance !== appearance
+      ? []
+      : looks.map(
+          (look) => [look, valuesOf(paintOf(background, appearance, look, colours[appearance]), appearance, images)] as const,
+        );
+  for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
+  const dark = sets("dark");
+  if (dark.length === 0) return css;
   css += "@media (prefers-color-scheme: dark) {\n";
   for (const [look, values] of dark) css += block(`${SELECTORS[look]}:not([data-theme="light"])`, values, "  ");
   css += "}\n";
@@ -146,13 +155,17 @@ function remembered(key: string, draw: () => string | null): string | null {
   return url;
 }
 
-/** The images a background needs: a gradient for each appearance where it
-    has more than one colour, and the grain's tile where it has grain. */
-export function imagesOf(background: Background): Images {
+/** The images a background needs: a gradient for each appearance asked
+    for where it has more than one colour, and the grain's tile where it
+    has grain. */
+export function imagesOf(
+  background: Background,
+  appearances: Appearance[] = ["light", "dark"],
+): Images {
   const images: Images = { light: null, dark: null, grain: null };
   if (!drawable()) return images;
   if (background.dots.length > 1) {
-    for (const appearance of ["light", "dark"] as Appearance[]) {
+    for (const appearance of appearances) {
       const colours = background.dots.map((dot) => dotColour(dot, appearance));
       const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
       images[appearance] = remembered(key, () =>

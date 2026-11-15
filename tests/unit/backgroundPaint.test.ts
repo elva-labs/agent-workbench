@@ -2,7 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Background } from "$lib/background";
 import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
 import { coloursOf } from "$lib/paletteColours";
-import { adoptTheme, loadTheme, setPalette, shownBackground, theme } from "$lib/theme.svelte";
+import {
+  adoptTheme,
+  deleteTheme,
+  endPreview,
+  loadTheme,
+  previewBackground,
+  setBackground,
+  setPalette,
+  setThemes,
+  shownBackground,
+  theme,
+} from "$lib/theme.svelte";
 
 const LAGOON: Background = {
   dots: [
@@ -78,6 +89,7 @@ describe("the stylesheet a background is painted from", () => {
 describe("painting the background the palette keeps", () => {
   beforeEach(() => {
     theme.palette = "teal";
+    theme.themes = {};
     theme.backgrounds = {};
     theme.preview = null;
     localStorage.clear();
@@ -104,6 +116,37 @@ describe("painting the background the palette keeps", () => {
     expect(shownBackground()).toBeNull();
     theme.preview = null;
     expect(shownBackground()).toEqual(LAGOON);
+  });
+
+  it("keeps a background with the palette in use, rounded as it is kept, and takes it away", () => {
+    setPalette("rose");
+    setBackground({ ...LAGOON, strength: 0.6049 });
+    expect(theme.backgrounds).toEqual({ rose: { ...LAGOON, strength: 0.6 } });
+    expect(JSON.parse(localStorage.getItem("workbench.backgrounds")!)).toEqual(theme.backgrounds);
+    setBackground(null);
+    expect(theme.backgrounds).toEqual({});
+    expect(document.documentElement.dataset.background).toBeUndefined();
+  });
+
+  it("paints a background being picked without keeping it, and the kept one again after", () => {
+    previewBackground(LAGOON);
+    expect(document.documentElement.dataset.background).toBe("");
+    expect(theme.backgrounds).toEqual({});
+    endPreview();
+    expect(document.documentElement.dataset.background).toBeUndefined();
+    previewBackground(LAGOON);
+    setBackground(LAGOON);
+    expect(theme.preview).toBeNull();
+    expect(theme.backgrounds).toEqual({ teal: LAGOON });
+  });
+
+  it("takes a theme's background away with the theme, and leaves the others", () => {
+    const dusk = { label: "Dusk", light: {}, dark: {}, shape: {} };
+    setThemes({ dusk }, "dusk", { dusk: LAGOON, teal: LAGOON });
+    expect(Object.keys(theme.backgrounds).sort()).toEqual(["dusk", "teal"]);
+    deleteTheme("dusk");
+    expect(theme.palette).toBe("teal");
+    expect(Object.keys(theme.backgrounds)).toEqual(["teal"]);
   });
 
   it("leaves out a background that does not keep the rules", () => {

@@ -426,6 +426,45 @@ export function swatchOf(background: Background, appearance: Appearance, ground:
   return colours.length === 1 ? colours[0] : `linear-gradient(135deg, ${colours.join(", ")})`;
 }
 
+/** The pad as pixels, RGBA: hue around it and colour out to the rim, as
+    padColour shows a dot, edged smoothly. */
+export function padPixels(size: number, appearance: Appearance): Uint8ClampedArray {
+  const lightness = appearance === "light" ? 0.8 : 0.6;
+  // The most colour the screen shows at each half degree of hue.
+  const most = Array.from({ length: 720 }, (_, at) => {
+    const [, a, b] = fitLch(lightness, 0.15, at / 2);
+    return Math.hypot(a, b);
+  });
+  const pixels = new Uint8ClampedArray(size * size * 4);
+  const radius = size / 2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x + 0.5 - radius;
+      const dy = y + 0.5 - radius;
+      const r = Math.hypot(dx, dy) / radius;
+      if (r > 1.01) continue;
+      const hue = turn((Math.atan2(dy, dx) * 180) / Math.PI);
+      const chroma = Math.min(Math.min(r, 1) * 0.15, most[Math.round(hue * 2) % 720]);
+      const rgb = labToRgb(lchToLab(lightness, chroma, hue));
+      const offset = (y * size + x) * 4;
+      pixels[offset] = rgb[0];
+      pixels[offset + 1] = rgb[1];
+      pixels[offset + 2] = rgb[2];
+      pixels[offset + 3] = Math.round(clamp((1.01 - r) * radius, 0, 1) * 255);
+    }
+  }
+  return pixels;
+}
+
+/** How far along the run from the first colour to the second a point is,
+    and how strongly the third glows there. */
+const run = (u: number, v: number) => smooth(clamp(((u * 0.9 + v * 1.5) / 2.4 - 0.04) / 0.9, 0, 1));
+const glow = (u: number, v: number) => {
+  const dx = (u - 0.94) * 1.6;
+  const dy = v + 0.04;
+  return 0.92 * Math.exp(-(dx * dx + dy * dy) / 0.55);
+};
+
 /** The colour the window gets at (u, v), each 0 to 1 across and down. One
     colour is flat. Two run from the top left down to the foot, steeply, so
     the sessions pane carries the whole run. A third glows from the top
@@ -433,27 +472,30 @@ export function swatchOf(background: Background, appearance: Appearance, ground:
 export function field(colours: Lab[]): (u: number, v: number) => Lab {
   if (colours.length === 1) return () => colours[0];
   return (u, v) => {
-    const t = smooth(clamp(((u * 0.9 + v * 1.5) / 2.4 - 0.04) / 0.9, 0, 1));
-    let colour = mixLch(colours[0], colours[1], t);
-    if (colours.length > 2) {
-      const dx = (u - 0.94) * 1.6;
-      const dy = v + 0.04;
-      colour = mixLch(colour, colours[2], 0.92 * Math.exp(-(dx * dx + dy * dy) / 0.55));
-    }
-    return colour;
+    const colour = mixLch(colours[0], colours[1], run(u, v));
+    return colours.length > 2 ? mixLch(colour, colours[2], glow(u, v)) : colour;
   };
 }
 
 /** The gradient as pixels, RGBA, for an image stretched over the window.
-    Dithered by half a step, so a soft run does not band. */
+    The run between the first two colours is worked out once along its
+    length, and the whole is dithered by half a step, so a soft run does
+    not band. */
 export function gradientPixels(colours: Lab[], width: number, height: number): Uint8ClampedArray {
-  const at = field(colours);
+  const steps = 512;
+  const along = Array.from({ length: steps }, (_, at) =>
+    colours.length === 1 ? colours[0] : mixLch(colours[0], colours[1], at / (steps - 1)),
+  );
+  const plain = along.map(labToRgb);
   const pixels = new Uint8ClampedArray(width * height * 4);
   let seed = 11;
   const noise = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const rgb = labToRgb(at(x / (width - 1), y / (height - 1)));
+      const u = x / (width - 1);
+      const v = y / (height - 1);
+      const step = colours.length === 1 ? 0 : Math.round(run(u, v) * (steps - 1));
+      const rgb = colours.length > 2 ? labToRgb(mixLch(along[step], colours[2], glow(u, v))) : plain[step];
       const offset = (y * width + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
         pixels[offset + channel] = Math.round(rgb[channel] + noise());
