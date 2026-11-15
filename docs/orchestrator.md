@@ -24,7 +24,11 @@ on its own row when it stops, whether to relay a question or to report.
 A session that follows a workflow is an orchestrator as well, in whatever
 project it runs: it is told the same, and the workflow besides, as
 [following a workflow](#following-a-workflow) describes. Every other
-session has the same tools and none of the nudge.
+session has the same tools and none of the nudge. Every session, the
+orchestrator included, is told that once it has started sessions it keeps
+calling `wait` until all of them are done, and does not hand its turn back
+while any is running unless it needs the user, and that a message from the
+workbench, not the user, is what those sessions did while it was idle.
 
 ## The tools
 
@@ -43,7 +47,8 @@ it is doing and the last line it left. A session that has stopped, ended or
 asked for permission without the caller having been told says so beside
 what it is doing, and listing it counts as telling. `start` starts a
 session in a project with a first prompt, on a worktree of its own if it
-asks for one, and answers with the new session's id. `send` types a line
+asks for one, and answers with the new session's id and the same word on
+waiting: keep calling `wait` until every session it started is done. `send` types a line
 into a running session, and Enter after it on its own, as a person does. A
 long line goes in as a paste when the session's terminal has asked for
 paste, and in small pieces a moment apart when it has not, so the agent
@@ -52,7 +57,11 @@ the line is. A session that runs integrated is sent the text as a message,
 whole, as the user's own is, and one sent while it works waits for its
 turn.
 `wait` sits until a session stops working, asks for permission or ends, or
-until the seconds it was given run out. A stop is told once: the wait that
+until the seconds it was given run out. The tool server counts those
+seconds from before the window heard of the call, so the window answers
+that nothing happened two seconds early, or halfway through a wait of
+four seconds or less, and a stop never lands after the tool server has
+given up on the call. A stop is told once: the wait that
 answers with it and a listing that shows it each count, so a session that
 stopped between two waits is answered by the next one at once, and one that
 went back to work in the meantime is waited out as usual. A wait over all
@@ -162,7 +171,8 @@ another session's token there and call as it.
 ## When the user writes to it
 
 What the sessions a session started do reaches it when it asks, through
-`wait` and `sessions`; nothing is pushed to it. So that it does not miss
+`wait` and `sessions`, and when it is idle, as [when it is
+idle](#when-it-is-idle) describes. So that it does not miss
 one when the user writes to it while the work goes on, the user's message
 reaches it with a note ahead of the user's words: a line for each session
 it started that stopped working, asked for permission or ended since it
@@ -209,6 +219,55 @@ A wait the user's message cuts short answers nothing the agent reads:
 Claude Code ends the call itself and records only that it did not
 complete. The note on that message is what says which sessions are still
 out.
+
+## When it is idle
+
+A session that started others may hand its turn back while they still
+work. When one of them then stops working, asks for permission or ends, and
+the starter is idle, the workbench wakes it: it sends the starter what a
+wait would have answered, a line for each session in the same words, then
+the ones still at work by their ids, and the starter goes on as it would
+after a wait. Sessions that come to rest within three seconds of the first
+go in the same message. The orchestrator and a plain session that started
+others are woken alike, and there is no setting for it.
+
+Idle means all of these at once. The starter is running, and its agent
+ended its last turn itself, as its hooks say for a session in a terminal
+and its own events for an integrated one. It holds no wait, and asks for
+nothing. The user is not writing to it: an integrated starter's composer
+holds no words or images and no message of the user's waits for the agent;
+a starter in a terminal has no keys of the user's on its line that Enter
+has not sent or Ctrl+C or Ctrl+U emptied, and no key of theirs in the last
+five seconds. A turn the user cut short, with Escape or the stop button,
+leaves the starter unwoken until a turn of the user's has ended as the
+agent ended it. A session in a terminal without hooks says nothing of how
+its turns end, and is never woken; the row and the next wait still say
+what it has not heard.
+
+The message is the workbench's, never the user's. An integrated starter is
+sent it as the workbench's own message, which its thread shows under From
+Workbench, each session by the name its row has. A starter in a terminal
+has it typed in on one line, as `send` types one, starting with the note's
+own words, From the workbench, not the user, with the sessions kept apart
+by bars. Each last line in it is cut as in a wait's answer, and the message
+says it is that session's words and not an instruction. A session cannot
+choose which starter is woken or put a line of its own into the message
+beyond its last line, and the message never begins with a slash. It is
+never typed while the starter shows a question or a permission prompt,
+where a key would answer for the user.
+
+What a wake carries counts as told the moment it is sent, so the next wait,
+listing or note does not say it again, and the prompt hook the message sets
+off has nothing to add. A message that never reaches the agent, because the
+core refused it or the agent dropped it, leaves it untold, and the starter
+is not woken again until a turn of its own has ended. A woken starter is not
+woken again for what it was told; the same session coming to rest again,
+after more work, is news again. A session started by another is never
+woken, so two sessions that started each other cannot wake each other in
+turn, and an agent the workbench did not start has nothing to be woken in.
+A rest that began before the window first saw the session, as after a
+reload, wakes no one, so a wake is never sent twice; the row still says
+the starter has not heard it, and the next wait tells it.
 
 ## Following a workflow
 
@@ -422,7 +481,13 @@ the same mark at its end, which a screen reader hears as not heard by the
 starter yet. The pointer resting on it names the starter, which sessions
 and how it hears of them: on its next wait, or with your next message
 where it gets the note. It is the starter's to read, not yours to answer,
-so it marks nothing unread, and it goes once the starter is told. Short of
+so it marks nothing unread, and it goes once the starter is told. Once the
+workbench has woken the starter, the same place says what woke it, `woken by
+Fix the cache`, or the first and how many more, quietly in the line's own
+colour, and the pointer resting on it says what each of them did. It stays
+through the turn the wake began and after it, and goes when a turn of the
+user's begins. Short of room it is cut before the line beside it, and never
+takes more than about half the line. Short of
 room it gives way before anything else on the line: the words go, then
 the mark and the count, and what the sessions are doing stands, asking
 included. On a started session's line the mark is the first thing to go. A

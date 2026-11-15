@@ -262,7 +262,10 @@ redraw, for five seconds while the hooks still say working means the turn ended
 without them, which is what an Escape at the keyboard does. A session
 waiting on its subagents is still by nature, and that silence is not read
 that way; an idle notice from the agent, which it sends only once nothing
-of its own is running, ends the working either way.
+of its own is running, ends the working either way. A turn Codex reports as
+aborted, which is what an Escape does there, is a stop that says the user
+cut it short. Neither turn cut short wakes a session that started others;
+see [orchestrator](orchestrator.md#when-it-is-idle).
 
 ## Accounts
 
@@ -355,7 +358,11 @@ tool says which it was to its caller, and the session is named by its
 prompt instead. Under it is the thread. The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
-under that session's name, with a way to go to it. A message is known as
+under that session's name, with a way to go to it. What the workbench
+sends of its own, to wake a session that started others, sits the same way
+under Workbench, each session in it by the name its row has, with nothing
+to go to and nothing to put back in the composer; see
+[orchestrator](orchestrator.md#when-it-is-idle). A message is known as
 another session's by the id it was sent under, never by its words, so the
 user's own message reads as theirs whatever another session sent; the sentence the
 workbench adds to a started session's prompt, asking it to call notify, is
