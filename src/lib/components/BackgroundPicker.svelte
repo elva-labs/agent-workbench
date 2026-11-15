@@ -356,6 +356,7 @@
             class="dot"
             class:first={index === 0}
             class:held={dragging === index}
+            class:chosen={shown.dots.length > 1 && Math.min(chosen, shown.dots.length - 1) === index}
             role="slider"
             tabindex="0"
             aria-label="Colour {index + 1} of {shown.dots.length}"
@@ -394,8 +395,8 @@
         tabindex="0"
         onclick={() => remove()}
         disabled={shown === null}
-        aria-label="Remove a colour"
-        title="Remove the chosen colour"
+        aria-label="Remove colour {Math.min(chosen, (shown?.dots.length ?? 1) - 1) + 1}"
+        title="Remove the ringed colour"
         data-testid="background-remove">−</button
       >
       <span class="word" data-testid="background-word">
@@ -623,6 +624,14 @@
 
   .dot.held {
     cursor: grabbing;
+  }
+
+  /* The colour the arrows and the minus act on, when there is a choice. */
+  .dot.chosen {
+    box-shadow:
+      0 0 0 2px #ffffff,
+      0 0 0 4px var(--accent),
+      0 2px 6px color-mix(in srgb, black 30%, transparent);
   }
 
   .dot:focus-visible {
