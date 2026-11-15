@@ -38,8 +38,12 @@ is told of the sessions it started, and prints it for the agent with the
 user's message; see [orchestrator](orchestrator.md#when-the-user-writes-to-it).
 It asks only for an agent the workbench started, whose environment names its
 session or its role, so an agent run by hand in the project is not held up,
-and it gives up after a few seconds. It never fails a prompt: a daemon that
-cannot ask, or one from a version without it, says nothing. The entries
+and only while a core on the machine that hands the window its calls says
+it is there, which it does by rewriting a small file of its own every few
+seconds: with the app closed, a remote machine disconnected, or an app from
+before this, the prompt goes on at once. It gives up after two seconds. It
+never fails a prompt: a daemon that cannot ask, or one from a version
+without it, says nothing. The entries
 already in place are left as they are, so a session that started with them
 goes on as before, and the next install adds the new one.
 
