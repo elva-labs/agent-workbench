@@ -368,6 +368,20 @@ its foot while new content comes, and where the user scrolled to otherwise,
 with a button back down; only the user's own scrolling stops it following,
 and sending a message takes it to its foot.
 
+A conversation of any length opens and scrolls as a short one does. The
+thread draws only the messages and runs in and near the view, a screen's
+worth either side, and keeps the space of the rest at the height each was
+last drawn at, or at what the first ones drawn averaged, so the scrollbar
+spans the whole conversation. What the reader looks at stays where it is
+when what is drawn above it turns out taller or shorter than reckoned, or
+when earlier messages come above it; while the user scrolls, the space
+above takes up the difference rather than the view being moved. A fold
+stays open while it is out of view. A selection keeps what it lies in
+drawn while the view is no more than a long stretch away. While a reply
+streams, the blocks before its last are drawn once and kept, and only the
+last is drawn again as words come, so a long reply streams as a short one
+does and a selection in what it has already said holds.
+
 What the agent did between two things it said folds into one line, such as
 Worked for 3m, changed 3 files, ran 1 command, which opens into the steps:
 each tool call with what it did to what, its input, a command's output as it

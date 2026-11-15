@@ -561,9 +561,13 @@ export function tokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
-/** A clock time as the thread shows it, in the user's own format. */
+let clockFormat: Intl.DateTimeFormat | null = null;
+
+/** A clock time as the thread shows it, in the user's own format. One
+    format is made and kept, since a thread can show thousands of times. */
 export function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  clockFormat ??= new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+  return clockFormat.format(at);
 }
 
 /** The day a time falls on, as the thread names it beside the time: today,

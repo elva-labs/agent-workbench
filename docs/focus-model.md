@@ -316,13 +316,13 @@ run, which is read before its buttons are reached.
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps and links; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
 each: the thread, where the arrows move through its folds, steps and links
-from what is in view and <kbd>Enter</kbd> opens one, and the dock's
-choices. The composer's
+from what is in view and <kbd>Enter</kbd> opens one, drawing what is not
+drawn yet as they come to it, and the dock's choices. The composer's
 controls, attach, the model and the mode, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
 of their own in reading order. Focus is always drawn where the keyboard
