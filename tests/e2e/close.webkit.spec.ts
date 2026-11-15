@@ -167,6 +167,53 @@ test.describe("a shell", () => {
     });
   }
 
+  test("with something running has its question go with the panel, closing nothing", async ({ page }) => {
+    await open(page, MAC);
+    const shell = await openShell(page);
+    await running(page, shell, "npm run dev");
+    await page.keyboard.press("Meta+w");
+    await expect(page.getByTestId("close-shell")).toBeVisible();
+    await page.keyboard.press("Meta+j");
+    await expect(page.locator(TERMINAL)).toBeHidden();
+    await expect(page.getByTestId("close-shell")).toHaveCount(0);
+    await page.keyboard.press("Meta+j");
+    await expect(page.locator(TERMINAL)).toBeVisible();
+    await expect(page.getByTestId("close-shell")).toHaveCount(0);
+    await expect(page.locator(ROW)).toHaveCount(1);
+    await expect.poll(() => holder(page)).toBe("Terminal input");
+  });
+
+  test("with something running puts the keyboard back on its question when closed again from the shell", async ({ page }) => {
+    await open(page, MAC);
+    const shell = await openShell(page);
+    await running(page, shell, "npm run dev");
+    await page.keyboard.press("Meta+w");
+    const cancel = page.getByTestId("close-shell-cancel");
+    await expect(cancel).toBeFocused();
+    await page.locator("[data-testid='terminal-slot'].on").click({ position: { x: 40, y: 120 } });
+    await expect.poll(() => holder(page)).toBe("Terminal input");
+    await page.keyboard.press("Meta+w");
+    await expect(cancel).toBeFocused();
+    await expect(page.getByTestId("close-shell")).toHaveCount(1);
+    await expect(page.locator(ROW)).toHaveCount(1);
+  });
+
+  test("draws Cancel as the answer Return gives, when the question came from a click", async ({ page }) => {
+    await open(page, MAC);
+    const shell = await openShell(page);
+    await running(page, shell, "sleep 30");
+    await page.locator(ROW).hover();
+    await page.getByTestId("close-terminal").click();
+    const cancel = page.getByTestId("close-shell-cancel");
+    await expect(cancel).toBeFocused();
+    const ring = await cancel.evaluate((button) => {
+      const style = getComputedStyle(button);
+      return { style: style.outlineStyle, width: parseFloat(style.outlineWidth) };
+    });
+    expect(ring.style).toBe("solid");
+    expect(ring.width).toBeGreaterThan(0);
+  });
+
   test("with something running asks on its row's Delete, and the keyboard goes back to the row", async ({ page }) => {
     await open(page, MAC);
     const shell = await openShell(page);

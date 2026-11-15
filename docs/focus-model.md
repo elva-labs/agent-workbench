@@ -180,7 +180,9 @@ A shell at an idle prompt closes at once. One with something still running
 in it, a dev server say, comes to the front and asks first, by the chord,
 its row's <kbd>Delete</kbd> or its ×: the question names what runs and
 holds the keyboard on Cancel, <kbd>Escape</kbd> cancels, and either answer
-gives the keyboard back where it was, the shell or its row. What a shell's
+gives the keyboard back where it was, the shell or its row. The question
+goes, closing nothing, when the panel is hidden, and the chord pressed
+again while the keyboard is elsewhere puts it back on Cancel. What a shell's
 prompt keeps running for itself, such as a git status daemon, does not
 count, and a shell started inside the shell counts for what it runs.
 
@@ -277,7 +279,8 @@ control a stop as it is drawn, by one rule for the whole window:
 - **A dialog, the palette and a question in a strip keep Tab inside**: past
   the last stop it comes round to the first. A question in a strip is one
   put in a pane before something is taken away, such as closing a tab with
-  unsaved edits; it takes the keyboard when it opens. The questions shown
+  unsaved edits; it takes the keyboard when it opens, on Cancel, which is
+  drawn ringed however the question came up. The questions shown
   over the agent pane, whether an agent may start a session or change a
   setting, take neither the keyboard nor Tab: the keyboard stays with the
   agent, and their buttons are stops in reading order. A pane that is

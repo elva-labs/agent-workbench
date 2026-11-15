@@ -71,6 +71,9 @@ export const terminals = $state({
   active: null as string | null,
   /** The question over the panel, if one is up. */
   asking: null as ShellAsk | null,
+  /** Counts the closes asked again while the question is up, each a call
+      for the keyboard to go back to it. */
+  askRequests: 0,
 });
 
 let counter = 0;
@@ -338,9 +341,14 @@ export async function closeAsking(key: string, fromRow = false): Promise<boolean
   const shell = byKey(key);
   if (shell === null) return true;
   const running = shell.ptyId === null || shell.status !== "running" ? [] : await runningIn(shell.ptyId);
-  // Gone, or asked about already, while the core was asked.
+  // Gone while the core was asked.
   if (byKey(key) === null) return true;
-  if (terminals.asking?.key === key) return false;
+  // Asked about already: the keyboard goes back to the question, where the
+  // answer is.
+  if (terminals.asking?.key === key) {
+    terminals.askRequests += 1;
+    return false;
+  }
   if (running.length === 0) {
     close(key);
     return true;
@@ -466,6 +474,7 @@ export function reset() {
   terminals.all = [];
   terminals.active = null;
   terminals.asking = null;
+  terminals.askRequests = 0;
   counter = 0;
   groups = 0;
   ordinals = {};

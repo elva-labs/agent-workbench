@@ -108,6 +108,20 @@
 
   let asked = $derived(terminals.asking);
   let askedShell = $derived(asked === null ? null : byKey(asked.key));
+  let askStrip = $state<HTMLDivElement | null>(null);
+
+  // A close asked again while the question is up puts the keyboard back on
+  // its Cancel, where the answer is.
+  $effect(() => {
+    if (terminals.askRequests === 0) return;
+    untrack(() => askStrip?.querySelector<HTMLElement>("[data-testid='close-shell-cancel']")?.focus());
+  });
+
+  // The question goes, closing nothing, with the panel, as the editor's
+  // goes when its pane folds.
+  $effect(() => {
+    if (!terminalVisible() && terminals.asking !== null) untrack(keepAsked);
+  });
 
   let askDetail = $derived.by(() => {
     if (asked === null) return "";
@@ -280,7 +294,7 @@
       <!-- Closing a shell with something running in it asks first, over
            the shells, where it is read before what runs under it. -->
       {#if asked !== null && askedShell !== null}
-        <div class="ask" data-testid="close-shell-ask">
+        <div class="ask" bind:this={askStrip} data-testid="close-shell-ask">
           <ConfirmStrip
             question="Close {label(askedShell)}?"
             detail={askDetail}
