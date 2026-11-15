@@ -1339,15 +1339,18 @@ export function followsAgain(key: string) {
  */
 export async function rejoined(key: string) {
   if (!pending.delete(key)) return;
-  await workflowsKnown();
   const session = byKey(key);
   if (session === null || session.id === null) return;
   const kept = sessions.workflows[session.id];
   if (kept === undefined || kept.workflow === null) return;
   const copy = storedWorkflow(kept.workflow);
   if (copy === null) return;
+  // Held to it at once, so no call it makes meanwhile goes unheld; whether
+  // the settings still have it waits for the settings.
   session.workflow = copy;
-  session.workflowGone = workflowNamed(copy.name) === undefined;
+  await workflowsKnown();
+  const now = byKey(key);
+  if (now !== null) now.workflowGone = workflowNamed(copy.name) === undefined;
 }
 
 /** Resumes a session whose workflow was lost, with no workflow, in place

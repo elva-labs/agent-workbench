@@ -185,6 +185,8 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
   switch (body.type) {
     case "ready":
       identify(session, body.sessionId);
+      // This run started on the workflow the row follows now.
+      rememberWorkflow(session);
       break;
     case "configured":
       session.model = body.model;
@@ -208,7 +210,6 @@ function identify(session: Session, id: string) {
   session.id = id;
   keepToken(session);
   adopt(session.project, id);
-  rememberWorkflow(session);
 }
 
 /** The row says what the session's events say it is doing. A session that
@@ -331,6 +332,10 @@ export async function launch(key: string): Promise<void> {
     row.changedAt = Date.now();
     for (const body of claim(started.id)) deliver(key, link, body);
     if (started.sessionId !== null) identify(row, started.sessionId);
+    // Every start and resume keeps the copy of the workflow this run was
+    // started on, which a reload goes on with; an agent that makes its own
+    // id is kept once ready names it.
+    rememberWorkflow(row);
     if (row.prompt !== null && !link.prompted && link.handle !== null) {
       link.prompted = true;
       send(key, row.prompt, [], starterOf(key));

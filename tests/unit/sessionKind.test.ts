@@ -315,7 +315,10 @@ describe("a session under a workflow", () => {
     });
     const row = reopened(PROJECT, "running", "claude-code", null, null, null, "integrated");
     row.status = "running";
-    await rejoined(row.key);
+    const rejoining = rejoined(row.key);
+    // Held to it at once, before the settings are read.
+    expect(byKey(row.key)!.workflow).toEqual(before);
+    await rejoining;
     expect(byKey(row.key)!.workflow).toEqual(before);
     expect(byKey(row.key)!.workflowGone).toBe(false);
     // One that followed none follows none.
