@@ -115,6 +115,16 @@ function write(open: Open[], active: string | null) {
     them, and the one on screen is chosen. */
 export const startup = $state({ settled: false });
 
+/** Settles the start once the restore does, whether it brought everything
+    back or failed on the way: what waits on the start must not wait for
+    the life of the window. */
+export function settleWhen(restored: Promise<unknown>): Promise<void> {
+  const settle = () => {
+    startup.settled = true;
+  };
+  return restored.then(settle, settle);
+}
+
 /**
  * Brings back the sessions that were open, in the projects that are, and
  * from then on keeps the record current. Call once the projects on this
