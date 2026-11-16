@@ -14,7 +14,15 @@
 
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Worktree } from "$lib/core";
-import { allowedProjects, oneLine, placeTextOf, startedFor, typeLine } from "$lib/conductor.svelte";
+import {
+  allowedProjects,
+  oneLine,
+  placeTextOf,
+  startedFor,
+  treeRemoved,
+  treesMadeBy,
+  typeLine,
+} from "$lib/conductor.svelte";
 import { handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
 import { lastSegment } from "$lib/paths";
 import { isLive, label, lastChanged, sessions, since, statusLabel, type Session } from "$lib/sessions.svelte";
@@ -245,6 +253,7 @@ export async function cleanWorktrees(trees: LeftTree[] = leftBehind.trees): Prom
   for (const tree of removable(trees)) {
     try {
       await core().worktreeRemove(tree.project, tree.name, dirsOf());
+      treeRemoved(tree.project, tree.path);
     } catch {
       // The tree grew work between the read and the removal. It stays.
     }
@@ -278,14 +287,26 @@ export function startedRows(session: Session): Session[] {
 }
 
 /** The session whose section stands at the changes pane's foot: the one
-    on screen, while it has sessions it started or holds a standing answer
-    to start more, so what it was allowed can be taken back once they are
+    on screen, while it has sessions it started, holds a standing answer to
+    start more, or has worktrees its starts left behind, so what it was
+    allowed can be taken back and what it left cleaned up once they are
     gone. None for an orchestrator in its own project, whose board stands
     in place of the tree. */
 export function boardOf(session: Session | null): Session | null {
   if (session === null || isConductor(session)) return null;
-  if (startedRows(session).length > 0 || allowedProjects(session.token).length > 0) return session;
+  if (
+    startedRows(session).length > 0 ||
+    allowedProjects(session.token).length > 0 ||
+    treesFor(session).length > 0
+  )
+    return session;
   return null;
+}
+
+/** Whether the worktrees left behind are worth reading for a session: one
+    of its starts made a worktree that may still be there. */
+export function madeTrees(session: Session | null): boolean {
+  return session !== null && !isConductor(session) && treesMadeBy(session.token).length > 0;
 }
 
 /** A started row's dot, as the pane draws a plugin row's: hollow once the
@@ -356,11 +377,14 @@ export function sendLine(session: Session, text: string): void {
   else void typeLine(session.key, session.ptyId!, line);
 }
 
-/** The worktrees left behind in the projects a session's starts run in
-    and the projects it may start in. */
+/** The worktrees left behind that the session's own starts made. A tree
+    is known by its project and its name, the folder the core made it in,
+    which the core's listing and the start's answer both give. */
 export function treesFor(session: Session): LeftTree[] {
-  const projects = new Set([...startedRows(session).map((row) => row.project), ...allowedProjects(session.token)]);
-  return leftBehind.trees.filter((left) => projects.has(left.project));
+  const made = treesMadeBy(session.token);
+  return leftBehind.trees.filter((left) =>
+    made.some((tree) => tree.project === left.project && lastSegment(tree.path) === left.name),
+  );
 }
 
 /** The line about worktrees left behind: how many, and once they have
@@ -389,23 +413,53 @@ export interface Question {
 const ofThem = (count: number, all: number) =>
   all === 1 ? "It is" : `${count} of them ${count === 1 ? "is" : "are"}`;
 
-/** What is asked before every session a session started is stopped. */
-export function stopAllQuestion(rows: Session[]): Question {
-  const all = rows.length;
+/** What it is doing, as the question to stop it says it. */
+function doingWords(rows: Session[], live: number): string[] {
   const working = rows.filter((row) => isLive(row) && row.working && !isAsking(row)).length;
   const asking = rows.filter(isAsking).length;
   const sentences: string[] = [];
-  if (asking > 0) sentences.push(`${ofThem(asking, all)} waiting on you.`);
-  if (working > 0) sentences.push(`${ofThem(working, all)} at work.`);
+  if (asking > 0) sentences.push(`${ofThem(asking, live)} waiting on you.`);
+  if (working > 0) sentences.push(`${ofThem(working, live)} at work.`);
+  return sentences;
+}
+
+/** What is asked before every session a session started is stopped: the
+    ones still running are counted, and the rows of those that have ended
+    go with them. */
+export function stopAllQuestion(rows: Session[]): Question {
+  const live = rows.filter(isLive).length;
+  const ended = rows.length - live;
+  const sentences = doingWords(rows, live);
   sentences.push(
-    all === 1
+    live === 1
       ? "Stopping it takes its row away; what it changed stays."
       : "Stopping them takes their rows away; what they changed stays.",
   );
+  if (ended > 0) sentences.push(ended === 1 ? "The one that has ended goes too." : `The ${ended} that have ended go too.`);
   return {
-    question: all === 1 ? "Stop the session it started?" : `Stop all ${all} sessions it started?`,
+    question:
+      live === 1
+        ? ended === 0
+          ? "Stop the session it started?"
+          : "Stop the session that still runs?"
+        : `Stop all ${live} sessions it started?`,
     detail: sentences.join(" "),
     action: "Stop all",
+  };
+}
+
+/** What is asked before one session it started is stopped from the
+    keyboard, where a key is easier to press by mistake than a ×. */
+export function stopOneQuestion(session: Session): Question {
+  const live = isLive(session);
+  const sentences = live ? doingWords([session], 1) : [];
+  sentences.push(
+    live ? "Stopping it takes its row away; what it changed stays." : "It has ended; its row goes, and what it changed stays.",
+  );
+  return {
+    question: `${live ? "Stop" : "Close"} ${quotedStarted(session)}?`,
+    detail: sentences.join(" "),
+    action: live ? "Stop" : "Close",
   };
 }
 

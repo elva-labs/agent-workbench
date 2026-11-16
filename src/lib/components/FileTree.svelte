@@ -15,6 +15,9 @@
     onCursor: (index: number) => void;
     /** Enter or Space on one. */
     activate: (index: number) => void;
+    /** Any other key on one, before the tree reads it: true when the
+        section took it. */
+    key?: (index: number, e: KeyboardEvent) => boolean;
     /** Left folds, Right unfolds, as they close and open a folder. */
     fold: (index: number, open: boolean) => void;
   }
@@ -123,20 +126,31 @@
     if (cursor > total - 1) cursor = Math.max(0, total - 1);
   });
 
-  // A row going from under the cursor leaves it on the row that took its
-  // place in the tree, or the last row of the tree, rather than letting it
-  // run on into the sections beneath.
-  let cursorPath: string | null = null;
+  // The cursor stays on its row as the tree's rows come and go: on the
+  // same file or folder while the tree has it, else on the row that took
+  // its place or the tree's last row, rather than running on into the
+  // sections beneath. On a row under the tree it keeps its place among
+  // those rows, which the pane keeps on the row it was on.
+  let held: { rows: Row[]; at: number } | null = null;
   $effect(() => {
     const now = rows;
+    const at = cursor;
     untrack(() => {
-      if (cursorPath === null || now.some((row) => row.node.path === cursorPath)) return;
-      if (cursor >= now.length && now.length > 0) cursor = now.length - 1;
+      const was = held;
+      held = { rows: now, at };
+      if (was === null || was.rows === now || was.at !== at) return;
+      let next = at;
+      if (at >= was.rows.length) next = now.length + (at - was.rows.length);
+      else {
+        const path = was.rows[at].node.path;
+        const found = now.findIndex((row) => row.node.path === path);
+        if (found !== -1) next = found;
+        else if (at >= now.length && now.length > 0) next = now.length - 1;
+      }
+      if (next === at) return;
+      cursor = next;
+      held = { rows: now, at: next };
     });
-  });
-  $effect(() => {
-    const row = cursor < rows.length ? rows[cursor] : undefined;
-    cursorPath = row?.node.path ?? null;
   });
 
   /** The tree's row under the cursor, none when the cursor is beyond. */
@@ -271,6 +285,10 @@
     if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) touched = true;
     if (!active) {
       if (beyond === undefined || beyondAt < 0) return;
+      if (beyond.key?.(beyondAt, e) === true) {
+        e.preventDefault();
+        return;
+      }
       // On a row beyond the tree: the arrows still walk, Home comes back
       // up, and Enter, Left and Right are the section's own.
       switch (e.key) {

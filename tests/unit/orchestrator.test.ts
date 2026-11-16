@@ -25,13 +25,15 @@ import {
   startedName,
   startedRows,
   stopAllQuestion,
+  stopOneQuestion,
+  madeTrees,
   summary,
   summaryLine,
   treesFor,
   worktreeLine,
   type LeftTree,
 } from "$lib/orchestrator.svelte";
-import { conductor, resetConductor } from "$lib/conductor.svelte";
+import { conductor, resetConductor, treesMadeBy } from "$lib/conductor.svelte";
 import {
   create,
   exact,
@@ -496,14 +498,40 @@ describe("the board for any session", () => {
     expect(fake.written).toHaveLength(2);
   });
 
-  it("counts the worktrees in the projects its sessions run in", () => {
+  it("counts only the worktrees its own starts made", () => {
     const starter = live(A, "pty-1", "sid-1");
-    startedIn(A, starter, "pty-2", "sid-2");
+    const other = live(A, "pty-2", "sid-2");
+    startedIn(A, starter, "pty-3", "sid-3");
+    startedIn(A, other, "pty-4", "sid-4");
+    conductor.trees[starter.token] = [
+      { project: A, path: tree(A, "fix-cache").path },
+      { project: B, path: tree(B, "bump").path },
+    ];
+    conductor.trees[other.token] = [{ project: A, path: tree(A, "theirs").path }];
     leftBehind.trees = [
       { ...tree(A, "fix-cache"), project: A },
+      { ...tree(A, "theirs"), project: A },
+      // Made by the user, or by a start of no session here.
+      { ...tree(A, "users-own"), project: A },
+      { ...tree(B, "bump"), project: B },
       { ...tree(B, "elsewhere"), project: B },
     ];
-    expect(names(treesFor(starter))).toEqual(["fix-cache"]);
+    expect(names(treesFor(starter))).toEqual(["fix-cache", "bump"]);
+    expect(names(treesFor(other))).toEqual(["theirs"]);
+    // The same name under another project is another tree.
+    conductor.trees[other.token] = [{ project: B, path: tree(B, "fix-cache").path }];
+    expect(names(treesFor(other))).toEqual([]);
+  });
+
+  it("stays while the worktrees its starts made are left behind", () => {
+    const starter = live(A, "pty-1", "sid-1");
+    expect(madeTrees(starter)).toBe(false);
+    conductor.trees[starter.token] = [{ project: A, path: tree(A, "fix-cache").path }];
+    expect(madeTrees(starter)).toBe(true);
+    // Not yet read, or gone: no section for it.
+    expect(boardOf(starter)).toBeNull();
+    leftBehind.trees = [{ ...tree(A, "fix-cache"), project: A }];
+    expect(boardOf(starter)).toBe(starter);
   });
 
   it("says what the worktrees left behind are, and why the rest stayed", () => {
@@ -537,6 +565,43 @@ describe("the board for any session", () => {
     });
   });
 
+  it("counts the ones still running, and says the ended ones go too", () => {
+    const starter = live(A, "pty-1", "sid-1");
+    const fix = startedIn(A, starter, "pty-2", "sid-2");
+    const bump = startedIn(A, starter, "pty-3", "sid-3");
+    const done = startedIn(A, starter, "pty-4", "sid-4");
+    done.status = "exited";
+    expect(stopAllQuestion([fix, bump, done])).toEqual({
+      question: "Stop all 2 sessions it started?",
+      detail: "Stopping them takes their rows away; what they changed stays. The one that has ended goes too.",
+      action: "Stop all",
+    });
+    bump.status = "exited";
+    expect(stopAllQuestion([fix, bump, done])).toEqual({
+      question: "Stop the session that still runs?",
+      detail: "Stopping it takes its row away; what it changed stays. The 2 that have ended go too.",
+      action: "Stop all",
+    });
+  });
+
+  it("asks before one is stopped from the keyboard, naming it", () => {
+    const starter = live(A, "pty-1", "sid-1");
+    const fix = startedIn(A, starter, "pty-2", "sid-2");
+    fix.title = "Fix the cache";
+    fix.working = true;
+    expect(stopOneQuestion(fix)).toEqual({
+      question: "Stop “Fix the cache”?",
+      detail: "It is at work. Stopping it takes its row away; what it changed stays.",
+      action: "Stop",
+    });
+    fix.status = "exited";
+    expect(stopOneQuestion(fix)).toEqual({
+      question: "Close “Fix the cache”?",
+      detail: "It has ended; its row goes, and what it changed stays.",
+      action: "Close",
+    });
+  });
+
   it("asks before cleaning up, naming what goes and how many stay", () => {
     const trees: LeftTree[] = [
       { ...tree(A, "clean"), project: A },
@@ -554,14 +619,16 @@ describe("the board for any session", () => {
     );
   });
 
-  it("cleans up only the worktrees it is given", async () => {
+  it("cleans up only the worktrees it is given, and forgets whose they were", async () => {
     workspace.open.push(repo(A));
     fake.trees[A] = [tree(A, "mine"), tree(A, "theirs")];
+    conductor.trees["tok-1"] = [{ project: A, path: tree(A, "mine").path }];
     await readWorktrees();
 
     await cleanWorktrees(leftBehind.trees.filter((left) => left.name === "mine"));
 
     expect(fake.removed).toEqual(["mine"]);
     expect(names(leftBehind.trees)).toEqual(["theirs"]);
+    expect(treesMadeBy("tok-1")).toEqual([]);
   });
 });

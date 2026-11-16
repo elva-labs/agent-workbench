@@ -22,6 +22,7 @@ import {
   accountWords,
   allow,
   allowedProjects,
+  treesMadeBy,
   conductor,
   handle,
   loadStarted,
@@ -721,6 +722,12 @@ describe("starting a session", () => {
     expect(worktrees).toEqual([[A, "fix-the-flaky-test"]]);
     expect(row.startIn).toBe(`${A}/.worktrees/fix-the-flaky-test`);
     expect(last().content).toContain(`${A}/.worktrees/fix-the-flaky-test`);
+    // The tree is the caller's to clean up, and stays so after a restart.
+    const made = [{ project: A, path: `${A}/.worktrees/fix-the-flaky-test` }];
+    const caller = startedFor(row.key)!;
+    expect(treesMadeBy(caller)).toEqual(made);
+    restarted();
+    expect(treesMadeBy(caller)).toEqual(made);
   });
 
   it("starts the session on the model the caller names", async () => {
@@ -4879,6 +4886,18 @@ describe("sessions told apart by their tokens", () => {
     expect(last().content).toBe("Stopped session kid-old.");
     await handle(raw("sessions", {}, { session: second.token }));
     expect(last().content).toBe("You have started no sessions.");
+  });
+
+  it("moves the worktrees its starts made to the token, and keeps them from the id", () => {
+    const made = [{ project: B, path: `${B}/.worktrees/old-fix` }];
+    localStorage.setItem("workbench.trees", JSON.stringify({ "orch-old": made }));
+    keptByAnEarlierVersion();
+    expect(treesMadeBy("orch-old")).toEqual(made);
+    const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(back.key, "pty-back", "orch-old");
+    expect(treesMadeBy(back.token)).toEqual(made);
+    expect(treesMadeBy("orch-old")).toEqual([]);
+    expect(stored("workbench.trees")).toEqual({ [back.token]: made });
   });
 
   it("moves a standing answer to the token, so one taken back there does not come back", async () => {
