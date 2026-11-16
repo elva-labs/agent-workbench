@@ -60,6 +60,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
+    data-card
     role="dialog"
     aria-modal="true"
     aria-labelledby="action-title"
@@ -126,7 +127,7 @@
     width: min(420px, calc(100vw - 48px));
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
@@ -198,7 +199,7 @@
   footer button {
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--clear-surface);
     font-family: var(--chrome);
     font-size: var(--btn-size);
     font-weight: var(--btn-weight);

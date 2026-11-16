@@ -407,6 +407,7 @@
                   <!-- svelte-ignore a11y_interactive_supports_focus -->
                   <div
                     class="menu"
+                    data-card
                     role="menu"
                     aria-label="Add a step after {step.name}"
                     style:left="{menuAt.left}px"
@@ -486,7 +487,7 @@
     box-sizing: border-box;
     border-radius: var(--radius);
     box-shadow: inset 0 0 0 1px var(--rule-strong);
-    background: var(--surface);
+    background: var(--paint-surface);
   }
 
   .orch-head {
@@ -598,6 +599,20 @@
     background: linear-gradient(to left, var(--surface), transparent);
   }
 
+  /* Where the cards let a background through, an edge fades out the
+     orchestrator's own paint. */
+  :global(:root[data-cards]) .fade {
+    background: var(--paint-surface);
+  }
+
+  :global(:root[data-cards]) .fade-start {
+    mask-image: linear-gradient(to right, black, transparent);
+  }
+
+  :global(:root[data-cards]) .fade-end {
+    mask-image: linear-gradient(to left, black, transparent);
+  }
+
   .flow {
     position: relative;
     width: max-content;
@@ -632,7 +647,7 @@
     padding: 0;
     border: 0;
     border-radius: var(--radius-tag);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     color: var(--ink);
     cursor: pointer;
@@ -707,7 +722,7 @@
   .models span {
     padding: 0 5px;
     border-radius: var(--radius-tag);
-    background: var(--surface);
+    background: var(--paint-surface);
     font-size: 11px;
     line-height: 18px;
     color: var(--ink-2);
@@ -758,7 +773,7 @@
     border: 0;
     border-radius: 50%;
     transform: translate(-60%, -50%);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     color: var(--ink-3);
     cursor: pointer;
@@ -801,7 +816,7 @@
     box-sizing: border-box;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
   }
 

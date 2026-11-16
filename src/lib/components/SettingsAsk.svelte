@@ -22,6 +22,7 @@
 {#if ask !== null}
   <div
     class="ask"
+    data-card
     role="alertdialog"
     aria-label="Change the settings"
     use:coversBrowser
@@ -80,7 +81,7 @@
 
 <!-- The two share a place: a question up hides the word until it is answered. -->
 {#if undo !== null && ask === null}
-  <div class="undo" role="status" use:coversBrowser data-testid="settings-undo">
+  <div class="undo" data-card role="status" use:coversBrowser data-testid="settings-undo">
     <span class="said">
       {undo.caller} changed {undo.changes.length === 1
         ? undo.changes[0].label.toLowerCase()
@@ -113,6 +114,13 @@
     color: var(--ink);
   }
 
+  /* Where the cards let a background through, the second surface is a
+     fill let through, laid over the card's paint so the ask and the undo
+     still cover what is under them. */
+  :global(:root[data-cards]) :is(.ask, .undo) {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .title {
     margin: 0 0 4px;
     font-family: var(--chrome);
@@ -135,7 +143,7 @@
     padding: 6px 8px;
     list-style: none;
     border-left: 2px solid var(--rule);
-    background: var(--surface);
+    background: var(--paint-surface);
     font-size: 12.5px;
     line-height: 1.6;
   }
@@ -185,7 +193,7 @@
     max-height: 220px;
     overflow: auto;
     padding: 6px 8px;
-    background: var(--surface);
+    background: var(--paint-surface);
     border-left: 2px solid var(--rule);
     font-family: var(--mono);
     font-size: 11.5px;

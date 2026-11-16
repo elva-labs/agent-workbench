@@ -147,7 +147,7 @@
 :root[data-look="modern"] [data-pane="changes"] .modes {
   gap: 0;
   padding: 2px;
-  background: var(--surface);
+  background: var(--paint-surface);
 }
 
 :root[data-look="modern"] [data-pane="changes"] .modes button.on {

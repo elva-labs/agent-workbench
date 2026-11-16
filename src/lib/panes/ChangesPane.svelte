@@ -1472,7 +1472,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <div class="scrim" onclick={() => (menuOpen = false)}></div>
-        <div class="menu" role="menu" use:coversBrowser data-testid="changes-menu-items">
+        <div class="menu" data-card role="menu" use:coversBrowser data-testid="changes-menu-items">
           <button
             role="menuitemradio"
             aria-checked={files.scope === "changed"}
@@ -1948,6 +1948,18 @@
     opacity: 1;
   }
 
+  /* Where the cards let a background through, the row's fills are let
+     through too: the buttons lay them over the card's paint, so they still
+     cover the name, and the fade is that paint faded in. */
+  :global(:root[data-cards]) .actions {
+    background: var(--paint-surface);
+    mask-image: linear-gradient(to right, transparent, black 12px);
+  }
+
+  :global(:root[data-cards]) .started:hover .actions {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .icon {
     flex: none;
     border: 0;
@@ -2110,7 +2122,7 @@
 
   .modes button.on {
     color: var(--accent);
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule);
     padding: 1px 4px;
   }
@@ -2144,7 +2156,7 @@
     z-index: 5;
     min-width: 232px;
     padding: 4px 0;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
@@ -2259,7 +2271,7 @@
      what is read. */
   .split.reviewing:not(.full) > .column,
   .split.editing:not(.treeless, .full) > .column {
-    background: var(--well);
+    background: var(--paint-well);
   }
 
   /* Editing in a window that gave up the tree's column: the editor alone. */

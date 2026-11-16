@@ -220,7 +220,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .body {

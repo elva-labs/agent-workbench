@@ -1508,7 +1508,7 @@
     padding: 4px 10px;
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) * 4);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: 0 4px 14px color-mix(in srgb, black 14%, transparent);
     font: inherit;
     font-size: var(--conv-meta);

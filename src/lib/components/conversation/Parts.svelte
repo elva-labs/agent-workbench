@@ -104,7 +104,7 @@
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) + 3px);
     padding: 8px 12px 9px;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .plan-head {

@@ -121,13 +121,15 @@
  *
  * A card is the modern look's card under a pane's header, every box of the
  * terminal look, and what stands over the window as one, marked
- * data-card: the settings and the palette. Every solid fill inside one is the card's paint, a fill let
+ * data-card: the settings, the palette, and every dialog, menu, popover
+ * and question. Every solid fill inside one is the card's paint, a fill let
  * through, or a menu or popover in the card's own tint, so nothing in it
  * looks patched. --paint-surface and --paint-well are the card's and the
  * well's paint for what has to cover what is under it, such as a menu, a
- * bar standing over a scrolled list, or a list beside what is read; a
- * hovered, chosen or selected row, a field and the rest lay the ink or the
- * accent over it. The browser pane's page and media stay as they are.
+ * bar standing over a scrolled list, or a list beside what is read;
+ * --clear-surface is clear, for what only lies on the card in the surface;
+ * a hovered, chosen or selected row, a field and the rest lay the ink or
+ * the accent over it. The browser pane's page and media stay as they are.
  */
 
 :root[data-background][data-cards] {
@@ -150,6 +152,7 @@
 :root[data-background][data-cards] [data-card] {
   --paint-surface: var(--paint-card);
   --paint-well: var(--paint-card-well);
+  --clear-surface: transparent;
   --ink: var(--tint-card-ink);
   --ink-2: var(--tint-card-ink-2);
   --ink-3: var(--tint-card-ink-3);

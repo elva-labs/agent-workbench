@@ -1186,7 +1186,7 @@
   }
 
   .tab:hover {
-    background: var(--surface);
+    background: var(--paint-surface);
     color: var(--ink);
   }
 
@@ -1684,7 +1684,7 @@
   .field input {
     border: 1px solid var(--field-border);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .field input.dir,
@@ -1780,7 +1780,7 @@
     padding: 5px 8px;
     border: 1px solid var(--field-border);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--clear-surface);
     color: var(--ink);
   }
 

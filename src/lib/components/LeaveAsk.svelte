@@ -40,7 +40,7 @@
 </script>
 
 {#if ask !== null}
-  <div class="leave" use:coversBrowser use:heard={ask.generation} data-testid="leave-ask">
+  <div class="leave" data-card use:coversBrowser use:heard={ask.generation} data-testid="leave-ask">
     {#if names.length > 0}
       <ConfirmStrip
         question={ask.leave === "quit" ? "Quit with unsaved edits?" : "Close the window with unsaved edits?"}
@@ -79,7 +79,7 @@
     z-index: 40;
     width: min(560px, calc(100vw - 48px));
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: 0 16px 48px color-mix(in srgb, black 30%, transparent);
   }
 </style>

@@ -22,7 +22,7 @@
   <!-- A round of review past what the workflow gives a piece: the user's
        yes lets this one through. -->
   {#if !docked}
-  <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
+  <div class="ask" data-card role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
     <p class="where">
       In {ask.project}{ask.worktree ? ", in a worktree of its own" : ""}.
@@ -41,6 +41,7 @@
 {:else if ask !== null}
   <div
     class="ask"
+    data-card
     role="alertdialog"
     aria-label="Start a session"
     aria-describedby={ask.outside !== null ? "conduct-ask-title conduct-ask-outside" : "conduct-ask-title"}
@@ -102,6 +103,13 @@
     color: var(--ink);
   }
 
+  /* Where the cards let a background through, the second surface is a
+     fill let through, laid over the card's paint so the ask still covers
+     what is under it. */
+  :global(:root[data-cards]) .ask {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .title {
     margin: 0 0 4px;
     font-family: var(--chrome);
@@ -123,7 +131,7 @@
     margin: 0 0 10px;
     padding: 6px 8px;
     border-left: 2px solid var(--rule);
-    background: var(--surface);
+    background: var(--paint-surface);
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink);

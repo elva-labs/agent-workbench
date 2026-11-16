@@ -364,7 +364,7 @@
   }
 
   .output {
-    background: var(--surface);
+    background: var(--clear-surface);
     color: var(--ink-2);
   }
 

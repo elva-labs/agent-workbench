@@ -1339,7 +1339,7 @@
     height: 40px;
     padding: 0 14px 0 10px;
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--clear-surface);
     box-shadow: inset 0 0 0 1px var(--rule);
     font-size: var(--conv-small);
     color: var(--ink);
@@ -1400,7 +1400,7 @@
 
   .chip:hover:not(:disabled) {
     color: var(--ink);
-    background: var(--surface);
+    background: var(--paint-surface);
   }
 
   .chip:disabled {

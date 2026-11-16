@@ -88,6 +88,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
+    data-card
     role="dialog"
     aria-modal="true"
     aria-labelledby="remote-title"
@@ -223,7 +224,7 @@
     max-height: 84vh;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
@@ -325,6 +326,12 @@
     background: var(--bg);
     color: var(--ink);
     outline: none;
+  }
+
+  /* On a card that lets a background through, a field is the ink let
+     through rather than the window's ground. */
+  :global(:root[data-cards]) :is(input, textarea) {
+    background: var(--field-bg);
   }
 
   input:focus {

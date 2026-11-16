@@ -12,7 +12,7 @@
 </script>
 
 {#if refusal.reason !== null}
-  <div class="refused" role="alert" data-testid="settings-refused">
+  <div class="refused" data-card role="alert" data-testid="settings-refused">
     <p>{refusal.lead}: {refusal.reason}.{shown}</p>
     <button type="button" onclick={() => showRefusal(null)} data-testid="settings-refused-dismiss"
       >Dismiss</button
@@ -38,6 +38,13 @@
     color: var(--ink);
     font-size: 12.5px;
     line-height: 1.45;
+  }
+
+  /* Where the cards let a background through, the second surface is a
+     fill let through, laid over the card's paint so this still covers
+     what is under it. */
+  :global(:root[data-cards]) .refused {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
   }
 
   p {

@@ -241,7 +241,7 @@
     min-width: 0;
     min-height: 0;
     visibility: hidden;
-    background: var(--surface);
+    background: var(--clear-surface);
     font-family: var(--chrome);
     container: conversation / inline-size;
     /* The conversation's type scale, from the look's own sizes: what is
@@ -306,7 +306,7 @@
     gap: 10px;
     padding: 20px 22px;
     border-radius: calc(var(--radius) * 2);
-    background: var(--surface);
+    background: var(--clear-surface);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
   }
 

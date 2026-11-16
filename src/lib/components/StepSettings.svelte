@@ -537,7 +537,7 @@
   }
 
   .seg button.on {
-    background: var(--surface);
+    background: var(--paint-surface);
     color: var(--ink);
     font-weight: 500;
     box-shadow: 0 0 0 1px var(--divider, var(--rule));

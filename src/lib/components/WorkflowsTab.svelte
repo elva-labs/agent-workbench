@@ -675,6 +675,13 @@
     background: linear-gradient(to bottom, transparent, var(--surface));
   }
 
+  /* Where the cards let a background through, the foot fades in the
+     card's own paint. */
+  :global(:root[data-cards]) .more-below {
+    background: var(--paint-surface);
+    mask-image: linear-gradient(to bottom, transparent, black);
+  }
+
   .step {
     flex: 1;
     min-height: 0;
@@ -957,7 +964,7 @@
     padding: 4px 8px;
     border: 1px solid var(--field-border);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--clear-surface);
     font-family: var(--chrome);
     font-size: var(--field-size);
     color: var(--ink);
