@@ -149,21 +149,26 @@ keeps its own share with its background.
 
 A card shows the background soft: the gradient, with the grain blurred
 into an even veil rather than speckled. Everything inside a card takes
-the card's paint, so nothing in it looks patched: a list beside what is read lets the background
-through its own step toward the ground, and a hovered, chosen or selected
-row, a field, your message, inline code, a diff's rows and a find match let
-the ink or the accent through rather than laying a solid fill over it. A
-menu or popover takes the card's tint from the background, never from
-what is under it. The terminal's ground is clear while any shows, so the
-card shows through it, and rows a program paints in colours of its own,
-such as a diff in Claude Code, keep them. The GPU draws a terminal's text
-thinner on a clear ground than the window draws its own, which leaves dark
-text on a dark colour a program paints faint, so while Cards shows
-something a terminal is drawn the way the rest of the window is, and goes
-back to the GPU when Cards is none. In the terminal look the rules
-inside a see-through box are the text colour let through, as the lines on
-the ground are. The browser pane's page and media such as images stay as
-they are.
+the card's paint, so nothing in it looks patched: a list beside what is
+read lets the background through its own step toward the ground, and a
+hovered, chosen or selected row, a field, your message, inline code, a
+diff's rows and a find match let the ink or the accent through rather
+than laying a solid fill over it. A menu or popover takes the card's tint
+from the background, never from what is under it. In the terminal look
+the rules inside a see-through box are the text colour let through, as
+the lines on the ground are. The browser pane's page and media such as
+images stay as they are.
+
+A terminal on a see-through card shows the card through its ground, and
+its selection is the accent let through. Rows and cells a program paints
+in colours of its own, such as a diff in Claude Code or an inverse status
+line, keep them. While Cards shows anything, a terminal is drawn the way
+the rest of the window draws text rather than by the GPU, which on a clear
+ground draws glyphs too thin to read dark text on a dark colour. Drawn
+that way, the box and line characters a program frames itself with, such
+as Claude Code's input box, are the font's own and can show small gaps at
+their joins, and a flood of output costs the window more. Where Cards
+shows nothing, terminals are drawn by the GPU as before.
 
 Text on a card is judged as text on the chrome is, at the worst point of
 the gradient behind it, and the app's own text is drawn a step stronger
@@ -172,7 +177,8 @@ its sixteen colours as they are, so the share is held back where one of
 them that holds 4.5 to 1 on a solid card would fall under it. In dark the
 background lifts the ground toward the cards' lightness, so the share is
 also held back where the cards would stop standing off the ground. The
-section says when either holds the share back, and by how much.
+section says when either holds the share back, by how much, and in which
+appearance. Where it holds the share at none, nothing changes.
 
 ## Custom styles
 
