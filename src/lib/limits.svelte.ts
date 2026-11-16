@@ -3,15 +3,15 @@ import type { AgentId, IntegratedEventBody, IntegratedLimitWindow } from "$lib/c
 /**
  * The usage limits of each account, as the agents report them.
  *
- * Limits belong to an account, not to a session: every integrated session
- * on an account reports the same figures, and a terminal session on it
- * shows what they reported. So the figures are kept by machine, agent and
- * account, the machine being the host a session's project is on, null for
- * this one, and the account the session's, null for the agents' own login.
- * The same account name on two machines is two logins. The report taken
- * last wins, whichever session sent it. Reports come from the limits event
- * and from the snapshot a window asks for when it comes to a session late.
- * Nothing here asks for them.
+ * Limits belong to an account, not to a session: every session on an
+ * account shows the same figures, integrated or in a terminal. So the
+ * figures are kept by machine, agent and account, the machine being the
+ * host a session's project is on, null for this one, and the account the
+ * session's, null for the agents' own login. The same account name on two
+ * machines is two logins. The report taken last wins, whoever sent it.
+ * Reports come from the limits event, from the snapshot a window asks for
+ * when it comes to a session late, and from the machine's own reads, which
+ * the limits poll asks for.
  *
  * Below the store is what the status bar and its popover say of a report:
  * the order and names of its windows, how near its end each is, which is
@@ -84,10 +84,11 @@ export interface Figure {
 /** From this share used a window is near its end, where the agent gives
     no reading of its own. */
 export const WARN_FROM = 80;
-/** Figures older than this say how old they are. A session reads them
-    once it is ready and after a turn at most every five minutes, so
-    figures this old mean no session on the account has finished a turn
-    for a while. */
+/** Figures older than this say how old they are. An account in use is
+    read about every five minutes while a session of it works and the
+    window is in use, and every half hour while none does, so figures this
+    old mean nothing here moved them, its reads failed, or the window was
+    left for a while. */
 export const STALE_AFTER = 15 * 60_000;
 
 const ORDER: IntegratedLimitWindow["kind"][] = ["session", "weekly", "weeklyScoped"];

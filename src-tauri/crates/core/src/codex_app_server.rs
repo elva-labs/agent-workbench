@@ -51,7 +51,7 @@ pub static CODEX_APP_SERVER: CodexAppServer = CodexAppServer;
 const CLIENT_NAME: &str = "agent-workbench";
 
 /// The agent's id, as a start names it, on the limits it reports.
-const AGENT: &str = "codex";
+pub(crate) const AGENT: &str = "codex";
 
 /// The length in minutes of the window a session of work is metered by,
 /// and of the week.
@@ -774,7 +774,7 @@ fn text(value: &Value) -> Option<String> {
 /// windows primary and secondary, which says nothing of how long each is,
 /// so each is named by its length; one of another length is left out, and
 /// of two of one length the primary is kept.
-fn limit_windows(limits: &Value) -> (Option<String>, Vec<LimitWindow>) {
+pub(crate) fn limit_windows(limits: &Value) -> (Option<String>, Vec<LimitWindow>) {
     let windows = WINDOWS.iter().filter_map(|name| {
         let window = &limits[name];
         let kind = match window["windowDurationMins"].as_u64()? {
@@ -797,7 +797,7 @@ fn limit_windows(limits: &Value) -> (Option<String>, Vec<LimitWindow>) {
 /// Lays the fields kept of an update over what was known: a null, or a
 /// value of a shape not known here, leaves what was there, and a window is
 /// merged field by field.
-fn merge(known: &mut Value, update: &Value) {
+pub(crate) fn merge(known: &mut Value, update: &Value) {
     if !known.is_object() {
         *known = json!({});
     }
