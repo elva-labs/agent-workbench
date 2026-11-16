@@ -4795,6 +4795,35 @@ describe("sessions told apart by their tokens", () => {
     expect(last().content).toBe("You have started no sessions.");
   });
 
+  it("wakes a session from before there were tokens by its token, and not another row with its id", async () => {
+    keptByAnEarlierVersion();
+    const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(back.key, "pty-back", "orch-old");
+    const kid = await resumed(raw("start", { session: "kid-old" }, { session: back.token }), "pty-kid");
+    exact("orch-old", "prompt");
+    exact("orch-old", "stop");
+    // A second row with the same id, idle as well.
+    const second = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(second.key, "pty-second", "orch-old");
+    second.turnEnd = "done";
+    kid.working = true;
+    flushSync();
+    kid.working = false;
+    flushSync();
+    expect(unheard(back)).toEqual([kid]);
+    expect(unheard(second)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER + 2000);
+    const typedInto = (ptyId: string) =>
+      written
+        .filter(([id]) => id === ptyId)
+        .map(([, data]) => data)
+        .join("");
+    expect(typedInto("pty-back")).toContain(`${REPORTS_HEAD} Session kid-old stopped working.`);
+    expect(typedInto("pty-second")).toBe("");
+    expect(conductor.woken[back.key]?.by.map((by) => by.key)).toEqual([kid.key]);
+    expect(conductor.woken[second.key]).toBeUndefined();
+  });
+
   it("carries what an earlier version kept under a folder to the one Codex session open there", async () => {
     const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
     localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")], [B]: [entry("kid-b")] }));
