@@ -638,6 +638,187 @@ fn the_newest_turn_is_left_open_while_codex_gives_it_no_end() {
     ));
 }
 
+/// Turns as Codex 0.169.0 gave them back for a real model's thread, with
+/// ids and times made neutral: a native file change, a command with no
+/// output, a commentary before a command that an interrupt left running,
+/// which Codex recorded as failed once it had ended, and the same turn read
+/// while it still ran, with no record of its command yet.
+#[test]
+fn a_real_model_s_turns_read_back_as_they_were_heard() {
+    let real_turn = |id: &str, status: &str, at: u64, items: Vec<Value>| {
+        let mut turn = turn(id, status, at, items);
+        turn["rootTurnId"] = json!(id);
+        turn
+    };
+    let said = |id: &str, phase: &str, text: &str, at: u64| {
+        json!({"type": "agentMessage", "moderation": null, "id": id, "text": text,
+               "phase": phase, "memoryCitation": null, "delivery": null, "questions": null,
+               "startedAtMs": at - 200, "completedAtMs": at})
+    };
+    let run = |id: &str, line: &str, status: &str, output: Value, code: i64, at: u64| {
+        json!({"type": "commandExecution", "id": id, "pluginId": null, "scriptPath": null,
+               "command": format!("/bin/zsh -lc '{line}'"), "cwd": "/work/demo",
+               "processId": "23973", "source": "unifiedExecStartup", "status": status,
+               "commandActions": [{"type": "unknown", "command": line}],
+               "aggregatedOutput": output, "exitCode": code, "durationMs": 44,
+               "startedAtMs": at, "completedAtMs": at + 44})
+    };
+    let patch = json!({"type": "fileChange", "id": "exec-1",
+        "changes": [{"path": "/work/demo/t.txt", "kind": {"type": "add"}, "diff": "x\n"}],
+        "status": "completed", "startedAtMs": 1_000_200, "completedAtMs": 1_000_233});
+    let interrupted = real_turn(
+        "t3",
+        "interrupted",
+        3_000,
+        vec![
+            user(
+                "u3",
+                Some("m-3"),
+                "run the shell command `sleep 42.5`",
+                3_000_000,
+            ),
+            said(
+                "msg_3",
+                "commentary",
+                "I’ll run `sleep 42.5` in the shell.",
+                3_000_500,
+            ),
+            run("exec-3", "sleep 42.5", "failed", Value::Null, -1, 3_001_000),
+        ],
+    );
+    let (history, _) = read_all(vec![(
+        "thread/turns/list",
+        page(
+            vec![
+                interrupted,
+                real_turn(
+                    "t2",
+                    "completed",
+                    2_000,
+                    vec![
+                        user("u2", Some("m-2"), "Run `touch u.txt`", 2_000_000),
+                        run(
+                            "exec-2",
+                            "touch u.txt",
+                            "completed",
+                            Value::Null,
+                            0,
+                            2_000_300,
+                        ),
+                        said(
+                            "msg_2",
+                            "final_answer",
+                            "`touch u.txt` completed.",
+                            2_000_900,
+                        ),
+                    ],
+                ),
+                real_turn(
+                    "t1",
+                    "completed",
+                    1_000,
+                    vec![
+                        user("u1", Some("m-1"), "Create t.txt", 1_000_000),
+                        patch,
+                        said("msg_1", "final_answer", "Created t.txt.", 1_000_900),
+                    ],
+                ),
+            ],
+            None,
+        ),
+    )]);
+    let kinds: Vec<String> = outline(&history)
+        .into_iter()
+        .map(|line| line.split_once(' ').unwrap().1.to_string())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "message m-1",
+            "turnStarted",
+            "toolStarted exec-1",
+            "toolInput exec-1",
+            "toolFinished exec-1",
+            "text msg_1",
+            "turnEnded",
+            "message m-2",
+            "turnStarted",
+            "toolStarted exec-2",
+            "toolInput exec-2",
+            "toolFinished exec-2",
+            "text msg_2",
+            "turnEnded",
+            "message m-3",
+            "turnStarted",
+            "text msg_3",
+            "toolStarted exec-3",
+            "toolInput exec-3",
+            "toolFinished exec-3",
+            "turnEnded",
+        ]
+    );
+    let finished = |call: &str| {
+        history
+            .items
+            .iter()
+            .find_map(|said| match &said.event {
+                Event::ToolFinished {
+                    call: c,
+                    output,
+                    error,
+                    changes,
+                    ..
+                } if c == call => Some((output.clone(), *error, changes.clone())),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (_, error, changes) = finished("exec-1");
+    assert!(!error);
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].kind, ChangeKind::Create);
+    assert_eq!(changes[0].path, "/work/demo/t.txt");
+    assert_eq!(changes[0].content.as_deref(), Some("x\n"));
+    assert_eq!(finished("exec-2"), (String::new(), false, vec![]));
+    assert_eq!(finished("exec-3"), (String::new(), true, vec![]));
+    assert!(matches!(
+        history.items.last().unwrap().event,
+        Event::TurnEnded {
+            outcome: Outcome::Interrupted,
+            ..
+        }
+    ));
+
+    // Read while it ran: no end, and no record of the command yet.
+    let mut running = real_turn(
+        "t3",
+        "interrupted",
+        3_000,
+        vec![
+            user(
+                "u3",
+                Some("m-3"),
+                "run the shell command `sleep 42.5`",
+                3_000_000,
+            ),
+            said(
+                "msg_3",
+                "commentary",
+                "I’ll run `sleep 42.5` in the shell.",
+                3_000_500,
+            ),
+        ],
+    );
+    running["completedAt"] = Value::Null;
+    running["durationMs"] = Value::Null;
+    let (history, _) = read_all(vec![("thread/turns/list", page(vec![running], None))]);
+    let kinds: Vec<String> = outline(&history)
+        .into_iter()
+        .map(|line| line.split_once(' ').unwrap().1.to_string())
+        .collect();
+    assert_eq!(kinds, ["message m-3", "turnStarted", "text msg_3"]);
+}
+
 #[test]
 fn a_turn_that_cannot_be_read_ends_the_reading_with_what_was_read() {
     let mut listed = turn("t1", "completed", 1_000, vec![]);

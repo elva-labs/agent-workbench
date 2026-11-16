@@ -301,6 +301,15 @@
     --conv-small: var(--row-size);
     --conv-meta: var(--meta-size);
     --conv-fine: calc(var(--meta-size) - 0.5px);
+    /* How long a line of words grows before it wraps. */
+    --conv-measure: 140ch;
+  }
+
+  /* The thread and the composer span the pane, with a gutter that grows a
+     little with it; inside the pane's container, so the gutter follows
+     the pane's own width. */
+  .conv > :global(*) {
+    --conv-gutter: clamp(24px, 2.5cqi, 48px);
   }
 
   .conv.narrow .foot {
@@ -320,12 +329,10 @@
 
   .foot {
     flex: none;
-    padding: 0 24px 14px;
+    padding: 0 var(--conv-gutter) 14px;
   }
 
   .ended {
-    max-width: 740px;
-    margin: 0 auto;
     display: flex;
     align-items: center;
     gap: 12px;
