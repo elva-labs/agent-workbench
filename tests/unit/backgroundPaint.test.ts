@@ -215,14 +215,16 @@ describe("the stylesheet with cards that let the background through", () => {
     expect(modern["tint-card-backdrop"]).toContain("var(--tint-image-light)");
     expect(modern["tint-card-backdrop"]).not.toContain("--tint-grain");
     expect(modern["tint-card-backdrop"]).toMatch(/^linear-gradient\(rgba\(128, 128, 128, 0\.018\)/);
-    // The surface let through by the strength times the share: 15%.
-    expect(modern["tint-card"]).toBe("rgba(255, 255, 255, 0.850)");
+    // At the end of the range a card shows as much as the ground: the
+    // strength, 60%. A white card's tone can lighten no further, so it
+    // stays white.
+    expect(modern["tint-card"]).toBe("rgba(255, 255, 255, 0.400)");
     expect(Object.keys(modern)).toEqual(expect.arrayContaining(["tint-well", "tint-card-ink", "tint-card-ink-3"]));
     // The terminal look takes no grain, so its cards take no veil, at its
     // held strength.
     const terminal = block(css, ":root[data-background]:not([data-look])");
     expect(terminal["tint-card-backdrop"]).toBe("var(--tint-image-light) 0 0 / 100vw 100vh no-repeat fixed");
-    expect(terminal["tint-card"]).toBe("rgba(255, 255, 255, 0.875)");
+    expect(terminal["tint-card"]).toBe("rgba(255, 255, 255, 0.500)");
     const dark = block(css, ':root[data-background][data-look="modern"][data-theme="dark"]');
     expect(dark["tint-card-backdrop"]).toContain("var(--tint-image-dark)");
   });
@@ -246,12 +248,14 @@ describe("keeping the cards' share", () => {
   });
 
   it("stamps nothing in the appearance where the guard holds the share at none", () => {
-    const fog: Background = { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 };
-    adoptTheme({ appearance: "dark", backgrounds: { teal: fog }, cards: { teal: 0.2 } });
+    // A theme whose terminal blue holds 4.5:1 on its light card by a hair,
+    // so any of the background on that card would take it under.
+    const tight = { label: "Tight", light: { "ansi-blue": "#717879" }, dark: {}, shape: {} };
+    adoptTheme({ appearance: "light", themes: { tight }, palette: "tight", backgrounds: { tight: LAGOON }, cards: { tight: 0.2 } });
     expect(theme.cardsHeld).toBe(0);
     expect(cardsThrough()).toBe(false);
     expect(document.documentElement.dataset.cards).toBeUndefined();
-    adoptTheme({ appearance: "light" });
+    adoptTheme({ appearance: "dark" });
     expect(theme.cardsHeld).toBeGreaterThan(0);
     expect(cardsThrough()).toBe(true);
     expect(document.documentElement.dataset.cards).toBe("");

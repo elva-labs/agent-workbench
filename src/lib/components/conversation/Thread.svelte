@@ -1283,7 +1283,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: calc(22px + var(--room, 0px)) 24px 12px;
+    padding: calc(22px + var(--room, 0px)) var(--conv-gutter) 12px;
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1324,8 +1324,7 @@
   }
 
   .col {
-    max-width: 740px;
-    margin: 0 auto;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 22px;
@@ -1393,7 +1392,7 @@
   }
 
   .bubble {
-    max-width: 82%;
+    max-width: min(82%, var(--conv-measure));
     padding: 9px 13px;
     border-radius: calc(var(--radius) * 2) calc(var(--radius) * 2) var(--radius-sm)
       calc(var(--radius) * 2);

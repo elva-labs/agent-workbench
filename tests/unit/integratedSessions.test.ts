@@ -34,6 +34,7 @@ import {
   runningByToken,
   reset as resetSessions,
   sessions,
+  viewed,
   wake,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
@@ -224,6 +225,38 @@ describe("an integrated session behind its row", () => {
     send(session.key, "go");
     fake.turn(handle, "ok");
     expect(session.unread).toBe(false);
+  });
+
+  // Claude Code compacts a long conversation by itself before its cache
+  // expires, in a turn of its own with nothing said: housekeeping, which
+  // leaves a read row read and puts no old line back under its name.
+  it("takes a compaction the agent does by itself while idle for nothing new", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
+    attention.focused = true;
+    sessions.active = session.key;
+    viewed(session.key);
+    attention.focused = false;
+
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.compaction(handle);
+    fake.context(handle, 20_000, 200_000);
+    fake.notice(handle, "Context compacted.");
+    fake.endTurn(handle);
+    expect(session.working).toBe(false);
+    expect(session.unread).toBe(false);
+    expect(session.note).toBeNull();
+
+    // A turn of its own that says something is news.
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "text", block: "r", parent: null, text: "The review is back.", done: true });
+    fake.endTurn(handle);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("The review is back.");
   });
 
   it("names an untitled row after the first line of its first message, and a new message clears the line", async () => {
@@ -797,6 +830,29 @@ describe("a session the core still runs after a reload", () => {
     fake.answer(before.handle, request, "allow");
     fake.turn(before.handle, "listed", { messages: [] });
     expect(session.needs).toBeNull();
+  });
+
+  // What the turn did before the reload is not heard again: its end is
+  // news whatever comes after the window takes it up.
+  it("marks a turn that ran across the reload when it ends, with nothing said after it", async () => {
+    const before = await started();
+    send(before.key, "run the tests");
+    fake.startTurn(before.handle);
+    fake.emit(before.handle, { type: "text", block: "t", parent: null, text: "All green.", done: true });
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
+    expect(await reattach(row.key, before.handle)).toBe(true);
+    const session = byKey(row.key)!;
+    expect(session.working).toBe(true);
+    attention.focused = false;
+
+    fake.endTurn(before.handle);
+    expect(session.working).toBe(false);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
   });
 
   it("is taken up under the id it was named by only once that run has said the id", async () => {

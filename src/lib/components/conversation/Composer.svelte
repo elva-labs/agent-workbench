@@ -1177,8 +1177,6 @@
 <style>
   .composer {
     position: relative;
-    max-width: 740px;
-    margin: 0 auto;
     display: flex;
     flex-direction: column;
     gap: 8px;

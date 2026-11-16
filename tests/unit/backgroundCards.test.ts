@@ -8,6 +8,7 @@ import {
   READY_MADE,
   STAND_OFF,
   TERMINAL_STRENGTH,
+  CARDS_REACH,
   TEXT_TOKENS,
   checkCards,
   deepOf,
@@ -20,6 +21,7 @@ import {
   paintOf,
   ratio,
   rgbToLab,
+  throughOf,
   roundedCards,
   toneOf,
   validCards,
@@ -100,6 +102,14 @@ const THEMES: Record<string, CustomTheme> = {
   sunken: { label: "Sunken", light: SUNKEN, dark: SUNKEN, shape: {} },
 };
 
+/** The owner's own background from beta 1: three hues a third of a turn
+    apart. */
+const HIS = [
+  { hue: 185, chroma: 0.85 },
+  { hue: 305, chroma: 0.85 },
+  { hue: 65, chroma: 0.85 },
+];
+
 const SWEPT: [string, Appearance][] = [
   ...Object.keys(PALETTE_COLOURS).flatMap((palette) =>
     (["light", "dark"] as const).map((appearance) => [palette, appearance] as [string, Appearance]),
@@ -140,22 +150,33 @@ function behind(painted: ReturnType<typeof paintOf>): Rgb[] {
   return out;
 }
 
-/** The lowest contrast of a colour over a ground let through by an amount,
-    under a fill. */
-function lowest(text: string, under: Rgb[], ground: Rgb, amount: number, fill: Rgb | null, share: number): number {
+/** A card's paint as the page lays it: a solid tone at an opacity over
+    the background. */
+function paint(rgba: string): { tone: Rgb; opacity: number } {
+  const [r, g, b, a] = rgba.match(/[\d.]+/g)!.map(Number);
+  return { tone: [r, g, b], opacity: a };
+}
+
+/** The lowest contrast of a colour over a card's paint laid over the
+    background, under a fill. */
+function lowest(text: string, under: Rgb[], card: { tone: Rgb; opacity: number }, fill: Rgb | null, share: number): number {
   const y = luminance(hexToRgb(text));
   let low = Infinity;
   for (const colour of under) {
-    const card = mix(ground, colour, amount);
-    low = Math.min(low, ratio(y, luminance(fill === null ? card : mix(card, fill, share))));
+    const ground = mix(colour, card.tone, card.opacity);
+    const shown = fill === null ? ground : mix(ground, fill, share);
+    low = Math.min(low, ratio(y, luminance(shown)));
   }
   return low;
 }
 
-function step(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength: number): number {
+/** A solid card's paint. */
+const solidPaint = (tone: Rgb) => ({ tone, opacity: 1 });
+
+function step(under: Rgb[], card: { tone: Rgb; opacity: number }, ground: Rgb, strength: number): number {
   let least = Infinity;
   for (const colour of under) {
-    const [L1, a1, b1] = rgbToLab(mix(card, colour, amount));
+    const [L1, a1, b1] = rgbToLab(mix(colour, card.tone, card.opacity));
     const [L2, a2, b2] = rgbToLab(mix(ground, colour, strength));
     least = Math.min(least, Math.hypot(L1 - L2, a1 - a2, b1 - b2));
   }
@@ -163,7 +184,7 @@ function step(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength: nu
 }
 
 describe("the share of the cards as the rules keep it", () => {
-  it("is from none to a quarter of the strength", () => {
+  it("is kept from none to a quarter, the end of the range", () => {
     expect(MOST_CARDS).toBe(0.25);
     expect(checkCards(0)).toBe(0);
     expect(checkCards(0.25)).toBe(0.25);
@@ -226,6 +247,7 @@ describe("the guard on the cards", () => {
         const tone = toneOf(colours);
         const card = hexToRgb(colours.surface);
         const well = wellOf(colours);
+        const solids = [solidPaint(card), solidPaint(well)];
         const ground = look === "modern" ? deepOf(colours) : hexToRgb(colours.bg);
         const ink = hexToRgb(colours.ink);
         const accent = hexToRgb(colours.accent);
@@ -235,21 +257,23 @@ describe("the guard on the cards", () => {
             const cards = painted.cards!;
             const under = behind(painted);
             const said = `${JSON.stringify(choice.dots)} at ${strength}`;
+            const paints = [paint(cards.card), paint(cards.well)];
             expect(cards.held, said).toBeLessThanOrEqual(MOST_CARDS);
-            expect(cards.amount).toBeCloseTo(painted.strength * cards.held, 9);
+            expect(cards.amount).toBeCloseTo(throughOf(cards.held, painted.strength), 9);
+            expect(paints[0].opacity).toBeCloseTo(1 - cards.amount, 3);
             if (look === "terminal") expect(painted.strength).toBeLessThanOrEqual(TERMINAL_STRENGTH);
 
             // The app's own text, on the card and the well, bare and under a
             // hovered or chosen row, a field and your message.
             for (const token of TEXT_TOKENS) {
               const drawn = cards.text[token];
-              for (const ground of [card, well]) {
+              for (const ground of paints) {
                 for (const [fill, share] of [
                   [null, 0],
                   [ink, FILL.ink],
                   [accent, FILL.accent],
                 ] as [Rgb | null, number][]) {
-                  const low = lowest(drawn, under, ground, cards.amount, fill, share);
+                  const low = lowest(drawn, under, ground, fill, share);
                   if (cards.amount > 0 && low < LEAST_CONTRAST) {
                     throw new Error(`${token} at ${low.toFixed(3)}:1 on a card, ${said}`);
                   }
@@ -266,17 +290,17 @@ describe("the guard on the cards", () => {
             // Each terminal colour that holds 4.5:1 on a solid card holds it
             // on this one; the terminal draws them as they are.
             for (const token of ["ink", ...ANSI_TOKENS]) {
-              for (const ground of [card, well]) {
-                if (lowest(colours[token], under, ground, 0, null, 0) < LEAST_CONTRAST) continue;
-                const low = lowest(colours[token], under, ground, cards.amount, null, 0);
+              for (const at of [0, 1]) {
+                if (lowest(colours[token], under, solids[at], null, 0) < LEAST_CONTRAST) continue;
+                const low = lowest(colours[token], under, paints[at], null, 0);
                 if (low < LEAST_CONTRAST - 0.02) throw new Error(`${token} at ${low.toFixed(3)}:1 in a terminal, ${said}`);
               }
             }
 
             // In dark, cards keep standing off the ground.
             if (tone === "dark") {
-              const solid = step(under, card, ground, 0, painted.strength);
-              const now = step(under, card, ground, cards.amount, painted.strength);
+              const solid = step(under, solids[0], ground, painted.strength);
+              const now = step(under, paints[0], ground, painted.strength);
               if (now < Math.min(STAND_OFF, solid) - 0.001) {
                 throw new Error(`cards stand off by ${now.toFixed(4)}, ${said}`);
               }
@@ -299,30 +323,31 @@ describe("the guard on the cards", () => {
     }
   }
 
-  it("lets a quarter through most backgrounds, and holds back only where it must", () => {
-    let held = 0;
-    let count = 0;
+  it("lets the whole range through in dark, and in light holds back only for a terminal colour", () => {
     for (const [palette, appearance] of SWEPT.slice(0, 10)) {
       for (const ready of READY_MADE) {
         for (const look of ["modern", "terminal"] as Look[]) {
-          const painted = paintOf(
+          const cards = paintOf(
             { dots: ready.dots, harmony: ready.harmony, strength: 0.6, grain: 0.25 },
             look,
             coloursOf(palette, appearance),
             MOST_CARDS,
-          );
-          count += 1;
-          if (painted.cards!.held < MOST_CARDS) held += 1;
+          ).cards!;
+          const said = `${palette}, ${appearance}, ${ready.name}, ${look}`;
+          if (appearance === "dark") expect(cards.held, said).toBe(MOST_CARDS);
+          else if (cards.held < MOST_CARDS) {
+            expect(cards.heldBy, said).toBe("terminal");
+            // Even held, a card shows a good part of what the ground does.
+            expect(cards.amount / 0.6, said).toBeGreaterThanOrEqual(0.4 * CARDS_REACH);
+          }
         }
       }
     }
-    // At the first strength a background is given, few combinations hold.
-    expect(held / count).toBeLessThan(0.1);
   });
 
   it("holds the share where a terminal colour would fall under 4.5:1, and says so", () => {
     const painted = paintOf(
-      { dots: READY_MADE.find((ready) => ready.name === "aurora")!.dots, harmony: "triad", strength: 1, grain: 0.25 },
+      { dots: HIS, harmony: "triad", strength: 1, grain: 0.25 },
       "modern",
       coloursOf("mono", "light"),
       MOST_CARDS,
@@ -333,10 +358,53 @@ describe("the guard on the cards", () => {
   });
 
   it("holds the share in dark where cards would melt into the ground, and says so", () => {
-    const painted = paintOf(background([[250, 0.3]]), "modern", coloursOf("teal", "dark"), MOST_CARDS);
+    // At full strength the end of the range would leave the card clear, the
+    // ground itself.
+    const painted = paintOf(background([[250, 0.3]], { strength: 1 }), "modern", coloursOf("teal", "dark"), MOST_CARDS);
     expect(painted.cards!.heldBy).toBe("ground");
-    expect(painted.cards!.held).toBe(0);
-    expect(painted.cards!.card).toMatch(/1\.000\)$/);
+    expect(painted.cards!.held).toBeLessThan(MOST_CARDS);
+    expect(painted.cards!.held).toBeGreaterThan(MOST_CARDS * 0.9);
+  });
+
+  it("keeps a card's own lightness in dark, taking only the background's colour", () => {
+    const colours = coloursOf("rose", "dark");
+    const choice = { dots: HIS, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
+    const painted = paintOf(choice, "modern", colours, MOST_CARDS);
+    const card = paint(painted.cards!.card);
+    const solid = rgbToLab(hexToRgb(colours.surface));
+    for (const colour of behind(painted)) {
+      const shown = rgbToLab(mix(colour, card.tone, card.opacity));
+      expect(Math.abs(shown[0] - solid[0])).toBeLessThan(0.02);
+    }
+  });
+
+  it("shows more of the background at every step of the range, enough to see", () => {
+    const choice = { dots: HIS, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
+    for (const appearance of ["light", "dark"] as const) {
+      const colours = coloursOf("rose", appearance);
+      const solid = rgbToLab(hexToRgb(colours.surface));
+      // How far the card strays from a solid one at its most coloured point.
+      const heldAt = paintOf(choice, "modern", colours, MOST_CARDS).cards!.held;
+      const away = (share: number) => {
+        const painted = paintOf(choice, "modern", colours, share);
+        const card = paint(painted.cards!.card);
+        return Math.max(
+          ...behind(painted).map((colour) => {
+            const shown = rgbToLab(mix(colour, card.tone, card.opacity));
+            return Math.hypot(shown[0] - solid[0], shown[1] - solid[1], shown[2] - solid[2]);
+          }),
+        );
+      };
+      let before = 0;
+      for (const share of [0.05, 0.1, 0.15, 0.2, 0.25].filter((share) => share <= heldAt)) {
+        const now = away(share);
+        expect(now, `${appearance} at ${share}`).toBeGreaterThan(before + 0.004);
+        before = now;
+      }
+      // A quarter of the range already shows; the end is plainly see-through.
+      expect(away(0.0625), appearance).toBeGreaterThan(0.008);
+      expect(away(MOST_CARDS), appearance).toBeGreaterThan(0.03);
+    }
   });
 
   it("draws quiet text on a card a step stronger as soon as any shows, as on the chrome", () => {

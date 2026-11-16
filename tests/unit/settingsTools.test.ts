@@ -458,7 +458,7 @@ describe("a background", () => {
     expect(describeSettings()).toContain("cards: 0% (how much of the background shows through the panes");
     theme.cards = { teal: 0.2 };
     theme.cardsHeld = 0.2;
-    expect(describeSettings()).toContain("cards: 20% (");
+    expect(describeSettings()).toContain("cards: 80% (");
     expect(describeSettings()).not.toContain("shows through now");
     theme.cardsHeld = 0;
     expect(describeSettings()).toContain("0% shows through now");

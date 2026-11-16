@@ -16,6 +16,10 @@
  * from the top left down to the foot, mixed in OKLCH so the middle never
  * greys out, and a third glows from the top right. A harmony keeps the dots
  * a fixed turn of the hue apart, so dragging the first carries the others.
+ * Three colours are placed close together by default, a sixth of a turn
+ * either side of the first, since colours that are near in hue belong
+ * together and mix cleanly; three spread evenly round the wheel stay a
+ * choice.
  *
  * The background tints the chrome only, and every surface that holds text
  * to read stays solid. The guard judges each kind of text on a tinted part
@@ -51,8 +55,12 @@ export interface Background {
 
 export const MOST_DOTS = 3;
 export const LEAST_STRENGTH = 0.1;
-/** The most of the strength the cards let through. */
+/** The most a cards' share is kept as. The share is read against this
+    end, so 0.25 is the end of the Cards range, shown as 100%. */
 export const MOST_CARDS = 0.25;
+/** How much of what the ground shows a card shows at the end of the Cards
+    range. */
+export const CARDS_REACH = 1;
 /** The most strength the terminal look takes, and it takes no grain. */
 export const TERMINAL_STRENGTH = 0.5;
 /** How far a speck of grain darkens or lightens, at full grain. */
@@ -77,18 +85,26 @@ const GUARD_FILL = { ink: 0.12, accent: 0.16 };
 // here as well.
 
 /** The lightness a light and a dark chrome paint at, and the most colour
-    each takes at the rim, in OKLCH. */
+    each takes at the rim, in OKLCH. Each is about the lightness of the
+    chrome's darkest tone, the modern look's ground, so the ground keeps its
+    place under the cards and they stand off it by lightness as well as
+    colour. Near black the screen shows little colour at any lightness, so
+    a dark chrome takes more of it at the rim, as much as the screen can
+    show for hues that allow it. */
 export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
   light: { lightness: 0.94, chroma: 0.066 },
-  dark: { lightness: 0.235, chroma: 0.075 },
+  dark: { lightness: 0.18, chroma: 0.13 },
 };
+
+/** How far either side of the first dot a close colour sits, in degrees. */
+export const NEAR = 50;
 
 /** The harmonies, in the order the picker shows them: each a turn of the
     hue from the first dot for every dot. */
 export const HARMONIES: { name: Exclude<Harmony, "free">; label: string; offsets: number[] }[] = [
   { name: "single", label: "Single", offsets: [0] },
   { name: "complementary", label: "Complementary", offsets: [0, 180] },
-  { name: "analogous", label: "Analogous", offsets: [0, 40, -40] },
+  { name: "analogous", label: "Analogous", offsets: [0, NEAR, -NEAR] },
   { name: "triad", label: "Triad", offsets: [0, 120, 240] },
 ];
 
@@ -108,18 +124,18 @@ export const READY_MADE: { name: string; label: string; dots: Dot[]; harmony: Ha
     harmony: "analogous",
     dots: [
       { hue: 140, chroma: 0.8 },
-      { hue: 180, chroma: 0.8 },
-      { hue: 100, chroma: 0.8 },
+      { hue: 190, chroma: 0.8 },
+      { hue: 90, chroma: 0.8 },
     ],
   },
   {
     name: "aurora",
     label: "Aurora",
-    harmony: "triad",
+    harmony: "analogous",
     dots: [
-      { hue: 185, chroma: 0.85 },
-      { hue: 305, chroma: 0.85 },
-      { hue: 65, chroma: 0.85 },
+      { hue: 250, chroma: 0.85 },
+      { hue: 300, chroma: 0.85 },
+      { hue: 200, chroma: 0.85 },
     ],
   },
   { name: "fog", label: "Fog", harmony: "single", dots: [{ hue: 250, chroma: 0.3 }] },
@@ -206,7 +222,7 @@ export function validBackgrounds(value: unknown): Record<string, Background> {
     it, or the reason it will not do. */
 export function checkCards(value: unknown): number {
   if (!inRange(value, 0, MOST_CARDS)) {
-    throw new Error(`cards let through from 0 to ${MOST_CARDS} of the strength, not ${JSON.stringify(value)}.`);
+    throw new Error(`cards are kept from 0 to ${MOST_CARDS}, not ${JSON.stringify(value)}.`);
   }
   return value;
 }
@@ -288,30 +304,36 @@ export function withHarmony(background: Background, harmony: Exclude<Harmony, "f
 }
 
 /** One dot moved. While a harmony holds, the first carries the others
-    with it; moving any other sets the harmony free. */
+    with it, each keeping its own turn of the hue from the first and taking
+    the first's colour, so a background kept with other turns than the
+    harmony's own keeps them; moving any other sets the harmony free. */
 export function moveDot(background: Background, index: number, dot: Dot): Background {
   const placed = { hue: turn(dot.hue), chroma: Math.min(1, Math.max(0, dot.chroma)) };
   if (index === 0 && background.harmony !== "free") {
-    return withHarmony({ ...background, dots: [placed, ...background.dots.slice(1)] }, background.harmony);
+    const from = background.dots[0].hue;
+    return {
+      ...background,
+      dots: background.dots.map((old, at) =>
+        at === 0 ? placed : { hue: turn(placed.hue + old.hue - from), chroma: placed.chroma },
+      ),
+    };
   }
   const dots = background.dots.map((old, at) => (at === index ? placed : old));
   return { ...background, dots, harmony: index === 0 ? background.harmony : "free" };
 }
 
-/** A dot more, up to three. One becomes a complementary pair and a pair in
-    harmony a triad; a free pair gains a dot in the widest gap of hue. */
+/** A dot more, up to three. One becomes a complementary pair, and a pair in
+    harmony three close colours around the first. A free pair keeps its two
+    and gains one a sixth of a turn from the first, on the side away from
+    the second. */
 export function addDot(background: Background): Background {
   const count = background.dots.length;
   if (count >= MOST_DOTS) return background;
   if (background.harmony === "single") return withHarmony(background, "complementary");
-  if (background.harmony === "complementary") return withHarmony(background, "triad");
-  const hues = background.dots.map((dot) => dot.hue).sort((a, b) => a - b);
-  let widest = { from: hues[hues.length - 1], gap: hues[0] + 360 - hues[hues.length - 1] };
-  for (let at = 1; at < hues.length; at++) {
-    const gap = hues[at] - hues[at - 1];
-    if (gap > widest.gap) widest = { from: hues[at - 1], gap };
-  }
-  const dot = { hue: turn(Math.round(widest.from + widest.gap / 2)), chroma: background.dots[0].chroma };
+  if (background.harmony !== "free") return withHarmony(background, "analogous");
+  const [first, second] = background.dots;
+  const towards = ((second.hue - first.hue + 540) % 360) - 180;
+  const dot = { hue: turn(first.hue + (towards >= 0 ? -NEAR : NEAR)), chroma: first.chroma };
   return { ...background, dots: [...background.dots, dot], harmony: "free" };
 }
 
@@ -775,8 +797,10 @@ export function paintOf(
   if (throughCards !== null && throughCards.amount > 0) {
     // A see-through card's ground and its well's are grounds a line lies
     // on as well.
-    for (const ground of [hexToRgb(colours.surface), wellOf(colours)]) {
-      const under = coarse.map((colour) => mix(ground, colour, throughCards.amount));
+    const solid = [hexToRgb(colours.surface), wellOf(colours)];
+    const laid = [throughCards.laid.card, throughCards.laid.well];
+    for (const [at, ground] of solid.entries()) {
+      const under = coarse.map((colour) => mix(laid[at], colour, throughCards.amount));
       amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
       strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
     }
@@ -882,18 +906,19 @@ export const STAND_OFF = 0.015;
 
 /** What the cards paint in one appearance and look. */
 export interface PaintedCards {
-  /** The share of the strength asked, and the share let through after
+  /** The cards' share asked, and the share let through after
       the guard, and why it holds back: a terminal colour that would fall
       under 4.5:1, or cards that would stop standing off the ground. */
   asked: number;
   held: number;
   heldBy: "terminal" | "ground" | null;
-  /** How much of the background a card shows: the strength times the
-      share let through. */
+  /** How much of the background a card shows, from throughOf. */
   amount: number;
-  /** The card's ground and the well's, let through by that amount. */
+  /** The card's ground and the well's, let through by that amount, and
+      the solid tones they lay over the background. */
   card: string;
   well: string;
+  laid: { card: Rgb; well: Rgb };
   /** The grain blurred to a flat veil over the background, or null. */
   veil: string | null;
   /** The text tokens on cards, a step stronger where they need it, and
@@ -907,13 +932,37 @@ export interface PaintedCards {
   standOff: number;
 }
 
+/** How much of the background a card shows at a share: none at none, and
+    at the end of the range CARDS_REACH of what the ground shows. */
+export const throughOf = (share: number, strength: number) =>
+  strength * CARDS_REACH * clamp(share / MOST_CARDS, 0, 1);
+
+/** The grey at the background's lightness: what a card takes out of the
+    background so it keeps its own lightness and takes only its colour. */
+function greyOf(under: Rgb[]): Rgb {
+  const lightness = under.reduce((sum, colour) => sum + rgbToLab(colour)[0], 0) / under.length;
+  return labToRgb([lightness, 0, 0]);
+}
+
+/** The solid tone a see-through card lays over the background, at one
+    less the amount, so that it comes out as its own ground with the
+    background's colour let through by the amount: its ground with that
+    much of the grey taken out. Where the tone would leave what the screen
+    shows, as a white card's does, it stops there, and the card takes on a
+    little of the background's lightness as well. */
+export function laidOf(ground: Rgb, grey: Rgb, amount: number): Rgb {
+  if (amount <= 0) return ground;
+  return ground.map((value, at) => clamp((value - amount * grey[at]) / (1 - amount), 0, 255)) as Rgb;
+}
+
 /** The lightest and darkest a card's ground gets under a fill, anywhere in
-    the window, at an amount of the veiled background. */
-function cardRange(under: Rgb[], ground: Rgb, amount: number, fill: Rgb | null, share: number): [number, number] {
+    the window, at an amount of the veiled background, the card laying its
+    solid tone over it. */
+function cardRange(under: Rgb[], laid: Rgb, amount: number, fill: Rgb | null, share: number): [number, number] {
   let low = 1;
   let high = 0;
   for (const colour of under) {
-    const card = mix(ground, colour, amount);
+    const card = mix(laid, colour, amount);
     const y = luminance(fill === null ? card : mix(card, fill, share));
     low = Math.min(low, y);
     high = Math.max(high, y);
@@ -921,7 +970,8 @@ function cardRange(under: Rgb[], ground: Rgb, amount: number, fill: Rgb | null, 
   return [low, high];
 }
 
-/** The least step, in OKLab, between a card and the ground it stands on. */
+/** The least step, in OKLab, between a card laying its solid tone over the
+    background and the ground it stands on. */
 function standOff(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength: number): number {
   let least = Infinity;
   for (const colour of under) {
@@ -932,8 +982,8 @@ function standOff(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength
   return least;
 }
 
-/** What cards paint that let through a share of a background's strength,
-    with the guard's stronger text and the share it holds back to. */
+/** What cards paint that let through a share of a background, with the
+    guard's stronger text and the share it holds back to. */
 export function cardsOf(
   colours: Record<string, string>,
   look: Look,
@@ -948,9 +998,11 @@ export function cardsOf(
   const veil = veilOf(grain);
   const under = veil > 0 ? grid.map((colour) => mix(colour, VEIL, veil)) : grid;
   const grounds = { card: hexToRgb(colours.surface), well: wellOf(colours) };
+  const grey = greyOf(under);
+  const laid = (name: CardPair["ground"], amount: number) => laidOf(grounds[name], grey, amount);
   const fillOf = (name: CardPair["fill"]) => (name === null ? null : hexToRgb(colours[name]));
   const ranges = (amount: number) =>
-    CARD_PAIRS.map((pair) => cardRange(under, grounds[pair.ground], amount, fillOf(pair.fill), pair.amount));
+    CARD_PAIRS.map((pair) => cardRange(under, laid(pair.ground, amount), amount, fillOf(pair.fill), pair.amount));
 
   // A terminal colour that holds 4.5:1 on a solid card is to hold it on a
   // see-through one; the share is held back to the most at which each
@@ -959,7 +1011,7 @@ export function cardsOf(
   const terminalRanges = (amount: number) =>
     terminalPairs.map((index) => {
       const pair = CARD_PAIRS[index];
-      return cardRange(under, grounds[pair.ground], amount, fillOf(pair.fill), pair.amount);
+      return cardRange(under, laid(pair.ground, amount), amount, fillOf(pair.fill), pair.amount);
     });
   const solid = terminalRanges(0);
   const judged = terminalPairs.flatMap((index, at) =>
@@ -972,20 +1024,22 @@ export function cardsOf(
     return judged.reduce((least, { at, token }) => Math.min(least, worst(colours[token], now[at])), Infinity);
   };
 
-  // In dark, the background lifts the ground toward the cards' lightness,
-  // so the guard also holds the share where cards would stop standing off
-  // the ground.
+  // In dark, a card that takes on the background's colour comes nearer
+  // the ground, which is that colour too, so the guard also holds the
+  // share where cards would stop standing off the ground.
   const ground = look === "modern" ? deepOf(colours) : hexToRgb(colours.bg);
   const plain = (() => {
     const [L1, a1, b1] = rgbToLab(grounds.card);
     const [L2, a2, b2] = rgbToLab(ground);
     return Math.hypot(L1 - L2, a1 - a2, b1 - b2);
   })();
-  const least = tone === "light" ? 0 : Math.min(STAND_OFF, standOff(under, grounds.card, ground, 0, strength)) - 1e-6;
+  const apart = (amount: number) => standOff(under, laid("card", amount), ground, amount, strength);
+  const least = tone === "light" ? 0 : Math.min(STAND_OFF, apart(0)) - 1e-6;
   /** What holds a share back, or null where it holds. */
   const fails = (share: number): PaintedCards["heldBy"] => {
-    if (terminalLow(strength * share) < LEAST_CONTRAST) return "terminal";
-    if (tone === "dark" && standOff(under, grounds.card, ground, strength * share, strength) < least) return "ground";
+    const amount = throughOf(share, strength);
+    if (terminalLow(amount) < LEAST_CONTRAST) return "terminal";
+    if (tone === "dark" && apart(amount) < least) return "ground";
     return null;
   };
 
@@ -1004,7 +1058,7 @@ export function cardsOf(
     held = low / 100;
     heldBy = fails(high / 100) ?? heldBy;
   }
-  const amount = strength * held;
+  const amount = throughOf(held, strength);
 
   // The app's own text is drawn a step stronger, as on the chrome, over
   // every ground and fill it is read on.
@@ -1028,12 +1082,13 @@ export function cardsOf(
     held,
     heldBy,
     amount,
-    card: rgba(grounds.card, 1 - amount),
-    well: rgba(grounds.well, 1 - amount),
+    card: rgba(laid("card", amount), 1 - amount),
+    well: rgba(laid("well", amount), 1 - amount),
+    laid: { card: laid("card", amount), well: laid("well", amount) },
     veil: veil > 0 ? rgba(VEIL, veil) : null,
     text,
     contrast,
     terminal: judged.length === 0 ? Infinity : terminalLow(amount),
-    standOff: plain === 0 ? 1 : standOff(under, grounds.card, ground, amount, strength) / plain,
+    standOff: plain === 0 ? 1 : apart(amount) / plain,
   };
 }

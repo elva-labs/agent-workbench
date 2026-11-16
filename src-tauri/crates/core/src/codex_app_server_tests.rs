@@ -294,6 +294,44 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
 }
 
 #[test]
+fn a_thread_that_names_no_effort_runs_at_its_model_s_default() {
+    let ready_effort = |model: &str| {
+        let mut driver = fresh();
+        let mut started = thread_started();
+        // As Codex answers when neither the user nor the start sets one.
+        started["model"] = json!(model);
+        started["reasoningEffort"] = Value::Null;
+        let (_, out) = handshake_with(
+            &mut driver,
+            json!({"account": null, "requiresOpenaiAuth": false}),
+            started,
+        );
+        match &out[0] {
+            Event::Ready { effort, .. } => effort.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(ready_effort("gpt-a").as_deref(), Some("medium"));
+    assert_eq!(ready_effort("gpt-b").as_deref(), Some("minimal"));
+    assert_eq!(ready_effort("unlisted"), None, "nothing to go by");
+
+    // An effort the start asked for still wins.
+    let vars = HashMap::new();
+    let mut driver = launch_with(&vars, |launch| launch.effort = Some("high"));
+    let mut started = thread_started();
+    started["reasoningEffort"] = Value::Null;
+    let (_, out) = handshake_with(
+        &mut driver,
+        json!({"account": null, "requiresOpenaiAuth": false}),
+        started,
+    );
+    assert!(
+        matches!(&out[0], Event::Ready { effort: Some(e), .. } if e == "high"),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     let vars = HashMap::new();
     let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
@@ -1491,6 +1529,59 @@ fn a_message_is_steered_into_the_turn_that_runs_and_taken_once_codex_answers() {
     assert_eq!(
         reading.unsteered,
         [(M1.to_string(), "turn is not steerable".to_string())]
+    );
+}
+
+#[test]
+fn a_thread_s_system_error_in_a_turn_is_left_to_the_turn_s_end() {
+    let system_error = notification(
+        "thread/status/changed",
+        json!({"threadId": THREAD, "status": {"type": "systemError"}}),
+    );
+    let failed = |error: Value| {
+        notification(
+            "turn/completed",
+            json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": "failed",
+                   "items": [], "itemsView": "notLoaded", "error": error, "durationMs": 16075}}),
+        )
+    };
+    // As Codex ends a turn whose request failed for good: the thread's
+    // status, the error, then the turn with the same error.
+    let mut driver = ready();
+    turn(&mut driver, M1);
+    let why = "unexpected status 500 Internal Server Error, url: https://api.example/v1/responses";
+    let out = events(
+        &mut driver,
+        &[
+            system_error.clone(),
+            notification(
+                "error",
+                json!({"threadId": THREAD, "turnId": "turn-1", "willRetry": false,
+                       "error": {"message": why, "additionalDetails": null,
+                                 "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 500}}}}),
+            ),
+            failed(json!({"message": why, "additionalDetails": null,
+                          "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 500}}})),
+        ],
+    );
+    assert!(
+        matches!(&out[..], [Event::TurnEnded { outcome: Outcome::Failed, error: Some(e), .. }] if e == why),
+        "{out:?}"
+    );
+
+    // A turn that fails with nothing more to say says that much.
+    turn(&mut driver, M2);
+    let out = events(&mut driver, &[system_error.clone(), failed(Value::Null)]);
+    assert!(
+        matches!(&out[..], [Event::TurnEnded { error: Some(e), .. }] if e == SYSTEM_ERROR),
+        "{out:?}"
+    );
+
+    // Outside a turn there is no end to say it, so it is told.
+    let out = events(&mut driver, &[system_error]);
+    assert!(
+        matches!(&out[..], [Event::Error { kind: ErrorKind::Agent, message }] if message == SYSTEM_ERROR),
+        "{out:?}"
     );
 }
 
