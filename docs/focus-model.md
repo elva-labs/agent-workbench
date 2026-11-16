@@ -569,6 +569,6 @@ The focused pane is marked in the accent, its title with it, and the status
 bar names it when there is room; which part of the pane carries the mark is
 the look's, in [settings](settings.md#theme): in the modern look an edge
 along the top of the pane's card, ending square in its rounded corners, or
-along the top of the sessions pane's header, which has no card; in the
+under the sessions pane's header, which has no card, on the same line; in the
 terminal look the box's own border. An unfocused agent pane shows a hollow
 cursor, the terminal convention.
