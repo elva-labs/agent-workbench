@@ -152,12 +152,16 @@ window. A Codex session takes the approval policy and the sandbox of the
 user's configuration.
 
 The window keeps the mode each conversation last ran in by the
-conversation's id, only while it is one the agent offers to switch to, and
-lets it go when the conversation runs in a terminal, whose mode the window
-cannot see; the agent's own record of that run decides the next. A mode is
-the conversation's own: a new session, one another session starts among
-them, names none, and no conversation takes another's. Changing the mode
-on the composer's chip changes it at once and is kept the same way.
+conversation's id, only while it is one the agent offers to switch to. A
+terminal session that resumes the conversation starts in that mode, as
+Claude Code's permission mode or Codex's approval policy and sandbox,
+since the agent's own record of a conversation holds only what its
+terminal wrote; from then on the mode is the terminal's, the window lets
+its record go, and the agent's own record of that run decides the next.
+A mode is the conversation's own: a new session, one another session
+starts among them, names none, and no conversation takes another's.
+Changing the mode on the composer's chip changes it at once and is kept
+the same way.
 
 A mode the agent was asked to start in and did not, such as auto where the
 account or the model has none, is said in a notice, and the session runs in

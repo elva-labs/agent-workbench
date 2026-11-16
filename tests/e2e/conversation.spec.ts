@@ -1065,7 +1065,7 @@ test.describe("how sessions run, in the settings", () => {
     await expect(claude.getByTestId("session-kind-integrated")).toHaveAttribute("aria-checked", "true");
     // Under the choice, in so many words: when it applies.
     const when = page.getByTestId("session-kind-when");
-    await expect(when).toContainText("A change applies from the next session started.");
+    await expect(when).toContainText("A change applies to sessions started after it. To move one that is running, right-click its row and choose Reopen.");
     const last = (await codex.boundingBox())!;
     expect((await when.boundingBox())!.y).toBeGreaterThanOrEqual(last.y + last.height);
   });

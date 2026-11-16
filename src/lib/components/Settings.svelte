@@ -691,8 +691,8 @@
               {/each}
             </div>
             <p class="note quiet" data-testid="session-kind-when">
-              A change applies from the next session started. One already running keeps its way; its
-              row's menu reopens it the other way.
+              A change applies to sessions started after it. To move one that is running, right-click
+              its row and choose Reopen.
             </p>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
