@@ -593,11 +593,24 @@ describe("what a resumed session said before", () => {
     expect(conversation.earlier).toBeNull();
   });
 
-  it("is not read for Codex, which says so as it did", async () => {
+  it("is read for Codex from the thread Codex keeps", async () => {
+    fake.transcript("codex-thread", written(1_000_000, "Count the files", "There are 12."), "codex");
     const session = create(PROJECT, "codex-thread", "codex", null, null, null, null, undefined, "integrated");
     await launch(session.key);
     const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(agentTexts(conversation)).toEqual(["There are 12."]);
+    expect(fake.calls.find((call) => call.method === "history")).toMatchObject({
+      options: { agent: "codex", session: "codex-thread" },
+    });
+  });
+
+  it("says why when Codex cannot read the thread, and leaves the session as it is", async () => {
+    const session = create(PROJECT, "codex-unknown", "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const conversation = conversationOf(session.key);
     await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
+    expect(conversation.earlierWhy).toBe("Codex does not have this conversation");
     expect(conversation.entries).toEqual([]);
     expect(conversation.began).toBeNull();
   });

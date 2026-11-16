@@ -15,6 +15,7 @@ pub mod claude_stream;
 pub mod client;
 pub mod codex;
 pub mod codex_app_server;
+pub mod codex_history;
 pub mod cwd;
 pub mod env;
 pub mod events;

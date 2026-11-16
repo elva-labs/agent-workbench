@@ -334,6 +334,16 @@ export function nowDoing(conversation: Conversation, parts: Part[]): string | nu
   return "Working";
 }
 
+/** How a thread ends a sentence about earlier messages it could not draw:
+    that they could not be read and why, on one short line, where it is
+    known, and that they are not shown otherwise. */
+export function notRead(why: string | null): string {
+  const first = why?.split("\n")[0].trim().replace(/[.\s]+$/, "") ?? "";
+  if (first === "") return "are not shown here.";
+  const said = first.length > 160 ? `${first.slice(0, 159).trimEnd()}…` : first;
+  return `could not be read: ${said}.`;
+}
+
 /** The name the agent's runs go under: the model it ran on, or the agent's
     own name where no model is known or the model is its default. */
 export function speaker(conversation: Conversation, model: string | null, agent: string): string {

@@ -400,7 +400,8 @@ async fn integrated_snapshot(
 
 /// What a conversation said and did before, read on the machine the
 /// project is on, with the host put back on the paths it names for a
-/// project elsewhere. Null for an agent whose history is not read.
+/// project elsewhere. Null for an agent whose history is not read; an
+/// error where the agent could not read it.
 #[tauri::command]
 async fn integrated_history(
     core: State<'_, Arc<Core>>,
@@ -424,7 +425,7 @@ async fn integrated_history(
             cwd.as_deref().map(Path::new),
             &session,
             config_dir.as_deref(),
-        )),
+        )?),
         Route::Remote { host, rest } => {
             let history = remotes.connection(&host)?.call(
                 "integrated_history",

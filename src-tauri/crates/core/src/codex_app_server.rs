@@ -494,7 +494,7 @@ fn refusal(method: &str) -> Option<Value> {
 
 /// The line that turns a request down: no, for one this side handles, and
 /// an error that says so for one it does not.
-fn turned_down(id: &Value, method: &str) -> String {
+pub(crate) fn turned_down(id: &Value, method: &str) -> String {
     match refusal(method) {
         Some(result) => json!({ "id": id, "result": result }),
         None => json!({
@@ -1092,6 +1092,161 @@ fn set(config: &mut Map<String, Value>, setting: &str) {
     table.insert(last.to_string(), value);
 }
 
+/// The tool call an item is, with the agent's name for it, its kind and
+/// its input. None for an item that is no tool call.
+pub(crate) fn call_of(item: &Value) -> Option<(String, ToolKind, Value)> {
+    let kind = item["type"].as_str()?;
+    Some(match kind {
+        "commandExecution" => (
+            kind.to_string(),
+            ToolKind::Command,
+            json!({
+                "command": item["command"],
+                "cwd": item["cwd"],
+                "actions": item["commandActions"],
+            }),
+        ),
+        "fileChange" => (
+            kind.to_string(),
+            ToolKind::Edit,
+            json!({ "changes": item["changes"] }),
+        ),
+        "mcpToolCall" => {
+            let server = item["server"].as_str().unwrap_or_default();
+            let tool = item["tool"].as_str().unwrap_or_default();
+            (
+                format!("mcp__{server}__{tool}"),
+                ToolKind::Mcp,
+                item["arguments"].clone(),
+            )
+        }
+        "dynamicToolCall" => (
+            text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
+            ToolKind::Other,
+            item["arguments"].clone(),
+        ),
+        "collabAgentToolCall" => (
+            text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
+            ToolKind::Agent,
+            json!({ "prompt": item["prompt"], "model": item["model"] }),
+        ),
+        "webSearch" => (
+            kind.to_string(),
+            ToolKind::Web,
+            json!({ "query": item["query"], "action": item["action"] }),
+        ),
+        "imageView" => (
+            kind.to_string(),
+            ToolKind::Read,
+            json!({ "path": item["path"] }),
+        ),
+        _ => return None,
+    })
+}
+
+/// What a completed item that is no tool call says, as the events a
+/// session sends: an agent message as its text, reasoning as a block of
+/// thinking for each part of its summary, and a plan as its text. The raw
+/// reasoning is told where there is no summary, or where `streamed` says
+/// its block streamed. Nothing for any other item.
+pub(crate) fn said(item: &Value, id: &str, streamed: impl Fn(&str) -> bool) -> Vec<Event> {
+    match item["type"].as_str() {
+        Some("agentMessage") => vec![Event::Text {
+            block: id.to_string(),
+            parent: None,
+            text: item["text"].as_str().unwrap_or_default().to_string(),
+            done: true,
+        }],
+        Some("reasoning") => {
+            let parts = |key: &str| -> Vec<String> {
+                item[key]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|part| {
+                        part.as_str()
+                            .or_else(|| part["text"].as_str())
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                    .collect()
+            };
+            let summary = parts("summary");
+            let mut events: Vec<Event> = summary
+                .iter()
+                .enumerate()
+                .map(|(at, part)| Event::Thinking {
+                    block: format!("{id}:{at}"),
+                    parent: None,
+                    text: part.clone(),
+                    done: true,
+                })
+                .collect();
+            for (at, part) in parts("content").into_iter().enumerate() {
+                let block = format!("{id}:raw:{at}");
+                if summary.is_empty() || streamed(&block) {
+                    events.push(Event::Thinking {
+                        block,
+                        parent: None,
+                        text: part,
+                        done: true,
+                    });
+                }
+            }
+            events
+        }
+        Some("plan") => vec![Event::Plan {
+            call: None,
+            parent: None,
+            text: text(&item["text"]),
+            steps: vec![],
+        }],
+        _ => vec![],
+    }
+}
+
+/// How the tool call a completed item is of `kind` ended: its output as
+/// text, whether it failed, and the files it changed.
+pub(crate) fn finished(
+    item: &Value,
+    kind: ToolKind,
+    project: &Path,
+) -> (String, bool, Vec<FileChange>) {
+    let status = item["status"].as_str();
+    match kind {
+        ToolKind::Command => (
+            item["aggregatedOutput"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            status != Some("completed") || item["exitCode"].as_i64().is_some_and(|code| code != 0),
+            vec![],
+        ),
+        ToolKind::Edit => (
+            String::new(),
+            status != Some("completed"),
+            if status == Some("completed") {
+                file_changes(&item["changes"], project)
+            } else {
+                vec![]
+            },
+        ),
+        ToolKind::Mcp => match text(&item["error"]["message"]) {
+            Some(error) => (error, true, vec![]),
+            None => (
+                mcp_output(&item["result"]),
+                status == Some("failed"),
+                vec![],
+            ),
+        },
+        _ => (
+            mcp_output(&json!({ "content": item["contentItems"] })),
+            status == Some("failed") || item["success"] == false,
+            vec![],
+        ),
+    }
+}
+
 impl AppServer {
     fn new(launch: &Launch) -> Self {
         Self {
@@ -1648,64 +1803,12 @@ impl AppServer {
         self.ask_rate_limits(out);
     }
 
-    /// The tool call an item is, with the agent's name for it, its kind and
-    /// its input. None for an item that is no tool call.
-    fn call_of(item: &Value) -> Option<(String, ToolKind, Value)> {
-        let kind = item["type"].as_str()?;
-        Some(match kind {
-            "commandExecution" => (
-                kind.to_string(),
-                ToolKind::Command,
-                json!({
-                    "command": item["command"],
-                    "cwd": item["cwd"],
-                    "actions": item["commandActions"],
-                }),
-            ),
-            "fileChange" => (
-                kind.to_string(),
-                ToolKind::Edit,
-                json!({ "changes": item["changes"] }),
-            ),
-            "mcpToolCall" => {
-                let server = item["server"].as_str().unwrap_or_default();
-                let tool = item["tool"].as_str().unwrap_or_default();
-                (
-                    format!("mcp__{server}__{tool}"),
-                    ToolKind::Mcp,
-                    item["arguments"].clone(),
-                )
-            }
-            "dynamicToolCall" => (
-                text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
-                ToolKind::Other,
-                item["arguments"].clone(),
-            ),
-            "collabAgentToolCall" => (
-                text(&item["tool"]).unwrap_or_else(|| kind.to_string()),
-                ToolKind::Agent,
-                json!({ "prompt": item["prompt"], "model": item["model"] }),
-            ),
-            "webSearch" => (
-                kind.to_string(),
-                ToolKind::Web,
-                json!({ "query": item["query"], "action": item["action"] }),
-            ),
-            "imageView" => (
-                kind.to_string(),
-                ToolKind::Read,
-                json!({ "path": item["path"] }),
-            ),
-            _ => return None,
-        })
-    }
-
     /// Starts the tool call an item is, once.
     fn start_call(&mut self, id: &str, item: &Value, out: &mut Reading) -> bool {
         if self.calls.contains_key(id) {
             return true;
         }
-        let Some((name, kind, input)) = Self::call_of(item) else {
+        let Some((name, kind, input)) = call_of(item) else {
             return false;
         };
         out.events.push(Event::ToolStarted {
@@ -1744,55 +1847,6 @@ impl AppServer {
             return;
         };
         match item["type"].as_str() {
-            Some("agentMessage") => {
-                out.events.push(Event::Text {
-                    block: id.to_string(),
-                    parent: None,
-                    text: item["text"].as_str().unwrap_or_default().to_string(),
-                    done: true,
-                });
-            }
-            Some("reasoning") => {
-                let parts = |key: &str| -> Vec<String> {
-                    item[key]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .map(|part| {
-                            part.as_str()
-                                .or_else(|| part["text"].as_str())
-                                .unwrap_or_default()
-                                .to_string()
-                        })
-                        .collect()
-                };
-                let summary = parts("summary");
-                for (at, part) in summary.iter().enumerate() {
-                    out.events.push(Event::Thinking {
-                        block: format!("{id}:{at}"),
-                        parent: None,
-                        text: part.clone(),
-                        done: true,
-                    });
-                }
-                for (at, part) in parts("content").into_iter().enumerate() {
-                    let block = format!("{id}:raw:{at}");
-                    if summary.is_empty() || self.streamed.contains(&block) {
-                        out.events.push(Event::Thinking {
-                            block,
-                            parent: None,
-                            text: part,
-                            done: true,
-                        });
-                    }
-                }
-            }
-            Some("plan") => out.events.push(Event::Plan {
-                call: None,
-                parent: None,
-                text: text(&item["text"]),
-                steps: vec![],
-            }),
             Some("contextCompaction") => {
                 self.compacting.remove(id);
                 let asked = std::mem::take(&mut self.compact_asked);
@@ -1806,45 +1860,16 @@ impl AppServer {
                     tokens_after: None,
                 });
             }
+            Some("agentMessage" | "reasoning" | "plan") => {
+                out.events
+                    .extend(said(item, id, |block| self.streamed.contains(block)));
+            }
             _ => {
                 if !self.start_call(id, item, out) {
                     return;
                 }
                 let call = self.calls.remove(id).expect("started above");
-                let status = item["status"].as_str();
-                let (output, error, changes) = match call.kind {
-                    ToolKind::Command => (
-                        item["aggregatedOutput"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string(),
-                        status != Some("completed")
-                            || item["exitCode"].as_i64().is_some_and(|code| code != 0),
-                        vec![],
-                    ),
-                    ToolKind::Edit => (
-                        String::new(),
-                        status != Some("completed"),
-                        if status == Some("completed") {
-                            file_changes(&item["changes"], &self.project)
-                        } else {
-                            vec![]
-                        },
-                    ),
-                    ToolKind::Mcp => match text(&item["error"]["message"]) {
-                        Some(error) => (error, true, vec![]),
-                        None => (
-                            mcp_output(&item["result"]),
-                            status == Some("failed"),
-                            vec![],
-                        ),
-                    },
-                    _ => (
-                        mcp_output(&json!({ "content": item["contentItems"] })),
-                        status == Some("failed") || item["success"] == false,
-                        vec![],
-                    ),
-                };
+                let (output, error, changes) = finished(item, call.kind, &self.project);
                 out.events.push(Event::ToolFinished {
                     call: id.to_string(),
                     parent: None,

@@ -6,6 +6,7 @@
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
   import { spoken } from "$lib/instructions";
+  import { notRead } from "$lib/thread";
   import { projectLabel, sessionRoot } from "$lib/workspace.svelte";
   import { mentionOpener } from "$lib/show.svelte";
   import { unsent } from "$lib/mention";
@@ -127,7 +128,7 @@
           : `A new ${agent} session in ${projectLabel(session.project)}, following ${session.workflow.name}. It directs; ${stepsGist(session.workflow)}.`
         : conversation.earlier === "read"
           ? "No earlier messages were found for this session."
-          : "This session was resumed. Its earlier messages are in its transcript and are not shown here.",
+          : `This session was resumed. Its earlier messages ${notRead(conversation.earlierWhy)}`,
   );
 
   /** Nothing has been said in it yet, so its workflow can still be
@@ -198,6 +199,7 @@
       root={folder}
       {intro}
       agent={name}
+      models={profile.turnModels}
       onPutBack={putBack}
       sender={(message) => senderOf(message)}
       opener={(path) => mentionOpener(session.key, path)}

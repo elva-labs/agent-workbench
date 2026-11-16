@@ -1807,8 +1807,9 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         .contains("PATH"));
 }
 
-/// What the driver reads from Codex's protocol and writes to it, each
-/// checked against the schema the installed Codex generates. A use is
+/// What the driver and the history reader read from Codex's protocol and
+/// write to it, each checked against the schema the installed Codex
+/// generates. A use is
 /// where it starts, a path of fields from there, and the values the driver
 /// reads or writes at the end of it.
 ///
@@ -2337,6 +2338,47 @@ const USES: &[(&str, &str, &[&str])] = &[
     ),
     ("answer mcpServer/elicitation/request", "content", &[]),
     ("answer mcpServer/elicitation/request", "_meta", &[]),
+    // What a history is read with.
+    ("request thread/turns/list", "threadId", &[]),
+    ("request thread/turns/list", "cursor", &[]),
+    ("request thread/turns/list", "limit", &[]),
+    ("request thread/turns/list", "sortDirection", &["desc"]),
+    (
+        "request thread/turns/list",
+        "itemsView",
+        &["full", "notLoaded"],
+    ),
+    ("response thread/turns/list", "data.[].id", &[]),
+    (
+        "response thread/turns/list",
+        "data.[].status",
+        &["completed", "interrupted", "failed", "inProgress"],
+    ),
+    ("response thread/turns/list", "data.[].startedAt", &[]),
+    ("response thread/turns/list", "data.[].completedAt", &[]),
+    ("response thread/turns/list", "data.[].durationMs", &[]),
+    ("response thread/turns/list", "data.[].error.message", &[]),
+    (
+        "response thread/turns/list",
+        "data.[].error.additionalDetails",
+        &[],
+    ),
+    ("response thread/turns/list", "data.[].itemsView", &["full"]),
+    ("response thread/turns/list", "data.[].items", &[]),
+    ("response thread/turns/list", "nextCursor", &[]),
+    ("request thread/items/list", "threadId", &[]),
+    ("request thread/items/list", "turnId", &[]),
+    ("request thread/items/list", "cursor", &[]),
+    ("request thread/items/list", "limit", &[]),
+    ("request thread/items/list", "sortDirection", &["asc"]),
+    ("response thread/items/list", "data.[].item", &[]),
+    ("response thread/items/list", "data.[].startedAtMs", &[]),
+    ("response thread/items/list", "data.[].completedAtMs", &[]),
+    ("response thread/items/list", "nextCursor", &[]),
+    ("item userMessage", "id", &[]),
+    ("item userMessage", "clientId", &[]),
+    ("item userMessage", "content.[].{text}.text", &[]),
+    ("item userMessage", "content.[].{image}.url", &[]),
 ];
 
 /// The schema the installed Codex generates, as definitions by name. Where
