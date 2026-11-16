@@ -1212,7 +1212,11 @@
     flex-direction: column;
   }
 
+  /* What is placed inside it, such as the words a Copy button says to a
+     screen reader, scrolls with it and adds nothing to the pane's own
+     size. */
   .thread {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -1238,14 +1242,12 @@
     white-space: pre-wrap;
   }
 
-  @container conversation (max-width: 520px) {
-    .frame .thread {
-      padding: calc(16px + var(--room, 0px)) 14px 10px;
-    }
+  :global(.conv.narrow) .frame .thread {
+    padding: calc(16px + var(--room, 0px)) 14px 10px;
+  }
 
-    .you .bubble {
-      max-width: 92%;
-    }
+  :global(.conv.narrow) .you .bubble {
+    max-width: 92%;
   }
 
   /* A thread that has earlier messages coming or read sits at the pane's

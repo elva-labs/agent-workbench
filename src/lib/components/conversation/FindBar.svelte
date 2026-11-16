@@ -482,11 +482,9 @@
     white-space: nowrap;
   }
 
-  @container conversation (max-width: 520px) {
-    .bar {
-      right: 14px;
-      max-width: calc(100% - 28px);
-    }
+  :global(.conv.narrow) .bar {
+    right: 14px;
+    max-width: calc(100% - 28px);
   }
 
   /* Every match drawn is tinted, and the current one filled. */

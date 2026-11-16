@@ -1354,10 +1354,8 @@
   }
 
   /* In a narrow pane the name and what it does keep the room. */
-  @container conversation (max-width: 420px) {
-    .cmd-source {
-      display: none;
-    }
+  :global(.conv.tight) .cmd-source {
+    display: none;
   }
 
   code {

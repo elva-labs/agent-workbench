@@ -91,6 +91,12 @@
   }
 
   let view = $state<HTMLDivElement | null>(null);
+  /** The pane's width, once measured. A narrow pane keeps less room at the
+      sides of the thread, the find bar and the foot, and a tight one less
+      in the composer's menu. The view is not a size container: WebKit puts
+      a scroller inside one back where it was after a style change, and the
+      thread would not stay at its foot. */
+  let width = $state(0);
 
   // A call this session is to be opened at, once it is on screen: the call
   // comes into view with the folds around it and the call itself open, and
@@ -178,7 +184,16 @@
   });
 </script>
 
-<div class="conv" class:active bind:this={view} data-testid="conversation" data-session={session.key}>
+<div
+  class="conv"
+  class:active
+  class:narrow={width > 0 && width <= 520}
+  class:tight={width > 0 && width <= 420}
+  bind:this={view}
+  bind:clientWidth={width}
+  data-testid="conversation"
+  data-session={session.key}
+>
   {#if link.untrusted}
     <div class="gate" data-testid="trust-gate">
       <div class="card" tabindex="-1" role="group" aria-labelledby="gate-{session.key}">
@@ -279,7 +294,6 @@
     visibility: hidden;
     background: var(--clear-surface);
     font-family: var(--chrome);
-    container: conversation / inline-size;
     /* The conversation's type scale, from the look's own sizes: what is
        said, what goes beside it, what notes it, and the finest print. */
     --conv-size: 13.5px;
@@ -288,10 +302,8 @@
     --conv-fine: calc(var(--meta-size) - 0.5px);
   }
 
-  @container conversation (max-width: 520px) {
-    .conv .foot {
-      padding: 0 14px 12px;
-    }
+  .conv.narrow .foot {
+    padding: 0 14px 12px;
   }
 
   :global(:root:not([data-look="modern"])) .conv {
