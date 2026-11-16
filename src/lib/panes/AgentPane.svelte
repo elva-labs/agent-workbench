@@ -297,8 +297,9 @@
     {/if}
     <HooksNotice />
     <!-- Every session that has started stays mounted. Only the active one
-         is visible, so its PTY keeps its size and coming back to it costs
-         no reflow. -->
+         is visible: a terminal stays laid out, so its PTY keeps its size
+         and coming back to it costs no reflow, and a conversation is out
+         of layout until it is in front again. -->
     {#each sessions.all as session (session.key)}
       {#if session.status !== "dormant" && session.kind === "terminal"}
         <TerminalView

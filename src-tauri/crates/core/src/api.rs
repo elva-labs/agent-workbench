@@ -90,6 +90,8 @@ pub struct Core {
     /// The prompt calls the window has yet to answer, each with the time
     /// its hook stops waiting.
     deadlines: Arc<crate::show::Deadlines>,
+    /// The usage limits of each account on the machine.
+    limits: Arc<crate::limits::Limits>,
 }
 
 /// The sink the core hands to the ptys and the watcher: everything reaches
@@ -151,10 +153,11 @@ impl Core {
             processes: crate::processes::Processes::default(),
             watchers: Arc::new(Watchers::default()),
             sink,
-            home,
             plugins,
             settings,
             deadlines: Arc::default(),
+            limits: Arc::new(crate::limits::Limits::new(home.as_deref())),
+            home,
         }
     }
 
@@ -676,8 +679,14 @@ impl Core {
         let named = token
             .filter(|token| !token.trim().is_empty())
             .map(str::to_string);
+        // What the session's agent reports of the account's limits counts
+        // for the account, as a read of them here would.
+        let sink = match self.limits_dir(agent, config_dir, &environment.vars) {
+            Some(dir) => self.limits.tap(Arc::clone(&self.sink), agent, dir),
+            None => Arc::clone(&self.sink),
+        };
         crate::integrated::start(
-            Arc::clone(&self.sink),
+            sink,
             Arc::clone(&self.integrated),
             protocol,
             &launch,
@@ -855,6 +864,64 @@ impl Core {
                 .map(Some)
             }
             _ => Ok(None),
+        }
+    }
+
+    /// The usage limits of an agent's account on this machine, under the
+    /// account whose configuration directory is given, or the agent's own.
+    /// With `read`, they are read first where a read is due, as the limits
+    /// module says, which takes a second or two of the agent's own process;
+    /// without, the figures held are the answer at once. `worked` says a
+    /// session of the account worked since its figures were read, which
+    /// makes a read due sooner. None where there are no figures, a read
+    /// failed and none came before it, or the agent has no limits read here.
+    pub fn account_limits(
+        &self,
+        agent: &str,
+        config_dir: Option<&str>,
+        read: bool,
+        worked: bool,
+    ) -> Option<crate::integrated::Event> {
+        let environment = env::environment();
+        let dir = self.limits_dir(agent, config_dir, &environment.vars)?;
+        if !read {
+            return self.limits.held(agent, &dir);
+        }
+        // The agent's own directory is left to the agent to find, as a
+        // session started under it does.
+        let config_dir = config_dir
+            .filter(|named| !named.trim().is_empty())
+            .map(|_| dir.clone());
+        self.limits.poll(agent, &dir, worked, || {
+            // An account whose directory is not there has never been signed
+            // in to, and the agent would make the directory to say so.
+            if !dir.is_dir() {
+                return Err(format!("{} is not there", dir.display()));
+            }
+            crate::limits::read(
+                agent,
+                &environment.vars,
+                config_dir.as_deref(),
+                &self.limits.folder()?,
+                crate::limits::READ_WAIT,
+            )
+        })
+    }
+
+    /// The directory an agent keeps the account in whose configuration
+    /// directory is given, or its own, which its limits are held under.
+    /// None for an agent with no limits read here.
+    fn limits_dir(
+        &self,
+        agent: &str,
+        config_dir: Option<&str>,
+        vars: &HashMap<String, String>,
+    ) -> Option<PathBuf> {
+        let home = self.home.as_deref()?;
+        match agent {
+            "claude-code" => Some(account::claude_dir(home, config_dir, vars)),
+            "codex" => Some(account::codex_home(home, config_dir, vars)),
+            _ => None,
         }
     }
 
@@ -1555,6 +1622,7 @@ mod tests {
             plugins: None,
             settings: None,
             deadlines: Arc::default(),
+            limits: Arc::new(crate::limits::Limits::new(Some(home))),
         }
     }
 

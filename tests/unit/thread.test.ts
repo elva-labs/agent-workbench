@@ -32,6 +32,7 @@ import {
   startedIds,
   stepTitle,
   tokens,
+  toHear,
   workSummary,
 } from "$lib/thread";
 
@@ -802,5 +803,50 @@ describe("a reply copied as Markdown", () => {
 
   it("is empty for a run that only worked", () => {
     expect(replyMarkdown([text("a", "", "text"), text("b", "hmm", "thinking")])).toBe("");
+  });
+});
+
+describe("what a screen reader hears of what comes", () => {
+  /** A turn read from before, of a message and a reply in `blocks` blocks. */
+  const before = (at: number, id: string, blocks: number) => [
+    { at, event: { type: "message", message: id, state: "sent", error: null, text: `Asked ${id}`, images: [] } },
+    { at, event: { type: "turnStarted", messages: [id] } },
+    ...Array.from({ length: blocks }, (_, block) => ({
+      at,
+      event: { type: "text", block: `${id}-${block}`, parent: null, text: `**Reply** ${id} ${block}`, done: true },
+    })),
+    { at, event: { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 10, usage: null } },
+  ] as { at: number; event: IntegratedEventBody }[];
+
+  it("makes words of each new block once, and never of what was read from before", () => {
+    let now = 1_000;
+    const c = new Conversation(() => now);
+    c.lay({ items: [...before(100, "m1", 6), ...before(200, "m2", 6)], cut: false }, null);
+    const told = new Set<string>();
+    let made = 0;
+    const words = {
+      message: (message: { text: string }) => message.text,
+      block: (markdown: string) => {
+        made += 1;
+        return markdown.replace(/\*\*/g, "");
+      },
+    };
+    // A thread opened on what was read hears none of it, at no cost, as
+    // often as it asks.
+    for (let asked = 0; asked < 5; asked++) expect(toHear(c, told, 500, words)).toEqual([]);
+    expect(made).toBe(0);
+    // What comes is heard once each, a block once it is whole.
+    now = 2_000;
+    c.apply({ type: "turnStarted", messages: [] });
+    c.apply({ type: "text", block: "live", parent: null, text: "Half", done: false });
+    expect(toHear(c, told, 500, words)).toEqual([]);
+    c.apply({ type: "text", block: "live", parent: null, text: "**Whole** now", done: true });
+    expect(toHear(c, told, 500, words)).toEqual(["Whole now"]);
+    for (let asked = 0; asked < 5; asked++) expect(toHear(c, told, 500, words)).toEqual([]);
+    expect(made).toBe(1);
+    c.apply({ type: "toolStarted", call: "c1", parent: null, name: "Bash", kind: "command" });
+    c.apply({ type: "text", block: "after", parent: null, text: "And then", done: true });
+    expect(toHear(c, told, 500, words)).toEqual(["And then"]);
+    expect(made).toBe(2);
   });
 });
