@@ -68,6 +68,7 @@ import {
   loadHistory,
   loadRemembered,
   output,
+  QUIET_EXACT_MS,
   QUIET_MS,
   renewToken,
   resumeWithout,
@@ -5556,6 +5557,35 @@ describe("what a starter is told of a session its hooks report", () => {
     exact("sid-1", "stop", "Done");
     flushSync();
     expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done"');
+  });
+
+  // Escape that only closes Claude Code's autocomplete or its transcript
+  // view leaves the turn running under its spinner: the still screen reads
+  // as the user's stop, and the agent's own stop after it is news.
+  it("tells the agent's own stop after a turn taken as cut short by a key", async () => {
+    const row = hooked("pty-1", "sid-1");
+    output(row.key, WORK_BYTES * 2);
+    typed("pty-1", "/com");
+    typed("pty-1", "\x1b");
+    for (let at = 0; at < 8000; at += 250) {
+      await vi.advanceTimersByTimeAsync(250);
+      output(row.key, 40);
+    }
+    expect(await waitsOut()).toBe("Session sid-1 stopped: the user interrupted its turn. It has left no line.");
+    exact("sid-1", "stop", "Done: suite green");
+    flushSync();
+    expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done: suite green"');
+
+    // A turn the user did stop has no stop after it: the idle notice a
+    // minute later tells nothing again.
+    exact("sid-1", "prompt");
+    output(row.key, WORK_BYTES * 2);
+    typed("pty-1", "\x1b");
+    await vi.advanceTimersByTimeAsync(QUIET_EXACT_MS);
+    expect(await waitsOut()).toBe("Session sid-1 stopped: the user interrupted its turn. It has left no line.");
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe("Nothing happened within 5 seconds: no session stopped and none asked anything.");
   });
 
   it("tells a stop once, and the next wait waits for the next turn's end", async () => {

@@ -451,7 +451,7 @@ export const conductor = $state({
     row's key, with the name the row had then and how it was at rest, and
     when. */
 export interface Woken {
-  by: { key: string; name: string; rest: "quiet" | "permission" | "ended" }[];
+  by: { key: string; name: string; rest: "quiet" | "cut" | "permission" | "ended" }[];
   at: number;
 }
 
@@ -1284,8 +1284,11 @@ function projectOf(cwd: string): string | null {
   );
 }
 
-/** How a session is at rest: gone, waiting on the user, or gone quiet. */
-type Rest = "ended" | "permission" | "quiet";
+/** How a session is at rest: gone, waiting on the user, gone quiet, or
+    gone quiet after the user's key as far as the window can tell. That
+    last is the window's guess, since stopping a turn fires no hook: a stop
+    the agent's hooks report after it, in the same turn, is news. */
+type Rest = "ended" | "permission" | "quiet" | "cut";
 
 /**
  * What each session a caller started is doing about stopping, by the row's
@@ -1356,7 +1359,8 @@ function observe(session: Session) {
     // the next one is news. Only the same quiet rest within one turn is
     // not news twice.
     if (!session.exact || mark.told !== "quiet") mark.told = null;
-  } else mark.rest = mark.worked ? "quiet" : null;
+  } else if (!mark.worked) mark.rest = null;
+  else mark.rest = session.turnEnd === "cut" ? "cut" : "quiet";
   if (mark.rest === null) mark.seen = true;
   if (unheardMark(mark) !== before) moved();
   // Kept with the run as well: a session that ends keeps what was last
@@ -1364,7 +1368,7 @@ function observe(session: Session) {
   const { id } = session;
   const caller = startedFor(key);
   if (id !== null && caller !== null && mark.rest !== "ended") {
-    const rested = mark.rest === "quiet";
+    const rested = mark.rest === "quiet" || mark.rest === "cut";
     untrack(() => keepRested(caller, id, rested));
   }
   // Up again in a row of its own, however it came back, why its last row
@@ -2723,7 +2727,7 @@ const owed = new Set<string>();
 function finished(session: Session): boolean {
   observe(session);
   const mark = stops.get(session.key);
-  return mark !== undefined && mark.worked && mark.rest === "quiet";
+  return mark !== undefined && mark.worked && (mark.rest === "quiet" || mark.rest === "cut");
 }
 
 function stopSession(request: Placed): Answered {

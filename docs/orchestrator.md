@@ -123,7 +123,10 @@ looks, or once it comes to rest another way, such as asking for
 permission; being seen at work again within the turn it was told of does
 not make the same stop news twice. Each ask for a permission is news of
 its own: one granted and followed by another ask in the same turn is told
-again. A wait over all
+again. So is a turn's end the agent's hooks report after the window took
+the turn as stopped by the user: the Escape or Ctrl+C before the still
+screen may only have closed a menu or a view, and the turn went on. A
+wait over all
 of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait naming a session the
