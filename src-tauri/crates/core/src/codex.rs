@@ -230,6 +230,8 @@ pub fn observe(
                     kind: if cut { "stop" } else { kind }.to_string(),
                     note: None,
                     cut,
+                    error: None,
+                    background: Vec::new(),
                 },
             );
         }

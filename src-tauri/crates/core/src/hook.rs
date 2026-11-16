@@ -66,8 +66,10 @@ pub fn activity_path(home: &Path) -> PathBuf {
 }
 
 /// The session events each agent can report, by the agent's own name for
-/// them. The permission prompt is the one they spell differently.
-const CLAUDE_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "Notification"];
+/// them. The permission prompt is the one they spell differently. Claude
+/// Code reports a turn an error ended, a usage limit among them, in place
+/// of its stop; Codex has no such event.
+const CLAUDE_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "StopFailure", "Notification"];
 const CODEX_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "PermissionRequest"];
 
 pub fn events_path(home: &Path) -> PathBuf {
@@ -2289,7 +2291,7 @@ mod tests {
         install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let claude = settings_of(&project);
-        for event in ["UserPromptSubmit", "Stop", "Notification"] {
+        for event in ["UserPromptSubmit", "Stop", "StopFailure", "Notification"] {
             let command = claude["hooks"][event][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap();
@@ -2305,6 +2307,39 @@ mod tests {
         }
         assert!(activity_path(&home).exists());
         assert!(status(&home, &project, &[], &HashMap::new()).installed);
+    }
+
+    /// A project given the hooks before Claude Code's failed turns were
+    /// heard reads as not installed, so the next install adds that one
+    /// entry and leaves the rest as they are.
+    #[test]
+    fn brings_a_project_without_the_failed_turn_hook_up_to_date() {
+        let (home, project) = fixture("sessions-older");
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let mut older = settings_of(&project);
+        older["hooks"]
+            .as_object_mut()
+            .unwrap()
+            .remove("StopFailure");
+        std::fs::write(settings_path(&project), older.to_string()).unwrap();
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let claude = settings_of(&project);
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        for event in ["UserPromptSubmit", "Stop", "StopFailure", "Notification"] {
+            assert_eq!(
+                claude["hooks"][event].as_array().unwrap().len(),
+                if event == "UserPromptSubmit" {
+                    older["hooks"][event].as_array().unwrap().len()
+                } else {
+                    1
+                },
+                "{event}"
+            );
+        }
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(settings_of(&project).get("hooks").is_none());
     }
 
     #[test]
