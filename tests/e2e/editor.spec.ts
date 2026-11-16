@@ -2128,8 +2128,21 @@ for (const linux of [false, true]) {
           await page.setViewportSize({ width: 1440, height: 900 });
           await page.goto("/");
           await page.getByTestId("start-agent").click();
-          if (tagged) await expect(page.getByTestId("run-words")).toHaveText("Build and review");
           if (crumbed) await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+          if (tagged && crumbed) {
+            // An integrated orchestrator's header has the run's chip from
+            // its first message on. The message's line is the row's own
+            // label, so it names the row as before, and its turn is over,
+            // so the header holds the same title and status as it did
+            // without one.
+            await page.getByTestId("composer-input").fill("session 1");
+            await page.keyboard.press("Enter");
+            await expect(page.getByTestId("user-message")).toHaveCount(1);
+            await integrated(page, `f.startTurn("int-1"); f.endTurn("int-1");`);
+            await expect(page.locator(`${AGENT} header .title`)).toHaveText("session 1");
+            await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+          }
+          if (tagged) await expect(page.getByTestId("run-words")).toHaveText("Build and review");
 
           const check = async (where: string) => {
             const at = await headerOrder(page);
