@@ -486,6 +486,7 @@
   /* Every match drawn is tinted, and the current one filled. */
   :global(::highlight(find-hit)) {
     background-color: color-mix(in srgb, var(--accent) 26%, transparent);
+    color: var(--ink);
   }
 
   :global(::highlight(find-current)) {
