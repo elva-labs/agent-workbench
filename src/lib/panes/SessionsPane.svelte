@@ -2769,6 +2769,9 @@
     overflow-y: auto;
     padding: 0 0 12px;
     min-height: 0;
+    /* The rows and the pinned headers stack inside the list, so the
+       scroll bar the list draws over them stays above every one. */
+    isolation: isolate;
   }
 
   /* A project and what stands under it. A hairline separates it from the
