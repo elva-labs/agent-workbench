@@ -83,6 +83,32 @@ test("a new conversation offers the workflows beside the model, each saying what
   await expect(chip(page)).toBeFocused();
 });
 
+// A fresh install has two workflows, neither turned on: Build and review,
+// and Direct, which hands each piece to a session of its own on any model.
+test("offers the shipped workflows on a fresh install, Direct among them", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.getByTestId("start-agent").click();
+  await expect(page.getByTestId("model-chip")).toBeEnabled();
+  await expect(chip(page)).toHaveText("No workflow");
+  await chip(page).click();
+  await expect(options(page).locator(".name")).toHaveText(["No workflow", "Build and review", "Direct"]);
+  await expect(options(page).locator(".about")).toHaveText([
+    "Claude works alone, on the model you pick",
+    "Fable directs, Sonnet works, Opus reviews",
+    "Fable directs, Any model works",
+  ]);
+
+  // Picked, the session starts again as Direct's orchestrator, told it.
+  await options(page).filter({ has: page.locator(".name", { hasText: /^Direct$/ }) }).click();
+  await expect(chip(page)).toHaveText("Direct");
+  await expect.poll(async () => (await starts(page)).length).toBe(2);
+  const told = (await starts(page)).at(-1)!.options as { instructions?: string; startOnly?: boolean };
+  expect(told.instructions).toContain('You are the orchestrator of the Agent Workbench workflow "Direct".');
+  expect(told.instructions).toContain('For the step "Work", split the task into pieces and start a session for each, on any agent and model. Run at most 8 "Work" sessions at once');
+  expect(told.startOnly).toBe(true);
+});
+
 test("picking a workflow makes the session its orchestrator, as New session under it would, keeping the row, the words and the keyboard", async ({
   page,
   browser,

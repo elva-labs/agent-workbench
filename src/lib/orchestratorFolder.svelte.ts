@@ -11,7 +11,7 @@
  */
 
 import { core } from "$lib/core";
-import { forProject, historyFor, outsideFor } from "$lib/sessions.svelte";
+import { forProject, historyFor } from "$lib/sessions.svelte";
 
 /** Where the window keeps that the folder was closed. */
 const KEY = "workbench.orchestratorFolder";
@@ -59,15 +59,16 @@ export function startsIn(path: string | null): boolean {
 }
 
 /** The folder while the sessions pane lists it: a session of it has a row,
-    or, until the user closes it, it holds past sessions or is the project
-    on screen. Null otherwise. */
+    or, until the user closes it, it holds past sessions the pane lists or
+    is the project on screen. Null otherwise. Past sessions the pane does
+    not list, aged past the setting or never the window's own, do not
+    bring it back. */
 export function folderShown(onScreen: string | null): string | null {
   const dir = orchestratorFolder.dir;
   if (dir === null) return null;
   if (forProject(dir).length > 0) return dir;
   if (orchestratorFolder.closed) return null;
-  const past = historyFor(dir).length > 0 || outsideFor(dir).length > 0;
-  return past || onScreen === dir ? dir : null;
+  return historyFor(dir).length > 0 || onScreen === dir ? dir : null;
 }
 
 /** The user closed the folder: it leaves the pane for good. */

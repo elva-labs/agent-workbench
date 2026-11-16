@@ -88,9 +88,13 @@ describe("the orchestrator folder", () => {
     expect(forProject(A)).toHaveLength(1);
   });
 
-  it("shows while it holds past sessions or a row, and not when empty", () => {
+  it("shows while it holds past sessions it lists or a row, and not when empty", () => {
     expect(folderShown(A)).toBeNull();
+    // A past session the window never ran is not listed, and does not
+    // bring the folder in.
     sessions.history[DIR] = [past("old-1")];
+    expect(folderShown(A)).toBeNull();
+    sessions.mine[DIR] = ["old-1"];
     expect(folderShown(A)).toBe(DIR);
     sessions.history[DIR] = [];
     expect(folderShown(A)).toBeNull();
@@ -101,6 +105,7 @@ describe("the orchestrator folder", () => {
 
   it("leaves the pane for good once closed, unless a session of it has a row", () => {
     sessions.history[DIR] = [past("old-1")];
+    sessions.mine[DIR] = ["old-1"];
     const resumed = create(DIR, "old-1", "claude-code", null);
     workspace.active = DIR;
     close(DIR);
