@@ -41,6 +41,8 @@ import {
   byToken,
   launch as launchTerminal,
   viewed,
+  exact,
+  belled,
   wake,
 } from "$lib/sessions.svelte";
 import { modeOf, resetModes } from "$lib/sessionModes";
@@ -1055,6 +1057,35 @@ describe("a session reopened the other way", () => {
     await launch(row.key);
     expect(byKey(row.key)!.status).toBe("running");
     expect(reopeningRow(row.key)).toBe(false);
+  });
+
+  it("keeps a row read at rest read, there and back, through what each stopped run does and the agent's notice after", async () => {
+    const row = terminalRow("conversation-1");
+    attention.focused = true;
+    sessions.active = row.key;
+    viewed(row.key);
+    attention.focused = false;
+    // On its way out the terminal's hooks say it stopped, and it rings.
+    pty.onWrite = (id) => {
+      if (pty.written.filter(([on, data]) => on === id && data === "\x03").length < 2) return;
+      exact("conversation-1", "stop");
+      belled(row.key);
+      endedTerminal({ id, code: 0, clean: true });
+    };
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    expect(byKey(row.key)!.unread).toBe(false);
+    await launch(row.key);
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    await launchTerminal(row.key, 80, 24, () => {});
+    expect(byKey(row.key)).toMatchObject({ kind: "terminal", status: "running", unread: false });
+    // A minute on, Claude Code says again that it waits, and rings for it.
+    exact("conversation-1", "idle");
+    belled(row.key);
+    expect(byKey(row.key)!.unread).toBe(false);
+    // A turn of its own is news.
+    exact("conversation-1", "prompt");
+    exact("conversation-1", "stop");
+    expect(byKey(row.key)!.unread).toBe(true);
   });
 
   it("goes on in a terminal in the mode the user last chose, and in none the agent does not offer", async () => {

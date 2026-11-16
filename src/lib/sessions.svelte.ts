@@ -2185,8 +2185,10 @@ function atRest(session: Session): boolean {
 }
 
 /** The agent, or someone speaking to it, has done something new: what the
-    user read of it is no longer all there is. */
+    user read of it is no longer all there is. What the run a reopen stops
+    does on its way out is not new. */
 function stirred(session: Session) {
+  if (reopening.has(session.key)) return;
   rested.delete(session.key);
 }
 
