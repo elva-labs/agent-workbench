@@ -26,6 +26,7 @@ import {
   byKey,
   failed,
   followsAgain,
+  givenName,
   keepToken,
   renewToken,
   loadHistory,
@@ -825,7 +826,7 @@ export function send(
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt. The workbench's own message names nothing.
-  if (session.title === null && from !== WORKBENCH) {
+  if (session.title === null && givenName(session) === null && from !== WORKBENCH) {
     const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
       .find((candidate) => candidate.trim() !== "")

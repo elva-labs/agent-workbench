@@ -1098,8 +1098,28 @@ export function liveCount(project: string): number {
     taken. */
 export function label(session: Session): string {
   if (session.title !== null && !reservedName(session.title)) return shown(session.title);
+  const given = givenBy(session);
+  if (given !== null && !reservedName(given)) return shown(given);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
+}
+
+let givenBy: (session: Session) => string | null = () => null;
+
+/** Who knows the name a session was given rather than one its agent
+    chose: the conductor, by the name a start gave the session it started.
+    It is the row's name whenever the agent's own title names nothing, as
+    when a session resumed in a terminal has not titled itself yet, so it
+    stays with the session across a close, a resume, a change of how it
+    runs and a restart, until the agent names it. */
+export function onGiven(handler: ((session: Session) => string | null) | null) {
+  givenBy = handler ?? (() => null);
+}
+
+/** The name a session was given rather than one its agent chose. Null for
+    none. */
+export function givenName(session: Session): string | null {
+  return givenBy(session);
 }
 
 /** Whether a name reads as an agent's own, as the window names an agent

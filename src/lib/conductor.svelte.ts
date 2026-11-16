@@ -69,6 +69,7 @@ import {
   keysStillIn,
   label,
   onClosed,
+  onGiven,
   onDirected,
   onForgotten,
   onMoved,
@@ -3085,6 +3086,14 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+
+// The name a start gave a session is kept on its caller's list, and is the
+// session's row's name while its agent's own title names nothing.
+onGiven((session) => {
+  if (session.id === null) return null;
+  const caller = startedFor(session.key);
+  return caller === null ? null : (remembered(caller, session.id)?.name ?? null);
+});
 
 // A row of a session a caller started that goes is remembered on the
 // caller's list as closed or ended, so the tools say why it is not running.

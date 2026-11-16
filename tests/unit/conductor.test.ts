@@ -74,6 +74,7 @@ import {
   reset as resetSessions,
   sessions,
   started as cameUp,
+  titled,
   typed,
   WORK_BYTES,
   WORK_WINDOWS,
@@ -5573,6 +5574,18 @@ describe("a session the user closed or the app lost", () => {
     await handle(call("sessions", {}, as));
     expect(last().content).not.toContain("closed by the user");
     expect(last().content).toContain("claude-code  waiting");
+  });
+
+  // A name a start gave is the session's until its agent gives one, after
+  // a restart as before it.
+  it("keeps the name a start gave across a restart and a resume by id", async () => {
+    await startOne();
+    restarted();
+    const back = await resumed(call("start", { session: "sid-1", prompt: "Go on" }, as), "pty-9");
+    titled(back.key, "✳ Claude Code");
+    expect(label(back)).toBe("Cache flake");
+    await handle(call("sessions", {}, as));
+    expect(last().content).toMatch(/^sid-1 {2}"Cache flake" {2}/);
   });
 
   it("stops one the user closed by taking it off the list, and says it was not running", async () => {
