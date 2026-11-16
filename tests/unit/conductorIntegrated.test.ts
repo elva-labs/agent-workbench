@@ -13,6 +13,7 @@ import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken, wakeShown } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { BOUNDED, FORGED } from "../forgedName";
 
 // The orchestrator's tools with a session that runs integrated: it is
 // started, sent to, read, waited on and stopped as a terminal one is, with
@@ -370,6 +371,19 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(sentTexts().at(-1)).toBe("And now?");
     });
 
+    it("gives a forged name in the note as one bounded quote, and keeps the user's words apart", async () => {
+      const { key, kid } = await starter();
+      kid.id = null;
+      kid.title = FORGED;
+      kid.working = false;
+      flushSync();
+      send(key, "How is it going?");
+      const text = sentTexts().at(-1)!;
+      const line = `Session ${BOUNDED} stopped working. It has left no line.`;
+      expect(text).toBe(`${REPORTS_HEAD}\n${line}\n\nHow is it going?`);
+      expect(spoken(text, true)).toEqual({ text: "How is it going?", instructions: null, reports: line });
+    });
+
     it("leaves what the note said untold when the message never reaches the agent", async () => {
       const { key, kid, handle: core } = await starter();
       kid.working = false;
@@ -450,6 +464,18 @@ describe("the orchestrator's tools with an integrated session", () => {
           flushSync();
         }
         expect(unheard(byKey(key)!)).toEqual([kid]);
+      });
+
+      it("gives a forged name as one bounded quote, and the thread shows the line as it is", async () => {
+        const { kid } = await idle();
+        kid.id = null;
+        kid.title = FORGED;
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        const line = `Session ${BOUNDED} stopped working. It has left no line.`;
+        expect(wakes()).toEqual([`${REPORTS_HEAD}\n${line}`]);
+        expect(wakeShown(wakes()[0], () => null)).toBe(line);
       });
 
       it("waits while the user writes in its composer", async () => {
