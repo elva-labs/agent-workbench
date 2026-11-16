@@ -14,9 +14,12 @@
 
 import { dirsOf } from "$lib/accounts.svelte";
 import { core, type Worktree } from "$lib/core";
-import { startedFor } from "$lib/conductor.svelte";
-import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
-import { workspace } from "$lib/workspace.svelte";
+import { allowedProjects, oneLine, placeTextOf, startedFor, typeLine } from "$lib/conductor.svelte";
+import { handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
+import { lastSegment } from "$lib/paths";
+import { isLive, label, lastChanged, sessions, since, statusLabel, type Session } from "$lib/sessions.svelte";
+import { shown } from "$lib/unseen";
+import { projectLabel, workspace } from "$lib/workspace.svelte";
 import { drawnWith } from "$lib/projects.svelte";
 
 /** The name the pane gives the orchestrator's own project. */
@@ -235,10 +238,11 @@ export async function readWorktrees(): Promise<void> {
   }
 }
 
-/** Removes the trees that can go, one at a time, and reads what is left. A
-    tree the core will not part with stays, and says why on the next read. */
-export async function cleanWorktrees(): Promise<void> {
-  for (const tree of removable(leftBehind.trees)) {
+/** Removes the trees that can go, of those given or else of every one left
+    behind, one at a time, and reads what is left. A tree the core will not
+    part with stays, and says why on the next read. */
+export async function cleanWorktrees(trees: LeftTree[] = leftBehind.trees): Promise<void> {
+  for (const tree of removable(trees)) {
     try {
       await core().worktreeRemove(tree.project, tree.name, dirsOf());
     } catch {
@@ -255,4 +259,172 @@ function inUse(path: string): boolean {
       isLive(session) &&
       (session.worktree === path || session.startIn === path),
   );
+}
+
+/**
+ * The board, for any session that started others.
+ *
+ * The changes pane shows a session's started sessions in a section at its
+ * foot, under the tree: each with its state, its step and round where it
+ * runs for a workflow's step, and the controls an orchestrator's board has.
+ * The orchestrator's own project has no tree to sit under, so its board
+ * stands in place of the tree instead.
+ */
+
+/** The rows a session started, running or not, in the order they were
+    started. */
+export function startedRows(session: Session): Session[] {
+  return tree.started.get(session.token) ?? [];
+}
+
+/** The session whose section stands at the changes pane's foot: the one
+    on screen, while it has sessions it started or holds a standing answer
+    to start more, so what it was allowed can be taken back once they are
+    gone. None for an orchestrator in its own project, whose board stands
+    in place of the tree. */
+export function boardOf(session: Session | null): Session | null {
+  if (session === null || isConductor(session)) return null;
+  if (startedRows(session).length > 0 || allowedProjects(session.token).length > 0) return session;
+  return null;
+}
+
+/** A started row's dot, as the pane draws a plugin row's: hollow once the
+    session no longer runs, the accent while it waits on you, breathing
+    while it works. */
+export function startedDot(session: Session): "none" | "waiting" | "busy" | "ok" {
+  if (!isLive(session)) return "none";
+  if (isAsking(session)) return "waiting";
+  return session.working ? "busy" : "ok";
+}
+
+/** What a started session is doing, in the words its rows elsewhere use. */
+export function startedState(session: Session): string {
+  return isAsking(session) ? "asking" : statusLabel(session);
+}
+
+/** The line under a started session's name: its step and round where it
+    runs for one, the project when it is not its starter's, the worktree
+    when it runs in one, and what it is doing with how long since that
+    last changed. */
+export function startedDetail(starter: Session, session: Session, now = Date.now()): string {
+  const parts: string[] = [];
+  const at = placeTextOf(session.key);
+  if (at !== null) parts.push(at.long);
+  if (session.project !== starter.project) parts.push(projectLabel(session.project));
+  const folder = session.worktree ?? session.startIn;
+  if (folder !== null && folder !== session.project) parts.push(`worktree ${lastSegment(folder)}`);
+  parts.push(`${startedState(session)}, ${since(lastChanged(session), now)}`);
+  return parts.join(" · ");
+}
+
+/** How many characters of a session's name a row holds, as the dock cuts
+    a name an agent chose. The row cuts it shorter to its width. */
+export const NAME_SHOWN = 160;
+
+/** A started session's name as the board shows it: cut to what a row
+    holds, marked where it was cut. */
+export function startedName(session: Session): string {
+  const chars = Array.from(label(session));
+  return chars.length > NAME_SHOWN ? `${chars.slice(0, NAME_SHOWN).join("")}…` : chars.join("");
+}
+
+/** The name on one line for a tooltip, with every character that would
+    change how it reads without being seen written out. */
+export function shownStarted(session: Session): string {
+  return shown(startedName(session).replace(/\s+/g, " "));
+}
+
+/** The name the same way, in quotes, for a button's label. */
+export function quotedStarted(session: Session): string {
+  return `“${shownStarted(session)}”`;
+}
+
+/** Whether a line can be sent from the board: the session runs, with a
+    terminal to type into or a conversation that takes a message. */
+export function canSend(session: Session): boolean {
+  if (session.status !== "running") return false;
+  return session.kind === "integrated" ? handleOf(session.key) !== null : session.ptyId !== null;
+}
+
+/** Sends the user's line to a started session: typed into its terminal as
+    the send tool types one, a line and nothing that drives the terminal,
+    or for an integrated session as the user's own message. */
+export function sendLine(session: Session, text: string): void {
+  const line = oneLine(text);
+  if (line === "" || !canSend(session)) return;
+  if (session.kind === "integrated") sendIntegrated(session.key, line);
+  else void typeLine(session.key, session.ptyId!, line);
+}
+
+/** The worktrees left behind in the projects a session's starts run in
+    and the projects it may start in. */
+export function treesFor(session: Session): LeftTree[] {
+  const projects = new Set([...startedRows(session).map((row) => row.project), ...allowedProjects(session.token)]);
+  return leftBehind.trees.filter((left) => projects.has(left.project));
+}
+
+/** The line about worktrees left behind: how many, and once they have
+    been cleaned up, why the rest are still there. */
+export function worktreeLine(trees: LeftTree[], cleaned: boolean): string {
+  if (!cleaned) return `${trees.length} worktree${trees.length === 1 ? "" : "s"} left behind`;
+  const dirty = trees.filter((left) => left.dirty).length;
+  const ahead = trees.filter((left) => !left.dirty && !left.merged).length;
+  const why = [
+    dirty === 0 ? null : { count: dirty, said: "uncommitted work" },
+    ahead === 0 ? null : { count: ahead, said: "has commits the project does not" },
+  ].filter((part) => part !== null);
+  if (why.length === 0) return `${trees.length} kept`;
+  const said = why.length === 1 ? why[0].said : why.map((part) => `${part.count} ${part.said}`).join(", ");
+  return `${trees.length} kept: ${said}`;
+}
+
+/** A question put before something is taken away, as the app asks one. */
+export interface Question {
+  question: string;
+  detail: string;
+  action: string;
+}
+
+/** Words for a count of sessions, "1 of them is" or "2 of them are". */
+const ofThem = (count: number, all: number) =>
+  all === 1 ? "It is" : `${count} of them ${count === 1 ? "is" : "are"}`;
+
+/** What is asked before every session a session started is stopped. */
+export function stopAllQuestion(rows: Session[]): Question {
+  const all = rows.length;
+  const working = rows.filter((row) => isLive(row) && row.working && !isAsking(row)).length;
+  const asking = rows.filter(isAsking).length;
+  const sentences: string[] = [];
+  if (asking > 0) sentences.push(`${ofThem(asking, all)} waiting on you.`);
+  if (working > 0) sentences.push(`${ofThem(working, all)} at work.`);
+  sentences.push(
+    all === 1
+      ? "Stopping it takes its row away; what it changed stays."
+      : "Stopping them takes their rows away; what they changed stays.",
+  );
+  return {
+    question: all === 1 ? "Stop the session it started?" : `Stop all ${all} sessions it started?`,
+    detail: sentences.join(" "),
+    action: "Stop all",
+  };
+}
+
+/** What is asked before the worktrees that can go are taken away, named
+    one by one, with their branches. */
+export function cleanQuestion(trees: LeftTree[]): Question {
+  const going = removable(trees);
+  const names = going.map((left) => shown(left.name));
+  const staying = trees.length - going.length;
+  const list =
+    names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  const one = going.length === 1;
+  const detail = [
+    `${list} ${one ? "goes, with its branch" : "go, with their branches"}: ${one ? "its" : "their"} work is merged and nothing in ${one ? "it" : "them"} is uncommitted.`,
+    staying === 0 ? null : `${staying} ${staying === 1 ? "stays" : "stay"}, with work that is not merged or not committed.`,
+  ];
+  return {
+    question: one ? "Clean up 1 worktree?" : `Clean up ${going.length} worktrees?`,
+    detail: detail.filter((part) => part !== null).join(" "),
+    action: "Clean up",
+  };
 }

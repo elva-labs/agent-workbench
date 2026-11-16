@@ -489,6 +489,22 @@ describe("persistence", () => {
     expect(layout).not.toHaveProperty("sessionsView");
   });
 
+  it("remembers the fold of the sessions the session on screen started, open until folded", () => {
+    layout.startedOpen = false;
+    saveLayout();
+    expect(JSON.parse(localStorage.getItem("workbench.layout")!).startedOpen).toBe(false);
+
+    layout.startedOpen = true;
+    loadLayout();
+    expect(layout.startedOpen).toBe(false);
+
+    // A layout kept by a version that had no such fold reads it open.
+    localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 300 }));
+    layout.startedOpen = true;
+    loadLayout();
+    expect(layout.startedOpen).toBe(true);
+  });
+
   it("does not persist focus", () => {
     layout.focus = "changes";
     saveLayout();
