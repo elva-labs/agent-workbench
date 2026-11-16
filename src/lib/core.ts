@@ -646,6 +646,9 @@ export interface AccountLimitsOptions {
   agent: AgentId;
   configDir?: string;
   read: boolean;
+  /** A session of the account worked since its figures were read, so they
+      are read again sooner. */
+  worked: boolean;
 }
 
 /** A transition reported by an agent hook or session log, by session id:

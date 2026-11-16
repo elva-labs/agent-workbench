@@ -480,7 +480,7 @@ const DIR: &str = "/home/ada/.claude-work";
 /// Polls the account at the clock's time, counting the reads made.
 fn poll(limits: &Limits, clock: &Clock, reads: &AtomicUsize, percent: f64) -> Option<Event> {
     let at = clock.now();
-    limits.poll("claude-code", Path::new(DIR), || {
+    limits.poll("claude-code", Path::new(DIR), true, || {
         reads.fetch_add(1, Ordering::SeqCst);
         Ok(read_at(at, percent))
     })
@@ -503,15 +503,51 @@ fn an_account_is_read_once_its_last_read_is_five_minutes_old() {
     assert_eq!(percent(poll(&limits, &clock, &reads, 20.0)), Some(20.0));
     assert_eq!(reads.load(Ordering::SeqCst), 2);
     // Each agent's account is its own, and so is each directory.
-    limits.poll("codex", Path::new(DIR), || {
+    limits.poll("codex", Path::new(DIR), true, || {
         reads.fetch_add(1, Ordering::SeqCst);
         Err("signed out".into())
     });
-    limits.poll("claude-code", Path::new("/home/ada/.claude"), || {
+    limits.poll("claude-code", Path::new("/home/ada/.claude"), true, || {
         reads.fetch_add(1, Ordering::SeqCst);
         Err("signed out".into())
     });
     assert_eq!(reads.load(Ordering::SeqCst), 4);
+}
+
+#[test]
+fn an_account_no_session_worked_on_since_is_read_every_half_hour() {
+    let clock = Clock::new();
+    let limits = limits(&clock, None);
+    let reads = AtomicUsize::new(0);
+    let quiet = |limits: &Limits| {
+        let at = clock.now();
+        limits.poll("claude-code", Path::new(DIR), false, || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            Ok(read_at(at, 10.0))
+        })
+    };
+    // None held is read at once, worked on or not.
+    quiet(&limits);
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    for _ in 0..29 {
+        clock.on(MINUTE);
+        quiet(&limits);
+    }
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "nothing worked: still fresh"
+    );
+    clock.on(MINUTE);
+    quiet(&limits);
+    assert_eq!(reads.load(Ordering::SeqCst), 2, "half an hour");
+    // A session worked: five minutes are enough.
+    clock.on(4 * MINUTE);
+    poll(&limits, &clock, &reads, 20.0);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    clock.on(MINUTE);
+    assert_eq!(percent(poll(&limits, &clock, &reads, 20.0)), Some(20.0));
+    assert_eq!(reads.load(Ordering::SeqCst), 3);
 }
 
 #[test]
@@ -520,7 +556,7 @@ fn a_failed_read_is_quiet_and_tried_again_later_and_later() {
     let limits = limits(&clock, None);
     let attempts = AtomicUsize::new(0);
     let failing = |limits: &Limits| {
-        limits.poll("claude-code", Path::new(DIR), || {
+        limits.poll("claude-code", Path::new(DIR), true, || {
             attempts.fetch_add(1, Ordering::SeqCst);
             Err("Claude Code did not answer in time".into())
         })
@@ -571,7 +607,7 @@ fn a_read_under_way_is_not_doubled_and_one_runs_at_a_time() {
         let (limits, running, overlapped) = (limits.clone(), running.clone(), overlapped.clone());
         let at = clock.now();
         std::thread::spawn(move || {
-            limits.poll("claude-code", Path::new(DIR), || {
+            limits.poll("claude-code", Path::new(DIR), true, || {
                 overlapped.fetch_or(running.swap(true, Ordering::SeqCst), Ordering::SeqCst);
                 entered.send(()).unwrap();
                 released.recv().unwrap();
@@ -590,7 +626,7 @@ fn a_read_under_way_is_not_doubled_and_one_runs_at_a_time() {
         let (limits, running, overlapped) = (limits.clone(), running.clone(), overlapped.clone());
         let at = clock.now();
         std::thread::spawn(move || {
-            limits.poll("codex", Path::new(DIR), || {
+            limits.poll("codex", Path::new(DIR), true, || {
                 overlapped.fetch_or(running.swap(true, Ordering::SeqCst), Ordering::SeqCst);
                 running.store(false, Ordering::SeqCst);
                 Ok(read_at(at, 20.0))
@@ -613,7 +649,7 @@ fn a_read_that_waited_its_turn_is_not_made_where_figures_came_meanwhile() {
         let limits = limits.clone();
         let at = clock.now();
         std::thread::spawn(move || {
-            limits.poll("codex", Path::new(DIR), || {
+            limits.poll("codex", Path::new(DIR), true, || {
                 entered.send(()).unwrap();
                 released.recv().unwrap();
                 Ok(read_at(at, 1.0))
@@ -687,7 +723,7 @@ fn the_figures_that_moved_last_are_shown_whichever_came_first() {
     let later = serde_json::to_value(read_at(T0 + 10, 60.0)).unwrap();
     limits.heard("claude-code", Path::new(DIR), &later);
     // A read that was taken before what the session said.
-    limits.poll("claude-code", Path::new(DIR), || Ok(read_at(T0, 5.0)));
+    limits.poll("claude-code", Path::new(DIR), true, || Ok(read_at(T0, 5.0)));
     assert_eq!(
         percent(limits.held("claude-code", Path::new(DIR))),
         Some(60.0)
@@ -714,7 +750,7 @@ fn the_last_full_read_of_each_account_is_kept_across_a_restart() {
     {
         let limits = limits(&clock, Some(file.clone()));
         poll(&limits, &clock, &reads, 12.0);
-        limits.poll("codex", Path::new("/home/ada/.codex"), || {
+        limits.poll("codex", Path::new("/home/ada/.codex"), true, || {
             Err("signed out".into())
         });
     }
@@ -789,6 +825,7 @@ fn the_file_keeps_the_most_recently_read_accounts() {
         limits.poll(
             "claude-code",
             &PathBuf::from(format!("/home/ada/{at}")),
+            true,
             || Ok(read_at(now, 1.0)),
         );
     }

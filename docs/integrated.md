@@ -506,9 +506,15 @@ brought the window forward in the last ten minutes. A window left alone
 asks for nothing, and the first act after that asks at once. A question
 that fails says nothing, and the next minute asks again.
 
-The core reads an account only when a read is due: when the newest full
-read of its limits, the core's own or one an integrated session's agent
-answered, is five minutes old. What an integrated session reports counts
+With each question the window says whether a session of the account
+worked since its figures were read: one is at work now, or was seen at
+work after the read. The core reads an account only when a read is due:
+when the newest full read of its limits, the core's own or one an
+integrated session's agent answered, is five minutes old where a session
+worked since, or half an hour old where none did. An account nobody here
+worked on can only have moved through its use elsewhere, on another
+machine or the web, and its figures show their age while they wait. What
+an integrated session reports counts
 on its way to the window, so an account whose session keeps reading is
 not read again while its reports keep coming. A read of an account already
 under way is not doubled, and one read runs at a time on a machine, so a

@@ -13,8 +13,10 @@
 //!
 //! A read is asked for by the window, for an account it has a session of,
 //! and is made only when it is due: when the newest full read of the
-//! account's limits, whoever made it, is five minutes old, and when no read
-//! of the account is under way already. A read that fails holds back the
+//! account's limits, whoever made it, is five minutes old where the window
+//! saw a session of the account work since, or half an hour old where it
+//! did not, and when no read of the account is under way already. A read
+//! that fails holds back the
 //! next for a minute, then for twice as long each time it fails again, up
 //! to an hour. One read runs at a time on the machine, so a window that
 //! asks for many accounts at once starts their processes one after
@@ -49,8 +51,12 @@ use crate::short_lived::{Gone, Line, ShortLived};
 /// to its answer.
 pub const READ_WAIT: Duration = Duration::from_secs(20);
 /// How long the figures of a full read stand, in seconds, before a read of
-/// the account is due again: as long as an integrated session's own.
+/// the account is due again where a session of it worked since: as long as
+/// an integrated session's own.
 const FRESH_FOR: u64 = LIMITS_AGE.as_secs();
+/// How long they stand where none did, so that only the account's use
+/// elsewhere can have moved them.
+const QUIET_FOR: u64 = 30 * 60;
 /// How long the first failed read holds back the next, in seconds, and the
 /// longest any does.
 const RETRY_FIRST: u64 = 60;
@@ -325,15 +331,15 @@ struct Account {
 }
 
 impl Account {
-    /// Whether a read is due at `now`: the newest full read is old, or
-    /// there is none, and no failed read holds the next back. A read under
-    /// way is not considered.
-    fn due(&self, now: u64) -> bool {
+    /// Whether a read is due at `now`: the newest full read is `fresh_for`
+    /// seconds old, or there is none, and no failed read holds the next
+    /// back. A read under way is not considered.
+    fn due(&self, now: u64, fresh_for: u64) -> bool {
         if self.failures > 0 && now < self.failed_at.saturating_add(retry_after(self.failures)) {
             return false;
         }
         self.last_read
-            .is_none_or(|read_at| now.saturating_sub(read_at) >= FRESH_FOR)
+            .is_none_or(|read_at| now.saturating_sub(read_at) >= fresh_for)
     }
 
     /// Takes figures over those held where they stand over them, and their
@@ -443,23 +449,26 @@ impl Limits {
     }
 
     /// Reads the account's limits with `read` where a read is due, and
-    /// answers with the figures then held. A read of the account under way
-    /// is not doubled: the figures held are the answer, and the read under
-    /// way brings its own. A read waits for the one under way on the
-    /// machine to end, and is not made where figures that landed in the
-    /// meantime made it needless.
+    /// answers with the figures then held. `worked` says a session of the
+    /// account worked since the figures were read, which makes them due
+    /// sooner. A read of the account under way is not doubled: the figures
+    /// held are the answer, and the read under way brings its own. A read
+    /// waits for the one under way on the machine to end, and is not made
+    /// where figures that landed in the meantime made it needless.
     pub fn poll(
         &self,
         agent: &str,
         dir: &Path,
+        worked: bool,
         read: impl FnOnce() -> Result<Event, String>,
     ) -> Option<Event> {
         let key = key(agent, dir);
+        let fresh_for = if worked { FRESH_FOR } else { QUIET_FOR };
         {
             let mut state = self.state();
             let now = (self.clock)();
             let account = state.accounts.entry(key.clone()).or_default();
-            if account.reading || !account.due(now) {
+            if account.reading || !account.due(now, fresh_for) {
                 return account.figures.as_ref().map(|figures| figures.event(agent));
             }
             account.reading = true;
@@ -472,7 +481,7 @@ impl Limits {
                 state
                     .accounts
                     .get(&key)
-                    .is_none_or(|account| account.due(now))
+                    .is_none_or(|account| account.due(now, fresh_for))
             };
             due.then(read)
         };

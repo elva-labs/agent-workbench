@@ -839,14 +839,16 @@ impl Core {
     /// account whose configuration directory is given, or the agent's own.
     /// With `read`, they are read first where a read is due, as the limits
     /// module says, which takes a second or two of the agent's own process;
-    /// without, the figures held are the answer at once. None where there
-    /// are no figures, a read failed and none came before it, or the agent
-    /// has no limits read here.
+    /// without, the figures held are the answer at once. `worked` says a
+    /// session of the account worked since its figures were read, which
+    /// makes a read due sooner. None where there are no figures, a read
+    /// failed and none came before it, or the agent has no limits read here.
     pub fn account_limits(
         &self,
         agent: &str,
         config_dir: Option<&str>,
         read: bool,
+        worked: bool,
     ) -> Option<crate::integrated::Event> {
         let environment = env::environment();
         let dir = self.limits_dir(agent, config_dir, &environment.vars)?;
@@ -858,7 +860,7 @@ impl Core {
         let config_dir = config_dir
             .filter(|named| !named.trim().is_empty())
             .map(|_| dir.clone());
-        self.limits.poll(agent, &dir, || {
+        self.limits.poll(agent, &dir, worked, || {
             // An account whose directory is not there has never been signed
             // in to, and the agent would make the directory to say so.
             if !dir.is_dir() {

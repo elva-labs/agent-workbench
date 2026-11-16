@@ -1,7 +1,7 @@
 import { core, type AgentId } from "$lib/core";
 import { dirFor } from "$lib/accounts.svelte";
 import { AGENTS } from "$lib/agent.svelte";
-import { heardLimits } from "$lib/limits.svelte";
+import { heardLimits, limitsOf } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { byKey, isLive, sessions, type Session } from "$lib/sessions.svelte";
 
@@ -11,9 +11,11 @@ import { byKey, isLive, sessions, type Session } from "$lib/sessions.svelte";
  * An account is in use while a session of it runs here, or while one of its
  * sessions is on screen. Its figures are asked of the core of the machine
  * the session's project is on, which reads them only when its own schedule
- * says a read is due: when the newest is five minutes old, never twice at
- * once, and later after a read that failed. So the window asks often and
- * cheaply, and the core decides.
+ * says a read is due: when the newest is five minutes old where a session
+ * of the account worked since, or half an hour old where none did, never
+ * twice at once, and later after a read that failed. So the window asks
+ * often and cheaply, says whether the account's sessions worked, and the
+ * core decides.
  *
  * The first time an account is asked for in this window, the figures the
  * machine kept are taken first, so they show with their age at once; then
@@ -73,6 +75,30 @@ export function accountsInUse(): InUse[] {
 const asking = new Map<string, Promise<void>>();
 /** The accounts whose kept figures were taken in this window. */
 const seen = new Set<string>();
+/** When a session of each account was last seen at work, by account. */
+const workedAt = new Map<string, number>();
+
+/** A session is at work, so its account's figures may move. */
+export function noteWork(session: Session, now = Date.now()) {
+  const use = useOf(session);
+  if (use !== null) workedAt.set(keyOf(use), now);
+}
+
+/** Whether a session of the account worked since its figures were read:
+    one is at work now, or one was seen at work after the read. */
+function workedSince(use: InUse): boolean {
+  const key = keyOf(use);
+  const atWork = sessions.all.some((session) => {
+    if (!isLive(session) || !session.working) return false;
+    const other = useOf(session);
+    return other !== null && keyOf(other) === key;
+  });
+  if (atWork) return true;
+  const worked = workedAt.get(key);
+  if (worked === undefined) return false;
+  const readAt = limitsOf(use.host, use.agent, use.account)?.readAt ?? 0;
+  return worked >= readAt * 1000;
+}
 
 async function take(use: InUse, read: boolean): Promise<void> {
   try {
@@ -81,6 +107,7 @@ async function take(use: InUse, read: boolean): Promise<void> {
       agent: use.agent,
       configDir: dirFor(use.account, use.agent),
       read,
+      worked: read && workedSince(use),
     });
     if (report !== null && report !== undefined) heardLimits(use.host, use.account, report);
   } catch {
@@ -160,5 +187,6 @@ export function followLimits(target: Window = window): () => void {
 export function resetLimitsPoll() {
   asking.clear();
   seen.clear();
+  workedAt.clear();
   lastUsed = 0;
 }

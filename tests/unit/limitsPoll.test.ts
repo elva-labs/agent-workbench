@@ -8,6 +8,7 @@ import {
   accountsInUse,
   askForSession,
   followLimits,
+  noteWork,
   resetLimitsPoll,
 } from "$lib/limitsPoll";
 import { sessions, type Session } from "$lib/sessions.svelte";
@@ -121,8 +122,8 @@ describe("asking for the figures", () => {
     stop = followLimits();
     await settle();
     expect(asked).toEqual([
-      { project: LOCAL, agent: "claude-code", configDir: "~/.claude-work", read: false },
-      { project: LOCAL, agent: "claude-code", configDir: "~/.claude-work", read: true },
+      { project: LOCAL, agent: "claude-code", configDir: "~/.claude-work", read: false, worked: false },
+      { project: LOCAL, agent: "claude-code", configDir: "~/.claude-work", read: true, worked: false },
     ]);
     expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(10);
 
@@ -131,6 +132,39 @@ describe("asking for the figures", () => {
     await vi.advanceTimersByTimeAsync(ASK_EVERY);
     expect(asked.map((options) => options.read)).toEqual([false, true, true]);
     expect(limitsOf(null, "claude-code", "Work")?.windows[0].percent).toBe(20);
+  });
+
+  it("says whether a session of the account worked since its figures were read", async () => {
+    const start = Math.floor(Date.now() / 1000);
+    const key = "claude-code ~/.claude-work";
+    held[key] = report(10, start - 3 * 3600);
+    sessions.all = [session("a", { account: "Work", working: true })];
+    const worked = () => asked.filter((options) => options.read).map((options) => options.worked);
+    // At work now.
+    stop = followLimits();
+    await settle();
+    expect(worked()).toEqual([true]);
+    // Gone quiet, with nothing seen at work since the read.
+    sessions.all[0].working = false;
+    fresh[key] = report(20, start + 30);
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked()).toEqual([true, false]);
+    // Seen at work after the read, though quiet by the next question.
+    noteWork(sessions.all[0]);
+    fresh[key] = report(30, start + 2 * 60);
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked()).toEqual([true, false, true]);
+    // A read since that work.
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked()).toEqual([true, false, true, false]);
+    // Another account's work is not this one's.
+    noteWork(session("b", { account: "Home" }));
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked()).toEqual([true, false, true, false, false]);
   });
 
   it("asks for nothing once the window has been left alone a long while, and at once when it is used again", async () => {

@@ -85,8 +85,10 @@ export interface Figure {
     no reading of its own. */
 export const WARN_FROM = 80;
 /** Figures older than this say how old they are. An account in use is
-    read about every five minutes while the window is in use, so figures
-    this old mean its reads failed, or the window was left for a while. */
+    read about every five minutes while a session of it works and the
+    window is in use, and every half hour while none does, so figures this
+    old mean nothing here moved them, its reads failed, or the window was
+    left for a while. */
 export const STALE_AFTER = 15 * 60_000;
 
 const ORDER: IntegratedLimitWindow["kind"][] = ["session", "weekly", "weeklyScoped"];

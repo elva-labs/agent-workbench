@@ -112,7 +112,7 @@
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
-  import { askForSession, followLimits } from "$lib/limitsPoll";
+  import { askForSession, followLimits, noteWork } from "$lib/limitsPoll";
   import { primeChime } from "$lib/chime";
   import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
@@ -327,6 +327,14 @@
   $effect(() => {
     const key = sessions.active;
     if (key !== null) untrack(() => void askForSession(key));
+  });
+
+  // A session at work may move its account's figures, which its machine
+  // then reads sooner.
+  $effect(() => {
+    for (const session of sessions.all) {
+      if (session.working) untrack(() => noteWork(session));
+    }
   });
 
   // Looking at a session is what reads it: the one on screen, in a window

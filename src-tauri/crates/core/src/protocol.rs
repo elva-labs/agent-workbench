@@ -153,6 +153,8 @@ struct AccountLimitsParams {
     config_dir: Option<String>,
     #[serde(default)]
     read: bool,
+    #[serde(default)]
+    worked: bool,
 }
 
 #[derive(Deserialize)]
@@ -552,7 +554,7 @@ pub fn dispatch(
         }
         "account_limits" => {
             let p: AccountLimitsParams = parse(params)?;
-            value(core.account_limits(&p.agent, p.config_dir.as_deref(), p.read))
+            value(core.account_limits(&p.agent, p.config_dir.as_deref(), p.read, p.worked))
         }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
@@ -889,7 +891,7 @@ mod tests {
         let read = dispatch(
             &core,
             "account_limits",
-            json!({ "agent": "nobody", "read": true }),
+            json!({ "agent": "nobody", "read": true, "worked": true }),
             no_output,
         )
         .unwrap();

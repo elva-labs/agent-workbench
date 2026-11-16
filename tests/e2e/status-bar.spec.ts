@@ -357,7 +357,7 @@ test.describe("a terminal session", () => {
     await expect(page.getByTestId("limits-age")).toHaveText("3 h ago");
     // What was kept was asked for first, then a read.
     const asked = await page.evaluate(() => (window as unknown as { __limitsAsked: unknown[] }).__limitsAsked);
-    expect(asked.slice(0, 2)).toEqual([
+    expect(asked.slice(0, 2)).toMatchObject([
       { project: PROJECT, agent: "claude-code", configDir: "~/.claude-work", read: false },
       { project: PROJECT, agent: "claude-code", configDir: "~/.claude-work", read: true },
     ]);
