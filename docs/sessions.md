@@ -227,15 +227,35 @@ over in the footer or a cursor blinking, is not work and holds nothing
 back, and nothing the agent draws while starting counts
 until it has been sent a line or a minute has passed. A session started
 with a prompt has been sent one, and so has one that another session
-types a line into. The dot says it on the row, with the words on hover and
-for a screen reader; the agent pane's header spells the state out. A
-session that goes quiet, ends, or rings for
-attention while nobody is looking at it is **unread**: the accent dot, the
+types a line into. An idle agent also keeps house by itself: Claude Code
+writes a recap of the conversation while you are away and compacts a long
+one before its cache expires, each under a spinner for seconds. Once you
+have read a session at rest, output nobody sent it a line for counts as
+work only when it draws the bullet Claude Code puts before what it says or
+does in a turn, which a recap and a compaction do not draw of their own.
+That holds once the session's own turns have been seen to draw the
+bullet; until then all such output can be work. Output cannot tell
+everything apart: a recap or compaction that moves the conversation on a
+full screen draws the bullets already there again and counts as work,
+and a turn with less than three seconds of output is not seen at all.
+With hooks on, every turn is reported, one the agent starts by itself
+included, and output decides neither. The dot says
+it on the row, with the words on hover and for a screen reader; the agent
+pane's header spells the state out. A session that goes quiet, ends, or
+rings for attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
 while a session asks for a permission, `waiting for you` in the agent pane,
 a count in the status bar,
 and the same count on the app's icon. Having it on
-screen in a focused window reads it. A session that goes unread while the
+screen in a focused window reads it. A session read stays read until the
+agent does something new: a turn that ends, a permission it asks for, a
+line it leaves, its ending, or a bell while it works. A notice that only
+says again that it waits changes nothing: Claude Code's idle notice, which
+it sends a minute after a turn ends and again a minute after each recap or
+compaction, and a bell or terminal notification from a session read at
+rest with nothing new from it since, when its hooks report its turns.
+Without hooks such a bell is news, since a short turn may show nothing
+else. A session that goes unread while the
 window is in the background also says so through the system, once each time
 it goes unread: a notification with the project, the session and what it
 waits on, the line the agent left when there is one, and a chime if that is
@@ -268,7 +288,10 @@ redraw, for five seconds while the hooks still say working means the turn ended
 without them, which is what an Escape at the keyboard does. A session
 waiting on its subagents is still by nature, and that silence is not read
 that way; an idle notice from the agent, which it sends only once nothing
-of its own is running, ends the working either way. A turn Codex reports as
+of its own is running, ends the working either way, and is news only when
+it does. A transition heard before the row knows its session's id waits
+half a minute for it; one older than that is from a session run elsewhere,
+which a resume of it here does not take for news. A turn Codex reports as
 aborted, which is what an Escape does there, is a stop that says the user
 cut it short. Neither turn cut short wakes a session that started others;
 see [orchestrator](orchestrator.md#when-it-is-idle).
@@ -753,8 +776,12 @@ the agent's own tools find the row. Its state, working, asking or idle,
 comes from the session's events, never from the hooks or from output; the
 hooks still fire for it and are left alone. When it stops working or asking
 while nobody looks, the line under its name is the first line of what the
-agent last said, unless the agent left a line of its own. A row with no name
-yet takes the first line of its first message.
+agent last said, unless the agent left a line of its own. A spell of work
+that was only a compaction the agent did by itself, with nothing said,
+marks nothing. A turn already running when the window takes the session
+up again after a reload marks when it ends, since what it did before is
+not heard again. A row with no name yet takes the first line of its first
+message.
 
 Before a session can run it may need the user. In a folder the agent has
 not been told to trust, the pane asks whether to trust it, and on a yes the
