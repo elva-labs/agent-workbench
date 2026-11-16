@@ -22,6 +22,61 @@ export function tokenReader(element: Element): TokenReader {
   return (token) => style.getPropertyValue(token).trim();
 }
 
+/** The colours last read back from the page, by the repaint they were
+    read after: the plain ones, and the ones on the well once asked for. */
+let read: { painted: number; plain: ITheme; dim: ITheme | null } | null = null;
+
+/**
+ * The colours a terminal draws in, as the page paints them after the
+ * repaint `painted` counts: the theme's, or with `dim` the theme's on the
+ * well's ground, as a shell beside the one with the keyboard is drawn.
+ * Reading a custom property back makes the page work out its style and its
+ * layout first, so they are read once a repaint and every terminal shares
+ * them.
+ */
+export function pageColours(painted: number, dim: boolean): ITheme {
+  if (read === null || read.painted !== painted) {
+    read ={ painted, plain: buildTheme(tokenReader(document.documentElement)), dim: null };
+  }
+  if (!dim) return read.plain;
+  read.dim ??= onWell(read.plain);
+  return read.dim;
+}
+
+/** The theme on the well's ground. The well is a mix, so it is read as
+    the page paints it. */
+function onWell(plain: ITheme): ITheme {
+  const probe = document.createElement("span");
+  probe.style.color = "var(--well)";
+  document.body.appendChild(probe);
+  const well = asRgb(getComputedStyle(probe).color);
+  probe.remove();
+  return well === null ? plain : { ...plain, background: well, cursorAccent: well };
+}
+
+/** A colour as the page reports it, `rgb()` or `color(srgb ...)` for a
+    mix, as the `rgb()` xterm reads. */
+export function asRgb(colour: string): string | null {
+  if (colour.startsWith("rgb")) return colour;
+  const srgb = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(colour);
+  if (srgb === null) return null;
+  const [r, g, b] = srgb.slice(1, 4).map((channel) => Math.round(Number(channel) * 255));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/** Whether two themes draw every colour the same. Giving xterm a theme
+    makes it draw every row again, and the GPU renderer its glyphs too. */
+export function sameTheme(a: ITheme | undefined, b: ITheme): boolean {
+  if (a === undefined) return false;
+  const one = a as Record<string, unknown>;
+  const other = b as Record<string, unknown>;
+  const keys = new Set([...Object.keys(one), ...Object.keys(other)]);
+  for (const key of keys) {
+    if (JSON.stringify(one[key]) !== JSON.stringify(other[key])) return false;
+  }
+  return true;
+}
+
 /**
  * Mixes a hex colour with an alpha channel. xterm wants a concrete colour
  * rather than a `color-mix()` expression, so the mixing happens here.
