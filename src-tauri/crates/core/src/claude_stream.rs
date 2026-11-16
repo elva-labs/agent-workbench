@@ -290,6 +290,8 @@ enum Sent {
     Initialize,
     Settings,
     Interrupt,
+    /// A message taken back, which the agent may already have taken.
+    Withdraw(String),
     Model,
     Mode,
     Effort(String),
@@ -476,6 +478,9 @@ struct Stream {
     /// agent has said it took.
     ours: HashSet<String>,
     taken: HashSet<String>,
+    /// Messages the user asked to take back, until the agent says whether
+    /// it let go of each.
+    withdrawing: HashSet<String>,
     interrupting: bool,
     minted: u64,
     /// What passed of a line too long to read: the end of the last piece,
@@ -899,6 +904,7 @@ impl Stream {
             starting: Vec::new(),
             ours: HashSet::new(),
             taken: HashSet::new(),
+            withdrawing: HashSet::new(),
             interrupting: false,
             minted: 0,
             skipped_tail: Vec::new(),
@@ -1224,13 +1230,18 @@ impl Stream {
         if !self.ours.remove(message) {
             return;
         }
+        let withdrawn = self.withdrawing.remove(message);
         if !self.taken.remove(message) && dropped {
             self.starting.retain(|m| m != message);
-            out.events.push(Event::message(
-                message,
-                MessageState::Dropped,
-                Some("the agent cancelled the message".into()),
-            ));
+            out.events.push(if withdrawn {
+                Event::message(message, MessageState::Withdrawn, None)
+            } else {
+                Event::message(
+                    message,
+                    MessageState::Dropped,
+                    Some("the agent cancelled the message".into()),
+                )
+            });
         }
     }
 
@@ -1913,7 +1924,7 @@ impl Stream {
             }
             return;
         }
-        let reply = if response["subtype"] == "success" {
+        let mut reply = if response["subtype"] == "success" {
             Ok(response["response"].clone())
         } else {
             Err(response["error"]
@@ -1957,6 +1968,21 @@ impl Stream {
             Sent::Interrupt => {
                 if reply.is_err() {
                     self.interrupting = false;
+                }
+            }
+            Sent::Withdraw(message) => {
+                let cancelled = body.is_some_and(|b| b["cancelled"] == true);
+                if cancelled {
+                    // The agent says its own cancelled line before this;
+                    // where it did not, the message is let go here.
+                    if self.ours.contains(&message) {
+                        self.done_with(&message, out, true);
+                    }
+                } else {
+                    self.withdrawing.remove(&message);
+                    if reply.is_ok() {
+                        reply = Err("the agent has taken the message already".into());
+                    }
                 }
             }
             Sent::Usage => {}
@@ -2155,11 +2181,24 @@ impl Driver for Stream {
                     line: line.to_string(),
                 });
             }
-            Control::Interrupt => {
+            // The agent takes every message that waits into a turn of its
+            // own straight after an interrupt, so sending them now is
+            // interrupting the turn.
+            Control::Interrupt | Control::SendNow => {
                 // An interrupt with no turn running ends nothing, so the
                 // next failure is not taken for one.
                 self.interrupting = self.turn;
                 self.request(Sent::Interrupt, json!({ "subtype": "interrupt" }))
+            }
+            Control::Withdraw(message) => {
+                if !self.ours.contains(message) || self.taken.contains(message) {
+                    return Err("the agent has taken the message already".into());
+                }
+                self.withdrawing.insert(message.clone());
+                self.request(
+                    Sent::Withdraw(message.clone()),
+                    json!({ "subtype": "cancel_async_message", "message_uuid": message }),
+                )
             }
             Control::SetModel(model) => {
                 let model = checked("model", model)?.to_string();
@@ -2187,8 +2226,12 @@ impl Driver for Stream {
     }
 
     fn forget(&mut self, key: &str) {
-        if self.sent.remove(key) == Some(Sent::Interrupt) {
-            self.interrupting = false;
+        match self.sent.remove(key) {
+            Some(Sent::Interrupt) => self.interrupting = false,
+            Some(Sent::Withdraw(message)) => {
+                self.withdrawing.remove(&message);
+            }
+            _ => {}
         }
     }
 
@@ -3231,6 +3274,110 @@ mod tests {
             panic!("an interrupt asks the agent");
         };
         key
+    }
+
+    #[test]
+    fn sending_now_interrupts_the_turn_and_the_waiting_message_starts_the_next() {
+        // As the real agent does: the interrupt leaves the message queued,
+        // the turn ends aborted, and the message starts a turn at once.
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        events(&mut stream, &[lifecycle(M1, "started"), init()]);
+        sent(&mut stream, M2);
+        let Sending::Request { line, key } = stream.control(&Control::SendNow).unwrap() else {
+            panic!("sending now asks the agent");
+        };
+        let line: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(line["request"]["subtype"], "interrupt");
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(M2, "queued"),
+                json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"still_queued":[M2]}}}),
+                json!({"type":"result","subtype":"error_during_execution","is_error":false,"terminal_reason":"aborted_tools"}),
+                lifecycle(M1, "cancelled"),
+                lifecycle(M2, "started"),
+                init(),
+            ],
+        );
+        assert!(
+            out.iter().any(|e| matches!(
+                e,
+                Event::TurnEnded {
+                    outcome: Outcome::Interrupted,
+                    ..
+                }
+            )),
+            "{out:?}"
+        );
+        assert_eq!(started(&out), vec![vec![M2.to_string()]]);
+    }
+
+    fn withdraw(stream: &mut Stream, message: &str) -> (Value, String) {
+        let Sending::Request { line, key } =
+            stream.control(&Control::Withdraw(message.into())).unwrap()
+        else {
+            panic!("taking a message back asks the agent");
+        };
+        (serde_json::from_str(&line).unwrap(), key)
+    }
+
+    #[test]
+    fn a_message_taken_back_is_withdrawn_once_the_agent_lets_go_of_it() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        events(&mut stream, &[lifecycle(M1, "started"), init()]);
+        sent(&mut stream, M2);
+        let (line, key) = withdraw(&mut stream, M2);
+        assert_eq!(line["request"]["subtype"], "cancel_async_message");
+        assert_eq!(line["request"]["message_uuid"], M2);
+        let reading = readings(
+            &mut stream,
+            &[
+                lifecycle(M2, "cancelled"),
+                json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"cancelled":true}}}),
+            ],
+        );
+        assert_eq!(
+            reading.events,
+            vec![Event::message(M2, MessageState::Withdrawn, None)]
+        );
+        assert_eq!(reading.replies, vec![(key, Ok(json!({"cancelled":true})))]);
+    }
+
+    #[test]
+    fn a_message_the_agent_took_before_it_could_be_taken_back_says_so() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        events(&mut stream, &[lifecycle(M1, "started"), init()]);
+        sent(&mut stream, M2);
+        let (_, key) = withdraw(&mut stream, M2);
+        let reading = readings(
+            &mut stream,
+            &[
+                lifecycle(M2, "started"),
+                json!({"type":"control_response","response":{"subtype":"success","request_id":key,"response":{"cancelled":false}}}),
+            ],
+        );
+        assert_eq!(
+            reading.replies,
+            vec![(key, Err("the agent has taken the message already".into()))]
+        );
+        // Taken now, and refused before the agent is asked.
+        assert!(stream.control(&Control::Withdraw(M2.into())).is_err());
+        // A cancel the agent makes later is its own: dropped, not withdrawn.
+        sent(&mut stream, M3);
+        let out = events(&mut stream, &[lifecycle(M3, "cancelled")]);
+        assert!(
+            matches!(
+                &out[0],
+                Event::Message {
+                    state: MessageState::Dropped,
+                    ..
+                }
+            ),
+            "{out:?}"
+        );
     }
 
     #[test]

@@ -1456,6 +1456,45 @@ fn a_retry_is_told_and_an_unauthorized_one_says_signed_out_once() {
 }
 
 #[test]
+fn a_message_is_steered_into_the_turn_that_runs_and_taken_once_codex_answers() {
+    let mut driver = ready();
+    // No turn: nothing to steer into.
+    assert!(driver.steer(M2, "and this", &[]).is_err());
+    turn(&mut driver, M1);
+    let line: Value = serde_json::from_str(&driver.steer(M2, "and this", &[]).unwrap()).unwrap();
+    assert_eq!(line["method"], "turn/steer");
+    assert_eq!(
+        line["params"],
+        json!({
+            "threadId": THREAD,
+            "input": [{"type": "text", "text": "and this", "text_elements": []}],
+            "clientUserMessageId": M2,
+            "expectedTurnId": "turn-1",
+        })
+    );
+    let reading = read(
+        &mut driver,
+        json!({"id": line["id"], "result": {"turnId": "turn-1"}}),
+    );
+    assert_eq!(
+        reading.events,
+        [Event::message(M2, MessageState::Taken, None)]
+    );
+
+    // One Codex will not take goes back to wait, with Codex's words.
+    let line: Value = serde_json::from_str(&driver.steer(M1, "again", &[]).unwrap()).unwrap();
+    let reading = read(
+        &mut driver,
+        json!({"id": line["id"], "error": {"code": -32600, "message": "turn is not steerable"}}),
+    );
+    assert!(reading.events.is_empty());
+    assert_eq!(
+        reading.unsteered,
+        [(M1.to_string(), "turn is not steerable".to_string())]
+    );
+}
+
+#[test]
 fn an_interrupt_names_the_turn_or_waits_for_it() {
     let mut driver = ready();
     // No turn: nothing to stop.

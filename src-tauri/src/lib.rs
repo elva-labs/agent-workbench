@@ -290,6 +290,42 @@ async fn integrated_interrupt(
 }
 
 #[tauri::command]
+async fn integrated_send_now(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_send_now",
+        |rest| json!({ "id": rest }),
+        |core, id| core.integrated_send_now(id),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_withdraw(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    message: String,
+) -> Result<Value, String> {
+    let named = message.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_withdraw",
+        move |rest| json!({ "id": rest, "message": named }),
+        move |core, id| core.integrated_withdraw(id, &message),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn integrated_compact(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
@@ -1787,6 +1823,8 @@ pub fn run() {
             integrated_trust,
             integrated_send,
             integrated_interrupt,
+            integrated_send_now,
+            integrated_withdraw,
             integrated_compact,
             integrated_answer,
             integrated_reply,
