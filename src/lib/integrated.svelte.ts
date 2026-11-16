@@ -103,7 +103,8 @@ export class Link {
   /** The agent has said or done something of its own since it last came
       to rest: answered a message, written, thought, called a tool, asked,
       or failed. A spell of work that was only a compaction leaves it
-      false. */
+      false. A turn already running when the window took the session up
+      sets it, what came before being unknown. */
   worked = false;
   /** Events heard while a snapshot is on its way. */
   held: IntegratedEventBody[] | null = null;
@@ -219,24 +220,36 @@ function claim(id: string): IntegratedEventBody[] {
   return kept;
 }
 
-/** Whether an event is the agent's own work rather than its keeping house:
-    a turn that answers a message, and anything the agent says, does or
-    asks. */
+/** Whether an event is the agent's own doing rather than its keeping house.
+    Housekeeping is a compaction and what a run reports of itself: its
+    state, settings, limits, context and notices, a retry, a turn's start
+    and end, and the user's messages. A turn that answers a message is the
+    agent's doing, and so is everything else, an event of a kind not named
+    here included. */
 function isWork(body: IntegratedEventBody): boolean {
   switch (body.type) {
     case "turnStarted":
       return body.messages.length > 0;
-    case "text":
-    case "thinking":
-    case "toolStarted":
-    case "plan":
-    case "taskStarted":
-    case "permissionAsked":
-    case "questionAsked":
-    case "error":
-      return true;
-    default:
+    case "compacting":
+    case "compacted":
+    case "compactFailed":
+    case "state":
+    case "ready":
+    case "configured":
+    case "commands":
+    case "limits":
+    case "context":
+    case "notice":
+    case "retrying":
+    case "skipped":
+    case "turnEnded":
+    case "message":
+    case "answered":
+    case "withdrawn":
+    case "ended":
       return false;
+    default:
+      return true;
   }
 }
 
@@ -687,6 +700,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       for (const body of held) deliver(key, link, body);
       const before = link.conversation.state;
       link.conversation.restore(snapshot);
+      if (snapshot.turn || snapshot.state !== "idle") link.worked = true;
       if (snapshot.limits !== null) heardLimits(hostOf(session.project), session.account, snapshot.limits);
       // Only a session that was spoken to has earlier messages to point
       // at, where they could not be read.

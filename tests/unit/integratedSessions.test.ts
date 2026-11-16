@@ -239,6 +239,8 @@ describe("an integrated session behind its row", () => {
 
     fake.emit(handle, { type: "turnStarted", messages: [] });
     fake.compaction(handle);
+    fake.context(handle, 20_000, 200_000);
+    fake.notice(handle, "Context compacted.");
     fake.endTurn(handle);
     expect(session.working).toBe(false);
     expect(session.unread).toBe(false);
@@ -756,6 +758,29 @@ describe("a session the core still runs after a reload", () => {
     fake.answer(before.handle, request, "allow");
     fake.turn(before.handle, "listed", { messages: [] });
     expect(session.needs).toBeNull();
+  });
+
+  // What the turn did before the reload is not heard again: its end is
+  // news whatever comes after the window takes it up.
+  it("marks a turn that ran across the reload when it ends, with nothing said after it", async () => {
+    const before = await started();
+    send(before.key, "run the tests");
+    fake.startTurn(before.handle);
+    fake.emit(before.handle, { type: "text", block: "t", parent: null, text: "All green.", done: true });
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
+    expect(await reattach(row.key, before.handle)).toBe(true);
+    const session = byKey(row.key)!;
+    expect(session.working).toBe(true);
+    attention.focused = false;
+
+    fake.endTurn(before.handle);
+    expect(session.working).toBe(false);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
   });
 
   it("is taken up under the id it was named by only once that run has said the id", async () => {
