@@ -37,6 +37,10 @@ pub struct SessionEvent {
     /// left no line of its own.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// With a stop, that the user cut the turn short rather than the agent
+    /// ending it, where the agent says so.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cut: bool,
 }
 
 /// One line of the log, as an event, if it is one the rows care about.
@@ -68,6 +72,7 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         session_id,
         kind: kind.to_string(),
         note,
+        cut: false,
     })
 }
 
@@ -323,6 +328,16 @@ mod tests {
         );
         assert_eq!(event(r#"{"hook_event_name":"Stop"}"#), None);
         assert_eq!(event("not json"), None);
+    }
+
+    #[test]
+    fn a_stop_says_it_was_cut_short_only_when_it_was() {
+        let stop = classify(r#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();
+        assert!(!stop.cut);
+        let sent = serde_json::to_value(&stop).unwrap();
+        assert!(sent.get("cut").is_none(), "{sent}");
+        let cut = SessionEvent { cut: true, ..stop };
+        assert_eq!(serde_json::to_value(&cut).unwrap()["cut"], true);
     }
 
     #[test]

@@ -208,7 +208,7 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onSessionEvent((event) =>
-        exact(event.sessionId, event.kind, event.note ?? null),
+        exact(event.sessionId, event.kind, event.note ?? null, event.cut === true),
       )
       .then((unlisten) => offs.push(unlisten));
     core()

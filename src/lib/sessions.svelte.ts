@@ -28,7 +28,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
-import { bareName, mixesScripts, readsAsYou, shown } from "$lib/unseen";
+import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -140,6 +140,11 @@ export interface Session {
   /** The agent ended its turn with subagents of its own still running,
       whose report starts its next one: working, with a still screen. */
   delegated: boolean;
+  /** How the agent's last turn ended, where its hooks or its events say:
+      done, as the agent itself ended it, or cut short by the user. Null
+      while a turn runs, before the first, and where nothing says, as for
+      a terminal session without hooks. */
+  turnEnd: "done" | "cut" | null;
   /** When the row last changed what it says: started working, went quiet,
       asked, was looked at, ended. The palette and the chord to the next
       session that needs you order by it. */
@@ -892,8 +897,8 @@ export function outsideFor(
  */
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
-  if (known !== undefined && !readsAsYou(known)) return shown(known);
-  if (transcript.title !== null && transcript.title !== "" && !readsAsYou(transcript.title))
+  if (known !== undefined && !reservedName(known)) return shown(known);
+  if (transcript.title !== null && transcript.title !== "" && !reservedName(transcript.title))
     return shown(transcript.title);
   return `session from ${ago(transcript.modified)}`;
 }
@@ -1017,20 +1022,21 @@ export function liveCount(project: string): number {
 
 /** A short label for the row: its name, the resumed id, or its number in
     the project. A name is the agent's or a caller's text, so what it holds
-    that cannot be seen is written out; and a name that reads as "You",
-    which is the user's alone, is not taken. */
+    that cannot be seen is written out; and a name that reads as "You" or
+    "Workbench", which are the user's and the workbench's alone, is not
+    taken. */
 export function label(session: Session): string {
-  if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
+  if (session.title !== null && !reservedName(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
 }
 
 /** Whether a name reads as the name of another live session, `except`
-    aside, or mixes scripts, as a name made to pass for another's often
-    does: a session never takes one, so no message or row can pass for
-    another session's. */
+    aside, or as the workbench's own, or mixes scripts, as a name made to
+    pass for another's often does: a session never takes one, so no
+    message or row can pass for another session's or the workbench's. */
 export function nameTaken(name: string, except: string | null = null): boolean {
-  if (mixesScripts(name)) return true;
+  if (mixesScripts(name) || readsAsWorkbench(name)) return true;
   const bare = bareName(name);
   return sessions.all.some(
     (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,
@@ -1482,6 +1488,7 @@ function row(
     exact: false,
     needs: null,
     delegated: false,
+    turnEnd: null,
     changedAt: Date.now(),
     exitCode: null,
     error: null,
@@ -1794,12 +1801,89 @@ export function isViewed(session: Session): boolean {
   return attention.focused && sessions.active === session.key;
 }
 
+/** When the user last pressed a key in each session's terminal, by the
+    row's key. */
+const pressed = new Map<string, number>();
+/** The last two characters of the user's keys in each session's terminal,
+    by the row's key: whether the last was an Enter that sends the line. */
+const lastKeys = new Map<string, string>();
+/** The sessions whose terminal the user's keys may have left words in, by
+    the row's key: typed into since the agent last took a line in, as its
+    prompt hook says, or since Ctrl+C emptied the line. Enter is no sign the
+    line went: Ctrl+J, a backslash before Enter and Alt+Enter each add a
+    newline to the agent's input, Ctrl+U empties only the current line of
+    several, and a command such as /config opens a panel the next keys
+    would answer, with no prompt hook for any of them. */
+const drafts = $state<Record<string, true>>({});
+
+/** What a terminal sends on its own, which is no key of the user's: focus
+    going in or out, and the mouse. */
+// eslint-disable-next-line no-control-regex
+const REPORT = /^\x1b\[(?:I|O|M|<)/;
+/** The terminal's replies to what the agent asks of it, each sent whole:
+    its attributes (`ESC[?1;2c`), status (`ESC[0n`), cursor position
+    (`ESC[1;1R`), window size (`ESC[8;24;80t`), keyboard flags
+    (`ESC[?0u`), a mode (`ESC[?2004;1$y`), and a setting, its version or a
+    colour (DCS and OSC). Claude Code asks for its attributes as it starts,
+    and Codex for its cursor as it starts and on every resize. No key sends
+    any of these but Ctrl+F3, in the shape of a cursor report, which is
+    taken for one and so holds no wake. */
+const REPLY =
+  // eslint-disable-next-line no-control-regex
+  /^(?:\x1b\[[?>=]?[\d;]*[cnRt]|\x1b\[\?[\d;]*u|\x1b\[\??[\d;]*\$y|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
+/** Ctrl+C, which empties the agent's input or closes what it has open. */
+const EMPTIES = "\x03";
+
 /** The user typed into a pty. A line sent is the agent spoken to: from
-    then on what it writes back can be work. */
+    then on what it writes back can be work. A key while the agent asks
+    for a permission answers that prompt, and leaves nothing on the line:
+    the window hears no hook when the prompt closes, so the keys after it,
+    once the agent is seen at work again, are the line's as ever. */
 export function typed(ptyId: string, data: string) {
-  if (!data.includes("\r") && !data.includes("\n")) return;
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
-  if (session !== undefined) session.engaged = true;
+  if (session === undefined) return;
+  if (REPORT.test(data) || REPLY.test(data)) return;
+  if (data.includes("\r") || data.includes("\n")) session.engaged = true;
+  pressed.set(session.key, Date.now());
+  if (session.needs !== null) return;
+  lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
+  if (data.endsWith(EMPTIES)) delete drafts[session.key];
+  else drafts[session.key] = true;
+}
+
+/** The workbench typed a line into a pty and sent it, as `send` does: the
+    agent has been spoken to, by no key of the user's, and how its last
+    turn ended no longer says it is idle. A line that sets off no prompt
+    hook, a command such as /config, leaves that unknown until a turn of
+    the agent's ends. */
+export function spokenTo(ptyId: string) {
+  const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
+  if (session === undefined) return;
+  session.engaged = true;
+  session.turnEnd = null;
+}
+
+/** The agent in a terminal took a line in, as its prompt hook says. The
+    user's keys have left nothing on its line when the last of them was an
+    Enter that sends, not one after a backslash or Escape, which adds a
+    newline. */
+function tookLine(key: string) {
+  const last = lastKeys.get(key);
+  // eslint-disable-next-line no-control-regex
+  if (last === undefined || (last.endsWith("\r") && !/[\\\x1b]\r$/.test(last))) delete drafts[key];
+}
+
+/** Whether the user's keys may have left words on a session's terminal
+    line that they have not sent. */
+export function drafting(key: string): boolean {
+  return drafts[key] === true;
+}
+
+/** How long until the user's keys in a session's terminal have been still
+    for `quiet` milliseconds: nothing once they have. */
+export function keysStillIn(key: string, quiet: number, now = Date.now()): number {
+  const at = pressed.get(key);
+  return at === undefined ? 0 : Math.max(0, at + quiet - now);
 }
 
 /** Bytes arrived for a session. */
@@ -1910,6 +1994,19 @@ export function onWaiting(handler: ((session: Session) => void) | null) {
   waiting = handler;
 }
 
+let turning: (session: Session) => void = () => {};
+
+/** Who is told when a session's agent begins a turn, as its hooks or its
+    events say. */
+export function onTurn(handler: ((session: Session) => void) | null) {
+  turning = handler ?? (() => {});
+}
+
+/** A session's agent began a turn. */
+export function beganTurn(session: Session) {
+  turning(session);
+}
+
 let directed: (session: Session) => boolean = () => false;
 
 /** Who says whether another session answers for a session: one an
@@ -1966,22 +2063,24 @@ export function noted(key: string, text: string) {
 // bound also covers hooks from sessions outside this window.
 const pendingActivity = new Map<
   string,
-  { kind: SessionEvent["kind"]; note: string | null }
+  { kind: SessionEvent["kind"]; note: string | null; cut: boolean }
 >();
 
 function replayActivity(sessionId: string) {
   const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
-  if (pending !== undefined) exact(sessionId, pending.kind, pending.note);
+  if (pending !== undefined) exact(sessionId, pending.kind, pending.note, pending.cut);
 }
 
 /** A hook or rollout reports a turn transition. With a stop comes the
     first line of what the agent said, which the row takes when the agent
-    left no line of its own through its notify tool. */
+    left no line of its own through its notify tool, and whether the user
+    cut the turn short. */
 export function exact(
   sessionId: string,
   kind: SessionEvent["kind"],
   note: string | null = null,
+  cut = false,
 ) {
   // An integrated session's state comes from its own events, and the
   // hooks that fire for it are left alone.
@@ -1995,7 +2094,7 @@ export function exact(
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, { kind, note });
+    pendingActivity.set(sessionId, { kind, note, cut });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -2012,15 +2111,21 @@ export function exact(
       session.working = true;
       session.needs = null;
       session.delegated = false;
+      session.turnEnd = null;
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
       session.note = null;
+      tookLine(session.key);
       changed(session);
+      beganTurn(session);
       break;
     case "stop":
       session.working = false;
       session.needs = null;
       session.delegated = false;
+      // A turn the user cut short stays so, though a hook of the agent's
+      // own may call its end a stop as well.
+      session.turnEnd = cut || session.turnEnd === "cut" ? "cut" : "done";
       changed(session);
       if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
@@ -2128,6 +2233,9 @@ export function nextNeedingYou(): Session | null {
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
   pendingActivity.clear();
+  pressed.clear();
+  lastKeys.clear();
+  for (const key of Object.keys(drafts)) delete drafts[key];
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
   for (const pulse of pulses.values()) {
