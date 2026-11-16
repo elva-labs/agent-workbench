@@ -46,7 +46,10 @@ expression count. <kbd>Enter</kbd> goes to the next match,
 <kbd>Shift</kbd><kbd>Enter</kbd> to the one before, and <kbd>Esc</kbd>
 closes the bar. There is nothing to replace with. The matches are counted
 as the text is typed, and once typing pauses in a large file or in the file
-itself.
+itself. Find goes to the pane that holds the keyboard: the editor's while
+the editor has it, and an integrated session's beside it while its
+composer or thread has it, which finds in the conversation; see
+[focus](focus-model.md#an-integrated-session).
 
 The foot has the line and column, what the file is written in by its name,
 and whether it is saved.
