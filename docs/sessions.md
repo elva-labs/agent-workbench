@@ -517,7 +517,8 @@ is waited for, and a message sent while the new run comes up waits for it.
 Once the first message is sent the choice is kept: the chip goes, and the
 header's chip names the workflow. Working another way takes a new session.
 A resumed session, one another session started and a session in a terminal
-have no chip.
+have no chip, and neither does any session while the settings have no
+workflow.
 
 A slash typed as the first thing in the composer opens a menu over the
 thread of the agent's slash commands, then its skills, for an agent that

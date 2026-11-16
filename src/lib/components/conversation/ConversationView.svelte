@@ -2,7 +2,7 @@
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
   import { linkFor, resume, trust, unspoken } from "$lib/integrated.svelte";
-  import { stepsGist } from "$lib/workflows.svelte";
+  import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
   import { spoken } from "$lib/instructions";
@@ -123,8 +123,8 @@
   );
 
   /** Nothing has been said in it yet, so its workflow can still be
-      chosen. */
-  let choosable = $derived(unspoken(session));
+      chosen, where there is a workflow to choose or one to leave. */
+  let choosable = $derived(unspoken(session) && (workflows.list.length > 0 || session.workflow !== null));
 
   /** Why the session is over, in a sentence. */
   let why = $derived.by(() => {

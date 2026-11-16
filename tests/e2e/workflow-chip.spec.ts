@@ -255,6 +255,12 @@ test("starts the orchestrator on another agent that runs as a conversation", asy
   await expect(page.getByTestId("session-row")).toHaveCount(1);
 });
 
+test("shows no chip where there is no workflow to choose", async ({ page }) => {
+  await open(page, []);
+  await expect(page.getByTestId("mode-chip")).toBeVisible();
+  await expect(chip(page)).toHaveCount(0);
+});
+
 test("shows no chip for a session in a terminal", async ({ page }) => {
   await installFakeCore(page, {
     open: [PROJECT],
