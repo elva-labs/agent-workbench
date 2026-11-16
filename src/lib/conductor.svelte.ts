@@ -55,6 +55,8 @@ import { SvelteSet } from "svelte/reactivity";
 import { core, type ConductRequest } from "$lib/core";
 import {
   nameTaken,
+  named as nameRow,
+  readsAsAgent,
   byKey,
   byToken,
   close,
@@ -68,6 +70,7 @@ import {
   label,
   onDirected,
   onForgotten,
+  onMoved,
   onTurn,
   runningByToken,
   sessions,
@@ -103,7 +106,7 @@ import {
 import { lastRun } from "$lib/thread";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { mixesScripts, readsAsWorkbench, readsAsYou } from "$lib/unseen";
+import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -404,7 +407,8 @@ export const conductor = $state({
       between runs. A row whose id is here is the caller's whether or not it
       was started in this run. A list an earlier version kept under the bare
       folder a caller that named no session called from is kept as it is,
-      and is no caller's, since no caller is a bare folder. */
+      and is no caller's, since no caller is a bare folder. A list it kept
+      under a session's id is the token's that session is given. */
   started: {} as Record<string, Started[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
@@ -659,7 +663,7 @@ function noRoom(caller: string, step: WorkStep): string | null {
   if (running.length === 0)
     return `The step ${quoted(step.name)} runs ${at} at once, and another start for it is on its way. Wait for it to answer before starting another.`;
   const ids = either(
-    running.map((session) => session.id ?? label(session)),
+    running.map(namedAs),
     "and",
   );
   return `The step ${quoted(step.name)} runs ${at} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.`;
@@ -691,13 +695,45 @@ function placed(caller: string, id: string): Place | null {
   return conductor.places[row.key] ?? null;
 }
 
+/** Takes a session off its caller's list, and off the list a session
+    from before there were tokens kept under its id, which is the caller's
+    as well: a session the caller is done with is not moved back to it.
+    That is the list of each id whose kept token the caller is, and of the
+    caller's own id, whose kept token two rows of it running at once leave
+    to neither. */
 function forget(caller: string, id: string) {
-  const list = conductor.started[caller];
-  if (list === undefined) return;
-  const kept = list.filter((known) => known.id !== id);
-  if (kept.length === 0) delete conductor.started[caller];
-  else conductor.started[caller] = kept;
-  saveStarted();
+  const own = sessions.all.find((row) => row.token === caller)?.id ?? null;
+  let changed = false;
+  for (const key of new Set([caller, ...idsOf(caller), ...(own === null ? [] : [own])])) {
+    const list = conductor.started[key];
+    if (list === undefined || !list.some((known) => known.id === id)) continue;
+    const kept = list.filter((known) => known.id !== id);
+    if (kept.length === 0) delete conductor.started[key];
+    else conductor.started[key] = kept;
+    changed = true;
+  }
+  if (changed) saveStarted();
+}
+
+/** The token a session kept under this id is named by now; anything else
+    as it is. So is an id while a run named by it still runs: what is kept
+    under the id is that run's until it stops. */
+function tokenOf(caller: string): string {
+  const kept = sessions.tokens[caller]?.token;
+  if (kept === undefined || kept === "" || namesLiveRun(caller)) return caller;
+  return kept;
+}
+
+/** Whether a running row is named by this, as a run taken up after a
+    reload can be named by its id. */
+const namesLiveRun = (name: string) =>
+  sessions.all.some((row) => row.token === name && isLive(row));
+
+/** The ids of the sessions whose kept token this is. */
+function idsOf(token: string): string[] {
+  return Object.entries(sessions.tokens)
+    .filter(([id, kept]) => kept.token === token && id !== token)
+    .map(([id]) => id);
 }
 
 /** Whether a list is kept under a folder rather than a caller's token: an
@@ -706,17 +742,24 @@ const byFolder = (caller: string) => /^(?:\/|ssh:\/\/|[A-Za-z]:[\\/])/.test(call
 
 /** The caller of each remembered session, by the session's id: the first
     caller listed where two remember one, a caller's own list before one
-    kept under a bare folder. A session a folder's list holds was started
-    by another all the same, so it starts none of its own, and no call acts
-    on it: no caller is a bare folder. */
+    kept under the id of a session from before there were tokens, which
+    holds what moved to the token as well, and both before one kept under
+    a bare folder. A session a folder's list holds was started by another
+    all the same, so it starts none of its own, and no call acts on it: no
+    caller is a bare folder. */
 const owners = $derived.by(() => {
   const index = new Map<string, string>();
   const lists = Object.entries(conductor.started);
-  for (const folders of [false, true])
+  const rank = (caller: string) =>
+    byFolder(caller) ? 2 : sessions.tokens[caller] !== undefined ? 1 : 0;
+  for (const at of [0, 1, 2])
     for (const [caller, entries] of lists) {
-      if (byFolder(caller) !== folders) continue;
+      if (rank(caller) !== at) continue;
+      // A list kept under the id of a session from before there were
+      // tokens is its token's, once it has one: no call names the id.
+      const owner = tokenOf(caller);
       for (const entry of entries)
-        if (!index.has(entry.id)) index.set(entry.id, caller);
+        if (!index.has(entry.id)) index.set(entry.id, owner);
     }
   return index;
 });
@@ -1279,12 +1322,11 @@ function reportNote(caller: string, ending: boolean): Note | null {
   if (ending) endWaits([caller], USER_WROTE);
   const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
   const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
-  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
-  const lines = news.map((kid) => restText(kid, name(kid)));
+  const lines = news.map((kid) => restText(kid));
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
     lines.push(
-      `Still at work when the user wrote: ${either(out.map(name), "and")}. Call wait to hear from them once you have answered.`,
+      `Still at work when the user wrote: ${either(out.map(namedAs), "and")}. Call wait to hear from them once you have answered.`,
     );
   if (lines.length === 0) return null;
   return {
@@ -1485,10 +1527,9 @@ const barless = (line: string) => line.normalize("NFKC").replace(BAR_LIKE, "\u00
  */
 async function wake(starter: Session, news: Session[]) {
   const key = starter.key;
-  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
-  const lines = news.map((kid) => restText(kid, name(kid)));
+  const lines = news.map((kid) => restText(kid));
   const out = startedBy(starter.token).filter(atWork);
-  if (out.length > 0) lines.push(atWorkLine(either(out.map(name), "and")));
+  if (out.length > 0) lines.push(atWorkLine(either(out.map(namedAs), "and")));
   const told = news.map((kid) => {
     const mark = stops.get(kid.key)!;
     return { key: kid.key, rest: mark.rest, before: mark.told };
@@ -1616,9 +1657,9 @@ function sessionLines(request: Placed): string {
 }
 
 function describe(session: Session): string {
-  const parts = [session.id ?? "", label(session), session.project];
+  const parts = [idText(session.id!), quotedName(label(session)), session.project];
   const tree = session.worktree ?? session.startIn;
-  if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
+  if (tree !== null && tree !== session.project) parts.push(`worktree ${oneLine(tree)}`);
   parts.push(session.agent);
   const place = placeOf(session.key);
   if (place !== null) parts.push(placeText(place));
@@ -1632,15 +1673,15 @@ function describe(session: Session): string {
 /** A remembered session that is not open as a row, in the same words. */
 function describeGone(owner: string, entry: Started): string {
   const parts = [
-    entry.id,
-    sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8),
+    idText(entry.id),
+    quotedName(sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8)),
     entry.project,
   ];
-  if (entry.worktree !== null) parts.push(`worktree ${entry.worktree}`);
+  if (entry.worktree !== null) parts.push(`worktree ${oneLine(entry.worktree)}`);
   parts.push(entry.agent);
   const at = placed(owner, entry.id);
   if (at !== null) parts.push(placeText(at));
-  parts.push("stopped", `resume it with start, naming session ${entry.id}`);
+  parts.push("stopped", `resume it with start, naming session ${idText(entry.id)}`);
   return parts.join("  ");
 }
 
@@ -1648,7 +1689,7 @@ function describeGone(owner: string, entry: Started): string {
     in: its step, and for a review the round and the work it checks. */
 export function placeText(place: Place): string {
   if (place.kind === "work") return `step "${place.step}"`;
-  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work ?? "unknown"}`;
+  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work === null ? "unknown" : idText(place.work)}`;
 }
 
 /** What a session is doing, in the words the tools answer in. */
@@ -1719,6 +1760,16 @@ async function startSession(request: Placed): Promise<Answered> {
   } finally {
     fit?.release(started);
   }
+}
+
+/** How many characters a name a caller gives a session keeps: as many as
+    a row's name taken from a first message. */
+export const NAME_MOST = 60;
+
+/** A name cut to what a row's name holds, marked where it was cut. */
+function nameCut(name: string): string {
+  const chars = Array.from(name);
+  return chars.length > NAME_MOST ? `${chars.slice(0, NAME_MOST - 1).join("")}…` : name;
 }
 
 /** The rest of a start, once it has been held to the caller's workflow:
@@ -1804,12 +1855,13 @@ async function startFitted(
     // The row holds its place in the step from here.
     fit.hold();
   }
-  // The name the caller gave is the row's, until the agent names it. One
-  // that reads as "You" is the user's alone, one that reads as "Workbench"
-  // the workbench's, and one another live session has is that session's:
-  // none is taken, and the row is named by the prompt instead.
+  // The name the caller gave is the row's, until the agent names it, cut
+  // to what a row's name holds. One that reads as "You" is the user's
+  // alone, one that reads as "Workbench" the workbench's, one that reads as
+  // an agent's that agent's, and one another live session has is that
+  // session's: none is taken, and the row is named by the prompt instead.
   // Weighed as it would be stored.
-  const candidate = name === null ? null : oneLine(name);
+  const candidate = name === null ? null : nameCut(oneLine(name));
   const you = candidate !== null && readsAsYou(candidate);
   const taken = candidate !== null && !you && nameTaken(candidate, session.key);
   const called = candidate !== null && !you && !taken ? candidate : null;
@@ -1833,26 +1885,33 @@ async function startFitted(
     name: called,
     account,
   });
+  // Kept by the session's id as well, as any name is, so the row is called
+  // so after a restart; unless the agent named it meanwhile.
+  if (called !== null && byKey(session.key)?.title === called) nameRow(session.key, called);
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   const notCalled = you
-    ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+    ? ` It is not called ${quotedName(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
     : taken
       ? mixesScripts(candidate!)
-        ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
+        ? ` It is not called ${quotedName(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
         : readsAsWorkbench(candidate!)
-          ? ` It is not called ${oneLine(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
-          : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
-      : "";
+          ? ` It is not called ${quotedName(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
+          : readsAsAgent(candidate!)
+            ? ` It is not called ${quotedName(name!)}: a conversation shows an agent's own words and requests under that name, so the session is named by its prompt.`
+            : ` It is not called ${quotedName(name!)}: another session is called that, so the session is named by its prompt.`
+      : called !== null && called !== oneLine(name!)
+        ? ` Its name is cut to ${NAME_MOST} characters: ${quotedName(called)}.`
+        : "";
   if (fit === null)
     return said(
-      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
   );
 }
 
@@ -2099,7 +2158,7 @@ function notAllowed(beyond: Beyond): string {
     beyond.done === most
       ? "as many as the workflow gives a piece"
       : `more than the ${most} the workflow gives a piece`;
-  return `${quoted(beyond.name)}, the work of session ${beyond.work}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
+  return `${quotedName(beyond.name)}, the work of session ${idText(beyond.work)}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
 }
 
 /** The agent and model a step runs a start on: the first the step allows
@@ -2568,7 +2627,7 @@ async function holdWait(
   const names = new Map<string, string>();
   for (const session of watched) {
     worked.set(session.key, session.working || untold(session));
-    names.set(session.key, session.id ?? label(session));
+    names.set(session.key, namedAs(session));
   }
 
   // The calling session's row: a wait held for a session that is no longer
@@ -2612,15 +2671,14 @@ async function holdWait(
       let busy = false;
       let again: { key: string; text: string } | null = null;
       for (const key of worked.keys()) {
-        const name = names.get(key) ?? key;
         const session = byKey(key);
         if (session === null) {
-          settle(`Session ${name} was closed.`);
+          settle(`Session ${names.get(key) ?? key} was closed.`);
           return;
         }
         const resting =
           !isLive(session) || session.needs === "permission"
-            ? restText(session, name)
+            ? restText(session)
             : null;
         if (resting !== null) {
           if (untold(session)) {
@@ -2635,7 +2693,7 @@ async function holdWait(
         if (session.working) worked.set(key, true);
         else if (worked.get(key) === true || untold(session)) {
           reported = key;
-          settle(restText(session, name));
+          settle(restText(session));
           return;
         }
       }
@@ -2702,15 +2760,45 @@ export function oneLine(text: string): string {
 }
 
 /** What a session at rest is doing, in the words a wait answers with: it
-    ended, it is asking for permission, or it stopped working. Its name goes
-    on one line, as its last line does. */
-function restText(session: Session, called: string): string {
-  const name = oneLine(called);
+    ended, it is asking for permission, or it stopped working. */
+function restText(session: Session): string {
+  const name = namedAs(session);
   if (!isLive(session))
     return `Session ${name} ${stateOf(session)}. ${lastLine(session)}`;
   if (session.needs === "permission")
     return `Session ${name} is asking for permission. ${lastLine(session)}`;
   return `Session ${name} stopped working. ${lastLine(session)}`;
+}
+
+/** An id of the shape the agents' own ids have, uuids and the like: the
+    characters a call's id may hold, as the core holds it to, and no more of
+    them. */
+const PLAIN_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * A session as a tool's answer, a note or a wake names it to an agent: by
+ * its id, which the agent did not choose and which is what the tools take,
+ * or, while the window does not know the id, by its name as a quote of the
+ * session's own words. A name may be the one a start gave, the agent's
+ * title for its terminal or the first words of its conversation, so it is
+ * bounded as a last line is and never reads as the workbench's words or as
+ * another session's entry.
+ */
+export function namedAs(session: Session): string {
+  return session.id === null ? quotedName(label(session)) : idText(session.id);
+}
+
+/** A session's id in an answer: as it is when it has the plain shape of
+    the agents' own ids, and otherwise quoted as a name is, since some ids
+    are read from where an agent can write. */
+export function idText(id: string): string {
+  return PLAIN_ID.test(id) ? id : quotedName(id);
+}
+
+/** A session's name as an answer gives it: its own words on one line, with
+    its spaces each one, cut as a row's name is and in double quotes. */
+export function quotedName(name: string): string {
+  return `"${nameCut(ownWords(name).replace(/\s+/g, " "))}"`;
 }
 
 /** The most of a session's last line a tool answers with, in characters,
@@ -2731,13 +2819,20 @@ function lastLine(session: Session): string {
 const QUOTE_LIKE =
   /["\p{Pi}\p{Pf}\u201a\u201e\u02ba\u02dd\u02ee\u05f3\u05f4\u2032-\u2037\u2e42\u275b-\u2760\u3003\u301d-\u301f]/gu;
 
-/** A session's own words as an answer quotes them: on one line, cut
-    short, and in double quotes, any quote mark of their own, or anything
-    that reads as one, turned single, so nothing in them closes the quote
-    and reads as a line of the answer's own, the workbench's or the
-    user's. Null for no words. */
+/** A session's own words made safe to quote: on one line, in their
+    compatibility form, anything that would change how they read without
+    being seen written as its marker, and any quote mark of their own, or
+    anything that reads as one, turned single, so nothing in them closes
+    the quote and reads as words of the answer's own, the workbench's or
+    the user's. */
+function ownWords(text: string): string {
+  return shown(oneLine(text.normalize("NFKC"))).replace(QUOTE_LIKE, "'");
+}
+
+/** A session's last line as an answer quotes it: its own words, cut short
+    and in double quotes. Null for no words. */
 function quotedLine(note: string | null): string | null {
-  const line = note === null ? "" : oneLine(note.normalize("NFKC")).replace(QUOTE_LIKE, "'");
+  const line = note === null ? "" : ownWords(note);
   if (line === "") return null;
   const chars = [...line];
   return `"${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}"`;
@@ -2760,6 +2855,52 @@ startersFrom(startedFor);
 onForgotten((tokens) => {
   for (const token of tokens) delete conductor.runs[token];
   saveRuns();
+});
+
+// A session from before there were tokens kept what it started, what its
+// workflow ran and its standing answers under its id. They go to the
+// token it is given whenever it is given one, unless a run named by the id
+// still runs, whose they stay until it stops. What it started is joined
+// by session id, the id's list staying for the version before, so a move
+// made again, or by a second window, adds nothing and puts back what a
+// window that wrote over it lost. Standing answers, the rows it started in
+// this run and what its workflow ran move whole: no version reads the
+// id's copy of them, and one left behind would bring back what the token
+// has since let go of.
+onMoved((id, token) => {
+  if (namesLiveRun(id)) return;
+  for (const entry of [...allowed]) {
+    const [caller, project, account, bare] = JSON.parse(entry) as Allowance;
+    if (caller !== id) continue;
+    allowed.delete(entry);
+    allowed.add(allowance(token, project, { account, bare }));
+  }
+  for (const [key, caller] of Object.entries(conductor.startedBy))
+    if (caller === id) conductor.startedBy[key] = token;
+  if (cut.delete(id)) cut.add(token);
+  const list = conductor.started[id];
+  if (list !== undefined) {
+    const have = conductor.started[token] ?? [];
+    const added = list.filter((entry) => !have.some((known) => known.id === entry.id));
+    if (added.length > 0) {
+      conductor.started[token] = [...have, ...added.map((entry) => ({ ...entry }))];
+      saveStarted();
+    }
+  }
+  const run = $state.snapshot(conductor.runs[id]);
+  if (run !== undefined) {
+    const into = $state.snapshot(conductor.runs[token]) ?? { places: {}, rounds: {} };
+    for (const [kid, at] of Object.entries(run.places)) into.places[kid] ??= at;
+    for (const [key, count] of Object.entries(run.rounds))
+      into.rounds[key] = Math.max(into.rounds[key] ?? 0, count);
+    for (const [key, count] of Object.entries(run.stopped ?? {}))
+      (into.stopped ??= {})[key] = Math.max(into.stopped[key] ?? 0, count);
+    const rested = [...new Set([...(into.rested ?? []), ...(run.rested ?? [])])];
+    if (rested.length > 0) into.rested = rested;
+    conductor.runs[token] = into;
+    delete conductor.runs[id];
+    saveRuns();
+  }
 });
 
 /** The rows a session started, running or not. */
@@ -2898,6 +3039,15 @@ export function once() {
 /** No session, and the caller hears it as a refusal. */
 export function refuse() {
   answerAsk("no");
+}
+
+/** Answers a round past a review's limit, for this one round or not,
+    when it is still the question on screen: an answer given to a question
+    that has gone reaches no other. True when it was answered. */
+export function answerRound(ask: Ask, allowed: boolean): boolean {
+  if (conductor.asking !== ask || ask.round === null) return false;
+  answerAsk(allowed ? "once" : "no");
+  return true;
 }
 
 /** The projects a caller may start sessions in without being asked. */

@@ -119,6 +119,11 @@ export interface FakeIntegrated {
   /** Writes a past conversation into the transcript of `session` ahead
       of anything said in it since. */
   transcript(session: string, items: IntegratedHistory["items"]): void;
+  /** Holds what the agent says to every answer and reply until
+      `releaseAnswers`, as a core whose agent takes its time does: the call
+      is taken and checked at once, and the answer told on release. */
+  holdAnswers(): void;
+  releaseAnswers(): void;
   /** Holds the answer to every read of a history until `releaseHistory`;
       what is read is what the transcript held when asked. */
   holdHistory(): void;
@@ -351,6 +356,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   /** Each conversation's transcript, by its id. */
   const transcripts = new Map<string, Written[]>();
   let historyHeld: { wait: Promise<void>; release: () => void } | null = null;
+  /** What answers and replies tell, held until released. */
+  let answersHeld: (() => void)[] | null = null;
+  const told = (tell: () => void) => (answersHeld === null ? tell() : answersHeld.push(tell));
   let count = 0;
   /** How deep in its own calls the fake is, and whether it is playing
       back what was kept across a reload. */
@@ -555,12 +563,14 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       if (!offer) throw new Error("that choice was not offered for this request");
       const said = offer.message && message?.trim() ? message.trim() : null;
       fake.calls.push({ method: "answer", id, request, choice, message: said });
-      fake.emit(id, { type: "answered", request, choice, answers: null, message: said });
-      // Cancelling stops the turn, which the agent then ends.
-      if (choice === "cancel")
-        later(() => {
-          if (session.turn) fake.endTurn(id, "interrupted");
-        });
+      told(() => {
+        fake.emit(id, { type: "answered", request, choice, answers: null, message: said });
+        // Cancelling stops the turn, which the agent then ends.
+        if (choice === "cancel")
+          later(() => {
+            if (session.turn) fake.endTurn(id, "interrupted");
+          });
+      });
     },
 
     reply(id, request, answers) {
@@ -585,14 +595,16 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       }
       fake.calls.push({ method: "reply", id, request, answers });
       // No window is told a secret question's answer.
-      fake.emit(id, {
-        type: "answered",
-        request,
-        choice: answers ? "allow" : "deny",
-        answers:
-          answers?.map((answer, at) => (asked.questions[at]?.secret ? null : answer)) ?? null,
-        message: null,
-      });
+      told(() =>
+        fake.emit(id, {
+          type: "answered",
+          request,
+          choice: answers ? "allow" : "deny",
+          answers:
+            answers?.map((answer, at) => (asked.questions[at]?.secret ? null : answer)) ?? null,
+          message: null,
+        }),
+      );
     },
 
     configure(id, settings) {
@@ -642,6 +654,16 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
     transcript(session, items) {
       transcripts.set(session, [...items, ...(transcripts.get(session) ?? [])]);
+    },
+
+    holdAnswers() {
+      answersHeld ??= [];
+    },
+
+    releaseAnswers() {
+      const held = answersHeld ?? [];
+      answersHeld = null;
+      for (const tell of held) tell();
     },
 
     holdHistory() {
@@ -1208,7 +1230,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       const call = own[name];
       if (
         typeof call !== "function" ||
-        ["subscribe", "snapshot", "history", "holdHistory", "releaseHistory"].includes(name)
+        ["subscribe", "snapshot", "history", "holdHistory", "releaseHistory", "holdAnswers", "releaseAnswers"].includes(name)
       )
         continue;
       own[name] = (...args: unknown[]) => {

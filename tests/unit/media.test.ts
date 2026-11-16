@@ -81,7 +81,7 @@ beforeEach(() => {
 });
 
 describe("whose media it is", () => {
-  it("is the session the request names, by the agent's id", () => {
+  it("is the session the request's token names, kept by the agent's id", () => {
     const a = create("/one");
     started(a.key, "pty-1", "s1");
     const b = create("/one");
@@ -93,9 +93,9 @@ describe("whose media it is", () => {
     expect(
       ownerFor(request(["/one/x.png"], "/one", null, a.token), "/one"),
     ).toBe("s1");
-    // A plugin names the session by its id.
+    // An agent's id names no session: the tools answer with ids.
     expect(ownerFor(request(["/one/x.png"], "/one", null, "s2"), "/one")).toBe(
-      "s2",
+      "project:/one",
     );
   });
 
@@ -158,7 +158,7 @@ describe("presenting", () => {
     const b = create("/one");
     started(b.key, "pty-2", "s2");
     presented(
-      request(["/one/a.png"], "/one", "Shot.", "s1"),
+      request(["/one/a.png"], "/one", "Shot.", a.token),
       1_700_000_000_000,
     );
     expect(itemsFor("s1")).toHaveLength(1);

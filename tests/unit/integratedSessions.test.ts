@@ -28,6 +28,7 @@ import {
   loadRemembered,
   noted,
   reopened,
+  runningByToken,
   reset as resetSessions,
   sessions,
   wake,
@@ -711,6 +712,36 @@ describe("a session the core still runs after a reload", () => {
     fake.answer(before.handle, request, "allow");
     fake.turn(before.handle, "listed", { messages: [] });
     expect(session.needs).toBeNull();
+  });
+
+  it("is taken up under the id it was named by only once that run has said the id", async () => {
+    // A run the version before named by its id, still going after a reload.
+    fake.transcript("old-run", written(1_000_000, "Count the files", "There are 12."));
+    const before = await started({ resumedFrom: "old-run" });
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "old-run", "claude-code", null, null, null, "integrated", null, true, "old-run");
+    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(byKey(row.key)!.token).toBe("old-run");
+    expect(runningByToken("old-run")?.key).toBe(row.key);
+    // A newer session the core numbered the same, which has not said its
+    // id yet, is not taken for it.
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    fake.holdReady = true;
+    const newer = await started();
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const stale = reopened(PROJECT, "old-gone", "claude-code", null, null, null, "integrated", null, true, "old-gone");
+    expect(await reattach(stale.key, newer.handle)).toBe(false);
+    expect(byKey(stale.key)!.status).toBe("dormant");
+    expect(runningByToken("old-gone")).toBeNull();
   });
 
   it("is left for a resume when the core has no such session, or another conversation under that id", async () => {

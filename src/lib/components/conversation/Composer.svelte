@@ -75,6 +75,8 @@
     active: boolean;
     /** Puts the keyboard on the dock, when something waits there. */
     onDock?: () => boolean;
+    /** Whether the dock holds something the user answers there. */
+    answers?: boolean;
     /** Whether the session runs on the agent's default model, the user
         having chosen none. */
     defaultModel?: boolean;
@@ -106,6 +108,7 @@
     ready,
     active,
     onDock,
+    answers = false,
     defaultModel = false,
     slash = false,
     root = null,
@@ -498,7 +501,7 @@
       return;
     }
     const lone = link.draft.trim();
-    if (conversation.open.length > 0 && link.images.length === 0 && /^[0-9]$/.test(lone) && digit !== lone) {
+    if (answers && link.images.length === 0 && /^[0-9]$/.test(lone) && digit !== lone) {
       digit = lone;
       return;
     }
@@ -974,7 +977,7 @@
       }}
       onblur={() => (focused = false)}
       rows="1"
-      placeholder={conversation.open.length > 0
+      placeholder={answers
         ? "↑ to answer, or write a message"
         : `${conversation.entries.length === 0 ? `Tell ${agent} what to do` : `Reply to ${agent}`}${keysSaid}`}
       aria-label="Message to {agent}"
