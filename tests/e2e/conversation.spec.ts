@@ -2800,3 +2800,83 @@ test("resolves a reference link while its reply streams, once its address comes"
   await expect(text.locator("a[href='https://example.com/r']")).toHaveText("the notes");
   await expect(text).not.toContainText("[the notes][r]");
 });
+
+test.describe("the conversation's width", () => {
+  /** Where each part of the conversation lies across the agent's pane. */
+  const across = (page: Page) =>
+    page.evaluate((agent) => {
+      const box = (selector: string) => {
+        const found = document.querySelector(`${agent} ${selector}`)!.getBoundingClientRect();
+        return { left: found.left, right: found.right, width: found.width };
+      };
+      const thread = document.querySelector(`${agent} .thread`)!;
+      return {
+        pane: box(""),
+        run: box("[data-testid='agent-run']"),
+        words: box("[data-testid='agent-text'] p"),
+        code: box("[data-testid='agent-text'] pre"),
+        output: box("[data-testid='step-output']"),
+        bubble: box("[data-testid='user-message'] .bubble"),
+        composer: box("[data-testid='composer-input']"),
+        overflow: thread.scrollWidth - thread.clientWidth,
+      };
+    }, AGENT);
+
+  for (const width of [1100, 1500, 2100, 2700])
+    test(`spans the pane at ${width}px, words at a measure, the bubble on the right`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await openIntegrated(page);
+      await expect(page.getByTestId("composer-input")).toBeVisible();
+      await agent(
+        page,
+        `f.send("${H}", crypto.randomUUID(), "Keep the cache between runs. ".repeat(12));
+         f.startTurn("${H}");
+         f.tool("${H}", "Bash", { command: "cargo test" }, "test result: ok. " + "6 passed; ".repeat(30), { kind: "command" });
+         f.emit("${H}", { type: "text", block: "a", parent: null, text: "${"The cache lives in memory now. ".repeat(20)}\\n\\n\`\`\`\\n${"let x = 1; ".repeat(40)}\\n\`\`\`", done: true });
+         f.endTurn("${H}");`,
+      );
+      await page.getByTestId("work-line").click();
+      await page.getByTestId("step-row").click();
+      await expect(page.getByTestId("step-output")).toBeVisible();
+      const at = await across(page);
+      // The thread and the composer span the pane, short of a gutter that
+      // stays comfortable at every width.
+      for (const part of [at.run, at.composer]) {
+        expect(part.left - at.pane.left).toBeGreaterThanOrEqual(12);
+        expect(part.left - at.pane.left).toBeLessThanOrEqual(80);
+        expect(at.pane.right - part.right).toBeLessThanOrEqual(80);
+      }
+      // Code and what a command printed take the whole width.
+      expect(at.code.right).toBeCloseTo(at.run.right, 0);
+      expect(at.output.right).toBeCloseTo(at.run.right, 0);
+      // Words wrap at a measure of their own once the pane is wide.
+      expect(at.words.width).toBeLessThanOrEqual(1300);
+      if (at.run.width < 1100) expect(at.words.right).toBeCloseTo(at.run.right, 0);
+      // Your message stands to the right, the agent's words to the left.
+      expect(at.bubble.right).toBeCloseTo(at.run.right, 0);
+      expect(at.words.left).toBeCloseTo(at.code.left, 0);
+      expect(at.overflow).toBe(0);
+    });
+
+  test("keeps to editor mode's narrow column with nothing overflowing", async ({ page }) => {
+    await openIntegrated(page);
+    await expect(page.getByTestId("composer-input")).toBeVisible();
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Keep the cache.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: "${"Words. ".repeat(40)}\\n\\n\`\`\`\\n${"let x = 1; ".repeat(40)}\\n\`\`\`", done: true });
+       f.endTurn("${H}");`,
+    );
+    await page.keyboard.press("ControlOrMeta+Shift+E");
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    const at = await page.evaluate((agent) => {
+      const pane = document.querySelector(agent)!.getBoundingClientRect();
+      const thread = document.querySelector(`${agent} .thread`)!;
+      const composer = document.querySelector(`${agent} [data-testid='composer-input']`)!.getBoundingClientRect();
+      return { pane: pane.right, composer: composer.right, overflow: thread.scrollWidth - thread.clientWidth };
+    }, AGENT);
+    expect(at.overflow).toBe(0);
+    expect(at.composer).toBeLessThan(at.pane);
+  });
+});

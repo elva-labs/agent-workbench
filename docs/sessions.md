@@ -429,7 +429,12 @@ like Latin ones, or a name whose letters mix scripts, so no message, row
 or request can pass for another session's, the workbench's or an agent's; the start
 tool says which it was to its caller, and the session is named by its
 prompt instead. A name the start gave is kept by the session's id, so the
-session is called so after a restart too. Under it is the thread. The user's words sit to the right in a
+session is called so after a restart too. Under it is the thread. The
+thread and the composer span the pane, as the terminal they replace does,
+with a margin that grows a little with the pane and narrows in a narrow
+one. Code, diffs, what a command printed and tables use the whole width;
+words wrap at about 140 characters, so a line still reads in a wide pane.
+The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
 under that session's name, with a way to go to it. What the workbench

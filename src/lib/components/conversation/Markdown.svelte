@@ -160,6 +160,12 @@
     padding-left: 1.4em;
   }
 
+  /* Words keep a measure that still reads in a wide pane; code, tables
+     and what steps print use the whole width. */
+  .md > :global(:is(p, ul, ol, blockquote, h1, h2, h3, h4)) {
+    max-width: var(--conv-measure);
+  }
+
   .md :global(li + li) {
     margin-top: 0.2em;
   }

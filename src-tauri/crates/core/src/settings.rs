@@ -260,7 +260,7 @@ pub struct Settings {
     /// every field filled in.
     pub backgrounds: BTreeMap<String, Value>,
     /// How much of its background each palette or theme lets through the
-    /// cards, by its name, as a share of the background's strength. Kept
+    /// cards, by its name, from none at 0 to the most at 0.25. Kept
     /// beside the backgrounds rather than in one, so a version that knows
     /// no such field still reads the background.
     #[serde(default)]
@@ -979,7 +979,7 @@ fn card_share(name: &str, value: &Value) -> Result<Value, String> {
     within(Some(value), 0.0, MOST_CARDS)
         .map(|_| value.clone())
         .ok_or(format!(
-            "the cards of {name} let through from 0 to {MOST_CARDS} of the strength"
+            "the cards of {name} are kept from 0 to {MOST_CARDS}"
         ))
 }
 
