@@ -201,11 +201,12 @@
   }
 
   /* Wide enough for a line on each choice to sit on one line, and no
-     wider than the conversation it opens over. */
+     wider than the conversation it opens over, whose width the view gives
+     it, or the window where there is none. */
   .menu.end {
     left: auto;
     right: 0;
-    width: min(330px, calc(100cqi - 32px));
+    width: min(330px, calc(var(--conv-width, 100vw) - 32px));
     max-width: none;
   }
 

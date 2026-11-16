@@ -7,8 +7,12 @@ session has no terminal, and the window draws its conversation instead, as
 many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
-unmounted, and hidden in a way that keeps their box in layout, so a
-background session's pty is never resized and never reflows. Each
+unmounted. A terminal session is hidden in a way that keeps its box in
+layout, so a background session's pty is never resized and never reflows.
+An integrated session's conversation is taken out of layout while it is
+not in front, so a window holding many costs no more to lay out than one
+holding the conversation on screen; it comes back where it was left, and
+at its foot if it was following it. Each
 terminal takes in what its agent draws as it arrives: on the next frame
 the window paints, or a moment later when the window paints none, as when
 it is minimised or behind other windows. A session that has never been on
