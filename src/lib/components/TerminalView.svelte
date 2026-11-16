@@ -20,7 +20,7 @@
     softwareGl,
     tokenReader,
   } from "$lib/terminal";
-  import { theme } from "$lib/theme.svelte";
+  import { cardsThrough, theme } from "$lib/theme.svelte";
   import { DEFAULT_SIZE } from "$lib/zoom.svelte";
 
   /**
@@ -77,9 +77,12 @@
 
   /** The colours the terminal draws in: the theme's, on the well's ground
       where it is drawn a step toward the ground. The well is a mix, so it is
-      read as the page paints it. */
+      read as the page paints it. While the cards let a background through,
+      the terminal's ground is clear and the card's paint, or the well's,
+      shows through it; rows a program paints itself keep their colour. */
   function colours() {
     const built = buildTheme(tokenReader(document.documentElement));
+    if (cardsThrough()) return { ...built, background: CLEAR };
     if (!dim) return built;
     const probe = document.createElement("span");
     probe.style.color = "var(--well)";
@@ -111,6 +114,8 @@
     gl.getExtension("WEBGL_lose_context")?.loseContext();
     return typeof renderer === "string" ? renderer : null;
   }
+
+  const CLEAR = "rgba(0, 0, 0, 0)";
 
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
@@ -145,6 +150,9 @@
       fontSize,
       lineHeight: 1.35,
       scrollback: 10_000,
+      // A clear ground draws glyphs without subpixel smoothing, so it is on
+      // only while the cards let a background through.
+      allowTransparency: cardsThrough(),
       theme: colours(),
       // Links the program marked up itself (OSC 8), as Claude Code does.
       linkHandler: { activate: follow },
@@ -355,12 +363,15 @@
     untrack(() => terminal!.focus());
   });
 
-  // Live setter: the TUI recolours without a respawn.
+  // Live setter: the TUI recolours without a respawn, and its ground
+  // clears or fills as the cards start or stop letting a background through.
   $effect(() => {
     theme.painted;
     void dim;
     if (!terminal) return;
     untrack(() => {
+      const clear = cardsThrough();
+      if (terminal!.options.allowTransparency !== clear) terminal!.options.allowTransparency = clear;
       terminal!.options.theme = colours();
     });
   });

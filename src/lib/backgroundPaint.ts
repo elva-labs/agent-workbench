@@ -4,9 +4,11 @@ import {
   gradientPixels,
   grainPixels,
   labToRgb,
+  mix,
   paintOf,
   rgbToHex,
   toneOf,
+  veilOf,
   type Appearance,
   type Background,
   type Look,
@@ -70,8 +72,29 @@ function backdrop(painted: Painted, appearance: Appearance, images: Images): str
   return layers.join(", ");
 }
 
+/** The layers behind a see-through card's own ground: the gradient with
+    the grain blurred into a flat veil over it, so a card shows the
+    background soft rather than speckled. A single colour is one flat
+    paint. */
+function cardBackdrop(painted: Painted, appearance: Appearance, images: Images): string {
+  const veil = painted.cards?.veil ?? null;
+  if (painted.colours.length > 1 && images[appearance] !== null) {
+    const image = `var(--tint-image-${appearance}) 0 0 / 100vw 100vh no-repeat fixed`;
+    return veil === null ? image : `linear-gradient(${veil}, ${veil}), ${image}`;
+  }
+  const flat = labToRgb(painted.colours[0]);
+  const shown = rgbToHex(veil === null ? flat : mix(flat, [127.5, 127.5, 127.5], veilOf(painted.grain)));
+  return `linear-gradient(${shown}, ${shown})`;
+}
+
 function valuesOf(painted: Painted, appearance: Appearance, images: Images): Record<string, string> {
   const out: Record<string, string> = { "tint-backdrop": backdrop(painted, appearance, images) };
+  if (painted.cards !== null) {
+    out["tint-card-backdrop"] = cardBackdrop(painted, appearance, images);
+    out["tint-card"] = painted.cards.card;
+    out["tint-well"] = painted.cards.well;
+    for (const token of TEXT_TOKENS) out[`tint-card-${token}`] = painted.cards.text[token];
+  }
   for (const [part, ground] of Object.entries(painted.grounds)) out[`tint-${part}`] = ground;
   out["tint-line"] = painted.line;
   out["tint-line-strong"] = painted.lineStrong;
@@ -82,7 +105,8 @@ function valuesOf(painted: Painted, appearance: Appearance, images: Images): Rec
 }
 
 /** The stylesheet for a background: what it paints in each appearance and
-    look, worked out for the palette's colours in each appearance. While a
+    look, worked out for the palette's colours in each appearance, the
+    cards' share included where they let any through. While a
     background is being picked only the appearance and look on screen are
     worked out, so the window keeps up with the pointer. */
 export function backgroundCss(
@@ -90,6 +114,7 @@ export function backgroundCss(
   colours: Record<Appearance, Record<string, string>>,
   images: Images,
   only: { appearance: Appearance; look: Look } | null = null,
+  cards = 0,
 ): string {
   const named: Record<string, string> = {};
   if (images.light !== null) named["tint-image-light"] = `url("${images.light}")`;
@@ -101,7 +126,7 @@ export function backgroundCss(
     only !== null && only.appearance !== appearance
       ? []
       : looks.map(
-          (look) => [look, valuesOf(paintOf(background, look, colours[appearance]), appearance, images)] as const,
+          (look) => [look, valuesOf(paintOf(background, look, colours[appearance], cards), appearance, images)] as const,
         );
   for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
   const dark = sets("dark");

@@ -51,6 +51,8 @@ export interface Background {
 
 export const MOST_DOTS = 3;
 export const LEAST_STRENGTH = 0.1;
+/** The most of the strength the cards let through. */
+export const MOST_CARDS = 0.25;
 /** The most strength the terminal look takes, and it takes no grain. */
 export const TERMINAL_STRENGTH = 0.5;
 /** How far a speck of grain darkens or lightens, at full grain. */
@@ -199,6 +201,32 @@ export function validBackgrounds(value: unknown): Record<string, Background> {
   }
   return out;
 }
+
+/** How much a palette or theme lets through its cards, as the rules take
+    it, or the reason it will not do. */
+export function checkCards(value: unknown): number {
+  if (!inRange(value, 0, MOST_CARDS)) {
+    throw new Error(`cards let through from 0 to ${MOST_CARDS} of the strength, not ${JSON.stringify(value)}.`);
+  }
+  return value;
+}
+
+/** The cards' shares in a table that pass the rules, the rest left out. */
+export function validCards(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return out;
+  for (const [name, share] of Object.entries(value)) {
+    try {
+      out[name] = checkCards(share);
+    } catch {
+      // A share that does not pass lets nothing through.
+    }
+  }
+  return out;
+}
+
+/** A cards' share rounded as it is kept, in hundredths. */
+export const roundedCards = (share: number) => Math.round(Math.min(MOST_CARDS, Math.max(0, share)) * 100) / 100;
 
 /** A background with its numbers rounded as they are kept: whole degrees,
     and hundredths for the rest. */
@@ -402,7 +430,7 @@ function mixLch(A: Lab, B: Lab, t: number): Lab {
 
 const smooth = (t: number) => t * t * (3 - 2 * t);
 
-const rgba = (rgb: Rgb, alpha: number) =>
+export const rgba = (rgb: Rgb, alpha: number) =>
   `rgba(${rgb.map((value) => Math.round(clamp(value, 0, 255))).join(", ")}, ${alpha.toFixed(3)})`;
 
 /* ---------------------------------------------------------------------- */
@@ -571,6 +599,8 @@ export interface Painted {
       painted. */
   asked: Record<TextToken, number>;
   contrast: Record<TextToken, number>;
+  /** What the cards paint, where they let any of the background through. */
+  cards: PaintedCards | null;
 }
 
 /** The darkest tone a chrome goes, which the modern look's ground is: a
@@ -689,7 +719,12 @@ function todayLine(colours: Record<string, string>, look: Look): Rgb {
 
 /** What a background paints in a look over a palette's colours in one
     appearance, with the guard's stronger text and the lines' one amount. */
-export function paintOf(background: Background, look: Look, colours: Record<string, string>): Painted {
+export function paintOf(
+  background: Background,
+  look: Look,
+  colours: Record<string, string>,
+  cards = 0,
+): Painted {
   const strength = look === "terminal" ? Math.min(background.strength, TERMINAL_STRENGTH) : background.strength;
   const grain = look === "terminal" ? 0 : background.grain;
   const tone = toneOf(colours);
@@ -715,6 +750,8 @@ export function paintOf(background: Background, look: Look, colours: Record<stri
     low = Math.min(low, partLow);
     high = Math.max(high, partHigh);
   }
+  const throughCards = cards > 0 ? cardsOf(colours, look, dots, strength, grain, cards) : null;
+
   const text = {} as Record<TextToken, string>;
   const asked = {} as Record<TextToken, number>;
   const contrast = {} as Record<TextToken, number>;
@@ -735,6 +772,15 @@ export function paintOf(background: Background, look: Look, colours: Record<stri
   let strongAmount = 0;
   const painted: Partial<Record<Part, string>> = {};
   const coarse = dots.length === 1 ? grid : gridOf(at, 8, 5);
+  if (throughCards !== null && throughCards.amount > 0) {
+    // A see-through card's ground and its well's are grounds a line lies
+    // on as well.
+    for (const ground of [hexToRgb(colours.surface), wellOf(colours)]) {
+      const under = coarse.map((colour) => mix(ground, colour, throughCards.amount));
+      amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
+      strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
+    }
+  }
   for (const part of parts) {
     const ground = grounds[part]!;
     const under = coarse.map((colour) => mix(ground, colour, strength));
@@ -755,5 +801,239 @@ export function paintOf(background: Background, look: Look, colours: Record<stri
     fillAccent: rgba(accent, FILL.accent),
     asked,
     contrast,
+    cards: throughCards,
+  };
+}
+
+/* ---------------------------------------------------------------------- */
+/* Cards that let the background through.                                  */
+/* ---------------------------------------------------------------------- */
+
+/** The terminal's sixteen colours, by token. */
+export const ANSI_TOKENS = [
+  "ansi-black",
+  "ansi-red",
+  "ansi-green",
+  "ansi-yellow",
+  "ansi-blue",
+  "ansi-magenta",
+  "ansi-cyan",
+  "ansi-white",
+  "ansi-bright-black",
+  "ansi-bright-red",
+  "ansi-bright-green",
+  "ansi-bright-yellow",
+  "ansi-bright-blue",
+  "ansi-bright-magenta",
+  "ansi-bright-cyan",
+  "ansi-bright-white",
+] as const;
+
+/** The well's tone: a step from the surface toward the ground, for a list
+    beside what is read, read from the colours as the deep is. */
+export function wellOf(colours: Record<string, string>): Rgb {
+  const bg = hexToRgb(colours.bg);
+  return toneOf(colours) === "light" ? bg : mix(bg, hexToRgb(colours.surface), 0.45);
+}
+
+/** What the grain comes to behind a card: its speckle blurred to a flat
+    grey at the mean opacity of a speck, so a card shows the background
+    soft rather than speckled. */
+export const veilOf = (grain: number) => (GRAIN_SPECK * grain) / 2;
+const VEIL: Rgb = [127.5, 127.5, 127.5];
+
+/** A ground inside a card that text is read on, with a fill over it, and
+    the kinds of text read there. A terminal's are its own colours, which
+    the guard reads and never redraws. */
+interface CardPair {
+  ground: "card" | "well";
+  fill: "ink" | "accent" | "add" | "del" | null;
+  amount: number;
+  tokens: readonly string[];
+  terminal?: boolean;
+}
+
+const CARD_PAIRS: CardPair[] = [
+  // The card and the well beside it, bare and under a hovered or chosen
+  // row, a field or your message, read as the chrome's parts are.
+  ...(["card", "well"] as const).flatMap((ground) => [
+    { ground, fill: null, amount: 0, tokens: TEXT_TOKENS },
+    { ground, fill: "ink" as const, amount: GUARD_FILL.ink, tokens: TEXT_TOKENS },
+    { ground, fill: "accent" as const, amount: GUARD_FILL.accent, tokens: TEXT_TOKENS },
+  ]),
+  // A diff's added and removed rows with their numbers, selected text, and
+  // the current find match.
+  { ground: "card", fill: "add", amount: 0.14, tokens: ["ink", "add", "ink-3"] },
+  { ground: "card", fill: "del", amount: 0.14, tokens: ["ink", "del", "ink-3"] },
+  { ground: "card", fill: "accent", amount: 0.24, tokens: ["ink"] },
+  { ground: "card", fill: "accent", amount: 0.38, tokens: ["ink"] },
+  // A terminal on the card, a shell without the keyboard on the well, and
+  // a selection in a terminal.
+  { ground: "card", fill: null, amount: 0, tokens: ["ink", ...ANSI_TOKENS], terminal: true },
+  { ground: "well", fill: null, amount: 0, tokens: ["ink", ...ANSI_TOKENS], terminal: true },
+  { ground: "card", fill: "accent", amount: 0.22, tokens: ["ink"], terminal: true },
+];
+
+/** How far, in OKLab, cards in dark keep standing off the ground at their
+    weakest point: about half the least step any palette's plain cards
+    have, or the step solid cards have over the background where that is
+    already less. */
+export const STAND_OFF = 0.015;
+
+/** What the cards paint in one appearance and look. */
+export interface PaintedCards {
+  /** The share of the strength asked, and the share let through after
+      the guard, and why it holds back: a terminal colour that would fall
+      under 4.5:1, or cards that would stop standing off the ground. */
+  asked: number;
+  held: number;
+  heldBy: "terminal" | "ground" | null;
+  /** How much of the background a card shows: the strength times the
+      share let through. */
+  amount: number;
+  /** The card's ground and the well's, let through by that amount. */
+  card: string;
+  well: string;
+  /** The grain blurred to a flat veil over the background, or null. */
+  veil: string | null;
+  /** The text tokens on cards, a step stronger where they need it, and
+      their contrast at the worst point. */
+  text: Record<TextToken, string>;
+  contrast: Record<TextToken, number>;
+  /** The lowest contrast of any terminal colour the guard reads. */
+  terminal: number;
+  /** How far cards stand off the ground at their weakest point, as a
+      share of the step they have with no background. */
+  standOff: number;
+}
+
+/** The lightest and darkest a card's ground gets under a fill, anywhere in
+    the window, at an amount of the veiled background. */
+function cardRange(under: Rgb[], ground: Rgb, amount: number, fill: Rgb | null, share: number): [number, number] {
+  let low = 1;
+  let high = 0;
+  for (const colour of under) {
+    const card = mix(ground, colour, amount);
+    const y = luminance(fill === null ? card : mix(card, fill, share));
+    low = Math.min(low, y);
+    high = Math.max(high, y);
+  }
+  return [low, high];
+}
+
+/** The least step, in OKLab, between a card and the ground it stands on. */
+function standOff(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength: number): number {
+  let least = Infinity;
+  for (const colour of under) {
+    const [L1, a1, b1] = rgbToLab(mix(card, colour, amount));
+    const [L2, a2, b2] = rgbToLab(mix(ground, colour, strength));
+    least = Math.min(least, Math.hypot(L1 - L2, a1 - a2, b1 - b2));
+  }
+  return least;
+}
+
+/** What cards paint that let through a share of a background's strength,
+    with the guard's stronger text and the share it holds back to. */
+export function cardsOf(
+  colours: Record<string, string>,
+  look: Look,
+  dots: Lab[],
+  strength: number,
+  grain: number,
+  asked: number,
+): PaintedCards {
+  const tone = toneOf(colours);
+  const at = field(dots);
+  const grid = dots.length === 1 ? [labToRgb(dots[0])] : gridOf(at, 24, 15);
+  const veil = veilOf(grain);
+  const under = veil > 0 ? grid.map((colour) => mix(colour, VEIL, veil)) : grid;
+  const grounds = { card: hexToRgb(colours.surface), well: wellOf(colours) };
+  const fillOf = (name: CardPair["fill"]) => (name === null ? null : hexToRgb(colours[name]));
+  const ranges = (amount: number) =>
+    CARD_PAIRS.map((pair) => cardRange(under, grounds[pair.ground], amount, fillOf(pair.fill), pair.amount));
+
+  // A terminal colour that holds 4.5:1 on a solid card is to hold it on a
+  // see-through one; the share is held back to the most at which each
+  // still does.
+  const terminalPairs = CARD_PAIRS.flatMap((pair, index) => (pair.terminal ? [index] : []));
+  const terminalRanges = (amount: number) =>
+    terminalPairs.map((index) => {
+      const pair = CARD_PAIRS[index];
+      return cardRange(under, grounds[pair.ground], amount, fillOf(pair.fill), pair.amount);
+    });
+  const solid = terminalRanges(0);
+  const judged = terminalPairs.flatMap((index, at) =>
+    CARD_PAIRS[index].tokens
+      .filter((token) => worst(colours[token], solid[at]) >= LEAST_CONTRAST)
+      .map((token) => ({ at, token })),
+  );
+  const terminalLow = (amount: number) => {
+    const now = terminalRanges(amount);
+    return judged.reduce((least, { at, token }) => Math.min(least, worst(colours[token], now[at])), Infinity);
+  };
+
+  // In dark, the background lifts the ground toward the cards' lightness,
+  // so the guard also holds the share where cards would stop standing off
+  // the ground.
+  const ground = look === "modern" ? deepOf(colours) : hexToRgb(colours.bg);
+  const plain = (() => {
+    const [L1, a1, b1] = rgbToLab(grounds.card);
+    const [L2, a2, b2] = rgbToLab(ground);
+    return Math.hypot(L1 - L2, a1 - a2, b1 - b2);
+  })();
+  const least = tone === "light" ? 0 : Math.min(STAND_OFF, standOff(under, grounds.card, ground, 0, strength)) - 1e-6;
+  /** What holds a share back, or null where it holds. */
+  const fails = (share: number): PaintedCards["heldBy"] => {
+    if (terminalLow(strength * share) < LEAST_CONTRAST) return "terminal";
+    if (tone === "dark" && standOff(under, grounds.card, ground, strength * share, strength) < least) return "ground";
+    return null;
+  };
+
+  // The share asked, or else the most in whole hundredths that holds. Each
+  // figure falls as the share grows, so halving finds it.
+  let held = asked;
+  let heldBy = fails(asked);
+  if (heldBy !== null) {
+    let low = 0;
+    let high = Math.ceil(asked * 100);
+    while (high - low > 1) {
+      const middle = Math.floor((low + high) / 2);
+      if (fails(middle / 100) === null) low = middle;
+      else high = middle;
+    }
+    held = low / 100;
+    heldBy = fails(high / 100) ?? heldBy;
+  }
+  const amount = strength * held;
+
+  // The app's own text is drawn a step stronger, as on the chrome, over
+  // every ground and fill it is read on.
+  const now = ranges(amount);
+  const text = {} as Record<TextToken, string>;
+  const contrast = {} as Record<TextToken, number>;
+  for (const token of TEXT_TOKENS) {
+    let low = 1;
+    let high = 0;
+    CARD_PAIRS.forEach((pair, index) => {
+      if (pair.terminal || !pair.tokens.includes(token)) return;
+      low = Math.min(low, now[index][0]);
+      high = Math.max(high, now[index][1]);
+    });
+    text[token] = amount > 0 ? strengthen(colours[token], [low, high], tone) : colours[token];
+    contrast[token] = worst(text[token], [low, high]);
+  }
+
+  return {
+    asked,
+    held,
+    heldBy,
+    amount,
+    card: rgba(grounds.card, 1 - amount),
+    well: rgba(grounds.well, 1 - amount),
+    veil: veil > 0 ? rgba(VEIL, veil) : null,
+    text,
+    contrast,
+    terminal: judged.length === 0 ? Infinity : terminalLow(amount),
+    standOff: plain === 0 ? 1 : standOff(under, grounds.card, ground, amount, strength) / plain,
   };
 }

@@ -379,6 +379,7 @@
     onclick={(e) => e.stopPropagation()}
     onkeydown={onKeydown}
     data-testid="settings"
+    data-card
   >
     <header>
       <h2 id="settings-title">Settings</h2>
@@ -1122,7 +1123,7 @@
     height: min(820px, 92vh);
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--pane-border-on);
     border-radius: var(--radius-pane);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
