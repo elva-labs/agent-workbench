@@ -277,8 +277,6 @@
   let scrolledBy = Number.NEGATIVE_INFINITY;
   /** The scroll bar is held down, for as long as it is. */
   let dragging = false;
-  /** A pointer is held down in the thread, for as long as it is. */
-  let pressing = false;
   const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
   /** Where the foot was when the user last scrolled: a scroll can be heard
@@ -311,16 +309,10 @@
     // Only the user decides whether the thread follows. The thread's own
     // scroll to its foot can be heard after more has come, and the browser
     // moves the view itself to keep its place while text is drawn again;
-    // neither is the user leaving the foot. A thread that follows its foot
-    // and was moved a little off it so, as WebKit does as rows are drawn
-    // again, goes back to it; one moved further, as a screen reader or find
-    // moves it, or by a press in it, such as a selection being dragged,
-    // stays where it was put.
-    if (performance.now() - scrolledBy > 1000) {
-      const off = scroller.scrollHeight - top - scroller.clientHeight;
-      if (pinned && !pressing && off > 1 && off < scroller.clientHeight / 2) toEnd(scroller);
-      return;
-    }
+    // neither is the user leaving the foot. A move nobody here made, such
+    // as a screen reader bringing what it reads into view, stays where it
+    // was put.
+    if (performance.now() - scrolledBy > 1000) return;
     if (Math.abs(top - ownTop) < 2) return;
     if (scroller.scrollHeight - top - scroller.clientHeight < 32) {
       pinned = true;
@@ -1044,26 +1036,21 @@
   }}
   onpointerdown={(e) => {
     touched = performance.now();
-    pressing = true;
     // A press on the scrollbar itself scrolls, until it is let go. The
     // scrollbar is at the thread's right edge, over it where it overlays;
     // a press on the thread's own margin elsewhere scrolls nothing.
-    const bar = scroller !== null && e.target === scroller && e.offsetX >= scroller.clientWidth - 16;
-    if (bar) {
+    if (scroller !== null && e.target === scroller && e.offsetX >= scroller.clientWidth - 16) {
       userScrolls();
       dragging = true;
-    }
-    const up = () => {
-      pressing = false;
-      if (bar) {
+      const up = () => {
         dragging = false;
         userScrolls();
-      }
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", up);
-    };
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", up);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", up);
+      };
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", up);
+    }
   }}
   onkeydown={onThreadKey}
   onwheel={userScrolls}

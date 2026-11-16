@@ -249,6 +249,32 @@ test("follows a message sent just before a click in the thread's gutter", async 
   await expect.poll(() => seenOrOffered(page)).toBe(true);
 });
 
+test("leaves a thread at its foot where a scroll nobody here made put it, as a screen reader does", async ({ page }) => {
+  await page.setViewportSize({ width: 1100, height: 760 });
+  await open(page);
+  // Long enough to scroll, short enough to be drawn whole.
+  for (let turn = 0; turn < 12; turn++) {
+    await say(page, `question ${turn}`);
+    await agent(page, `f.turn("${H}", ${JSON.stringify(`Reply ${turn}. `.repeat(20))});`);
+  }
+  await expect.poll(async () => (await geometry(page)).fromFoot).toBeLessThan(1);
+  // What stands just above the view, brought into it with no wheel, key
+  // or touch, as a screen reader brings what it reads; then the frames in
+  // which the thread hears of the scroll and would move back.
+  await page.evaluate(async () => {
+    const scroller = document.querySelector<HTMLElement>("[data-testid='thread']")!;
+    const top = scroller.getBoundingClientRect().top;
+    const above = [...scroller.querySelectorAll<HTMLElement>("p")].filter((p) => p.getBoundingClientRect().bottom < top);
+    above.at(-1)!.dataset.read = "";
+    above.at(-1)!.scrollIntoView({ block: "nearest" });
+    for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+  });
+  const read = (await page.locator("[data-read]").boundingBox())!;
+  const view = (await page.getByTestId("thread").boundingBox())!;
+  expect(read.y).toBeGreaterThanOrEqual(view.y - 1);
+  expect(read.y + read.height).toBeLessThanOrEqual(view.y + view.height + 1);
+});
+
 test("brings a message that comes to wait into view just after a press in the thread", async ({ page }) => {
   await open(page);
   for (let turn = 0; turn < 10; turn++) {
