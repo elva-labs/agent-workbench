@@ -122,8 +122,10 @@ export const theme = $state<{
   /** A background and a share being picked, painted in place of the ones
       kept until they are let go; null while nothing is being picked. */
   preview: { background: Background | null; cards?: number } | null;
-  /** Counts every repaint, for what reads the colours back from the page,
-      such as a terminal, to follow. */
+  /** Counts every repaint that can change the colours read back from the
+      page, for what reads them, such as a terminal, to follow. A
+      background, and the share of it the cards let through, paint the
+      parts they tint and leave those colours as they were. */
   painted: number;
   /** The share the cards let through in the appearance and look on
       screen, after the guard: none where it holds the share at 0. */
@@ -395,8 +397,8 @@ export function cycleTheme() {
 }
 
 /** The stylesheet the user's own themes are painted from, written last
-    into the page's head. */
-function paintThemes() {
+    into the page's head. Answers with what it holds. */
+function paintThemes(): string {
   const id = "workbench-themes";
   let sheet = document.getElementById(id);
   if (sheet === null) {
@@ -406,6 +408,7 @@ function paintThemes() {
   }
   const css = themeCss(theme.themes);
   if (sheet.textContent !== css) sheet.textContent = css;
+  return css;
 }
 
 /** The system asking for more contrast, by a setting or by forcing its
@@ -457,6 +460,18 @@ export function cardsThrough(): boolean {
 export const REST = 200;
 let resting: ReturnType<typeof setTimeout> | null = null;
 
+/** The stylesheet last worked out for a background, by what it was worked
+    out from, with the share the guard lets through in each appearance and
+    look, and whether a gradient in it is drawn small: a repaint that
+    changes none of it works nothing out again, unless it is the one that
+    draws the gradient at full size. */
+let worked: {
+  from: string;
+  css: string;
+  held: Partial<Record<string, number>>;
+  rough: boolean;
+} | null = null;
+
 /** The stylesheet the background is painted from, worked out from the
     colours the palette or theme paints in each appearance. A gradient not
     yet drawn at full size is drawn small, and at full size once the
@@ -472,10 +487,9 @@ function paintBackground(full = false) {
     document.head.appendChild(sheet);
   }
   const background = shownBackground();
-  const root = document.documentElement;
   if (background === null || moreContrast()) {
-    delete root.dataset.background;
-    delete root.dataset.cards;
+    stamp("background", null);
+    stamp("cards", null);
     theme.cardsHeld = 0;
     if (sheet.textContent !== "") sheet.textContent = "";
     return;
@@ -488,51 +502,60 @@ function paintBackground(full = false) {
   // While one is being picked, only what is on screen is worked out.
   const appearance = resolvedTheme();
   const only = theme.preview === null ? null : { appearance, look: theme.look };
-  const held: Partial<Record<string, number>> = {};
-  const images = imagesOf(
-    background,
-    only === null ? colours : { [only.appearance]: colours[only.appearance] },
-    full,
-  );
-  const css = backgroundCss(background, colours, images, only, cards, held);
+  const from = JSON.stringify([background, colours, only, cards]);
+  if (worked?.from !== from || (full && worked.rough)) {
+    const held: Partial<Record<string, number>> = {};
+    const images = imagesOf(
+      background,
+      only === null ? colours : { [only.appearance]: colours[only.appearance] },
+      full,
+    );
+    const css = backgroundCss(background, colours, images, only, cards, held);
+    worked = { from, css, held, rough: images.rough === true };
+  }
+  const { css, held } = worked;
   if (sheet.textContent !== css) sheet.textContent = css;
-  if (images.rough) resting = setTimeout(() => paintBackground(true), REST);
-  root.dataset.background = "";
+  if (worked.rough) resting = setTimeout(() => paintBackground(true), REST);
+  stamp("background", "");
   // Where the guard holds the share at none on screen, nothing changes.
   theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
-  if (theme.cardsHeld > 0) root.dataset.cards = "";
-  else delete root.dataset.cards;
+  stamp("cards", theme.cardsHeld > 0 ? "" : null);
+}
+
+/** What the colours read back from the page follow, as last painted. */
+let paintedFrom: string | null = null;
+
+/** Stamps `name` on <html>, or takes it off for null. Rules across the
+    whole page read every stamp, so only a change is written. */
+function stamp(name: string, value: string | null) {
+  const root = document.documentElement;
+  if (value === null) {
+    if (name in root.dataset) delete root.dataset[name];
+  } else if (root.dataset[name] !== value) {
+    root.dataset[name] = value;
+  }
 }
 
 function applyTheme() {
-  paintThemes();
-  const root = document.documentElement;
-  if (theme.choice === "system") {
-    delete root.dataset.theme;
-  } else {
-    root.dataset.theme = theme.choice;
-  }
-  if (theme.palette === "teal") {
-    delete root.dataset.palette;
-  } else {
-    root.dataset.palette = theme.palette;
-  }
-  if (theme.look === "terminal") {
-    delete root.dataset.look;
-  } else {
-    root.dataset.look = theme.look;
-  }
-  if (theme.mono === "system") {
-    delete root.dataset.mono;
-  } else {
-    root.dataset.mono = theme.mono;
-  }
-  if (theme.sans === "system") {
-    delete root.dataset.sans;
-  } else {
-    root.dataset.sans = theme.sans;
-  }
+  const themes = paintThemes();
+  stamp("theme", theme.choice === "system" ? null : theme.choice);
+  stamp("palette", theme.palette === "teal" ? null : theme.palette);
+  stamp("look", theme.look === "terminal" ? null : theme.look);
+  stamp("mono", theme.mono === "system" ? null : theme.mono);
+  stamp("sans", theme.sans === "system" ? null : theme.sans);
   paintBackground();
+  const from = JSON.stringify([
+    theme.choice,
+    resolvedTheme(),
+    theme.palette,
+    theme.look,
+    theme.mono,
+    theme.sans,
+    moreContrast(),
+    themes,
+  ]);
+  if (from === paintedFrom) return;
+  paintedFrom = from;
   theme.painted += 1;
 }
 

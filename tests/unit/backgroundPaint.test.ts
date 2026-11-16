@@ -174,8 +174,14 @@ describe("painting the background the palette keeps", () => {
     const shown = resolvedTheme();
     const other = shown === "light" ? "dark" : "light";
     const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
-    adoptTheme({ palette: "teal", backgrounds: { teal: LAGOON } });
+    // A background no other test paints, so no sheet is already worked
+    // out for it.
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
     expect(images()).toEqual({ light: small, dark: small });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ light: full, dark: full });
+    // Painted again with nothing changed, it stays at full size.
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
     vi.advanceTimersByTime(REST);
     expect(images()).toEqual({ light: full, dark: full });
     // A dot dragged on the pad: only the appearance on screen is drawn, and
