@@ -3,6 +3,7 @@
   import FileTree, { type Beyond, type NameField } from "$lib/components/FileTree.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
   import RowMenu from "$lib/components/RowMenu.svelte";
+  import Plain from "$lib/components/conversation/Plain.svelte";
   import {
     cancelDelete,
     cancelName,
@@ -62,23 +63,36 @@
   import { core } from "$lib/core";
   import {
     allowedProjects,
-    oneLine,
     revoke,
     startedBy,
     stateOf,
     stopAll,
     stopStarted,
-    typeLine,
   } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { listed as presentedFor, openItem } from "$lib/media.svelte";
   import {
+    boardOf,
+    canSend,
+    cleanQuestion,
     cleanWorktrees,
     isAsking,
     isConductor,
     leftBehind,
+    madeTrees,
+    quotedStarted,
     readWorktrees,
     removable,
+    sendLine as sendStarted,
+    shownStarted,
+    startedDetail,
+    startedDot,
+    startedName,
+    stopAllQuestion,
+    stopOneQuestion,
+    treesFor,
+    worktreeLine,
+    type LeftTree,
   } from "$lib/orchestrator.svelte";
   import {
     elapsed,
@@ -106,7 +120,7 @@
     select as selectSession,
     type Session,
   } from "$lib/sessions.svelte";
-  import { activate, activeProject, followedWorktree, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { activate, activeProject, followedWorktree, goTo, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
   import {
     DEFAULT,
     MIN,
@@ -143,8 +157,9 @@
   let columnHeight = $state(0);
 
   /** The sections' rows as the tree's cursor sees them: each section's
-      header, then what it holds while it is open, media first, processes,
-      the browser, and a plugin's fold with its group lines and rows last. */
+      header, then what it holds while it is open, media first, the
+      sessions the session on screen started, processes, the browser, and
+      a plugin's fold with its group lines and rows last. */
   let sectionCursor = $state(-1);
   const FOLD_ID = "media-fold";
   const PROCESSES_FOLD_ID = "processes-fold";
@@ -158,6 +173,10 @@
   type Entry =
     | { id: string; kind: "media-head" }
     | { id: string; kind: "media"; index: number }
+    | { id: string; kind: "started-head" }
+    | { id: string; kind: "started"; key: string }
+    | { id: string; kind: "started-allowed"; project: string }
+    | { id: string; kind: "started-trees" }
     | { id: string; kind: "processes-head" }
     | { id: string; kind: "process"; index: number }
     | { id: string; kind: "browser-head" }
@@ -180,6 +199,14 @@
       list.push({ id: FOLD_ID, kind: "media-head" });
       if (layout.mediaOpen) {
         presented.forEach((item, index) => list.push({ id: rowIdOf(item.id), kind: "media", index }));
+      }
+    }
+    if (board !== null) {
+      list.push({ id: STARTED_FOLD_ID, kind: "started-head" });
+      if (layout.startedOpen) {
+        for (const session of started) list.push({ id: startedRowId(session.key), kind: "started", key: session.key });
+        for (const project of allowedHere) list.push({ id: allowedId(project), kind: "started-allowed", project });
+        if (boardTrees.length > 0) list.push({ id: STARTED_TREES_ID, kind: "started-trees" });
       }
     }
     list.push({ id: PROCESSES_FOLD_ID, kind: "processes-head" });
@@ -230,6 +257,10 @@
       if (entry === undefined) return;
       if (entry.kind === "media-head") toggleMedia();
       else if (entry.kind === "media") openItem(presented[entry.index]);
+      else if (entry.kind === "started-head") toggleStarted();
+      else if (entry.kind === "started") openStarted(entry.key);
+      else if (entry.kind === "started-allowed") revokeProject(entry.project);
+      else if (entry.kind === "started-trees") askClean();
       else if (entry.kind === "processes-head") toggleProcesses();
       else if (entry.kind === "browser-head") toggleBrowser();
       else if (entry.kind === "browser-tab") {
@@ -243,6 +274,26 @@
         const section = sectionAt(entry.key);
         if (section !== undefined) runDefault(section, section.rows[entry.index]);
       }
+    },
+    key: (index, e) => {
+      const entry = sectionEntries[index];
+      if (entry === undefined || e.metaKey || e.ctrlKey || e.altKey) return false;
+      const deleting = (e.key === "Delete" || e.key === "Backspace") && !e.shiftKey;
+      if (entry.kind === "started-head") {
+        if (!deleting) return false;
+        askStopAll();
+        return true;
+      }
+      if (entry.kind !== "started") return false;
+      const session = started.find((row) => row.key === entry.key);
+      if (session === undefined) return false;
+      if (e.key === "Enter" && e.shiftKey) {
+        if (sending !== session.key) openSend(session);
+        return true;
+      }
+      if (!deleting) return false;
+      askStop(session);
+      return true;
     },
     fold: (index, open) => {
       const entry = sectionEntries[index];
@@ -279,6 +330,17 @@
         sectionCursor = head;
         return;
       }
+      if (
+        entry.kind === "started-head" ||
+        entry.kind === "started" ||
+        entry.kind === "started-allowed" ||
+        entry.kind === "started-trees"
+      ) {
+        if (open === layout.startedOpen) return;
+        setStartedOpen(open);
+        if (!open) sectionCursor = sectionEntries.findIndex((candidate) => candidate.kind === "started-head");
+        return;
+      }
       // Media, processes and the browser each fold the same way: a row
       // folds the section it sits under, and leaves the cursor on its header.
       const headKind =
@@ -313,8 +375,10 @@
     if (at !== -1) sectionCursor = at;
   });
 
-  let anyOpen = $derived(
-    (presented.length > 0 && layout.mediaOpen) ||
+  let anyOpen = $derived.by(
+    () =>
+      (presented.length > 0 && layout.mediaOpen) ||
+      (board !== null && layout.startedOpen) ||
       layout.processesOpen ||
       layout.browserOpen ||
       pluginList.some((group) => sectionOpen(group.key)),
@@ -647,7 +711,13 @@
     const session = activeSession();
     return session !== null && isConductor(session) ? session : null;
   });
-  let started = $derived(conducting === null ? [] : startedBy(conducting.token));
+  /** Any other session on screen that started sessions of its own has
+      them in a section at the foot of the tree's column, beside Processes
+      and Browser, walked by the tree's cursor as they are. */
+  let board = $derived(conducting === null ? boardOf(activeSession()) : null);
+  /** The session whose started sessions are shown, in either place. */
+  let starter = $derived(conducting ?? board);
+  let started = $derived(starter === null ? [] : startedBy(starter.token));
   let asking = $derived(started.filter(isAsking).length);
   let boardMeta = $derived(
     `${started.length} session${started.length === 1 ? "" : "s"}${asking === 0 ? "" : `, ${asking} asking`}`,
@@ -674,9 +744,13 @@
   let startedOpen = $state(true);
   let boardCursor = $state<string | null>(null);
   let boardNav = $state<HTMLDivElement | null>(null);
-  /** The projects this orchestrator may start sessions in without being
+  /** The projects this session may start sessions in without being
       asked, each with the × that takes the standing answer back. */
-  let allowedHere = $derived(conducting === null ? [] : allowedProjects(conducting.token));
+  let allowedHere = $derived(starter === null ? [] : allowedProjects(starter.token));
+  /** The worktrees the line under the sessions counts: every one left
+      behind for the orchestrator, and for any other session those in the
+      projects it starts sessions in. */
+  let boardTrees = $derived(conducting !== null ? leftBehind.trees : board === null ? [] : treesFor(board));
   /** The row with the send field under it: one at a time, and only while
       that session is running. */
   let sending = $state<string | null>(null);
@@ -764,29 +838,15 @@
     return parts.join(" · ");
   }
 
-  /** The row's dot, as the pane draws a plugin row's: breathing while the
-      session works, the accent while it waits on you, hollow once it is
-      no longer running. */
-  function startedDot(session: Session): string {
-    if (!isLive(session)) return "none";
-    if (isAsking(session)) return "waiting";
-    return session.working ? "busy" : "ok";
-  }
-
   /** The next start this caller makes in that project is put to the user. */
   function revokeProject(project: string) {
-    if (conducting === null) return;
-    revoke(conducting.token, project);
+    if (starter === null) return;
+    revoke(starter.token, project);
   }
 
   function stopRow(session: Session) {
     if (sending === session.key) sending = null;
     stopStarted(session.key);
-  }
-
-  /** A session with a terminal behind it is one there is somewhere to type. */
-  function canSend(session: Session): boolean {
-    return session.status === "running" && session.ptyId !== null;
   }
 
   function openSend(session: Session) {
@@ -800,11 +860,11 @@
     sendLine = "";
   }
 
-  /** What the field holds, typed into the session as the conductor's own
-      send tool types a line: one line, and nothing that drives the terminal. */
+  /** What the field holds, sent to the session the field is under: one
+      line, typed into a terminal as the conductor's own send tool types
+      one, or an integrated session's message from the user. */
   function sendTo(session: Session) {
-    const line = oneLine(sendLine);
-    if (line !== "" && session.ptyId !== null) void typeLine(session.key, session.ptyId, line);
+    sendStarted(session, sendLine);
     closeSend();
   }
 
@@ -815,9 +875,11 @@
     if (e.key === "Enter") {
       e.preventDefault();
       sendTo(session);
+      keysBack();
     } else if (e.key === "Escape") {
       e.preventDefault();
       closeSend();
+      keysBack();
     }
   }
 
@@ -826,10 +888,19 @@
     if (sending !== null) sendField?.focus();
   });
 
-  // What the starts left behind, read while the board is on screen and again
-  // whenever one of the sessions comes or goes.
+  /** The session whose worktrees left behind are read: the orchestrator,
+      the one whose section shows, or the one on screen whose starts made a
+      worktree, so the section can show for what they left. */
+  let readFor = $derived.by(() => {
+    if (starter !== null) return starter.key;
+    const session = activeSession();
+    return madeTrees(session) ? session!.key : null;
+  });
+
+  // What the starts left behind, read while the board or the section is on
+  // screen and again whenever one of the sessions comes or goes.
   $effect(() => {
-    if (conducting === null) return;
+    if (readFor === null) return;
     liveStarted;
     untrack(() => {
       cleaned = false;
@@ -837,32 +908,234 @@
     });
   });
 
-  async function cleanUp() {
+  async function cleanUp(trees?: LeftTree[]) {
     cleaning = true;
     try {
-      await cleanWorktrees();
+      await cleanWorktrees(trees);
     } finally {
       cleaning = false;
       cleaned = true;
     }
   }
 
-  /** The line under the board: how many worktrees the starts left behind,
-      and once they have been cleaned, why the rest are still there. */
-  function worktreeLine(): string {
-    const trees = leftBehind.trees;
-    if (!cleaned) return `${trees.length} worktree${trees.length === 1 ? "" : "s"} left behind`;
-    const dirty = trees.filter((tree) => tree.dirty).length;
-    const ahead = trees.filter((tree) => !tree.dirty && !tree.merged).length;
-    const why = [
-      dirty === 0 ? null : { count: dirty, said: "uncommitted work" },
-      ahead === 0 ? null : { count: ahead, said: "has commits the project does not" },
-    ].filter((part) => part !== null);
-    if (why.length === 0) return `${trees.length} kept`;
-    const said =
-      why.length === 1 ? why[0].said : why.map((part) => `${part.count} ${part.said}`).join(", ");
-    return `${trees.length} kept: ${said}`;
+  /** The section at the tree's foot: its header, each session it started,
+      each project it may start in and the worktrees left behind, as the
+      tree's cursor walks them. */
+  const STARTED_FOLD_ID = "started-fold";
+  const STARTED_TREES_ID = "started-trees";
+  const startedRowId = (key: string) => `started-row-${key}`;
+  const allowedId = (project: string) => `started-allowed-${encodeURIComponent(project)}`;
+
+  function toggleStarted() {
+    setStartedOpen(!layout.startedOpen);
   }
+
+  /** Folded, the section puts away what was open in it. */
+  function setStartedOpen(open: boolean) {
+    layout.startedOpen = open;
+    saveLayout();
+    if (open) return;
+    asked = null;
+    closeSend();
+  }
+
+  /** A row opened by its click or Enter: the session it shows, with the
+      keyboard, and its project brought forward. */
+  function openStarted(key: string) {
+    if (goTo(key)) focusPane("agent");
+  }
+
+  /** The question up in the section, for the session it was asked about:
+      every session it started then, or the worktrees that could go then.
+      Only those are acted on, whatever has come since. */
+  let asked = $state<
+    | { kind: "stop-all"; starter: string; keys: string[] }
+    | { kind: "stop-one"; starter: string; keys: string[] }
+    | { kind: "clean"; starter: string; paths: string[] }
+    | null
+  >(null);
+  /** The rows a question to stop them was asked about, still there. */
+  let askedRows = $derived.by(() => {
+    const was = asked;
+    return was?.kind === "stop-all" || was?.kind === "stop-one"
+      ? started.filter((row) => was.keys.includes(row.key))
+      : [];
+  });
+  /** The worktrees the question to clean up was asked about, still there. */
+  let askedTrees = $derived.by(() => {
+    const was = asked;
+    return was?.kind === "clean" ? boardTrees.filter((left) => was.paths.includes(left.path)) : [];
+  });
+
+  function askStopAll() {
+    if (board === null || !started.some(isLive)) return;
+    closeSend();
+    asked = { kind: "stop-all", starter: board.key, keys: started.map((row) => row.key) };
+  }
+
+  /** Stopping one from the keyboard asks first, under its row. */
+  function askStop(session: Session) {
+    if (board === null) return;
+    closeSend();
+    asked = { kind: "stop-one", starter: board.key, keys: [session.key] };
+  }
+
+  function askClean() {
+    if (board === null) return;
+    const going = removable(boardTrees);
+    if (going.length === 0) return;
+    asked = { kind: "clean", starter: board.key, paths: going.map((left) => left.path) };
+  }
+
+  function confirmAsked() {
+    const was = asked;
+    const rows = askedRows;
+    const trees = askedTrees;
+    asked = null;
+    if (was === null || board === null || was.starter !== board.key) return;
+    if (was.kind === "clean") void cleanUp(trees);
+    else for (const row of rows) stopRow(row);
+    keysBack();
+  }
+
+  function cancelAsked() {
+    asked = null;
+    keysBack();
+  }
+
+  // A question or a send field is about the session it was opened for:
+  // another session on screen puts it away, and so does nothing being left
+  // to ask about.
+  let starterKey = $derived(starter?.key ?? null);
+  $effect(() => {
+    starterKey;
+    untrack(() => {
+      asked = null;
+      closeSend();
+    });
+  });
+  $effect(() => {
+    if (
+      (asked?.kind === "stop-all" && !askedRows.some(isLive)) ||
+      (asked?.kind === "stop-one" && askedRows.length === 0) ||
+      (asked?.kind === "clean" && askedTrees.length === 0)
+    )
+      untrack(() => (asked = null));
+  });
+
+  // A question opened in the section is brought whole into its share of
+  // the column, which may be scrolled to show only a row or two.
+  $effect(() => {
+    if (asked === null) return;
+    void tick().then(() =>
+      document
+        .querySelector("section[data-pane='changes'] [data-testid='board-section'] .board-ask")
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  });
+
+  /** Which section an entry is in. */
+  function sectionOfEntry(entry: Entry): string {
+    switch (entry.kind) {
+      case "media-head":
+      case "media":
+        return "media";
+      case "started-head":
+      case "started":
+      case "started-allowed":
+      case "started-trees":
+        return "started";
+      case "processes-head":
+      case "process":
+        return "processes";
+      case "browser-head":
+      case "browser-tab":
+        return "browser";
+      default:
+        return `plugin:${entry.group}`;
+    }
+  }
+
+  /** Where the cursor goes when the rows change under it without it being
+      moved: to the row it was on, wherever that row is now. A row that has
+      gone leaves it on the row that took its place in the same section, or
+      that section's header; the sessions of another starter, on its
+      header; and a section that has gone, on the header of the section
+      after it, or before it. */
+  function followed(before: Entry[], at: number, now: Entry[], sameStarter: boolean): number {
+    const found = now.findIndex((entry) => entry.id === before[at].id);
+    if (found !== -1) return found;
+    const section = sectionOfEntry(before[at]);
+    const start = before.findIndex((entry) => sectionOfEntry(entry) === section);
+    const inNow = now.flatMap((entry, index) => (sectionOfEntry(entry) === section ? [index] : []));
+    if (inNow.length > 0) {
+      if (section === "started" && !sameStarter) return inNow[0];
+      return inNow[Math.min(at - start, inNow.length - 1)];
+    }
+    const order = [...new Set(before.map(sectionOfEntry))];
+    const place = order.indexOf(section);
+    for (const other of [...order.slice(place + 1), ...order.slice(0, place).reverse()]) {
+      const head = now.findIndex((entry) => sectionOfEntry(entry) === other);
+      if (head !== -1) return head;
+    }
+    return -1;
+  }
+
+  // The cursor follows the row it is on, never a position: sessions start
+  // and stop, and media and processes come and go, while it rests.
+  let heldCursor: { entries: Entry[]; at: number; starter: string | null } | null = null;
+  $effect(() => {
+    const now = sectionEntries;
+    const at = sectionCursor;
+    const key = starterKey;
+    untrack(() => {
+      const was = heldCursor;
+      heldCursor = { entries: now, at, starter: key };
+      if (was === null || was.entries === now || was.at !== at || at < 0 || was.entries[at] === undefined) return;
+      const next = followed(was.entries, at, now, was.starter === key);
+      if (next === at) return;
+      sectionCursor = next;
+      heldCursor = { entries: now, at: next, starter: key };
+    });
+  });
+
+  /** The keyboard back on the tree once a field or a question in the
+      section has gone, since the cursor that walks the section is the
+      tree's. */
+  function keysBack() {
+    if (board === null) return;
+    void tick().then(() =>
+      document.querySelector<HTMLElement>("section[data-pane='changes'] [data-testid='file-tree']")?.focus(),
+    );
+  }
+
+  /** How long ago each row last changed, kept current while the section
+      shows. */
+  let now = $state(Date.now());
+  $effect(() => {
+    if (board === null) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(timer);
+  });
+
+  // One of them asking opens a folded section by itself, so the row that
+  // asks is in sight: as it asks, or as its starter comes on screen while
+  // it does.
+  let askingHere = $derived(board === null ? 0 : asking);
+  let askedBefore: { key: string | null; count: number } = { key: null, count: 0 };
+  $effect(() => {
+    const key = board?.key ?? null;
+    const count = askingHere;
+    untrack(() => {
+      const before = key === askedBefore.key ? askedBefore.count : 0;
+      askedBefore = { key, count };
+      if (key !== null && count > before && !layout.startedOpen) {
+        layout.startedOpen = true;
+        saveLayout();
+      }
+    });
+  });
 </script>
 
 {#snippet tabs()}
@@ -973,7 +1246,7 @@
                         onpointerdown={(e) => e.preventDefault()}
                         onclick={() => openSend(session)}
                         disabled={!canSend(session)}
-                        title="Type a line into this session"
+                        title="Send this session a line"
                         data-testid="send-started-row">Send</button
                       >
                       <button
@@ -1026,15 +1299,15 @@
           {/each}
         </p>
       {/if}
-      {#if leftBehind.trees.length > 0}
+      {#if boardTrees.length > 0}
         <p class="board-line" data-testid="worktrees-left">
-          <span>{worktreeLine()}</span>
+          <span>{worktreeLine(boardTrees, cleaned)}</span>
           <button
             class="head-action"
             tabindex="-1"
             onpointerdown={(e) => e.preventDefault()}
-            onclick={cleanUp}
-            disabled={cleaning || removable(leftBehind.trees).length === 0}
+            onclick={() => void cleanUp()}
+            disabled={cleaning || removable(boardTrees).length === 0}
             data-testid="clean-worktrees">Clean up</button
           >
         </p>
@@ -1168,6 +1441,204 @@
                         </button>
                       </li>
                     {/each}
+                  </ul>
+                {/if}
+              </section>
+            {/if}
+            <!-- The sessions the session on screen started, with what it was
+                 allowed and what their worktrees left: a section like its
+                 neighbours, folded and walked the same way, there while it
+                 has any of them. A name is the agent's text, drawn as it is
+                 and cut to what a row holds. Each row's buttons act on the
+                 session that row shows, and stopping them all or cleaning
+                 up asks first. -->
+            {#if board !== null}
+              <section class="section board-section" class:open={layout.startedOpen} data-testid="board-section">
+                <div class="section-head">
+                  <button
+                    id={STARTED_FOLD_ID}
+                    class="fold strong"
+                    class:cursor={cursorId === STARTED_FOLD_ID}
+                    tabindex="-1"
+                    onpointerdown={(e) => e.preventDefault()}
+                    onclick={() => {
+                      sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "started-head");
+                      toggleStarted();
+                    }}
+                    aria-expanded={layout.startedOpen}
+                    data-testid="board-fold"
+                  >
+                    <span class="chevron">{layout.startedOpen ? "▾" : "▸"}</span>
+                    Sessions it started ({started.length})
+                  </button>
+                  {#if started.some(isLive)}
+                    <span class="head-actions">
+                      <button
+                        class="head-action accent"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={askStopAll}
+                        title="Stop every session it started (Delete)"
+                        data-testid="board-stop-all">Stop all</button
+                      >
+                    </span>
+                  {/if}
+                </div>
+                {#if layout.startedOpen}
+                  {#if asked?.kind === "stop-all"}
+                    {@const ask = stopAllQuestion(askedRows)}
+                    <div class="board-ask">
+                      <ConfirmStrip
+                        question={ask.question}
+                        detail={ask.detail}
+                        action={ask.action}
+                        onConfirm={confirmAsked}
+                        onCancel={cancelAsked}
+                        testid="board-stop-all-ask"
+                      />
+                    </div>
+                  {/if}
+                  <!-- The tree's cursor walks the list, so it is no stop of its
+                       own, even where it scrolls. -->
+                  <ul class="rows" tabindex="-1">
+                    {#if started.length === 0}
+                      <li class="section-empty" data-testid="board-empty">None open now.</li>
+                    {/if}
+                    {#each started as session (session.key)}
+                      <li
+                        id={startedRowId(session.key)}
+                        class="started"
+                        class:cursor={cursorId === startedRowId(session.key)}
+                        data-row={session.key}
+                        data-testid="board-row"
+                      >
+                        <div class="row-box">
+                          <button
+                            class="media-row"
+                            tabindex="-1"
+                            onpointerdown={(e) => e.preventDefault()}
+                            onclick={() => {
+                              sectionCursor = sectionEntries.findIndex((entry) => entry.id === startedRowId(session.key));
+                              openStarted(session.key);
+                            }}
+                            title={shownStarted(session)}
+                            data-testid="board-open"
+                          >
+                            <span class="row-line">
+                              <span class="dot" data-state={startedDot(session)} data-testid="board-dot"></span>
+                              <span class="media-caption" data-testid="board-name"><Plain text={startedName(session)} /></span>
+                            </span>
+                            <span class="media-meta" data-testid="board-detail">{startedDetail(board, session, now)}</span>
+                          </button>
+                          <span class="actions">
+                            <button
+                              class="icon word"
+                              tabindex="-1"
+                              onpointerdown={(e) => e.preventDefault()}
+                              onclick={() => {
+                                sectionCursor = sectionEntries.findIndex((entry) => entry.id === startedRowId(session.key));
+                                openSend(session);
+                              }}
+                              disabled={!canSend(session)}
+                              aria-label="Send a line to {quotedStarted(session)}"
+                              title="Send this session a line (Shift+Enter)"
+                              data-testid="board-send">Send</button
+                            >
+                            <button
+                              class="icon"
+                              tabindex="-1"
+                              onpointerdown={(e) => e.preventDefault()}
+                              onclick={() => stopRow(session)}
+                              aria-label="Stop {quotedStarted(session)}"
+                              title="Stop (Delete asks first)"
+                              data-testid="board-stop">×</button
+                            >
+                          </span>
+                        </div>
+                        {#if sending === session.key}
+                          <input
+                            class="send"
+                            bind:this={sendField}
+                            bind:value={sendLine}
+                            onkeydown={(e) => onSendKeydown(e, session)}
+                            placeholder="a line to send…"
+                            aria-label="Send a line to {quotedStarted(session)}"
+                            spellcheck="false"
+                            autocomplete="off"
+                            data-testid="board-send-field"
+                          />
+                        {/if}
+                        {#if asked?.kind === "stop-one" && asked.keys[0] === session.key}
+                          {@const ask = stopOneQuestion(session)}
+                          <div class="board-ask row-ask">
+                            <ConfirmStrip
+                              question={ask.question}
+                              detail={ask.detail}
+                              action={ask.action}
+                              onConfirm={confirmAsked}
+                              onCancel={cancelAsked}
+                              testid="board-stop-ask"
+                            />
+                          </div>
+                        {/if}
+                      </li>
+                    {/each}
+                    {#each allowedHere as project (project)}
+                      <li class="board-line" data-testid="board-allowed">
+                        <span>Allowed to start sessions in</span>
+                        <span id={allowedId(project)} class="allowed" class:cursor={cursorId === allowedId(project)}
+                          ><span data-testid="board-allowed-project">{projectLabel(project)}</span><button
+                            class="revoke"
+                            tabindex="-1"
+                            onpointerdown={(e) => e.preventDefault()}
+                            onclick={() => {
+                              sectionCursor = sectionEntries.findIndex((entry) => entry.id === allowedId(project));
+                              revokeProject(project);
+                            }}
+                            aria-label="Ask again before starting a session in {projectLabel(project)}"
+                            title="Ask again"
+                            data-testid="board-revoke">×</button
+                          ></span
+                        >
+                      </li>
+                    {/each}
+                    {#if boardTrees.length > 0}
+                      {#if asked?.kind === "clean"}
+                        {@const ask = cleanQuestion(
+                          boardTrees.filter((left) => asked?.kind === "clean" && (asked.paths.includes(left.path) || removable([left]).length === 0)),
+                        )}
+                        <li class="board-ask">
+                          <ConfirmStrip
+                            question={ask.question}
+                            detail={ask.detail}
+                            action={ask.action}
+                            onConfirm={confirmAsked}
+                            onCancel={cancelAsked}
+                            testid="board-clean-ask"
+                          />
+                        </li>
+                      {:else}
+                        <li
+                          id={STARTED_TREES_ID}
+                          class="board-line"
+                          class:cursor={cursorId === STARTED_TREES_ID}
+                          data-testid="board-trees"
+                        >
+                          <span>{worktreeLine(boardTrees, cleaned)}</span>
+                          <button
+                            class="head-action accent"
+                            tabindex="-1"
+                            onpointerdown={(e) => e.preventDefault()}
+                            onclick={() => {
+                              sectionCursor = sectionEntries.findIndex((entry) => entry.id === STARTED_TREES_ID);
+                              askClean();
+                            }}
+                            disabled={cleaning || removable(boardTrees).length === 0}
+                            data-testid="board-clean">Clean up</button
+                          >
+                        </li>
+                      {/if}
+                    {/if}
                   </ul>
                 {/if}
               </section>
@@ -1866,7 +2337,10 @@
   .sections.keyed .process.cursor,
   .sections.keyed .browser-tab.cursor,
   .sections.keyed .group-line.cursor,
-  .sections.keyed .plugin.cursor {
+  .sections.keyed .plugin.cursor,
+  .sections.keyed .started.cursor,
+  .sections.keyed .allowed.cursor,
+  .sections.keyed .board-line.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
   }
 
@@ -2029,6 +2503,57 @@
 
   .revoke:hover {
     color: var(--del);
+  }
+
+  /* The section of started sessions at the tree's foot: its header in a
+     firmer ink than its neighbours', since what is in it waits on its
+     sessions, and the actions that end something in the accent. A row's
+     buttons show under the cursor as they do on hover. */
+  .fold.strong {
+    color: var(--ink-2);
+  }
+
+  .fold.strong:hover {
+    color: var(--ink);
+  }
+
+  .head-action.accent {
+    color: var(--accent);
+  }
+
+  .head-action:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .sections .started.cursor .actions {
+    opacity: 1;
+  }
+
+  /* Inside the cursor's ring, so the ring stays whole under them. */
+  .sections.keyed .started.cursor .actions {
+    top: 1px;
+    right: 1px;
+    bottom: 1px;
+  }
+
+  /* Its rows name sessions, in the chrome's type as the sessions pane
+     names them. */
+  .board-section .media-row,
+  .board-section .board-line,
+  .board-section .section-empty {
+    font-family: var(--chrome);
+  }
+
+  .board-section .allowed {
+    margin-left: -1px;
+    padding: 0 1px 0 3px;
+    border-radius: var(--radius-sm);
+  }
+
+  .board-ask {
+    flex: none;
+    padding: 2px var(--pane-pad) 6px var(--row-indent);
   }
 
   .head {
