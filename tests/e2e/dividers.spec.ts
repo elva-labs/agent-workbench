@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, foldedWidth, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, foldedWidth, installFakeCore } from "./fake";
 
 /**
  * The frame every pane lives in: in the modern look the panes stand as
@@ -504,4 +504,56 @@ test("the background picker's small window draws the ground with a card standing
   expect(card.y - window.y).toBeGreaterThanOrEqual(8);
   expect(window.x + window.width - (card.x + card.width)).toBeGreaterThan(1);
   expect(window.y + window.height - (card.y + card.height)).toBeGreaterThan(4);
+});
+
+// A round of review past the workflow's limit is asked in the
+// orchestrator's dock, over its composer: inside its card, clear of the
+// card's rounded corners.
+test("the dock's round question stands inside the agent's card, clear of its corners", async ({ page }) => {
+  const conduct = (id: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool: "start",
+          arguments: { project, prompt: "Go", ...args },
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, args },
+    );
+  const answered = (id: string) =>
+    page.evaluate(
+      (id) =>
+        ((window as unknown as { __conductAnswers?: { id: string }[] }).__conductAnswers ?? []).some(
+          (answer) => answer.id === id,
+        ),
+      id,
+    );
+  const once = structuredClone(WITH_WORKFLOW);
+  (once.workflows.list[0].steps[1] as { limit: number }).limit = 1;
+  await open(page, { settings: { integrated: ["claude-code"], ...once } });
+  await page.getByTestId("start-agent").click();
+  const conversation = page.locator("[data-testid='conversation'].active");
+  await expect(conversation.getByTestId("composer-input")).toBeEnabled();
+  await conduct("c-start", { name: "Fix the cache", step: "Work" });
+  await page.getByTestId("conduct-allow").click();
+  await expect.poll(() => answered("c-start")).toBe(true);
+  for (const id of ["c-2", "c-3"]) {
+    await conduct(id, { step: "Review", work: "integrated-session-2" });
+    await expect.poll(() => answered(id)).toBe(true);
+  }
+  await conduct("c-4", { step: "Review", work: "integrated-session-2", prompt: "Look once more" });
+  const dock = conversation.getByTestId("round-dock");
+  await expect(dock).toBeVisible();
+  const card = await box(page, `${AGENT} > .body`);
+  const inside = (await dock.boundingBox())!;
+  const radius = 10;
+  expect(inside.x - card.x).toBeGreaterThanOrEqual(radius);
+  expect(card.x + card.width - (inside.x + inside.width)).toBeGreaterThanOrEqual(radius);
+  expect(inside.y).toBeGreaterThan(card.y + radius);
+  // The composer stands under it, and both clear the card's foot.
+  const composer = (await conversation.getByTestId("composer").boundingBox())!;
+  expect(composer.y).toBeGreaterThanOrEqual(inside.y + inside.height);
+  expect(card.y + card.height - (composer.y + composer.height)).toBeGreaterThanOrEqual(radius);
 });
