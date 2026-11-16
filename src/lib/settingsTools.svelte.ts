@@ -252,6 +252,7 @@ export function describeSettings(): string {
     `look: ${theme.look} (one of ${names(LOOKS)})`,
     `palette: ${theme.palette} (one of ${names(palettes())})`,
     `background: ${backgroundOf(theme.palette)} (kept with the palette in use; settings_change's background argument sets it, null takes it away)`,
+    `cards: ${Math.round((Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0) * 100)}% (how much of the background shows through the panes as well, as a share of its strength from 0 to 25%; the user's to change, in the settings)`,
     `terminalFont: ${theme.mono} (one of ${names(TERMINAL_FONTS)})`,
     `interfaceFont: ${theme.sans} (one of ${names(INTERFACE_FONTS)})`,
     `keyPreset: ${keys.preset} (one of ${Object.keys(PRESETS).join(", ")}; custom once a chord differs from both)`,

@@ -82,6 +82,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 beforeEach(() => {
   theme.themes = {};
   theme.backgrounds = {};
+  theme.cards = {};
   theme.preview = null;
   sheets.length = 0;
   refuseSheet = null;
@@ -454,6 +455,9 @@ describe("a background", () => {
     theme.backgrounds = { teal: lagoon as never };
     expect(describeSettings()).toContain(`background: ${JSON.stringify(lagoon)}`);
     expect(describeSettings()).toMatch(/one to three dots on a colour pad/);
+    expect(describeSettings()).toContain("cards: 0% (how much of the background shows through the panes");
+    theme.cards = { teal: 0.2 };
+    expect(describeSettings()).toContain("cards: 20% (");
   });
 
   it("goes with the palette in use, or the one the change switches to", () => {
