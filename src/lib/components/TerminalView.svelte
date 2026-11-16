@@ -84,9 +84,19 @@
     const probe = document.createElement("span");
     probe.style.color = "var(--well)";
     document.body.appendChild(probe);
-    const well = getComputedStyle(probe).color;
+    const well = asRgb(getComputedStyle(probe).color);
     probe.remove();
-    return well === "" ? built : { ...built, background: well, cursorAccent: well };
+    return well === null ? built : { ...built, background: well, cursorAccent: well };
+  }
+
+  /** A colour as the page reports it, `rgb()` or `color(srgb ...)` for a
+      mix, as the `rgb()` xterm reads. */
+  function asRgb(colour: string): string | null {
+    if (colour.startsWith("rgb")) return colour;
+    const srgb = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(colour);
+    if (srgb === null) return null;
+    const [r, g, b] = srgb.slice(1, 4).map((channel) => Math.round(Number(channel) * 255));
+    return `rgb(${r}, ${g}, ${b})`;
   }
 
   /** What WebGL here draws with, unmasked where the browser allows. */

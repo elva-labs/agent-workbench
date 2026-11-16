@@ -1260,8 +1260,8 @@ export interface Core {
   windowControl(action: "minimize" | "maximize" | "close"): Promise<void>;
   /** The native popup that stands in for a menu bar on those platforms. */
   openAppMenu(): Promise<void>;
-  /** Where the middle of the leftmost header is, in CSS pixels from the
-      window's top, for the platform's own controls to sit on. */
+  /** Where the middle of the sessions pane's header is, in CSS pixels
+      from the window's top, for the platform's own controls to sit on. */
   controlsCentre(centre: number): Promise<void>;
   /** The window started into full screen, with true, or back out, with
       false. Only macOS says; its controls are away while it is in. */

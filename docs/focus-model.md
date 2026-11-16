@@ -306,8 +306,9 @@ control a stop as it is drawn, by one rule for the whole window:
   sessions pane goes back when Tab leaves it rather than let Tab reach the
   pane under it.
 - **Wherever Tab lands is drawn** in the look's own way: a ring in the
-  accent, a list's cursor on its row, a splitter's line lit, a field's
-  caret.
+  accent, a list's cursor on its row, a field's caret, and on a divider a
+  line in the accent with its grip at the middle while the status bar names
+  the keys it takes, as [dividers](layout.md#dividers) says.
 
 A control added anywhere in the window, the status bar included, follows
 the rule without any work of its own. A list that walks its own items, as
@@ -523,6 +524,9 @@ back to that pane.
 ## What focus looks like
 
 The focused pane is marked in the accent, its title with it, and the status
-bar names it when there is room; which part of the pane carries the mark is the look's, in
-[settings](settings.md#theme). An unfocused agent pane shows a hollow cursor,
-the terminal convention.
+bar names it when there is room; which part of the pane carries the mark is
+the look's, in [settings](settings.md#theme): in the modern look an edge
+along the top of the pane's card, ending square in its rounded corners, or
+along the top of the sessions pane's header, which has no card; in the
+terminal look the box's own border. An unfocused agent pane shows a hollow
+cursor, the terminal convention.

@@ -351,9 +351,9 @@
     void syncOwner();
   });
 
-  // The platform's own window controls sit on the leftmost header's text,
-  // and a look sets how tall that header is: measured once the look has
-  // painted, and again whenever it changes.
+  // The platform's own window controls sit on the middle of the sessions
+  // pane's header row, open or folded, and a look sets how tall that header
+  // is: measured once the look has painted, and again whenever it changes.
   $effect(() => {
     theme.look;
     const frame = requestAnimationFrame(() => {
