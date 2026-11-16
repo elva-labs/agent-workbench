@@ -153,9 +153,9 @@ export interface Session {
   turnEnd: "done" | "cut" | "failed" | null;
   /** What ended the last turn when it failed. Null otherwise. */
   failure: Failure | null;
-  /** The commands the agent left running in the background when it ended
-      its last turn, by its own description of each: each one's end starts
-      its next turn by itself. */
+  /** The tasks the agent left running in the background when it ended
+      its last turn, by its own description of each: when one finishes,
+      the agent takes it up in a turn of its own. */
   background: string[];
   /** How many turns the agent has begun in this run, as its hooks or its
       events say, or, without them, as its output does. */
@@ -2616,7 +2616,7 @@ const pendingActivity = new Map<
 >();
 
 /** What a hook says beside a turn's end: the kind of error a failed turn
-    ended on, and the commands a stop left running in the background. */
+    ended on, and the tasks a stop left running in the background. */
 export interface TurnEnding {
   error?: string | null;
   background?: string[];
@@ -2635,7 +2635,7 @@ function replayActivity(sessionId: string) {
 /** A hook or rollout reports a turn transition. With a stop comes the
     first line of what the agent said, which the row takes when the agent
     left no line of its own through its notify tool, whether the user cut
-    the turn short, and the commands it left running. With a failed turn
+    the turn short, and the tasks it left running. With a failed turn
     come the error's kind and the line the agent showed for it. */
 export function exact(
   sessionId: string,

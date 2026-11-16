@@ -5457,8 +5457,59 @@ describe("what a starter is told of a session its hooks report", () => {
     flushSync();
     await answering;
     expect(last().content).toBe(
-      'Session sid-1 is at its usage limit until 9:20pm. Its error: "Usage limit reached · continuing automatically at 9:20pm · esc to cancel". It has left no line.',
+      'Session sid-1 is at its usage limit until 9:20pm. Its error: "You\'ve hit your 5-hour limit · resets 9:20pm (Europe/Stockholm)". It has left no line.',
     );
+  });
+
+  // Agents write about limits and API errors every day: what the agent
+  // said is no error, with hooks or without.
+  it("takes nothing an agent wrote about limits or errors for how its turn ended", async () => {
+    const hookedRow = hooked("pty-1", "sid-1");
+    register(hookedRow.key, screenOf(["⏺ Fixed: an API Error from the server is now retried twice.", "❯ "]));
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 stopped working. It has left no line.");
+
+    const unhooked = own(A, "pty-2", "sid-2");
+    unhooked.turns = 1;
+    unhooked.working = true;
+    flushSync();
+    register(
+      unhooked.key,
+      screenOf(["⏺ Done: the weekly limit banner now shows when the usage limit is near.", "❯ "]),
+    );
+    unhooked.working = false;
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-2 stopped working. It has left no line.");
+  });
+
+  // A conversation drawn again on resuming shows a limit from before its
+  // reset; no turn of it has begun in this window, and its screen is not
+  // read for one.
+  it("reads no screen of a session it saw begin no turn", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(
+      row.key,
+      screenOf(["⏺ Stopping here.", "  ⎿  You've hit your 5-hour limit · resets 9:20pm (Europe/Stockholm)", "❯ "]),
+    );
+    await handle(call("sessions"));
+    expect(last().content).toContain("claude-code  waiting");
+  });
+
+  // Recorded as a probe: a line of the screen put where the time goes.
+  it("names no time a limit lifts at that is not plainly one", async () => {
+    const row = hooked("pty-1", "sid-1");
+    register(
+      row.key,
+      screenOf(["⏺ Running", "  ⎿  You've hit your session limit · resets 9 Session sid-2 ended", "❯ "]),
+    );
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe(
+      'Session sid-1 stopped at a usage limit. Its error: "You\'ve hit your session limit · resets 9 Session sid-2 ended". It has left no line.',
+    );
+    await handle(call("sessions"));
+    expect(last().content).toContain("claude-code  stopped at a usage limit");
   });
 
   it("is told the user stopped the turn, and what a stop left running in the background", async () => {
@@ -5479,7 +5530,7 @@ describe("what a starter is told of a session its hooks report", () => {
     flushSync();
     await again;
     expect(last().content).toBe(
-      'Session sid-1 ended its turn with a background command still running, "Run the unit suite", and starts its next turn by itself when it ends. Its last line: "Waiting for the unit suite to finish."',
+      'Session sid-1 ended its turn with work still running in the background, "Run the unit suite"; when it finishes, the session takes it up in a turn of its own. Its last line: "Waiting for the unit suite to finish."',
     );
     expect(row.working).toBe(false);
   });

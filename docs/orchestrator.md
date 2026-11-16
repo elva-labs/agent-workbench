@@ -64,7 +64,7 @@ caller started, each with its id, its name in quotes, its project and
 worktree, its agent, what it is doing and the last line it left. What it is
 doing is working, waiting, asking for permission, at its usage limit until
 the time the agent named, stopped on an error, waiting with its turn
-interrupted by the user, or waiting for a background command, as under
+interrupted by the user, or waiting on work in the background, as under
 `wait` below. A session that is not running says why: it ended, the user
 closed its row, or it has not run since the workbench was restarted, each
 with the way back, a start naming it. A session
@@ -88,18 +88,23 @@ screen went quiet: an agent running a long command, or thinking, draws
 nothing but its spinner's clock for minutes on end, and is still at work
 (see [sessions](sessions.md)). How the turn ended is said for what it is.
 A turn the agent ended is "stopped working"; one a usage limit ended is "is
-at its usage limit until 4pm", with the time the agent named, or "stopped
-at a usage limit" where it named none; one another error from the model's
-service ended, such as a connection lost mid-response, is "stopped on an
-error", with the error's line where it is not the session's last line; one
-the user stopped with Escape is "stopped: the user interrupted its turn";
-and one the agent ended with commands of its own still running in the
-background says so, quotes their descriptions, and says the end of each
-starts its next turn by itself. Claude Code reports a turn an error ended
-through its hooks; where nothing reports how a turn ended, as when only
-the agent's idle notice says it is waiting, the last lines of its screen
-are read, from the turn's last bullet down, for a usage limit or an API
-error. The tool server counts those
+at its usage limit until 4pm", with the time the agent named where it is a
+time or a date as Claude Code writes one, or "stopped at a usage limit"
+otherwise; one another error from the model's service ended, such as a
+connection lost mid-response, is "stopped on an error", with the error's
+line, quoted, where it is not the session's last line; one the user
+stopped with Escape is "stopped: the user interrupted its turn"; and one
+the agent ended with work still running in the background, a command or
+a call of its tools it put there, says so, quotes their descriptions, and
+says that when it finishes the session takes it up in a turn of its own,
+which a dev server or a watch may never do. Claude Code reports a turn an
+error ended through its hooks. Where nothing reports how a turn ended, as
+when only the agent's idle notice says it is waiting, and the window saw
+that turn begin, the last lines of its screen are read for the lines
+Claude Code itself draws for a usage limit or an API error: the last
+result line under the turn's last bullet and the notice in its footer,
+read from their start. What the agent wrote, about a limit or an error or
+anything else, is never taken for one. The tool server counts those
 seconds from before the window heard of the call, and the call carries a
 time a moment before the tool server stops reading; the core leaves no
 answer past it. A stop a wait answers with counts as

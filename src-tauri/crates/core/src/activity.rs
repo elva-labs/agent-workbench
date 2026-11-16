@@ -48,14 +48,15 @@ pub struct SessionEvent {
     /// `server_error` and the like.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    /// With a stop, the commands the agent left running in the background,
-    /// by its own description of each. Each one's end starts the agent's
-    /// next turn by itself.
+    /// With a stop, the tasks the agent left running in the background
+    /// that are not subagents, by its own description of each: commands,
+    /// and calls of its tools it put in the background. When one finishes
+    /// the agent takes it up in a turn of its own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub background: Vec<String>,
 }
 
-/// The most background commands a stop names.
+/// The most background tasks a stop names.
 const BACKGROUND_MOST: usize = 3;
 
 /// One line of the log, as an event, if it is one the rows care about.
@@ -100,7 +101,7 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         None
     };
     let background = if kind == "stop" {
-        commands_running(&value)
+        work_running(&value)
     } else {
         Vec::new()
     };
@@ -114,10 +115,9 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
     })
 }
 
-/// The background tasks a stop lists as running that are not subagents:
-/// commands the agent started and left to run, each by its description,
-/// or its command where it has none.
-fn commands_running(value: &serde_json::Value) -> Vec<String> {
+/// The background tasks a stop lists as running that are not subagents,
+/// each by its description, or its command where it has none.
+fn work_running(value: &serde_json::Value) -> Vec<String> {
     value
         .get("background_tasks")
         .and_then(|tasks| tasks.as_array())
@@ -499,7 +499,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stop_names_the_commands_it_left_running_and_no_subagent() {
+    fn a_stop_names_the_work_it_left_running_and_no_subagent() {
         let stop = classify(
             r#"{"session_id":"s1","hook_event_name":"Stop","last_assistant_message":"Waiting for the unit suite to finish.","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"Run the  unit\nsuite","command":"npm run test:unit"},{"id":"b2","type":"shell","status":"completed","description":"Build"},{"id":"b3","type":"shell","status":"running","command":"npm run dev"},{"id":"a1","type":"subagent","status":"completed","description":"Review"}]}"#,
         )
@@ -508,6 +508,13 @@ mod tests {
         assert_eq!(stop.background, ["Run the unit suite", "npm run dev"]);
         let sent = serde_json::to_value(&stop).unwrap();
         assert_eq!(sent["background"][1], "npm run dev");
+        // A call of the agent's tools it put in the background is work of
+        // its own as well, as a wait on the sessions it started is.
+        let waiting = classify(
+            r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"k1","type":"MCP task","status":"running","description":"agent-workbench/wait","server":"agent-workbench","tool":"wait"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(waiting.background, ["agent-workbench/wait"]);
         // Nothing left running says nothing.
         let done = classify(
             r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"completed","description":"Build"}]}"#,

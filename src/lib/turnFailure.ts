@@ -5,60 +5,76 @@
  *
  * The agent says so in one of two ways. Claude Code's hook for a failed
  * turn names the error's kind and the line it showed; without that hook,
- * the line is on its screen, under the turn's last bullet or in the footer
- * it draws while a limit holds.
+ * the line is on its screen, as the result line Claude Code draws under the
+ * turn's last bullet or in the footer it draws while a limit holds. Only
+ * lines of Claude Code's own shape count: what the agent writes about a
+ * limit or an error, in its answer or in a tool's output, is not one.
  */
 
 export interface Failure {
   /** The agent is at a usage limit, not on another error. */
   limit: boolean;
   /** When the limit lifts, in the agent's words, where it says and the
-      words are plainly a time. */
+      words are a time or a date as Claude Code writes them. */
   until: string | null;
   /** The line the agent showed for it, as it showed it. */
   line: string | null;
 }
 
-/** A line that says a usage limit holds. */
-const LIMIT =
-  /\b(?:usage|session|weekly|daily|monthly|spend|\d+-hour)\s+limit\b|\bhit your\b.*\blimit\b|\blimit reached\b|\bout of usage\b/i;
-/** A line that says an error ended the response. */
-const ERROR = /\bAPI Error\b|\bConnection lost\b|\bwent to sleep mid-response\b|\bresponse (?:stalled|stopped arriving)\b/i;
+/** A line Claude Code draws when a usage limit ends a turn, read from its
+    start. */
+const LIMIT = /^(?:You've (?:hit|reached) your\b.*\blimit\b|Usage limit reached\b|You're out of usage\b)/i;
+/** A line Claude Code draws when an error from the model's service ends a
+    turn, read from its start. */
+const ERROR = /^API Error\b/;
 /** When a limit lifts: the words after "resets", up to a bracket or a
     middle dot. */
-const RESETS = /\bresets?\s+(?:at\s+|on\s+)?([^·()\n]+?)\s*(?:[(·]|$)/i;
-/** What a time may be made of: letters, digits, spaces and the marks a
-    time or a date uses, and no more than a time takes. */
-const PLAIN_TIME = /^[\p{L}\p{N} :.,+\-/]{1,24}$/u;
-/** The most words a time or a date with it takes, "Thu Nov 18 2pm". */
-const TIME_WORDS = 4;
+const RESETS = /\bresets?\s+(?:(?:at|on|in)\s+)?([^·()\n]+?)\s*(?:[(·]|$)/i;
 
-/** When a limit lifts, as the line says it, where it says it plainly: a
-    few words with a number in them, and nothing else. */
+const WEEKDAY =
+  "(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:r(?:s(?:day)?)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|today|tomorrow)";
+const MONTH =
+  "(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?";
+const DAY = "\\d{1,2}(?:st|nd|rd|th)?";
+const DATE = `(?:${MONTH}\\s+${DAY}|${DAY}\\s+${MONTH})`;
+const TIME = "(?:\\d{1,2}(?::\\d{2})?\\s?(?:am|pm)|\\d{1,2}:\\d{2})";
+/** A time a limit lifts at, as Claude Code writes one: a time of day, with
+    a day or a date before it, or a date alone. Nothing else is taken, so
+    no words but these reach another agent as the workbench's own. */
+const WHEN = new RegExp(
+  `^(?:(?:${WEEKDAY},?\\s+)?(?:${DATE},?\\s+)?(?:at\\s+)?${TIME}|(?:${WEEKDAY},?\\s+)?${DATE})$`,
+  "i",
+);
+
+/** When a limit lifts, as the line says it, where it says it as a time or
+    a date. A span such as "in 3h" is no time. */
 export function resetsAt(line: string): string | null {
   const found = RESETS.exec(line.normalize("NFKC"));
   if (found === null) return null;
   const until = found[1].trim().replace(/[.,]+$/, "");
-  return PLAIN_TIME.test(until) && /\d/.test(until) && until.split(/\s+/).length <= TIME_WORDS
-    ? until
-    : null;
+  return WHEN.test(until) ? until : null;
 }
 
 /** A failed turn as the agent reported it: the kind of error its hook
     named, if any, and the line it showed. */
 export function failureOf(error: string | null, line: string | null): Failure {
-  const limit = error === "rate_limit" || (line !== null && LIMIT.test(line));
+  const limit = error === "rate_limit" || (line !== null && LIMIT.test(line.trim()));
   return { limit, until: limit && line !== null ? resetsAt(line) : null, line };
 }
 
 /** The bullets Claude Code draws before what a turn says or does. */
 const BULLET = /^\s*[⏺●]/;
+/** The mark before a result line, and the one before the footer's notice. */
+const RESULT = /^\s*⎿\s*/;
+const NOTICE = /^\s*⚠\s*/;
 
 /**
  * What the last lines of a session's screen say ended its turn, read from
  * the turn's last bullet down: a usage limit or an error, or null when
- * they say neither. A line from an earlier turn, above a later bullet, is
- * not read.
+ * they say neither. Only the last result line and the footer's notices are
+ * read, and only where they begin as Claude Code's own do. A line from an
+ * earlier turn, above a later bullet, is not read, nor anything the agent
+ * said under a bullet.
  */
 export function failureOnScreen(lines: string[]): Failure | null {
   let from = 0;
@@ -67,14 +83,16 @@ export function failureOnScreen(lines: string[]): Failure | null {
       from = at;
       break;
     }
-  const tail = lines.slice(from).map((line) => line.replace(/^[\s⏺●⎿⚠│]+/u, "").trim());
-  // The status line's own reset, of a limit not yet reached, is not when
-  // this one lifts: only lines that say a limit holds are read for it.
-  const limits = tail.filter((line) => LIMIT.test(line));
+  const tail = lines.slice(from);
+  const results = tail.filter((line) => RESULT.test(line));
+  const last = results.length === 0 ? [] : [results[results.length - 1].replace(RESULT, "").trim()];
+  const notices = tail.filter((line) => NOTICE.test(line)).map((line) => line.replace(NOTICE, "").trim());
+  const said = [...last, ...notices];
+  const limits = said.filter((line) => LIMIT.test(line));
   if (limits.length > 0) {
     const until = limits.map(resetsAt).find((at) => at !== null) ?? null;
     return { limit: true, until, line: limits[0] };
   }
-  const error = tail.find((line) => ERROR.test(line));
+  const error = last.find((line) => ERROR.test(line));
   return error === undefined ? null : { limit: false, until: null, line: error };
 }

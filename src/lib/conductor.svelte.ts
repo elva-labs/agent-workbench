@@ -2955,14 +2955,16 @@ const SCREEN_TAIL = 16;
 
 /**
  * What ended a session's last turn when it did not finish it itself: what
- * its hooks or its events said for a failed turn, or, for a turn that
- * ended with no word of how, what its screen says, a usage limit or an
- * error under the turn's last bullet or in the footer. Null for a turn the
- * agent ended or the user cut short, and for a screen that says neither.
+ * its hooks or its events said for a failed turn, or, for a turn this
+ * window saw begin that ended with no word of how, what its screen says in
+ * Claude Code's own lines, a usage limit or an error. Null for a turn the
+ * agent ended or the user cut short, for a session seen to begin no turn,
+ * whose screen may be a conversation drawn again from long ago, and for a
+ * screen that says neither.
  */
 function failureFor(session: Session): Failure | null {
   if (session.turnEnd === "failed") return session.failure ?? { limit: false, until: null, line: null };
-  if (session.turnEnd !== null || session.kind === "integrated") return null;
+  if (session.turnEnd !== null || session.kind === "integrated" || session.turns === 0) return null;
   const drawn = screen(session.key, SCREEN_TAIL);
   return drawn === null ? null : failureOnScreen(drawn.split("\n"));
 }
@@ -2976,14 +2978,16 @@ function failureWords(failure: Failure): string {
     : `is at its usage limit until ${failure.until}`;
 }
 
-/** The commands a session left running as it ended its turn, quoted as
-    its own words, with what their end does. Null for none. */
+/** The work a session left running in the background as it ended its
+    turn, its tasks quoted as its own words, with what their end does. A
+    task such as a dev server may never end, so nothing is promised of
+    when. Null for none. */
 function backgroundWords(session: Session): string | null {
   const quoted = session.background.map(quotedLine).filter((line) => line !== null);
   if (quoted.length === 0) return null;
   return quoted.length === 1
-    ? `a background command still running, ${quoted[0]}, and starts its next turn by itself when it ends`
-    : `background commands still running, ${quoted.join(", ")}, and starts a turn by itself as each ends`;
+    ? `work still running in the background, ${quoted[0]}; when it finishes, the session takes it up in a turn of its own`
+    : `work still running in the background, ${quoted.join(", ")}; as each finishes, the session takes it up in a turn of its own`;
 }
 
 /** A session's state as a listing gives it: what `stateOf` says, and for
@@ -2994,7 +2998,7 @@ function stateWords(session: Session): string {
   const failure = failureFor(session);
   if (failure !== null) return failure.limit ? failureWords(failure).replace(/^is /, "") : "stopped on an error";
   if (session.turnEnd === "cut") return "waiting, its turn interrupted by the user";
-  if (session.background.length > 0) return "waiting for a background command";
+  if (session.background.length > 0) return "waiting on work in the background";
   return state;
 }
 

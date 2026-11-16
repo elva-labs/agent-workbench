@@ -280,9 +280,10 @@ with a hollow ring on the dot, waiting for you from the stop. A stop that
 leaves the agent's own subagents running in the background is not one: the
 agent has ended its turn to wait for their report, which starts the next,
 and the row stays working through it, with the agent's parting line under
-the name. A stop that leaves commands of its own running in the background
-is one, and the row keeps their descriptions, since the end of each starts
-the agent's next turn by itself. Claude Code reports a turn that an error
+the name. A stop that leaves other work of its own running in the
+background, a command or a call of its tools, is one, and the row keeps
+their descriptions: when one finishes, the agent takes it up in a turn of
+its own, though a dev server may never finish. Claude Code reports a turn that an error
 from the model's service ended, a usage limit or a connection lost
 mid-response, with a hook of its own in place of the stop: the row is
 waiting from it, keeps the error's first line as its line where the agent
