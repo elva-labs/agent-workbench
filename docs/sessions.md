@@ -232,7 +232,14 @@ writes a recap of the conversation while you are away and compacts a long
 one before its cache expires, each under a spinner for seconds. Once you
 have read a session at rest, output nobody sent it a line for counts as
 work only when it draws the bullet Claude Code puts before what it says or
-does in a turn, which a recap and a compaction never draw. The dot says
+does in a turn, which a recap and a compaction do not draw of their own.
+That holds once the session's own turns have been seen to draw the
+bullet; until then all such output can be work. Output cannot tell
+everything apart: a recap or compaction that moves the conversation on a
+full screen draws the bullets already there again and counts as work,
+and a turn with less than three seconds of output is not seen at all.
+With hooks on, every turn is reported, one the agent starts by itself
+included, and output decides neither. The dot says
 it on the row, with the words on hover and for a screen reader; the agent
 pane's header spells the state out. A session that goes quiet, ends, or
 rings for attention while nobody is looking at it is **unread**: the accent dot, the
@@ -765,7 +772,9 @@ hooks still fire for it and are left alone. When it stops working or asking
 while nobody looks, the line under its name is the first line of what the
 agent last said, unless the agent left a line of its own. A spell of work
 that was only a compaction the agent did by itself, with nothing said,
-marks nothing. A row with no name yet takes the first line of its first
+marks nothing. A turn already running when the window takes the session
+up again after a reload marks when it ends, since what it did before is
+not heard again. A row with no name yet takes the first line of its first
 message.
 
 Before a session can run it may need the user. In a folder the agent has
