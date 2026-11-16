@@ -58,6 +58,12 @@ const MODES: &[(&str, &str)] = &[
     ("dontAsk", "Don't ask"),
 ];
 
+/// Whether a mode is one a session can switch to, by the name the agent
+/// takes.
+pub(crate) fn offers_mode(mode: &str) -> bool {
+    MODES.iter().any(|(value, _)| *value == mode)
+}
+
 /// What a mode is called: by the name the modes offered give it, else as
 /// the agent spells it.
 fn mode_name(mode: &str) -> &str {
@@ -251,8 +257,7 @@ impl Protocol for ClaudeStream {
             None => crate::account::claude_dir(home, None, env),
         };
         let transcript = crate::claude_history::find(&dir, folder, None, session)?;
-        crate::claude_history::last_mode(&transcript)
-            .filter(|mode| MODES.iter().any(|(value, _)| value == mode))
+        crate::claude_history::last_mode(&transcript).filter(|mode| offers_mode(mode))
     }
 
     fn trusted(

@@ -374,6 +374,8 @@ impl Core {
     /// instructions or none, differs from what its conversation was first
     /// given. `token` is what the window knows the session by, which the
     /// agent's tools are given so that every call they make names it.
+    /// `mode` is the mode the conversation last ran in where the window
+    /// knows it, by the name its integrated sessions offer it under.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -384,6 +386,7 @@ impl Core {
         token: Option<&str>,
         prompt: Option<&str>,
         model: Option<&str>,
+        mode: Option<&str>,
         config_dir: Option<&str>,
         instructions: Option<&str>,
         start_only: bool,
@@ -404,6 +407,7 @@ impl Core {
             token,
             prompt,
             model,
+            mode,
             config_dir,
             instructions,
             start_only,
@@ -468,6 +472,7 @@ impl Core {
         token: Option<&str>,
         prompt: Option<&str>,
         model: Option<&str>,
+        mode: Option<&str>,
         config_dir: Option<&str>,
         instructions: Option<&str>,
         start_only: bool,
@@ -542,6 +547,7 @@ impl Core {
             token,
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
+            mode: mode.filter(|mode| !mode.trim().is_empty()),
             config_dir: expanded.as_deref(),
             orchestrator,
             instructions,
@@ -1580,6 +1586,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     instructions,
                     true,
                     false,
@@ -1604,6 +1611,7 @@ mod tests {
         let spawned = core_at(&home).spawn(
             "claude-code",
             &home,
+            None,
             None,
             None,
             None,
