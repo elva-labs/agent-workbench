@@ -1677,7 +1677,7 @@ export async function launch(
         rows,
       },
       (bytes) => {
-        output(key, bytes.length);
+        output(key, bytes.length, Date.now(), session.agent === "claude-code" && drawsTurn(bytes));
         onOutput(bytes);
       },
     );
@@ -1814,6 +1814,7 @@ export function close(key: string, keepShells = false) {
   const pulse = pulses.get(key);
   if (pulse?.quiet) clearTimeout(pulse.quiet);
   pulses.delete(key);
+  rested.delete(key);
   const still = stills.get(key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
@@ -1905,7 +1906,33 @@ export function statusLabel(session: Session | null): string {
  * spinner while it connects most of all, and none of it is work. A session
  * that goes quiet while nobody is looking at it, or rings for attention,
  * is unread until someone does.
+ *
+ * An idle agent keeps house by itself: Claude Code writes a recap of the
+ * conversation while the user is away and compacts a long one before its
+ * cache expires, each under a spinner for seconds on end. What it draws for
+ * a turn of its own, a reply or a call to a tool, comes after a bullet; a
+ * recap and a compaction draw none. So once the user has read a session at
+ * rest, a spell of output nobody sent a line for is work only when it draws
+ * that bullet.
  */
+
+/** The bullet Claude Code draws before what it says or does in a turn:
+    one glyph on macOS and another elsewhere, in UTF-8. */
+const BULLETS = [
+  [0xe2, 0x8f, 0xba],
+  [0xe2, 0x97, 0x8f],
+];
+
+/** Whether a chunk of a Claude Code terminal's output draws a turn's
+    bullet. */
+export function drawsTurn(bytes: Uint8Array): boolean {
+  for (let at = 0; at + 2 < bytes.length; at++) {
+    if (bytes[at] !== 0xe2) continue;
+    for (const [, second, third] of BULLETS)
+      if (bytes[at + 1] === second && bytes[at + 2] === third) return true;
+  }
+  return false;
+}
 
 /** Quiet this long after output is the agent waiting. */
 export const QUIET_MS = 2000;
@@ -1928,9 +1955,27 @@ interface Pulse {
   /** Windows before this one that were busy, without a quiet one between. */
   run: number;
   quiet: ReturnType<typeof setTimeout> | null;
+  /** Whether this spell of output has drawn a turn's bullet. */
+  said: boolean;
 }
 
 const pulses = new Map<string, Pulse>();
+
+/** The sessions the user has read at rest, neither working nor asking,
+    with nothing new from the agent since, by the row's key. A reminder of
+    what was read, an idle notice or a bell after a stop, marks none of
+    them. */
+const rested = new Set<string>();
+
+function atRest(session: Session): boolean {
+  return !session.working && session.needs === null;
+}
+
+/** The agent, or someone speaking to it, has done something new: what the
+    user read of it is no longer all there is. */
+function stirred(session: Session) {
+  rested.delete(session.key);
+}
 
 /** Whether the session is the one on screen, in a window that is looked at. */
 export function isViewed(session: Session): boolean {
@@ -1979,7 +2024,10 @@ export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   if (REPORT.test(data) || REPLY.test(data)) return;
-  if (data.includes("\r") || data.includes("\n")) session.engaged = true;
+  if (data.includes("\r") || data.includes("\n")) {
+    session.engaged = true;
+    stirred(session);
+  }
   pressed.set(session.key, Date.now());
   if (session.needs !== null) return;
   lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
@@ -1997,6 +2045,7 @@ export function spokenTo(ptyId: string) {
   if (session === undefined) return;
   session.engaged = true;
   session.turnEnd = null;
+  stirred(session);
 }
 
 /** The agent in a terminal took a line in, as its prompt hook says. The
@@ -2022,8 +2071,8 @@ export function keysStillIn(key: string, quiet: number, now = Date.now()): numbe
   return at === undefined ? 0 : Math.max(0, at + quiet - now);
 }
 
-/** Bytes arrived for a session. */
-export function output(key: string, bytes: number, now = Date.now()) {
+/** Bytes arrived for a session, and whether they draw a turn's bullet. */
+export function output(key: string, bytes: number, now = Date.now(), said = false) {
   const session = byKey(key);
   if (session === null) return;
   // Codex reports turn boundaries in its rollout. Output is only needed
@@ -2048,6 +2097,7 @@ export function output(key: string, bytes: number, now = Date.now()) {
     if (session.needs !== null && work) {
       session.needs = null;
       session.working = true;
+      stirred(session);
       changed(session);
     }
     if (
@@ -2059,8 +2109,13 @@ export function output(key: string, bytes: number, now = Date.now()) {
       stillLater(session);
     return;
   }
-  if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working) {
+  if (said) pulse.said = true;
+  // Read at rest, the agent at work unasked is a turn of its own only once
+  // it says something; until then it is keeping house.
+  const turn = pulse.said || !rested.has(key);
+  if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working && turn) {
     session.working = true;
+    stirred(session);
     changed(session);
   }
   if (!work) return;
@@ -2074,7 +2129,7 @@ export function output(key: string, bytes: number, now = Date.now()) {
 function counted(key: string, bytes: number, now: number): Pulse {
   let pulse = pulses.get(key);
   if (pulse === undefined) {
-    pulse = { bytes: 0, windowStart: now, run: 0, quiet: null };
+    pulse = { bytes: 0, windowStart: now, run: 0, quiet: null, said: false };
     pulses.set(key, pulse);
   }
   if (now - pulse.windowStart > WINDOW_MS) {
@@ -2115,6 +2170,7 @@ function settle(key: string) {
     pulse.quiet = null;
     pulse.bytes = 0;
     pulse.run = 0;
+    pulse.said = false;
   }
   if (session === null || !session.working) return;
   session.working = false;
@@ -2157,9 +2213,16 @@ export function onDirected(handler: ((session: Session) => boolean) | null) {
     what happened is: an ask for a permission is, whatever came before it.
     A session another session answers for is unread for a permission and
     nothing else: a stop, an ending, a bell or a line left are its
-    director's to hear. */
-function unseen(session: Session, asking = false) {
-  if (isViewed(session)) return;
+    director's to hear. A reminder, a sign that only says again that the
+    agent waits, marks nothing the user has read at rest since. Seen at
+    rest, the session is read so. */
+function unseen(session: Session, asking = false, reminder = false) {
+  if (isViewed(session)) {
+    if (atRest(session)) rested.add(session.key);
+    return;
+  }
+  if (reminder && rested.has(session.key)) return;
+  rested.delete(session.key);
   if (!asking && directed(session)) return;
   const news = asking || !session.unread;
   session.unread = true;
@@ -2168,13 +2231,23 @@ function unseen(session: Session, asking = false) {
   waiting?.(session);
 }
 
-/** The agent rang the bell, or sent a notification: it wants the user,
-    whatever else is going on. Heard in a focused window on this session,
-    it needs no mark. */
+/** The agent wants the user, whatever else is going on: an integrated
+    session asks, comes to rest after a turn, or ends. Heard in a focused
+    window on this session, it needs no mark. */
 export function rang(key: string) {
   const session = byKey(key);
   if (session === null) return;
   unseen(session);
+}
+
+/** A terminal rang its bell, or was sent a notification. While the agent
+    works or asks it is news. At rest it may only say again that the agent
+    waits, as Claude Code's idle notice does when it is set to ring, and a
+    session read at rest since takes no mark from it. */
+export function belled(key: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  unseen(session, false, atRest(session));
 }
 
 /** The user looked: the session is on screen in a focused window. */
@@ -2184,6 +2257,7 @@ export function viewed(key: string) {
   if (session.unread) changed(session);
   session.unread = false;
   session.note = null;
+  if (atRest(session)) rested.add(key);
 }
 
 /** The agent left a line for the row: shown under the name, and the row
@@ -2196,16 +2270,23 @@ export function noted(key: string, text: string) {
 }
 
 // Only the latest transition matters when identification catches up. The
-// bound also covers hooks from sessions outside this window.
+// bound also covers hooks from sessions outside this window, and so does
+// the age: a row learns its id within seconds of its start, so a
+// transition older than that is a session run elsewhere, which a resume of
+// it here must not take for news.
 const pendingActivity = new Map<
   string,
-  { kind: SessionEvent["kind"]; note: string | null; cut: boolean }
+  { kind: SessionEvent["kind"]; note: string | null; cut: boolean; at: number }
 >();
+
+/** How long a transition waits for its row to learn the session's id. */
+export const PENDING_FOR = 30_000;
 
 function replayActivity(sessionId: string) {
   const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
-  if (pending !== undefined) exact(sessionId, pending.kind, pending.note, pending.cut);
+  if (pending !== undefined && Date.now() - pending.at < PENDING_FOR)
+    exact(sessionId, pending.kind, pending.note, pending.cut);
 }
 
 /** A hook or rollout reports a turn transition. With a stop comes the
@@ -2230,7 +2311,7 @@ export function exact(
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, { kind, note, cut });
+    pendingActivity.set(sessionId, { kind, note, cut, at: Date.now() });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -2248,6 +2329,7 @@ export function exact(
       session.needs = null;
       session.delegated = false;
       session.turnEnd = null;
+      stirred(session);
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
       session.note = null;
@@ -2274,6 +2356,7 @@ export function exact(
       session.working = true;
       session.needs = null;
       session.delegated = true;
+      stirred(session);
       if (idle) changed(session);
       if (session.note === null && note !== null) session.note = shown(note);
       break;
@@ -2283,20 +2366,26 @@ export function exact(
       session.working = false;
       session.needs = "permission";
       session.delegated = false;
+      stirred(session);
       if (asking) changed(session);
       unseen(session, asking);
       break;
     }
-    case "idle":
+    case "idle": {
       // An agent waiting long enough to say so is not working, whatever
-      // was last heard: its subagents are gone, or it never had any.
-      if (session.working) {
+      // was last heard: its subagents are gone, or it never had any. Then
+      // the notice ends a turn. Otherwise it only says again what a stop
+      // said: Claude Code sends it a minute after a turn ends, and again a
+      // minute after each recap or compaction it does while idle.
+      const ends = session.working;
+      if (ends) {
         session.working = false;
         changed(session);
       }
       session.delegated = false;
-      unseen(session);
+      unseen(session, false, !ends);
       break;
+    }
   }
 }
 
@@ -2378,6 +2467,7 @@ export function reset() {
     if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   }
   pulses.clear();
+  rested.clear();
   sessions.all = [];
   sessions.active = null;
   sessions.history = {};

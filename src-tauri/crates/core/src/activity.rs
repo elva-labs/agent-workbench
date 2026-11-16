@@ -330,6 +330,33 @@ mod tests {
         assert_eq!(event("not json"), None);
     }
 
+    /// Recorded from an idle Claude Code session with every hook of the
+    /// kind installed: a turn, then a recap and a compaction it did while
+    /// idle. Each ends a subagent of its own and the compaction starts the
+    /// session again, none of which is a transition, and each is followed a
+    /// minute later by the same idle notice as the turn.
+    #[test]
+    fn an_idle_session_s_housekeeping_says_only_that_it_is_idle() {
+        let lines = [
+            r#"{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}"#,
+            r#"{"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"Reply with the single word ok."}"#,
+            r#"{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"ok","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+            r#"{"session_id":"s1","agent_id":"a1","agent_type":"","hook_event_name":"SubagentStop","stop_hook_active":false,"last_assistant_message":"The overall goal so far is a quick check-in.","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+            r#"{"session_id":"s1","hook_event_name":"PreCompact","trigger":"manual","custom_instructions":null}"#,
+            r#"{"session_id":"s1","agent_id":"a2","agent_type":"","hook_event_name":"SubagentStop","stop_hook_active":false,"last_assistant_message":"<summary>Nothing is in progress.</summary>","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"SessionStart","source":"compact"}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+        ];
+        let heard: Vec<String> = lines
+            .iter()
+            .filter_map(|line| classify(line))
+            .map(|event| event.kind)
+            .collect();
+        assert_eq!(heard, ["prompt", "stop", "idle", "idle", "idle"]);
+    }
+
     #[test]
     fn a_stop_says_it_was_cut_short_only_when_it_was() {
         let stop = classify(r#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();

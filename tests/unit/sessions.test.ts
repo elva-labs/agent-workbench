@@ -21,6 +21,10 @@ import {
   refreshHistory,
   isMine,
   isViewed,
+  belled,
+  drawsTurn,
+  onDirected,
+  PENDING_FOR,
   exact,
   loadRemembered,
   output,
@@ -1713,9 +1717,11 @@ describe("working, and waiting for you", () => {
       exact("session-pty-1", "stop");
       expect(behind.working).toBe(false);
       expect(statusLabel(behind)).toBe("waiting for you");
+      // Claude Code's idle notice a minute later says it again: read, it
+      // stays read.
       viewed(behind.key);
       exact("session-pty-1", "idle");
-      expect(behind.unread).toBe(true);
+      expect(behind.unread).toBe(false);
     } finally {
       vi.useRealTimers();
     }
@@ -1862,6 +1868,281 @@ describe("working, and waiting for you", () => {
     expect(() => output("nope", 999)).not.toThrow();
     expect(() => rang("nope")).not.toThrow();
     expect(() => viewed("nope")).not.toThrow();
+  });
+});
+
+// What an idle Claude Code session does by itself, recorded from a scratch
+// session: the hooks it fires and the bytes it draws each second. The idle
+// notice comes a minute after a turn ends, and again a minute after each
+// recap and each compaction, which fire no hook the window hears (a recap
+// and a compaction each end a subagent, and a compaction starts the session
+// again, neither of which the hooks report).
+describe("a session read stays read", () => {
+  /** Bytes per second a turn drew, its first two seconds with the user's
+      words echoed and the reply's bullet in the second. */
+  const TURN = [1150, 869, 350, 727];
+  const TURN_SAYS = 1;
+  /** A recap of the conversation, under a spinner, with no bullet. */
+  const RECAP = [4241, 335, 713];
+  /** A compaction, under a spinner, with no bullet. */
+  const COMPACTION = [5364, 1055, 674, 745, 782, 938, 1247, 837];
+  /** The whole of a minute's idle: the cursor redrawn as focus left. */
+  const IDLE_MINUTE = [44];
+
+  /** Plays seconds of output into a session, a chunk a second, the bullet
+      in the second `says` names. */
+  const plays = (key: string, seconds: number[], says = -1) => {
+    seconds.forEach((bytes, at) => {
+      if (at > 0) vi.advanceTimersByTime(1010);
+      output(key, bytes, Date.now(), at === says);
+    });
+    vi.advanceTimersByTime(QUIET_MS + 10);
+  };
+
+  /** The user reads a session: on screen in a focused window. */
+  const look = (session: ReturnType<typeof live>) => {
+    select(session.key);
+    viewed(session.key);
+  };
+
+  /** Two sessions in one project, the second behind the first. */
+  const pair = () => {
+    const front = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(front.key);
+    return { front, behind };
+  };
+
+  it("takes the idle notices after a stop, a recap and a compaction for nothing new, with hooks", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop", "ok");
+      expect(behind.unread).toBe(true);
+      expect(told).toEqual([behind.key]);
+
+      look(behind);
+      select(front.key);
+      expect(behind.unread).toBe(false);
+      // A minute after the stop, after the recap, after the compaction.
+      for (let notice = 0; notice < 3; notice++) exact("session-pty-2", "idle");
+      expect(behind.unread).toBe(false);
+      expect(behind.note).toBeNull();
+      expect(statusLabel(behind)).toBe("running");
+      expect(told).toEqual([behind.key]);
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("takes the idle notice for nothing new after a stop seen on screen", () => {
+    const { front, behind } = pair();
+    select(behind.key);
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Done.");
+    expect(behind.unread).toBe(false);
+    select(front.key);
+    exact("session-pty-2", "idle");
+    expect(behind.unread).toBe(false);
+  });
+
+  it("marks a read session again for a new turn that ends, a permission, a line or an ending", () => {
+    const { front, behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop");
+    look(behind);
+    select(front.key);
+
+    // A turn that starts and ends while the user is away.
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Second answer.");
+    expect(behind.unread).toBe(true);
+    expect(behind.note).toBe("Second answer.");
+    viewed(behind.key);
+    expect(behind.unread).toBe(false);
+
+    // A permission, however recently the row was read.
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "permission");
+    expect(behind.unread).toBe(true);
+    viewed(behind.key);
+
+    // A line it leaves, with nothing else new.
+    exact("session-pty-2", "stop");
+    viewed(behind.key);
+    noted(behind.key, "Over to you.");
+    expect(behind.unread).toBe(true);
+    viewed(behind.key);
+
+    // Its ending.
+    ended({ id: "pty-2", code: 0, clean: true });
+    expect(behind.unread).toBe(true);
+  });
+
+  // A turn whose stop the hooks never told, as when the agent waited on its
+  // subagents: its idle notice is the turn's end, and news.
+  it("marks the idle notice that ends a turn", () => {
+    const { behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "delegated");
+    viewed(behind.key);
+    exact("session-pty-2", "idle");
+    expect(behind.working).toBe(false);
+    expect(behind.unread).toBe(true);
+  });
+
+  it("takes a recap and a compaction for housekeeping, without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "Reply with the single word ok.\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      expect(behind.unread).toBe(true);
+      look(behind);
+      select(front.key);
+
+      plays(behind.key, IDLE_MINUTE);
+      plays(behind.key, RECAP);
+      expect(behind.working).toBe(false);
+      expect(behind.unread).toBe(false);
+      plays(behind.key, COMPACTION);
+      expect(behind.working).toBe(false);
+      expect(behind.unread).toBe(false);
+      expect(statusLabel(behind)).toBe("running");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The agent starts a turn of its own while read, as it does for a
+  // background subagent's report: it says something, so it is a turn.
+  it("takes a turn the agent starts by itself for work and news, without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      look(behind);
+      select(front.key);
+      expect(behind.unread).toBe(false);
+
+      plays(behind.key, [...RECAP, ...TURN], RECAP.length + TURN_SAYS);
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes housekeeping for work while the session is not read at rest, as before", () => {
+    vi.useFakeTimers();
+    try {
+      const { behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, RECAP);
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes a line the user sends for the start of a turn, bullet or not", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      look(behind);
+      select(front.key);
+      // The model thinks under its spinner before it says a word.
+      typed("pty-2", "and then?\r");
+      for (let second = 0; second < WORK_WINDOWS; second++) {
+        if (second > 0) vi.advanceTimersByTime(1010);
+        output(behind.key, WORK_BYTES);
+      }
+      expect(behind.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("finds a turn's bullet in a chunk, on macOS and elsewhere", () => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    expect(drawsTurn(encode("\x1b[2K⏺ ok"))).toBe(true);
+    expect(drawsTurn(encode("● Read(src/a.ts)"))).toBe(true);
+    expect(drawsTurn(encode("✻ Transmuting… ⎿ recap"))).toBe(false);
+    expect(drawsTurn(encode("✳ Compacting conversation…"))).toBe(false);
+    expect(drawsTurn(new Uint8Array([0xe2, 0x8f]))).toBe(false);
+  });
+
+  it("takes a bell at rest after the session was read for a reminder, and any other for news", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop");
+      look(behind);
+      select(front.key);
+      // Claude Code set to ring its idle notice.
+      belled(behind.key);
+      expect(behind.unread).toBe(false);
+
+      // While it works, a bell is news.
+      exact("session-pty-2", "prompt");
+      belled(behind.key);
+      expect(behind.unread).toBe(true);
+
+      // A session nobody has looked at yet rings for its own reasons.
+      const fresh = live(A, "pty-3");
+      select(front.key);
+      belled(fresh.key);
+      expect(fresh.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a session another session answers for to a permission alone", () => {
+    const { behind } = pair();
+    onDirected((session) => session.key === behind.key);
+    try {
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop");
+      exact("session-pty-2", "idle");
+      belled(behind.key);
+      expect(behind.unread).toBe(false);
+      exact("session-pty-2", "permission");
+      expect(behind.unread).toBe(true);
+    } finally {
+      onDirected(null);
+    }
+  });
+
+  // A session run outside the window has its hooks heard all the same; a
+  // stop from then is no news to a resume of it here.
+  it("drops a transition heard long before the row knew its id", () => {
+    vi.useFakeTimers();
+    try {
+      const front = live(A, "pty-1");
+      exact("outside", "stop", "Old answer.");
+      vi.advanceTimersByTime(PENDING_FOR);
+      const resumed = create(A);
+      select(front.key);
+      started(resumed.key, "pty-9", "outside");
+      expect(resumed.unread).toBe(false);
+      expect(resumed.note).toBeNull();
+
+      // One heard just before the id is known is the row's.
+      exact("soon", "prompt");
+      vi.advanceTimersByTime(PENDING_FOR / 10);
+      const fresh = create(A);
+      select(front.key);
+      started(fresh.key, "pty-10", "soon");
+      expect(fresh.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
