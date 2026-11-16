@@ -1661,6 +1661,7 @@ export async function launch(
   const session = byKey(key);
   // A row refused before it started has no process to start.
   if (told === null || session === null) return false;
+  const bullets = session.agent === "claude-code" ? bulletWatch() : null;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -1677,7 +1678,7 @@ export async function launch(
         rows,
       },
       (bytes) => {
-        output(key, bytes.length, Date.now(), session.agent === "claude-code" && drawsTurn(bytes));
+        output(key, bytes.length, Date.now(), bullets?.(bytes) ?? false);
         onOutput(bytes);
       },
     );
@@ -1815,6 +1816,7 @@ export function close(key: string, keepShells = false) {
   if (pulse?.quiet) clearTimeout(pulse.quiet);
   pulses.delete(key);
   rested.delete(key);
+  bulleted.delete(key);
   const still = stills.get(key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
@@ -1911,9 +1913,15 @@ export function statusLabel(session: Session | null): string {
  * conversation while the user is away and compacts a long one before its
  * cache expires, each under a spinner for seconds on end. What it draws for
  * a turn of its own, a reply or a call to a tool, comes after a bullet; a
- * recap and a compaction draw none. So once the user has read a session at
- * rest, a spell of output nobody sent a line for is work only when it draws
- * that bullet.
+ * recap and a compaction draw none of their own. So once the user has read
+ * a session at rest, a spell of output nobody sent a line for is work only
+ * when it draws a bullet. That holds only in a terminal whose turns have
+ * been seen to draw one: anywhere else every such spell is work, so that a
+ * Claude Code drawing some other glyph loses no turn. What output cannot
+ * tell apart: a recap or compaction that moves the conversation on a full
+ * screen draws the bullets already on it again, and is taken for work, and
+ * a turn with less than three seconds of output is never seen. The hooks
+ * report every turn, one the agent starts by itself included.
  */
 
 /** The bullet Claude Code draws before what it says or does in a turn:
@@ -1932,6 +1940,20 @@ export function drawsTurn(bytes: Uint8Array): boolean {
       if (bytes[at + 1] === second && bytes[at + 2] === third) return true;
   }
   return false;
+}
+
+/** Watches one terminal's output for a turn's bullet. A read of the pty
+    may cut the glyph in two, so each chunk is looked at together with the
+    last two bytes of the one before it. */
+export function bulletWatch(): (bytes: Uint8Array) => boolean {
+  let tail = new Uint8Array(0);
+  return (bytes) => {
+    const seam = new Uint8Array(tail.length + Math.min(2, bytes.length));
+    seam.set(tail);
+    seam.set(bytes.subarray(0, 2), tail.length);
+    tail = bytes.length >= 2 ? bytes.slice(-2) : seam.slice(-2);
+    return drawsTurn(seam) || drawsTurn(bytes);
+  };
 }
 
 /** Quiet this long after output is the agent waiting. */
@@ -1955,11 +1977,18 @@ interface Pulse {
   /** Windows before this one that were busy, without a quiet one between. */
   run: number;
   quiet: ReturnType<typeof setTimeout> | null;
-  /** Whether this spell of output has drawn a turn's bullet. */
+  /** Whether this spell of output has drawn a turn's bullet, counting the
+      second just before it. */
   said: boolean;
+  /** Whether this second has drawn one. */
+  saidNow: boolean;
 }
 
 const pulses = new Map<string, Pulse>();
+
+/** The sessions whose turns have been seen to draw a bullet, by the row's
+    key: in these alone a spell of output without one is housekeeping. */
+const bulleted = new Set<string>();
 
 /** The sessions the user has read at rest, neither working nor asking,
     with nothing new from the agent since, by the row's key. A reminder of
@@ -2109,15 +2138,20 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
       stillLater(session);
     return;
   }
-  if (said) pulse.said = true;
+  if (said) {
+    pulse.said = true;
+    pulse.saidNow = true;
+  }
   // Read at rest, the agent at work unasked is a turn of its own only once
-  // it says something; until then it is keeping house.
-  const turn = pulse.said || !rested.has(key);
+  // it draws a turn's bullet, where its turns are known to; until then it
+  // is keeping house.
+  const turn = pulse.said || !rested.has(key) || !bulleted.has(key);
   if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working && turn) {
     session.working = true;
     stirred(session);
     changed(session);
   }
+  if (session.working && pulse.said) bulleted.add(key);
   if (!work) return;
   if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   pulse.quiet = setTimeout(() => settle(key), QUIET_MS);
@@ -2129,12 +2163,17 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
 function counted(key: string, bytes: number, now: number): Pulse {
   let pulse = pulses.get(key);
   if (pulse === undefined) {
-    pulse = { bytes: 0, windowStart: now, run: 0, quiet: null, said: false };
+    pulse = { bytes: 0, windowStart: now, run: 0, quiet: null, said: false, saidNow: false };
     pulses.set(key, pulse);
   }
   if (now - pulse.windowStart > WINDOW_MS) {
     const followed = now - pulse.windowStart < 2 * WINDOW_MS;
-    pulse.run = followed && pulse.bytes >= WORK_BYTES ? pulse.run + 1 : 0;
+    const goesOn = followed && pulse.bytes >= WORK_BYTES;
+    pulse.run = goesOn ? pulse.run + 1 : 0;
+    // A spell ends at a quiet second, and what it drew with it, but for a
+    // bullet in that second when the next follows at once.
+    if (!goesOn) pulse.said = followed && pulse.saidNow;
+    pulse.saidNow = false;
     pulse.bytes = 0;
     pulse.windowStart = now;
   }
@@ -2171,6 +2210,7 @@ function settle(key: string) {
     pulse.bytes = 0;
     pulse.run = 0;
     pulse.said = false;
+    pulse.saidNow = false;
   }
   if (session === null || !session.working) return;
   session.working = false;
@@ -2468,6 +2508,7 @@ export function reset() {
   }
   pulses.clear();
   rested.clear();
+  bulleted.clear();
   sessions.all = [];
   sessions.active = null;
   sessions.history = {};

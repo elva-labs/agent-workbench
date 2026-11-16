@@ -23,6 +23,7 @@ import {
   isViewed,
   belled,
   drawsTurn,
+  bulletWatch,
   onDirected,
   PENDING_FOR,
   exact,
@@ -1886,15 +1887,21 @@ describe("a session read stays read", () => {
   const RECAP = [4241, 335, 713];
   /** A compaction, under a spinner, with no bullet. */
   const COMPACTION = [5364, 1055, 674, 745, 782, 938, 1247, 837];
+  /** A compaction on a full screen, in a second recording: moving the
+      conversation, it draws again the bullets already on screen as it
+      starts and as it ends. */
+  const FULL_COMPACTION = [6833, 714, 983, 691, 991, 991, 989, 985, 871, 1881];
+  const FULL_COMPACTION_SAYS = [0, 9];
   /** The whole of a minute's idle: the cursor redrawn as focus left. */
   const IDLE_MINUTE = [44];
 
-  /** Plays seconds of output into a session, a chunk a second, the bullet
-      in the second `says` names. */
-  const plays = (key: string, seconds: number[], says = -1) => {
+  /** Plays seconds of output into a session, a chunk a second, a bullet in
+      each second `says` names. */
+  const plays = (key: string, seconds: number[], says: number | number[] = -1) => {
+    const drawn = Array.isArray(says) ? says : [says];
     seconds.forEach((bytes, at) => {
       if (at > 0) vi.advanceTimersByTime(1010);
-      output(key, bytes, Date.now(), at === says);
+      output(key, bytes, Date.now(), drawn.includes(at));
     });
     vi.advanceTimersByTime(QUIET_MS + 10);
   };
@@ -2074,6 +2081,88 @@ describe("a session read stays read", () => {
     expect(drawsTurn(encode("✻ Transmuting… ⎿ recap"))).toBe(false);
     expect(drawsTurn(encode("✳ Compacting conversation…"))).toBe(false);
     expect(drawsTurn(new Uint8Array([0xe2, 0x8f]))).toBe(false);
+  });
+
+  // The core hands the bytes on as the pty gave them, and a read may end
+  // inside a character. A reply draws its bullet once.
+  it("finds a bullet a read of the pty cuts in two", () => {
+    const encode = (text: string) => new TextEncoder().encode(text);
+    const bytes = encode("\x1b[H\r\x1b[8B\x1b[38;2;255;255;255m⏺\x1b[3G\x1b[39mok");
+    const at = bytes.indexOf(0xe2);
+    for (const cut of [at + 1, at + 2]) {
+      const watch = bulletWatch();
+      expect(watch(bytes.slice(0, cut))).toBe(false);
+      expect(watch(bytes.slice(cut))).toBe(true);
+    }
+    const byByte = bulletWatch();
+    expect([...bytes].filter((byte) => byByte(new Uint8Array([byte])))).toHaveLength(1);
+    const plain = bulletWatch();
+    expect(plain(encode("✻ Brewing…"))).toBe(false);
+    expect(plain(encode("✶ Brewing…"))).toBe(false);
+  });
+
+  // A Claude Code that draws its turns some other way: the window cannot
+  // tell its turns from its housekeeping, and takes every spell for work.
+  it("takes every spell for work where the agent's turns drew no bullet it knows", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN);
+      expect(behind.unread).toBe(true);
+      look(behind);
+      select(front.key);
+
+      plays(behind.key, TURN);
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts a bullet for the spell it starts, not for one a while later", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      look(behind);
+      select(front.key);
+
+      // A redraw that happens to draw a bullet, a minute before a recap.
+      output(behind.key, 44, Date.now(), true);
+      vi.advanceTimersByTime(60_000);
+      plays(behind.key, RECAP);
+      expect(behind.working).toBe(false);
+      expect(behind.unread).toBe(false);
+
+      // One in the quiet second just before a spell is the spell's.
+      vi.advanceTimersByTime(60_000);
+      output(behind.key, 120, Date.now(), true);
+      vi.advanceTimersByTime(1010);
+      plays(behind.key, RECAP);
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // What output cannot tell: the bullets a compaction draws again on a full
+  // screen are the turns', and the window errs on the side of news.
+  it("takes a compaction that draws the turns again on a full screen for work, without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      look(behind);
+      select(front.key);
+
+      plays(behind.key, FULL_COMPACTION, FULL_COMPACTION_SAYS);
+      expect(behind.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("takes a bell at rest after the session was read for a reminder, and any other for news", () => {
