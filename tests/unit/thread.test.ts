@@ -6,6 +6,10 @@ import {
   asks,
   clock,
   dayName,
+  foldKey,
+  held,
+  locate,
+  matches,
   stamps,
   choiceLabel,
   choiceMeans,
@@ -621,6 +625,83 @@ describe("the times a thread shows", () => {
       `today ${clock(at(4, 9))}`,
       clock(at(4, 10)),
     ]);
+  });
+});
+
+
+describe("what the thread holds, drawn or not", () => {
+  /** A turn that answers a question with a command, then a subagent that
+      reads a file, then says what it found. */
+  const conversation = () => {
+    const c = new Conversation(() => 0);
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "Where is the Counter?", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" },
+      { type: "toolInput", call: "c-1", parent: null, delta: null, input: { command: "grep -rn counter src" }, truncated: false },
+      { type: "toolFinished", call: "c-1", parent: null, output: "src/count.ts:1", error: false, truncated: false, changes: [] },
+      { type: "toolStarted", call: "c-2", parent: null, name: "Task", kind: "agent" },
+      { type: "toolStarted", call: "c-3", parent: "c-2", name: "Read", kind: "read" },
+      { type: "toolFinished", call: "c-3", parent: "c-2", output: "let counter = 0;", error: false, truncated: false, changes: [] },
+      { type: "toolFinished", call: "c-2", parent: null, output: "done", error: false, truncated: false, changes: [] },
+      { type: "text", block: "b-1", parent: null, text: "The counter is in `src/count.ts`.", done: true },
+      { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 1000, usage: null },
+    ];
+    for (const event of events) c.apply(event);
+    return c;
+  };
+
+  it("finds every message, block and call, with the entry it is in and the folds around it", () => {
+    const c = conversation();
+    const run = c.entries.find((entry) => entry.kind === "agent")!.key;
+    const user = c.entries.find((entry) => entry.kind === "user")!.key;
+    const work = foldKey("work", c.call("c-1")!);
+    expect(held(c).map((one) => one.id)).toEqual(["m-1", "c-1", "c-2", "c-3", "b-1"]);
+    expect(locate(c, "m-1")).toMatchObject({ entry: user, folds: [] });
+    expect(locate(c, "b-1")).toMatchObject({ entry: run, folds: [] });
+    expect(locate(c, "c-1")).toMatchObject({ entry: run, folds: [work] });
+    // A subagent's call is behind the work's fold, the step of the call
+    // that started it, and its own run's fold of work.
+    expect(locate(c, "c-3")).toMatchObject({
+      entry: run,
+      folds: [work, foldKey("step", c.call("c-2")!), foldKey("work", c.call("c-3")!)],
+    });
+    expect(locate(c, "nothing")).toBeNull();
+  });
+
+  it("matches words wherever they are, folded or not, case aside, in the order drawn", () => {
+    const c = conversation();
+    expect(matches(c, "COUNTER").map((one) => one.id)).toEqual(["m-1", "c-1", "c-3", "b-1"]);
+    expect(matches(c, "count.ts").map((one) => one.id)).toEqual(["c-1", "b-1"]);
+    expect(matches(c, "")).toEqual([]);
+  });
+
+  it("holds an input as its step shows it, a change's lines and a message still waiting, and not the error said where it resumes", () => {
+    const c = conversation();
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-2", state: "sent", error: null, text: "Fix the path", images: [] },
+      { type: "turnStarted", messages: ["m-2"] },
+      { type: "toolStarted", call: "c-4", parent: null, name: "Edit", kind: "edit" },
+      {
+        type: "toolInput", call: "c-4", parent: null, delta: null, truncated: false,
+        input: { file_path: "C:\\repo\\src\\count.ts", old_string: 'say("hi")', new_string: 'say("bye")' },
+      },
+      {
+        type: "toolFinished", call: "c-4", parent: null, output: "", error: false, truncated: false,
+        changes: [{ path: "C:\\repo\\src\\count.ts", kind: "update", to: null, content: null, truncated: false,
+          hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-say("hi")', '+say("farewell")'] }] }],
+      },
+      { type: "message", message: "m-3", state: "queued", error: null, text: "And the tests", images: [] },
+    ];
+    for (const event of events) c.apply(event);
+    expect(matches(c, "C:\\repo\\src").map((one) => one.id)).toEqual(["c-4"]);
+    expect(matches(c, 'say("bye")').map((one) => one.id)).toEqual(["c-4"]);
+    expect(matches(c, 'say("farewell")').map((one) => one.id)).toEqual(["c-4"]);
+    expect(locate(c, "m-3")).toMatchObject({ entry: null, folds: [] });
+    const over = conversation();
+    over.apply({ type: "error", kind: "process", message: "the agent crashed" });
+    over.apply({ type: "ended", code: 1, clean: false });
+    expect(matches(over, "crashed")).toEqual([]);
   });
 });
 

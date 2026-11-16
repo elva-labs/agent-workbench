@@ -69,14 +69,16 @@
     leave = setTimeout(() => (hovered = false), HIDE_AFTER);
   }
 
+  /** A click, Enter or Space holds the popover open, the one shown by
+      the pointer resting on it as well, and puts a held one away. */
   function toggle() {
     cancelTimers();
-    if (open) {
+    if (held) {
       held = false;
       hovered = false;
       return;
     }
-    place();
+    if (!open) place();
     held = true;
   }
 

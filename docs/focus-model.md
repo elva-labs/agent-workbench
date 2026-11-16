@@ -242,10 +242,10 @@ a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
   editor mode to the editor. This is the one key whose meaning
   depends on context, so the resolution takes the focus state and lives in one
   testable place. The one exception is a popover the user opened from a
-  header, such as a workflow tag's rules: while it is open, Esc puts it away
-  wherever the keyboard is and reaches nothing else, since a click does not
-  move the keyboard on every platform and the key that closes a popover
-  must never also stop the agent's turn. With no popover open, Esc is the
+  header, such as a workflow tag's rules or where a run stands: while it
+  is open, Esc puts it away wherever the keyboard is and reaches nothing
+  else, since a click does not move the keyboard on every platform and the
+  key that closes a popover must never also stop the agent's turn. With no popover open, Esc is the
   terminal's or the composer's again.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
@@ -322,7 +322,8 @@ the agent waits on the user, a dock between them; see
 [sessions](sessions.md#integrated-sessions). Focusing the pane by key, or
 the session coming on screen in it, puts the keyboard in its composer,
 unless another control of that same session has it, or a control of the
-pane's own, such as the workflow tag in its header, as for a terminal; a
+pane's own, such as the workflow tag or a run's chip in its header, as
+for a terminal; a
 session going off screen lets the keyboard go. With no composer, the
 keyboard goes to Resume once the session has ended, and to the card that
 asks before a session can run, which is read before its buttons are
@@ -342,14 +343,15 @@ reached.
 | <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
 each: the thread, where the arrows move through its folds, steps, links
-and Copy buttons from what is in view, each Copy after what it belongs to
-and shown while the keyboard is on it, and <kbd>Enter</kbd> opens or
-presses one, and the dock's choices. The composer's
+and Copy buttons from what is in view, drawing what is not drawn yet as
+they come to it, each Copy after what it belongs to and shown while the
+keyboard is on it, and <kbd>Enter</kbd> opens or presses one, and the
+dock's choices. The composer's
 controls, attach, the model and the mode, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
 of their own in reading order. Focus is always drawn where the keyboard

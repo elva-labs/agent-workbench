@@ -1468,6 +1468,40 @@ test.describe("the peek in editor mode", () => {
       })
       .toBeGreaterThanOrEqual(tree.x + tree.width - 1);
   });
+
+  test("stays put away by the chord when a click peeked it, however soon after", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.clock.install();
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await flip(page);
+    const slot = page.locator(".sessions-slot");
+    await expect(slot).toHaveClass(/folded/);
+    const column = await box(page, "[data-testid='unfold-sessions']");
+    const onColumn = { x: column.x + column.width / 2, y: column.y + column.height / 2 };
+    // Time held still, so the pointer's wait before a peek is run out by
+    // the test rather than raced.
+    await page.clock.pauseAt(new Date(Date.now() + 60_000));
+    // The pointer comes to the folded column and clicks it: the pane peeks
+    // at once, and the chord puts it away from over the peek.
+    await page.mouse.move(onColumn.x, onColumn.y);
+    await page.mouse.down();
+    await page.mouse.up();
+    await expect(slot).toHaveClass(/peeking/);
+    const peek = await box(page, SESSIONS);
+    await page.mouse.move(peek.x + peek.width - 20, onColumn.y);
+    await page.keyboard.press(`${MOD}+1`);
+    await expect(slot).not.toHaveClass(/peeking/);
+    // The wait the pointer started on its way in has ended: nothing peeks.
+    await page.clock.runFor(1000);
+    expect(await slot.evaluate((node) => node.classList.contains("peeking"))).toBe(false);
+    // The pointer resting on the column again still peeks it.
+    await page.mouse.move(peek.x + peek.width + 200, onColumn.y);
+    await page.mouse.move(onColumn.x, onColumn.y);
+    await page.clock.runFor(1000);
+    await expect(slot).toHaveClass(/peeking/);
+  });
 });
 
 test.describe("the corner and the keyboard", () => {
@@ -2034,8 +2068,12 @@ function headerOrder(page: Page) {
     const drawn = (el: Element | null) =>
       el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
     const cut = (el: HTMLElement | null) => el !== null && el.scrollWidth > el.clientWidth + 0.5;
-    const tag = header.querySelector<HTMLElement>("[data-testid='workflow-tag']");
-    const role = header.querySelector<HTMLElement>("[data-testid='workflow-tag-role']");
+    // A session that follows a workflow has the run's chip, whose words
+    // give way as a place does.
+    const tag = header.querySelector<HTMLElement>("[data-testid='workflow-tag'], [data-testid='run-chip']");
+    const role = header.querySelector<HTMLElement>("[data-testid='workflow-tag-role'], [data-testid='run-words']");
+    const pips = header.querySelector<HTMLElement>("[data-testid='run-pips']");
+    const pane = header.closest("section")!.getBoundingClientRect();
     const flow = header.querySelector<HTMLElement>("[data-testid='workflow-tag-flow']");
     const meta = header.querySelector<HTMLElement>(".meta");
     const title = header.querySelector<HTMLElement>(".title")!;
@@ -2053,6 +2091,8 @@ function headerOrder(page: Page) {
         letters: crumb.querySelector<HTMLElement>(".crumb-text")!.clientWidth / parseFloat(getComputedStyle(crumb).fontSize),
       })),
       status: { drawn: drawn(meta), cut: cut(meta) },
+      // The chip's pips stand, inside the pane, whatever the room.
+      pips: pips === null ? null : drawn(pips) && pips.getBoundingClientRect().right <= pane.right,
       role:
         role === null || roleBox === undefined || tagBox === undefined
           ? null
@@ -2072,9 +2112,9 @@ for (const linux of [false, true]) {
         const tagged = kind !== "integrated";
         const crumbed = kind !== "orchestrator";
         const what = {
-          orchestrator: "a workflow tag",
+          orchestrator: "a run's chip",
           integrated: "a project and a branch",
-          "integrated orchestrator": "a workflow tag, a project and a branch",
+          "integrated orchestrator": "a run's chip, a project and a branch",
         }[kind];
         test(`gives way in turn with ${what}, the title last`, async ({ page }) => {
           if (linux) await asLinux(page);
@@ -2089,7 +2129,7 @@ for (const linux of [false, true]) {
           await page.setViewportSize({ width: 1440, height: 900 });
           await page.goto("/");
           await page.getByTestId("start-agent").click();
-          if (tagged) await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+          if (tagged) await expect(page.getByTestId("run-words")).toHaveText("Build and review");
           if (crumbed) await expect(page.getByTestId("conversation-branch")).toHaveText("main");
 
           const check = async (where: string) => {
@@ -2107,6 +2147,7 @@ for (const linux of [false, true]) {
               expect(at.status.drawn, where).toBe(false);
               expect(at.name.on, where).toBe(false);
             }
+            if (at.pips !== null) expect(at.pips, where).toBe(true);
             // The title is cut short only once the rest has gone.
             if (at.title.cut) {
               expect(at.status.drawn, where).toBe(false);
@@ -2119,10 +2160,7 @@ for (const linux of [false, true]) {
           const wide = await check("agent mode at 1440");
           expect(wide.title.cut).toBe(false);
           expect(wide.status).toEqual({ drawn: true, cut: false });
-          if (tagged) {
-            expect(wide.role).toEqual({ drawn: true, cut: false });
-            expect(wide.name.on).toBe(true);
-          }
+          if (tagged) expect(wide.role).toEqual({ drawn: true, cut: false });
           if (crumbed) expect(wide.crumbs.every((crumb) => crumb.drawn && !crumb.cut)).toBe(true);
 
           for (const width of [1200, 1100, 1000, 900]) {
@@ -2130,9 +2168,10 @@ for (const linux of [false, true]) {
             await settled(page);
             const at = await check(`agent mode at ${width}`);
             // In agent mode the agent is never narrower than its least
-            // width, and the place and the status both have room there.
-            expect(at.role?.cut ?? false, `agent mode at ${width}`).toBe(false);
-            expect(at.status, `agent mode at ${width}`).toEqual({ drawn: true, cut: false });
+            // width, and the status has room there beside a project and a
+            // branch. A run's chip is wider, and its words and the status
+            // give way in their turn.
+            if (kind === "integrated") expect(at.status, `agent mode at ${width}`).toEqual({ drawn: true, cut: false });
           }
 
           await page.setViewportSize({ width: 1440, height: 900 });
