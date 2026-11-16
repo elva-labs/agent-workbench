@@ -1232,22 +1232,19 @@ fn approving(tools: &toml_edit::Item) -> toml_edit::Item {
 
 /// Gives the workbench's entry the approvals the hooks write: each tool
 /// of [`RUN_UNASKED`] that has no approval of its own is given one to run
-/// without asking, and the entry has none for the whole server, so every
-/// other tool asks as the user's approval policy says. The approval for
-/// the whole server that an earlier build wrote is taken out. One of any
-/// other value is the user's own, and the entry is then left as it is; so
-/// is an approval a tool already has. Says whether anything changed, or
-/// that the entry cannot take them.
+/// without asking, and the hooks write none for the whole server, so every
+/// other tool asks as the user's approval policy says. An approval for the
+/// whole server is the user's own, of whatever value, and the entry is then
+/// left as it is; so is an approval a tool already has. Says whether
+/// anything changed, or that the entry cannot take them.
 fn approve_tools(server: &mut toml_edit::Item) -> Result<bool, String> {
     let inline = server.is_inline_table();
     let entry = server
         .as_table_like_mut()
         .ok_or("the server's entry is not a table")?;
-    let earlier = match entry.get(CODEX_APPROVAL_SETTING) {
-        None => false,
-        Some(mode) if mode.as_str() == Some(CODEX_APPROVE) => true,
-        Some(_) => return Ok(false),
-    };
+    if entry.contains_key(CODEX_APPROVAL_SETTING) {
+        return Ok(false);
+    }
     let mut changed = false;
     if !entry.contains_key(CODEX_TOOLS) {
         let tools = if inline {
@@ -1284,10 +1281,6 @@ fn approve_tools(server: &mut toml_edit::Item) -> Result<bool, String> {
                 changed = true;
             }
         }
-    }
-    if earlier {
-        entry.remove(CODEX_APPROVAL_SETTING);
-        changed = true;
     }
     // An inline entry is spaced afresh so what was added sits as the rest
     // does. Only the spaces between its keys and values move; a comment
@@ -2345,11 +2338,11 @@ mod tests {
         assert!(!project.join(".codex/config.toml").exists());
     }
 
-    // An entry without the approvals the hooks write, or with the one for
-    // the whole server an earlier build wrote, reads as installed and out
-    // of date. The next install gives each listed tool its own approval and
-    // takes the server's out, leaving the rest of the file as the user has
-    // it, whatever its form, and every approval of the user's own as it is.
+    // An entry without the approvals the hooks write reads as installed and
+    // out of date. The next install gives each listed tool its own approval,
+    // leaving the rest of the file as the user has it, whatever its form,
+    // and every approval of the user's own as it is. An entry with an
+    // approval for the whole server is the user's, and is left alone.
     #[test]
     fn an_older_codex_entry_gets_its_tools_approvals_and_nothing_else() {
         let (home, project) = fixture("codex-approval");
@@ -2403,27 +2396,26 @@ mod tests {
                 .collect()
         };
         let approve = approvals("tools.", &[]);
-        // From before there were approvals, and from the build that wrote
-        // one for the whole server.
+        // From before there were approvals.
         brought(&older(""), &older(&approve));
-        brought(
-            &older("default_tools_approval_mode = \"approve\"\n"),
-            &older(&approve),
-        );
 
-        // An approval for the whole server that the user chose stays
-        // theirs, and the entry is left as it is.
-        left(&older("default_tools_approval_mode = \"prompt\"\n"));
+        // An approval for the whole server is the user's, whatever it says,
+        // and the entry is left as it is, run after run.
+        for mode in ["approve", "prompt", "writes", "auto"] {
+            left(&older(&format!(
+                "default_tools_approval_mode = \"{mode}\"\n"
+            )));
+        }
         // So does a tool's own, listed or not, and the rest are added.
-        let theirs = "tools.show.approval_mode = \"prompt\"\n\
+        let theirs = "tools.notify.approval_mode = \"prompt\"\n\
                       tools.git_commit.approval_mode = \"approve\"\n";
         brought(
             &older(theirs),
-            &older(&format!("{theirs}{}", approvals("tools.", &["show"]))),
+            &older(&format!("{theirs}{}", approvals("tools.", &["notify"]))),
         );
         left(&older(&format!(
             "{theirs}{}",
-            approvals("tools.", &["show"])
+            approvals("tools.", &["notify"])
         )));
 
         // Line breaks of a carriage return and a line feed, and a byte
@@ -2482,12 +2474,12 @@ mod tests {
         // A tool's approval the user wrote under a header of its own: the
         // others go under headers of their own beside it.
         let headed = format!(
-            "{}\n[mcp_servers.agent_workbench.tools.show]\napproval_mode = \"prompt\"\n",
+            "{}\n[mcp_servers.agent_workbench.tools.notify]\napproval_mode = \"prompt\"\n",
             older("").trim_end()
         );
         let headers: String = RUN_UNASKED
             .iter()
-            .filter(|tool| **tool != "show")
+            .filter(|tool| **tool != "notify")
             .map(|tool| {
                 format!(
                     "\n[mcp_servers.agent_workbench.tools.{tool}]\napproval_mode = \"approve\"\n"

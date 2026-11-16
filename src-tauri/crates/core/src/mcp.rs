@@ -103,44 +103,57 @@ pub fn tools() -> Vec<Value> {
     listed
 }
 
-/// The tools a terminal Codex session runs without asking, by name: each
-/// is given an approval of its own in the server's entry, and the server
-/// as a whole is given none. They are the tools that only read or show,
-/// and those the window asks the user about itself each time. Every other
-/// tool of the server asks as the user's approval policy says, a plugin's
-/// tool or one added to the server later among them, until it is put here.
+/// The tools a Codex session runs without asking, by name: each is given
+/// an approval of its own, in a terminal session's entry for the server
+/// and in an integrated session's thread, and the server as a whole is
+/// given none. Only the server's own tools are named here, never a
+/// plugin's. Every other tool of the server asks as the user's approval
+/// policy says, a plugin's tool or one added to the server later among
+/// them, until it is put here.
 pub const RUN_UNASKED: &[&str] = &[
-    // They read or show.
+    // Puts one line of text on the caller's row in the sessions list.
     "notify",
-    "show",
-    "diff",
-    "present",
+    // Says what the user has open in the viewer and which lines are
+    // highlighted.
     "selection",
+    // List, read and wait on the sessions the caller started, and no
+    // others.
     "sessions",
-    "wait",
     "read",
+    "wait",
+    // Lists the open projects' paths and names.
     "projects",
+    // Reads the workbench's settings: looks, keys, workflows, theme names.
     "settings",
-    // The tools of the workbench's own plugins, todos and git, that read.
-    "todos_list",
-    "git_status",
-    "git_log",
-    // The window asks the user each time.
+    // The window shows the change and asks the user every time before it
+    // makes it.
     "settings_change",
     "theme_save",
     "styles_write",
-    "terminal",
-    "start",
 ];
 
 /// The tools left off [`RUN_UNASKED`] on purpose, so they ask as the
 /// user's approval policy says, with Codex's question the only one before
-/// they act: the browser's tools, which act in sites the user signed into
-/// in the workbench's browser, send and stop, which reach the session's
-/// own sessions, and the tools of the workbench's own plugins that change
-/// things. Named so that a tool added to the server is never left off
+/// they act. Named so that a tool added to the server is never left off
 /// either list by accident.
 pub const ASK_AS_POLICY_SAYS: &[&str] = &[
+    // Open a file the agent names, or its diff, in the viewer, where a
+    // Markdown document can be drawn with images loaded from any address:
+    // `diff` of a file git has no change in opens it drawn, and `show`
+    // keeps the view a tab of it already has.
+    "show",
+    "diff",
+    // Draws what the agent names: an HTML page in a frame that can reach
+    // the network, or a document with images from any address.
+    "present",
+    // Types a command into a terminal for the user to run, and moves the
+    // keyboard there.
+    "terminal",
+    // Starts a session. The window asks before the first start in a
+    // project unless the user let the caller start more there, and never
+    // before a resume.
+    "start",
+    // Act in the workbench's browser, in sites the user signed into there.
     "browser_open",
     "browser_tabs",
     "browser_navigate",
@@ -151,10 +164,17 @@ pub const ASK_AS_POLICY_SAYS: &[&str] = &[
     "browser_screenshot",
     "browser_eval",
     "browser_close",
+    // Type into or stop the caller's own sessions.
     "send",
     "stop",
+    // The tools of the workbench's own plugins. A plugin's tool reaches the
+    // agent as the plugin's name and the tool's, which any plugin enabled
+    // under that name could publish, so none is approved by name.
+    "todos_list",
     "todos_add",
     "todos_finish",
+    "git_status",
+    "git_log",
     "git_commit",
     "github_pr",
 ];
@@ -1612,9 +1632,14 @@ mod tests {
                 "todos_list"
             ]
         );
-        // Only reading tools of theirs run unasked.
-        for tool in ["git_commit", "github_pr", "todos_add", "todos_finish"] {
-            assert!(!RUN_UNASKED.contains(&tool), "{tool}");
+        // No plugin's tool runs unasked: what does is the server's own.
+        for tool in RUN_UNASKED {
+            assert!(own.iter().any(|name| name == tool), "{tool}");
+        }
+        // Nor does a tool that draws what the agent names, types into a
+        // terminal or starts a session.
+        for tool in ["show", "diff", "present", "terminal", "start"] {
+            assert!(ASK_AS_POLICY_SAYS.contains(&tool), "{tool}");
         }
     }
 

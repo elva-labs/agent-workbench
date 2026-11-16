@@ -46,9 +46,10 @@ server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
 those two variables to pass on. Named for a workflow where no
 configuration names it, it is given the approvals the
-[hooks](hooks.md#the-agents-tools) write: the tools that read, show or
-are asked about by the window run without asking, each by an approval of
-its own, and the rest ask as the user's approval policy says. Named again
+[hooks](hooks.md#the-agents-tools) write: the server's own tools that
+read, and those the window asks the user about every time, run without
+asking, each by an approval of its own, and the rest ask as the user's
+approval policy says. Named again
 where the project's configuration has it, the command line says nothing
 of approval, since Codex takes the command line over the project's file:
 the entry there decides, as the hooks wrote it or as the user changed it.

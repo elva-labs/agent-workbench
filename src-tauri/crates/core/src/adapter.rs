@@ -127,20 +127,20 @@ pub const SERVER_NAME: &str = "agent-workbench";
 pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
 /// The setting of a Codex server's entry that says whether all of its
-/// tools ask before they run, and the value that lets them run without
-/// asking. An integrated session's thread gives the workbench's server
-/// this value; a terminal session's entry does not carry the setting, and
-/// the hooks take the line out of an entry an earlier build wrote it into.
-/// From Codex 0.122.0.
+/// tools ask before they run, from Codex 0.122.0, and the value that lets
+/// a tool run without asking. The workbench never gives its server the
+/// setting, in a terminal session or an integrated one; an entry where the
+/// user set it is the user's, and the hooks leave it as it is.
 pub const CODEX_APPROVAL_SETTING: &str = "default_tools_approval_mode";
 pub const CODEX_APPROVE: &str = "approve";
 
 /// Where a Codex server's entry gives one tool an approval of its own:
 /// `tools.<tool>.approval_mode`, which Codex reads from 0.117.0 and takes
-/// over the setting for the whole server. A terminal session's entry for
-/// the workbench's server gives each of [`crate::mcp::RUN_UNASKED`] the
-/// value that lets it run without asking, and no other tool any. A Codex
-/// that does not know the setting passes over it.
+/// over the setting for the whole server. The workbench's server is given
+/// one for each of [`crate::mcp::RUN_UNASKED`], the value that lets it run
+/// without asking, and no other tool any: in a terminal session's entry,
+/// and in an integrated session's thread. A Codex that does not know the
+/// setting passes over it.
 pub const CODEX_TOOLS: &str = "tools";
 pub const CODEX_TOOL_APPROVAL: &str = "approval_mode";
 
@@ -1458,11 +1458,11 @@ mod tests {
         approves(&again, &[]);
         let config = project.join(".codex").join("config.toml");
         let theirs = std::fs::read_to_string(&config).unwrap().replace(
-            &format!("tools.show.{CODEX_TOOL_APPROVAL} = \"{CODEX_APPROVE}\""),
-            &format!("tools.show.{CODEX_TOOL_APPROVAL} = \"prompt\""),
+            &format!("tools.notify.{CODEX_TOOL_APPROVAL} = \"{CODEX_APPROVE}\""),
+            &format!("tools.notify.{CODEX_TOOL_APPROVAL} = \"prompt\""),
         );
         std::fs::write(&config, theirs).unwrap();
-        approves(&again, &[("show", "prompt")]);
+        approves(&again, &[("notify", "prompt")]);
         // And the variables are still passed on.
         if knows {
             let read = std::process::Command::new(&codex)
