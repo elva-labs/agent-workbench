@@ -458,6 +458,8 @@ in only as it shuts down, and a kill on Windows would leave it no time to;
 one the presses do not end is hung up on, and any other agent's terminal
 session is hung up on at once. A run that has not ended within twenty
 seconds is left as it was, and the pane says the session was not reopened.
+A mode chosen on the chip while the session is being reopened is the one
+it goes on in.
 
 The session starts in the mode the agent resumes it in that way, as for
 any resume, except that a conversation whose last run was integrated goes

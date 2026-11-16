@@ -1108,6 +1108,47 @@ describe("a session reopened the other way", () => {
     expect(pty.spawned.at(-1)!.mode).toBeUndefined();
   });
 
+  it("goes on in the mode chosen while it is being reopened, or asked just before and not answered", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__WORKBENCH_CORE__;
+    const stopNow = seam.integratedStop;
+    let release = () => {};
+    seam.integratedStop = (async (handle: string) => {
+      release = () => void stopNow(handle as never);
+    }) as never;
+    const { session, key } = await started();
+    const reopening = reopenOtherWay(key);
+    await settled();
+    // The run is on its way out, and the user turns the chip.
+    const asked = fake.calls.filter((call) => call.method === "configure").length;
+    await configure(key, { mode: "default" });
+    expect(conversationOf(key).settings.mode).toBe("default");
+    expect(fake.calls.filter((call) => call.method === "configure")).toHaveLength(asked);
+    expect(modeOf(session.id!)).toBe("default");
+    release();
+    expect(await reopening).toBe(true);
+    await launchTerminal(key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: session.id, mode: "default" });
+
+    // A change asked of the run that it has not answered when the reopen
+    // stops it.
+    const other = await started();
+    const configureNow = seam.integratedConfigure;
+    seam.integratedConfigure = (() => new Promise(() => {})) as never;
+    void configure(other.key, { mode: "plan" });
+    await settled();
+    const again = reopenOtherWay(other.key);
+    await settled();
+    release();
+    expect(await again).toBe(true);
+    await launchTerminal(other.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: other.session.id, mode: "plan" });
+    seam.integratedConfigure = configureNow;
+    seam.integratedStop = stopNow;
+  });
+
   it("leaves no line on the row from what the run it stops says on its way out", async () => {
     const { key, handle } = await started();
     // Nobody looks at it.

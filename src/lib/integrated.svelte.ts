@@ -37,6 +37,7 @@ import {
   rang,
   rejoined,
   rememberWorkflow,
+  reopeningRow,
   runEnded,
   runUp,
   toldAtStart,
@@ -930,6 +931,16 @@ export async function configure(key: string, change: Change) {
   const link = links.get(key);
   if (link === undefined) return;
   if (change.mode !== undefined) link.modeChosen = true;
+  // A run a reopen is stopping takes nothing more: a mode chosen meanwhile
+  // is the one the next run starts in, the other way.
+  if (reopeningRow(key)) {
+    const id = byKey(key)?.id ?? null;
+    if (change.mode !== undefined && id !== null && offers(link, change.mode)) {
+      keepMode(id, change.mode, true);
+      link.conversation.settings = { ...link.conversation.settings, mode: change.mode };
+    }
+    return;
+  }
   const handle = link.handle;
   if (handle === null) {
     // Made on the new run once it is up.
@@ -974,6 +985,11 @@ function halt(session: Session) {
     runEnded(session.key);
     return;
   }
+  // A mode asked of the run and not answered yet is the user's last choice,
+  // which the next run starts in.
+  const asked: Change = Object.assign({}, ...link.unanswered);
+  if (asked.mode !== undefined && session.id !== null && offers(link, asked.mode))
+    keepMode(session.id, asked.mode, true);
   const handle = link.handle;
   core()
     .integratedStop(handle)
