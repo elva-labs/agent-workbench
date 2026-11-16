@@ -14,6 +14,7 @@
     stepTitle,
   } from "$lib/thread";
   import { markedCall } from "$lib/callShown.svelte";
+  import { askingCalls } from "$lib/stepAsking";
   import Copy from "./Copy.svelte";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
@@ -46,8 +47,12 @@
       : { lead: [part.done ? "Thought" : "Thinking"], object: null },
   );
 
+  const asking = askingCalls();
+
   let status = $derived.by((): { text: string; tone: "run" | "bad" | "quiet" } | null => {
     if (part.kind !== "tool") return null;
+    // A call whose subagent asks says so, as the subagent's row does.
+    if (part.tool === "agent" && asking().has(part.call)) return { text: "asking", tone: "run" };
     if (part.answer !== null && part.answer.choice !== "allow")
       return {
         text: answered(part.answer.choice),

@@ -34,6 +34,9 @@ export interface Subagent {
   state: SubagentState;
   /** When it came to the state it is in. */
   at: number;
+  /** When the call that started it was made, as the conversation has it:
+      the time it happened for one read from what was said before. */
+  began: number;
 }
 
 /** How many characters of what a subagent was asked a row keeps. */
@@ -117,29 +120,24 @@ export function subagentsOf(conversation: Conversation): Subagent[] {
     if (task.kind !== "agent" || task.ambient || task.call === null) continue;
     if (task.status === "running" || task.until > ended) take(conversation.call(task.call));
   }
-  // Those that ask: from inside the subagent, or to start it.
-  const asking = new Map<string, number>();
-  for (const request of conversation.open) {
-    const owner = request.asked.parent !== null ? topOf(conversation, request.asked.parent) : conversation.call(request.asked.call ?? "");
-    if (owner === null || owner.tool !== "agent" || owner.parent !== null) continue;
-    take(owner);
-    if (!asking.has(owner.call)) asking.set(owner.call, request.at ?? owner.at);
-  }
+  const asking = askingOf(conversation);
+  for (const call of asking.keys()) take(conversation.call(call));
 
   const out: Subagent[] = [];
   for (const call of calls.values()) {
     const runs = runsOf(call);
     const { about, kind } = asked(call);
+    const began = call.at;
     const askedAt = asking.get(call.call);
     if (askedAt !== undefined) {
-      out.push({ call: call.call, about, kind, state: "asking", at: askedAt });
+      out.push({ call: call.call, about, kind, state: "asking", at: askedAt, began });
       continue;
     }
     // A call that has yet to hand back what its subagent said runs on,
     // and so does a subagent in the background after its call returned.
     const running = runs.find((run) => run.status === "running");
     if (running !== undefined || !call.done) {
-      out.push({ call: call.call, about, kind, state: "running", at: running?.at ?? call.at });
+      out.push({ call: call.call, about, kind, state: "running", at: running?.at ?? call.at, began });
       continue;
     }
     const finished = Math.max(call.until, ...runs.map((run) => run.until));
@@ -151,9 +149,24 @@ export function subagentsOf(conversation: Conversation): Subagent[] {
         : runs.length === 0 && call.error
           ? "failed"
           : "done";
-    out.push({ call: call.call, about, kind, state, at: finished });
+    out.push({ call: call.call, about, kind, state, at: finished, began });
   }
-  return out.sort((a, b) => calls.get(a.call)!.at - calls.get(b.call)!.at);
+  return out.sort((a, b) => a.began - b.began);
+}
+
+/** The calls in the main conversation that started a subagent which asks
+    now, from inside it or to start it, each with when it first asked. */
+export function askingOf(conversation: Conversation): Map<string, number> {
+  const asking = new Map<string, number>();
+  for (const request of conversation.open) {
+    const owner =
+      request.asked.parent !== null
+        ? topOf(conversation, request.asked.parent)
+        : conversation.call(request.asked.call ?? "");
+    if (owner === null || owner.tool !== "agent" || owner.parent !== null) continue;
+    if (!asking.has(owner.call)) asking.set(owner.call, request.at ?? owner.at);
+  }
+  return asking;
 }
 
 /** What a session's subagents are doing, in words, each counted once:

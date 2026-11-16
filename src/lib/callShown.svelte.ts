@@ -46,12 +46,3 @@ export function markCall(call: string) {
     timer = null;
   }, MARK_MS);
 }
-
-/** Test seam. */
-export function resetCallShown() {
-  if (timer !== null) clearTimeout(timer);
-  timer = null;
-  shownCall.key = null;
-  shownCall.call = null;
-  markedCall.call = null;
-}

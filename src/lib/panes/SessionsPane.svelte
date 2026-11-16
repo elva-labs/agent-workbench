@@ -837,35 +837,61 @@
     focusPane("agent");
   }
 
-  /** What a screen reader is told of subagents as they start, once each,
-      politely: the calls told of so far, and whether those already out
-      when the pane came have been taken in without a word. */
+  /** What a screen reader is told of subagents as they start, politely:
+      each session's starts gathered over a moment and said in one line,
+      each subagent once, and none whose call was made before the pane
+      came, as those read from what a conversation said before were. */
   let subagentSaidNow = $state("");
   const toldOf = new Set<string>();
-  let primed = false;
+  const cameAt = Date.now();
+  /** How long starts are gathered before they are said. */
+  const GATHER_MS = 1500;
+  /** The starts gathered, by session, with the session's name and what
+      each was asked. */
+  let gathered = new Map<string, { name: string; about: (string | null)[] }>();
+  let gathering: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
-    const fresh: string[] = [];
     for (const session of sessions.all)
       for (const one of liveSubagents(session)) {
         if (toldOf.has(one.call)) continue;
+        if (one.began < cameAt) {
+          toldOf.add(one.call);
+          continue;
+        }
         // What it was asked is said once the call says it.
-        if (primed && one.about === null && one.state === "running") continue;
+        if (one.about === null && one.state === "running") continue;
         toldOf.add(one.call);
-        if (primed && (one.state === "running" || one.state === "asking"))
-          fresh.push(`${label(session)} started a subagent${one.about === null ? "" : ` for ${shown(one.about)}`}`);
+        if (one.state === "running" || one.state === "asking") untrack(() => gather(session, one.about));
       }
-    primed = true;
-    if (fresh.length === 0) return;
-    untrack(() => {
-      const text = `${fresh.join(". ")}.`;
-      if (subagentSaidNow !== text) subagentSaidNow = text;
-      else {
-        subagentSaidNow = "";
-        queueMicrotask(() => (subagentSaidNow = text));
-      }
-    });
   });
+
+  $effect(() => () => {
+    if (gathering !== null) clearTimeout(gathering);
+  });
+
+  function gather(session: Session, about: string | null) {
+    const held = gathered.get(session.key) ?? { name: label(session), about: [] };
+    held.about.push(about === null ? null : shown(about));
+    gathered.set(session.key, held);
+    gathering ??= setTimeout(sayGathered, GATHER_MS);
+  }
+
+  function sayGathered() {
+    gathering = null;
+    const lines = [...gathered.values()].map(({ name, about }) =>
+      about.length === 1
+        ? `${name} started a subagent${about[0] === null ? "" : ` for ${about[0]}`}.`
+        : `${name} started ${about.length} subagents.`,
+    );
+    gathered = new Map();
+    const text = lines.join(" ");
+    if (subagentSaidNow !== text) subagentSaidNow = text;
+    else {
+      subagentSaidNow = "";
+      queueMicrotask(() => (subagentSaidNow = text));
+    }
+  }
 
   /** A project's rows in the order drawn: its sessions, each with the
       sessions it started under it, the quiet rows and the fold of the
@@ -1370,11 +1396,12 @@
   {@const woken = wokenBy(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
   {@const drawnSubs = subGroups.get(session.key) ?? []}
-  {@const liveSubs = drawnSubs.length > 0 ? liveSubagents(session) : []}
+  <!-- Said of the rows drawn, so the line and the rows agree while they
+       hold still. -->
   {@const subsSaid =
     folded || session.note !== null || kids.length > 0 || news.length > 0 || drawnSubs.length === 0
       ? null
-      : subagentWords(liveSubs.length > 0 ? liveSubs : drawnSubs)}
+      : subagentWords(drawnSubs)}
   {@const line = folded
     ? startedWords(kids)
     : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : subsSaid))}
@@ -1418,7 +1445,7 @@
             class:asking={owned
               ? session.needs === "permission"
               : subsSaid !== null
-                ? (liveSubs.length > 0 ? liveSubs : drawnSubs).some((one) => one.state === "asking")
+                ? drawnSubs.some((one) => one.state === "asking")
                 : kids.some(isAsking)}
             class:first-say={news.length > 0}
             class:shares={!folded && news.length === 0 && woken !== null}
@@ -1519,6 +1546,7 @@
             class:live={one.state === "running" || one.state === "asking"}
             class:working={one.state === "running"}
             class:permission={one.state === "asking"}
+            class:over={one.state === "done" || one.state === "stopped"}
             class:bad={one.state === "failed"}
           ></span>{/each}</span
       >
@@ -3397,10 +3425,10 @@
   }
 
   /* Rows hang right under a session's subagents and carry on the rail
-     theirs come down. */
+     theirs come down, across the gap below them. */
   .kids.after-subs .kid.first .rail-in {
-    top: 0;
-    height: 50%;
+    top: -1px;
+    height: calc(50% + 1px);
   }
 
   /* A session's subagents hang under it on a rail of their own, a little
@@ -3531,6 +3559,37 @@
 
   .nav.folded .sub {
     visibility: hidden;
+  }
+
+  /* With no words beside them, the dots differ in shape as well as
+     colour: running is filled, asking a ring with a halo, done a plain
+     hollow ring, failed a cross. */
+  .sub-dots .dot.over {
+    background: none;
+  }
+
+  .sub-dots .dot.bad {
+    position: relative;
+    border-color: transparent;
+    background: none;
+  }
+
+  .sub-dots .dot.bad::before,
+  .sub-dots .dot.bad::after {
+    content: "";
+    position: absolute;
+    top: -1.5px;
+    bottom: -1.5px;
+    left: 50%;
+    width: 1.5px;
+    margin-left: -0.75px;
+    border-radius: 1px;
+    background: var(--del);
+    transform: rotate(45deg);
+  }
+
+  .sub-dots .dot.bad::after {
+    transform: rotate(-45deg);
   }
 
   /* A started session on one line. */
