@@ -1,7 +1,7 @@
 <script lang="ts">
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
-  import { linkFor, resume, trust, unspoken } from "$lib/integrated.svelte";
+  import { aloneOn, linkFor, resume, trust, unspoken } from "$lib/integrated.svelte";
   import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
@@ -222,6 +222,7 @@
           dir={session.cwd ?? folder}
           project={projectLabel(session.project)}
           agentId={session.agent}
+          alone={agentProfile(aloneOn(session)).name}
           workflow={session.workflow}
           {choosable}
         />

@@ -116,6 +116,9 @@ export class Link {
   unanswered = new Set<Change>();
   /** What the run behind the row was started on. */
   ranOn: Run | null = null;
+  /** The agent the row was started on, once a workflow picked for it may
+      have put it on another: no workflow puts it back. */
+  startedOn = $state<AgentId | null>(null);
 
   constructor(clock: () => number) {
     this.conversation = new Conversation(clock);
@@ -466,8 +469,16 @@ export function follow(key: string, name: string | null) {
   if (session === null || !unspoken(session) || (session.workflow?.name ?? null) === name) return;
   const workflow = name === null ? null : (workflowNamed(name) ?? null);
   if (name !== null && workflow === null) return;
-  if (!putUnder(key, workflow)) return;
+  const link = linkFor(key);
+  link.startedOn ??= session.agent;
+  if (!putUnder(key, workflow, link.startedOn)) return;
   settleRun(key);
+}
+
+/** The agent a new conversation runs on under no workflow: the one it was
+    started on. */
+export function aloneOn(session: Session): AgentId {
+  return links.get(session.key)?.startedOn ?? session.agent;
 }
 
 /** Starts the run behind a new conversation again when it is not the one

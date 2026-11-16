@@ -518,11 +518,16 @@ workflow makes the session its orchestrator, as starting a session under it
 does: the session starts again on the orchestrator's agent and model, told
 the workflow's instructions and with the agent's own subagent tools taken
 away where the workflow says so, and the thread's first line says what it
-follows. Picking none starts it again alone, on the agent's own default
-model. Either way it keeps its row and its token, the words being written,
-the keyboard, and the mode chosen while the agent stays the same. The run it
-leaves is stopped before anything can reach it, a start already on its way
-is waited for, and a message sent while the new run comes up waits for it.
+follows. A workflow directed by another agent puts the session on that
+agent, still as a conversation, whatever that agent's own setting is.
+Picking none starts it again alone, on the agent it was started on and that
+agent's own default model. Either way it keeps its row and its token, the
+words being written, the keyboard, and, while the agent stays the same, the
+user's last choice of mode, one still on its way included. The run it
+leaves is stopped before anything can reach it, and what that run answers
+later is let go. A start already on its way is waited for, and a message
+sent while the new run comes up waits for it, as does a change of the
+settings, which is made on the new run before the message goes.
 Once the first message is sent the choice is kept: the chip goes, and the
 header's chip names the workflow. Working another way takes a new session.
 A resumed session, one another session started and a session in a terminal

@@ -1036,6 +1036,20 @@ describe("a new conversation put under a workflow", () => {
     ]);
   });
 
+  it("goes back to the agent it was started on under no workflow", async () => {
+    const codexFlow = { ...defaultWorkflow(), name: "Codex directs", orchestrator: { agent: "codex" as const, model: "default" } };
+    adoptWorkflows({ list: [codexFlow], default: null, overrides: {} });
+    const { key } = await started();
+    follow(key, "Codex directs");
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-2"));
+    expect(byKey(key)!.agent).toBe("codex");
+    follow(key, null);
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
+    expect(byKey(key)!.agent).toBe("claude-code");
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "claude-code", mode: "default" } });
+    expect(conversationOf(key).ready?.models.map((model) => model.value)).toContain("sonnet");
+  });
+
   it("refuses a workflow whose orchestrator's agent is not here", async () => {
     resetAgent();
     applyDetect(

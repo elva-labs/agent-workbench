@@ -89,6 +89,8 @@
     project?: string;
     /** The agent the session runs on. */
     agentId?: AgentId;
+    /** The name of the agent it runs on under no workflow. */
+    alone?: string;
     /** The workflow the session follows, which holds its model; null for
         none. */
     workflow?: Workflow | null;
@@ -110,6 +112,7 @@
     dir = "",
     project = "the project",
     agentId = "claude-code",
+    alone = agent,
     workflow = null,
     choosable = false,
   }: Props = $props();
@@ -1090,7 +1093,7 @@
         {#if menu === "workflow"}
           <ChoiceMenu
             label="Workflow"
-            choices={workflowChoices(agentId, agent, workflow)}
+            choices={workflowChoices(agentId, alone, workflow)}
             note="Chosen before the first message, then kept."
             onpick={pickWorkflow}
             onclose={closeMenu}

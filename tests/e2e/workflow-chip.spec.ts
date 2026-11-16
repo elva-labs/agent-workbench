@@ -288,6 +288,13 @@ test("starts the orchestrator on another agent that runs as a conversation", asy
   await expect(page.getByTestId("thread-intro")).toContainText("A new Codex session in demo, following Codex directs.");
   await expect(page.getByTestId("composer-input")).toHaveAttribute("placeholder", /Tell Codex what to do/);
   await expect(page.getByTestId("session-row")).toHaveCount(1);
+  // No workflow goes back to the agent the session was started on.
+  await chip(page).click();
+  await expect(options(page).first().locator(".about")).toHaveText("Claude works alone, on the model you pick");
+  await options(page).first().click();
+  await expect.poll(async () => (await starts(page)).length).toBe(3);
+  expect((await starts(page))[2].options).toMatchObject({ agent: "claude-code" });
+  await expect(page.getByTestId("composer-input")).toHaveAttribute("placeholder", /Tell Claude what to do/);
 });
 
 test("shows no chip where there is no workflow to choose", async ({ page }) => {

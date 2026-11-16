@@ -1355,17 +1355,18 @@ export function cannotDirect(workflow: Workflow): string | null {
 /**
  * Puts a row under a workflow, or under none, the way a new row is put
  * under one: on the orchestrator's agent and model and told the workflow
- * as it starts, or alone on the agent it runs on and that agent's own
- * default model. It changes what the row says it is; the run behind it is
- * the caller's to start again. False when the workflow cannot direct a
+ * as it starts, or alone on the agent given and that agent's own default
+ * model. It changes what the row says it is; the run behind it is the
+ * caller's to start again. False when the workflow cannot direct a
  * conversation here.
  */
-export function putUnder(key: string, workflow: Workflow | null): boolean {
+export function putUnder(key: string, workflow: Workflow | null, alone: AgentId): boolean {
   const session = byKey(key);
   if (session === null) return false;
   if (workflow !== null && cannotDirect(workflow) !== null) return false;
   if (workflow === null) {
     session.workflow = null;
+    session.agent = alone;
     session.model = null;
   } else {
     session.workflow = structuredClone($state.snapshot(workflow)) as Workflow;
