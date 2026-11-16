@@ -219,7 +219,7 @@ test.describe("the session on screen", () => {
     await expect(page.getByTestId("limits-age")).toHaveText("20 min ago");
     await page.getByTestId("account-group").click();
     await expect(page.getByTestId("allowance-updated")).toHaveText(
-      "Some figures are from just now, the rest from 20 min ago. The next turn on this account updates them.",
+      "Some figures are from just now, the rest from 20 min ago",
     );
   });
 
@@ -322,6 +322,52 @@ test.describe("a terminal session", () => {
     await expect(page.getByTestId("session-settings")).toHaveCount(0);
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
     await expect(page.getByTestId("limit-figure")).toHaveCount(3);
+  });
+
+  test("shows the figures its machine kept for the account with their age, then those it read", async ({ page }) => {
+    /** Puts figures on the fake machine for the account, read `age`
+        seconds ago. */
+    const kept = (percents: number[], age: number) =>
+      page.evaluate(
+        ({ percents, age }) => {
+          const now = Math.floor(Date.now() / 1000);
+          (window as unknown as { __accountLimits: unknown }).__accountLimits = {
+            "claude-code ~/.claude-work": {
+              type: "limits",
+              agent: "claude-code",
+              plan: "max",
+              windows: [
+                { kind: "session", model: null, percent: percents[0], resetsAt: now + 7200, severity: null },
+                { kind: "weekly", model: null, percent: percents[1], resetsAt: now + 3 * 86_400, severity: null },
+              ],
+              readAt: now - age,
+              takenAt: now - age,
+            },
+          };
+        },
+        { percents, age },
+      );
+    await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK, ...NO_WORKFLOW } });
+    await page.goto("/");
+    await kept([11, 34], 3 * HOUR);
+    await page.getByTestId("start-agent").click();
+    await expect(page.locator("section[data-pane='agent'] .xterm")).toBeVisible();
+    // No session on the account is integrated, and its figures show.
+    await expect(page.getByTestId("limit-figure")).toHaveText(["5h11%", "Week34%"]);
+    await expect(page.getByTestId("limits-age")).toHaveText("3 h ago");
+    // What was kept was asked for first, then a read.
+    const asked = await page.evaluate(() => (window as unknown as { __limitsAsked: unknown[] }).__limitsAsked);
+    expect(asked.slice(0, 2)).toEqual([
+      { project: PROJECT, agent: "claude-code", configDir: "~/.claude-work", read: false },
+      { project: PROJECT, agent: "claude-code", configDir: "~/.claude-work", read: true },
+    ]);
+    // A session that comes on screen asks again, and fresh figures replace
+    // the old, their age gone.
+    await kept([12, 35], 0);
+    await page.getByTestId("new-session").click();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("limit-figure")).toHaveText(["5h12%", "Week35%"]);
+    await expect(page.getByTestId("limits-age")).toHaveCount(0);
   });
 });
 
@@ -515,7 +561,7 @@ test.describe("the allowance popover", () => {
     await expect(page.getByTestId("allowance-account")).toHaveText("Claude Code");
     await expect(page.getByTestId("allowance-plan")).toHaveText("Max");
     await expect(page.getByTestId("allowance-updated")).toHaveText(
-      "Figures from 3 hours ago. The next turn on this account updates them.",
+      "Figures from 3 hours ago",
     );
   });
 

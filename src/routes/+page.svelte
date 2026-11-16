@@ -112,6 +112,7 @@
     viewed,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
+  import { askForSession, followLimits } from "$lib/limitsPoll";
   import { primeChime } from "$lib/chime";
   import { announce } from "$lib/notify.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
@@ -314,10 +315,18 @@
       }),
     );
     offs.push(followFocus());
+    offs.push(followLimits());
     offs.push(primeChime());
     onWaiting(announce);
     offs.push(() => onWaiting(null));
     return () => offs.forEach((off) => off());
+  });
+
+  // A session that comes on screen asks for its account's figures, which
+  // its machine reads where they are old or missing.
+  $effect(() => {
+    const key = sessions.active;
+    if (key !== null) untrack(() => void askForSession(key));
   });
 
   // Looking at a session is what reads it: the one on screen, in a window
