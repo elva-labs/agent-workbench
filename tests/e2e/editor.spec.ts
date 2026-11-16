@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, WITH_WORKFLOW, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, foldedWidth, installFakeCore } from "./fake";
 
 /**
  * Editor mode: the file tree and an editor in the middle, the agent on the
@@ -10,7 +10,6 @@ const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
 const FILES = "section[data-pane='changes']";
 const MOD = "ControlOrMeta";
-const FOLDED = 50;
 /** The sessions pane's width until it is dragged. */
 const DEFAULT_SESSIONS = 300;
 
@@ -88,13 +87,13 @@ test.describe("the editing shape", () => {
     expect(editor.x).toBeGreaterThan(tree.x + tree.width - 1);
     expect(editor.width).toBeGreaterThanOrEqual(640);
     // A comfortable window keeps the sessions pane open.
-    expect((await box(page, SESSIONS)).width).toBeGreaterThan(FOLDED + 1);
+    expect((await box(page, SESSIONS)).width).toBeGreaterThan((await foldedWidth(page)) + 1);
   });
 
   test("folds the sessions pane at 1440 so the editor keeps its room", async ({ page }) => {
     await open(page, 1440);
     await flip(page);
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual((await foldedWidth(page)) + 1);
     const editor = await box(page, "[data-testid='editor-column']");
     expect(editor.width).toBeGreaterThanOrEqual(640);
     await expect(page.locator("[data-testid='tree-column']")).toBeVisible();
@@ -102,7 +101,7 @@ test.describe("the editing shape", () => {
     // Forced, not chosen: back in agent mode the pane is open again.
     await flip(page);
     await expect(page.getByTestId("mode-readout")).toHaveText("working");
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan((await foldedWidth(page)) + 1);
   });
 
   test("gives up the tree's column, then hides the agent, as the window narrows", async ({ page }) => {
@@ -128,16 +127,16 @@ test.describe("the editing shape", () => {
   test("peeks the folded sessions pane over the files from its column", async ({ page }) => {
     await open(page, 1440);
     await flip(page);
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual((await foldedWidth(page)) + 1);
     const files = await box(page, FILES);
     await page.getByTestId("unfold-sessions").click();
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan((await foldedWidth(page)) + 1);
     // Drawn over the files pane: nothing beside it moved.
     expect((await box(page, FILES)).x).toBe(files.x);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
 
     await page.keyboard.press("Escape");
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual((await foldedWidth(page)) + 1);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
   });
 });
@@ -1610,11 +1609,11 @@ test.describe("the session question in a peek", () => {
     await expect(page.getByTestId("close-owner")).toBeVisible();
     // The peek put away by its chord, from wherever the keyboard is.
     await page.keyboard.press(`${MOD}+1`);
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeLessThanOrEqual((await foldedWidth(page)) + 1);
     // Peeked again by the same chord: a click on the folded column races
     // the peek the pointer resting there opens, which takes the button away.
     await page.keyboard.press(`${MOD}+1`);
-    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan(FOLDED + 1);
+    await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan((await foldedWidth(page)) + 1);
     await expect(page.getByTestId("close-owner")).toHaveCount(0);
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
   });
@@ -1934,11 +1933,15 @@ for (const linux of [false, true]) {
       await turn();
       const pane = (await box(page, AGENT))!;
       expect(Math.round(pane.width)).toBe(420 + (await controlsRoom(page)));
-      // Nothing past the pane's edges but what scrolls inside it: the code.
+      // Nothing past the pane's edges but what scrolls inside it, the code,
+      // the window's own controls, which stand in the window's corner, and
+      // what is there for a screen reader alone and draws nothing.
       const outside = await page.evaluate((AGENT) => {
         const edge = document.querySelector(AGENT)!.getBoundingClientRect();
         return [...document.querySelectorAll<HTMLElement>(`${AGENT} *`)]
           .filter((el) => el.closest("pre") === null)
+          .filter((el) => el.closest("[data-testid='window-controls']") === null)
+          .filter((el) => getComputedStyle(el).clipPath !== "inset(50%)")
           .filter((el) => {
             const box = el.getBoundingClientRect();
             return box.width > 0 && (box.right > edge.right + 0.5 || box.left < edge.left - 0.5);

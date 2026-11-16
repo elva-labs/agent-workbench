@@ -8,6 +8,7 @@
     TERMINAL_STRENGTH,
     addDot,
     hexToRgb,
+    deepOf,
     labToRgb,
     moveDot,
     padColour,
@@ -427,15 +428,16 @@
               <b style:left="4px" style:bottom="2px" style:width="16px" style:background={m.text.accent}></b>
             </div>
           {:else}
-            <div class="mini" style:background={m.colours.surface}>
-              <i class="side" style:background={layer(m.grounds?.side, m.gradient, m.colours.bg)}></i>
-              <i class="head" style:background={layer(m.grounds?.surf, m.gradient, m.colours.surface)}></i>
-              <i class="status" style:background={layer(m.grounds?.status, m.gradient, m.colours.surface)}></i>
+            <!-- The ground across the window, the sessions column, the header
+                 and the status bar on it, and a card standing on it. -->
+            <div class="mini" style:background={layer(m.grounds?.side, m.gradient, rgbToHex(deepOf(m.colours)))}>
+              <i class="card" style:background={m.colours.surface}></i>
               <b style:left="4px" style:top="13px" style:width="14px" style:background={m.text.ink}></b>
               <b style:left="4px" style:top="19px" style:width="11px" style:background={m.text["ink-3"]}></b>
               <b style:left="28px" style:top="4px" style:width="20px" style:background={m.text.accent}></b>
-              <b style:left="28px" style:top="16px" style:width="46px" style:background={m.colours["ink-2"]}></b>
-              <b style:left="28px" style:top="22px" style:width="54px" style:background={m.colours.ink}></b>
+              <b style:left="30px" style:top="16px" style:width="40px" style:background={m.colours["ink-2"]}></b>
+              <b style:left="30px" style:top="22px" style:width="34px" style:background={m.colours.ink}></b>
+              <b style:left="4px" style:bottom="2px" style:width="16px" style:background={m.text.accent}></b>
             </div>
           {/if}
           <span class="mini-label">{at === "light" ? "Light" : "Dark"}</span>
@@ -730,18 +732,12 @@
     display: block;
   }
 
-  .mini .side {
-    left: 0;
-    top: 0;
-    bottom: 6px;
-    width: 22px;
-  }
-
-  .mini .head {
-    left: 22px;
-    right: 0;
-    top: 0;
-    height: 10px;
+  .mini .card {
+    left: 24px;
+    right: 3px;
+    top: 10px;
+    bottom: 8px;
+    border-radius: 3px;
   }
 
   .mini .status {

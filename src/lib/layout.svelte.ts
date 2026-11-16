@@ -19,7 +19,7 @@
  * deliberate toggle, the same bargain review mode strikes.
  *
  * The sessions pane is never gone, only open or folded: folded, its column is
- * `FOLDED` wide and shows its projects and the dots of their sessions where
+ * `folded()` wide and shows its projects and the dots of their sessions where
  * they stand when it is open. While reviewing it can also be peeked: drawn
  * at its open width over the agent pane, with the column still folded, so
  * a session can be picked without the viewer closing or anything moving.
@@ -34,11 +34,21 @@
  */
 
 import { Tween } from "svelte/motion";
+import { isMac } from "$lib/platform";
+import { theme } from "$lib/theme.svelte";
 
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing" | "editing";
 
-export const SPLITTER = 6;
+/** The room a divider between two panes takes: the gap between them, which
+    is the modern look's and wider than the terminal look's, so the layout's
+    sums hold in either. A divider inside a pane takes none. */
+export const SPLITTER = 8;
+/** The room a divider inside a pane takes, between the tree and what is
+    beside it or between the shells and their list: none, since it lies
+    over the seam. */
+export const INNER = 0;
+/** The frame's padding across the window, the most a look gives it. */
 export const FRAME_PADDING = 20;
 
 export const MIN = {
@@ -63,7 +73,7 @@ export const MIN = {
 } as const;
 
 /** The review pane holds a tree and the content side by side. */
-export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
+export const MIN_REVIEW = MIN.tree + INNER + MIN.viewer;
 
 /** The share of the content width the viewer's pane opens at: the file is
     what is being read, the agent is glanced at beside it. */
@@ -119,8 +129,28 @@ export function minChanges(): number {
   return MIN.changes + controlsStep();
 }
 
-/** How wide the sessions pane's column is while the pane is folded. */
+/** How wide the sessions pane's column is while the pane is folded, on
+    Windows and Linux. */
 export const FOLDED = 50;
+
+/** The folded column on macOS, wide enough to hold the window's three
+    buttons, from 18 to 76 pixels in, on its own ground with even room on
+    either side: in the modern look the column starts at the window's edge,
+    in the terminal look its box stands inside the frame's padding. It
+    keeps that width in full screen, so nothing moves on the way in. */
+export const FOLDED_WIDE = { modern: 86, terminal: 74 } as const;
+
+/** How wide the folded sessions column is on this platform and in the
+    look in use. */
+export function folded(): number {
+  return isMac() ? FOLDED_WIDE[theme.look] : FOLDED;
+}
+
+/** What the folded column takes here beyond the narrow one, which the
+    widths the layout needs grow by. */
+function foldedStep(): number {
+  return folded() - FOLDED;
+}
 
 /** Content width below which the sessions pane cannot open alongside the rest. */
 export const NEEDS_SESSIONS =
@@ -131,13 +161,18 @@ export const NEEDS_CHANGES =
   FOLDED + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
 
 /** `NEEDS_SESSIONS` and `NEEDS_CHANGES` on this platform, where the
-    changes pane's least width is its own. */
+    changes pane's least width and the folded column are its own. */
 function needsSessions(): number {
   return NEEDS_SESSIONS - MIN.changes + minChanges();
 }
 
 function needsChanges(): number {
-  return NEEDS_CHANGES - MIN.changes + minChanges();
+  return NEEDS_CHANGES - MIN.changes + minChanges() + foldedStep();
+}
+
+/** `NEEDS_AGENT_WHILE_REVIEWING` beside this platform's folded column. */
+function needsAgentWhileReviewing(): number {
+  return NEEDS_AGENT_WHILE_REVIEWING + foldedStep();
 }
 /**
  * Content width below which reviewing hides the agent rather than squeezing it.
@@ -307,14 +342,6 @@ export function terminalVisible() {
   return layout.terminalChosen && !layout.terminalForced;
 }
 
-/** The pane whose header the macOS window controls sit over: the sessions
-    pane while it is open, and the first pane beside it while it is folded,
-    whose header then runs on under the controls from the folded column. */
-export function leftmost(): PaneId {
-  if (sessionsVisible()) return "sessions";
-  return besideSessions();
-}
-
 /** The pane beside the sessions column: the agent, or the changes pane
     when the agent is away, and the changes pane while editing. */
 export function besideSessions(): PaneId {
@@ -391,7 +418,7 @@ function resolveLayout(width: number, height: number) {
     layout.terminal = Math.min(Math.max(layout.terminal, MIN.terminal), room);
   }
   // Inside the panel, the shells keep their minimum and the list gives way.
-  const listRoom = width - SPLITTER - MIN.shells;
+  const listRoom = width - INNER - MIN.shells;
   layout.terminalList = Math.min(
     Math.max(layout.terminalList, MIN.terminalList),
     Math.max(MIN.terminalList, listRoom),
@@ -406,9 +433,9 @@ function resolveLayout(width: number, height: number) {
     layout.sessionsForced = true;
     layout.changesForced = false;
     layout.sessionsPeek &&= !sessionsVisible();
-    layout.agentHidden = width < NEEDS_AGENT_WHILE_REVIEWING;
+    layout.agentHidden = width < needsAgentWhileReviewing();
 
-    const beside = width - FOLDED - SPLITTER;
+    const beside = width - folded() - SPLITTER;
     const room = layout.agentHidden ? beside : beside - SPLITTER - MIN.agent;
     layout.review = Math.min(
       Math.max(layout.review, MIN_REVIEW),
@@ -416,7 +443,7 @@ function resolveLayout(width: number, height: number) {
     );
 
     // Inside the pane, the content keeps its minimum and the tree gives way.
-    const treeRoom = layout.review - SPLITTER - MIN.viewer;
+    const treeRoom = layout.review - INNER - MIN.viewer;
     layout.tree = Math.min(
       Math.max(layout.tree, MIN.tree),
       Math.max(MIN.tree, treeRoom),
@@ -442,7 +469,7 @@ function resolveLayout(width: number, height: number) {
   // The sessions column is there either way, folded or open.
   const splitters = SPLITTER + (showChanges ? SPLITTER : 0);
   let overflow =
-    (showSessions ? sessions : FOLDED) +
+    (showSessions ? sessions : folded()) +
     (showChanges ? changes : 0) +
     splitters +
     MIN.agent -
@@ -472,8 +499,7 @@ function resolveLayout(width: number, height: number) {
  */
 function resolveEditing(width: number) {
   layout.changesForced = false;
-  const folded = FOLDED + SPLITTER;
-  const beside = width - folded;
+  const beside = width - folded() - SPLITTER;
 
   layout.agentHidden = beside - SPLITTER - MIN.agent < MIN.editor;
   layout.editAgentDrawn = layout.agentHidden
@@ -481,11 +507,11 @@ function resolveEditing(width: number) {
     : clamp(layout.editAgent, MIN.agent, beside - SPLITTER - MIN.editor);
   const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
 
-  layout.editTreeForced = beside - agent - SPLITTER - MIN.tree < MIN.editor;
+  layout.editTreeForced = beside - agent - INNER - MIN.tree < MIN.editor;
   layout.editTreeDrawn = layout.editTreeForced
     ? layout.editTree
-    : clamp(layout.editTree, MIN.tree, beside - agent - SPLITTER - MIN.editor);
-  const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + SPLITTER;
+    : clamp(layout.editTree, MIN.tree, beside - agent - INNER - MIN.editor);
+  const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + INNER;
 
   layout.sessionsForced = width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
   layout.sessionsPeek &&= !sessionsVisible() && layout.sessionsForced;
@@ -497,14 +523,14 @@ function clamp(value: number, least: number, most: number) {
 
 /** What the sessions column takes while editing, the splitter included. */
 function sessionsColumn() {
-  return (sessionsVisible() ? layout.sessions : FOLDED) + SPLITTER;
+  return (sessionsVisible() ? layout.sessions : folded()) + SPLITTER;
 }
 
 /** Drags the agent pane's edge while editing, from where it is drawn: the
     width the drag ends at is the one chosen. The editor keeps its room
     with the panes as they are: a drag never folds or hides one. */
 export function resizeEditAgent(dx: number) {
-  const tree = editTreeVisible() ? layout.editTreeDrawn + SPLITTER : 0;
+  const tree = editTreeVisible() ? layout.editTreeDrawn + INNER : 0;
   const most = layout.width - sessionsColumn() - tree - SPLITTER - MIN.editor;
   layout.editAgent = clamp(layout.editAgentDrawn - dx, MIN.agent, most);
   layout.editAgentDragged = true;
@@ -514,7 +540,7 @@ export function resizeEditAgent(dx: number) {
 /** Drags the tree column's edge while editing, on the same terms. */
 export function resizeEditTree(dx: number) {
   const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
-  const most = layout.width - sessionsColumn() - agent - SPLITTER - MIN.editor;
+  const most = layout.width - sessionsColumn() - agent - INNER - MIN.editor;
   layout.editTree = clamp(layout.editTreeDrawn + dx, MIN.tree, most);
   applyLayout(layout.width);
 }
@@ -583,7 +609,7 @@ export function enterReview() {
   // mode change rather than on every file, and it gets the width straight
   // back on exit.
   if (!layout.reviewTouched) {
-    const freed = sessionsVisible() ? layout.sessions - FOLDED : 0;
+    const freed = sessionsVisible() ? layout.sessions - folded() : 0;
     layout.review = Math.max(
       DEFAULT.review,
       layout.changes + freed,

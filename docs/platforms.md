@@ -6,8 +6,9 @@ started, and what the platform will not say.
 
 ## macOS
 
-The window has no title bar. The traffic lights sit over the header of the
-leftmost pane, placed by the app; [layout](layout.md) has the details.
+The window has no title bar. The traffic lights sit in the sessions pane's
+header row, placed by the app, and the folded column is wide enough to hold
+them; [layout](layout.md) has the details.
 Following a session into a worktree reads the process's working directory
 through the kernel's process information. The embedded browser has all of
 it here: tabs, and the tools an agent reads and drives a page with alike.

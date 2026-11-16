@@ -21,14 +21,18 @@ System, light or dark. System follows the desktop and changes with it.
 ## Theme
 
 Modern or terminal, modern to begin with. Modern sets the chrome in the
-sans, in sentence case, with soft corners and the three panes flush on one
-surface, a single hairline between each pair and the sessions pane a shade
-below; that hairline is the resize bar itself, with three pixels either side
-of it to take hold of, and it turns accent under the pointer. Terminal is mono
-chrome, small capitals, square corners and panes drawn as boxes. The focused
-pane is marked in the accent either way, its title with it: an edge along the
-header under modern, the pane's own border under terminal. Both use the same
-colours, so the appearance and the palette hold across either.
+sans, in sentence case, with soft corners: the sessions pane, the pane
+headers and the status bar lie on the window's ground, its darkest tone,
+and what the other panes hold stands on it as rounded cards. Terminal is
+mono chrome, small capitals, square corners and panes drawn as boxes on the
+ground. Either way nothing is drawn between two panes: the gap is the
+divider, which shows itself as the pointer nears it, as
+[layout](layout.md#dividers) describes. The focused pane is marked in the
+accent either way, its title with it: an edge along its card's top under
+modern, the pane's own border under terminal. Both use the same colours, so
+the appearance and the palette hold across either. The system's
+increase-contrast setting brings plain lines back in both: an outline round
+each card and box, and a line in each divider inside a pane.
 
 ## Font
 
@@ -66,13 +70,15 @@ for editing by hand.
 ## Background
 
 A colour or a gradient of up to three colours of your own behind the
-window's chrome. It tints the chrome only: in the modern look the sessions
-pane, the pane headers, the status bar and the settings' title row and tab
-column. Every surface that holds text to read stays solid: the terminal,
-the conversation, the diff, the editor, the viewer and the palette. In the
-terminal look it shows only in the ground between the boxes and in the
-status bar, at half strength at most and with no grain, and the boxes stay
-as they are.
+window's chrome. It tints the chrome only: in the modern look the window's
+ground, with the sessions pane, the pane headers and the status bar on it,
+and the settings' title row and tab column. Every surface that holds text
+to read stays solid: the cards with the terminal, the conversation, the
+diff, the editor and the viewer in them, and the palette. In dark the
+ground under the tint is the chrome's darkest tone, so the headers on it
+stand apart from the cards below them. In the terminal look it shows only
+in the ground between the boxes and in the status bar, at half strength at
+most and with no grain, and the boxes stay as they are.
 
 Each palette and each theme of your own keeps a background of its own, so
 choosing another colour brings its background with it, and one that has
@@ -121,9 +127,10 @@ beside a tinted part is the text colour let through at one amount for the
 whole window, so it takes the colour of what it crosses, stands off a
 tinted part as far as the plain line stands off the plain chrome, and
 lines that meet are one paint. In the terminal look the boxes stay as they
-are: their outline, the gap between them and the status rule take the
-background, and the rules inside them keep their colour. A splitter under the pointer, while it is focused or dragged, the
-focus rings, the focused pane's mark and a chosen row stay in the accent.
+are: their outline and the status rule take the background, which shows in
+the gap between them, and the rules inside them keep their colour. A
+divider's grip and line, the focus rings, the focused pane's mark and a
+chosen row stay in the accent.
 
 The system's increase-contrast setting, or a contrast theme that forces
 the system's own colours, sets the background aside, with every line and
