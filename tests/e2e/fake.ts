@@ -220,6 +220,10 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+      // The agents spawned in a pty, which a kill ends as the core says it
+      // does: once the process has gone, through onSessionEnded.
+      const agentPtys = new Set<string>();
+      const endedHandlers = new Set<(event: { id: string; code: number | null; clean: boolean }) => void>();
 
       // The past sessions the core finds in a folder: the test's for the
       // first project and for the orchestrator folder, none elsewhere.
@@ -710,6 +714,7 @@ export async function installFakeCore(
           onOutput: (bytes: Uint8Array) => void,
         ) => {
           const ptyId = `pty-${++ptyCount}`;
+          agentPtys.add(ptyId);
           const sessionId = spawnOptions.session ?? `session-${ptyCount}`;
           if (spawnOptions.token !== undefined) tokens[sessionId] = spawnOptions.token;
           // What each spawn asked for, and a way for a test to put bytes on
@@ -746,7 +751,12 @@ export async function installFakeCore(
           };
           (w.__resizes ??= []).push({ id, cols, rows });
         },
-        kill: async () => {},
+        kill: async (id: string) => {
+          if (!agentPtys.delete(id)) return;
+          setTimeout(() => {
+            for (const handler of endedHandlers) handler({ id, code: 0, clean: true });
+          }, 0);
+        },
         // Where a session's process is working, when a test has said so in
         // __cwds by pty id; the changes pane follows it into a worktree.
         ptyCwd: async (id: string) => {
@@ -917,7 +927,10 @@ export async function installFakeCore(
           if (w.__processes?.[id])
             w.__processes[id] = w.__processes[id].filter((p) => p.pid !== pid);
         },
-        onSessionEnded: async () => () => {},
+        onSessionEnded: async (handler: (event: { id: string; code: number | null; clean: boolean }) => void) => {
+          endedHandlers.add(handler);
+          return () => endedHandlers.delete(handler);
+        },
         onSessionIdentified: async () => () => {},
         onSessionEvent: async (
           handler: (event: { sessionId: string; kind: string }) => void,

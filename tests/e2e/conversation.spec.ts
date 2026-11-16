@@ -1063,6 +1063,11 @@ test.describe("how sessions run, in the settings", () => {
     await expect(codex.getByTestId("session-kind-only")).toHaveText("Codex sessions run in a terminal.");
     await claude.getByTestId("session-kind-integrated").click();
     await expect(claude.getByTestId("session-kind-integrated")).toHaveAttribute("aria-checked", "true");
+    // Under the choice, in so many words: when it applies.
+    const when = page.getByTestId("session-kind-when");
+    await expect(when).toContainText("A change applies from the next session started.");
+    const last = (await codex.boundingBox())!;
+    expect((await when.boundingBox())!.y).toBeGreaterThanOrEqual(last.y + last.height);
   });
 
   test("offers it for any agent the core says it can drive", async ({ page }) => {
