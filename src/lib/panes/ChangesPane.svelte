@@ -115,6 +115,7 @@
     type Session,
   } from "$lib/sessions.svelte";
   import { activeProject, followedWorktree, goTo, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { isOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import {
     DEFAULT,
     MIN,
@@ -143,6 +144,9 @@
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
+  /** The orchestrator folder is in front: it is no open project, so there
+      is nothing of it to watch. */
+  let folderInFront = $derived(isOrchestratorFolder(workspace.active));
 
   let field = $state<HTMLInputElement | null>(null);
   let menuOpen = $state(false);
@@ -1764,6 +1768,10 @@
   {#if notGit}
     <p class="notice" data-testid="not-git">
       This folder is not a git repository, so there are no changes to show. Sessions still run in it.
+    </p>
+  {:else if folderInFront}
+    <p class="notice" data-testid="folder-notice">
+      This folder holds sessions to resume. It is not a project, so there are no changes to show.
     </p>
   {/if}
 

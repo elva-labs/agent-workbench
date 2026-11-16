@@ -633,6 +633,8 @@ test.describe("the orchestrator folder", () => {
     await expect(folder(page)).toHaveClass(/\bon\b/);
     await expect(page.getByTestId("agent-status")).toHaveText("No session open. Resume a past one from the list.");
     await expect(page.getByTestId("start-agent")).toHaveCount(0);
+    // The changes pane says why it has nothing to show.
+    await expect(page.getByTestId("folder-notice")).toBeVisible();
     await page.keyboard.press(`${MOD}+Shift+P`);
     await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
     await expect(page.getByTestId("palette-row").filter({ hasText: /^New session in/ })).toHaveCount(0);
