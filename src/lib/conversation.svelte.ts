@@ -381,6 +381,7 @@ export class Conversation {
   /** The session starts again after it ended: what ended it is over, and
       the thread goes on under it. */
   resumed() {
+    this.#changed();
     this.ended = null;
     this.notLoggedIn = false;
     this.state = null;
