@@ -162,6 +162,7 @@
       // browser puts the view where it was, and from there it goes on as
       // for any change of size: to the foot, if it followed its foot.
       if (!shown()) return;
+      reflowed();
       heard();
       // Which rows to draw is worked out again a frame on: drawing them
       // now would change the size this has just been told of.
@@ -197,14 +198,28 @@
     });
   });
 
-  /** Where the thread last scrolled itself to: a scroll that lands there
-      is its own, and says nothing of where the user wants to be. */
+  /** Where the thread last scrolled itself to, or the browser left it to
+      keep the reader's place across a change of width: a scroll that lands
+      there says nothing of where the user wants to be. */
   let ownTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
     if (!shown()) return;
     node.scrollTop = node.scrollHeight;
     ownTop = node.scrollTop;
+  }
+
+  /** The width the thread was last seen at. */
+  let across = 0;
+
+  /** Takes in a change of the thread's width. A thread drawn whole leaves
+      the reader's place to the browser, which scrolls to keep it as the
+      rows reflow: where that leaves the view is not the user's doing. */
+  function reflowed() {
+    if (scroller === null) return;
+    const width = scroller.clientWidth;
+    if (across > 0 && width !== across && !windowed) ownTop = scroller.scrollTop;
+    across = width;
   }
 
   /** Whether the thread is laid out. A session not in front is not, so
@@ -258,6 +273,7 @@
 
   function onscroll() {
     if (scroller === null) return;
+    reflowed();
     const top = scroller.scrollTop;
     const down = top >= lastTop - 1;
     lastTop = top;
@@ -1214,13 +1230,15 @@
 
   /* What is placed inside it, such as the words a Copy button says to a
      screen reader, scrolls with it and adds nothing to the pane's own
-     size. */
+     size. Its room, less in a narrow pane, comes with the pane's width in
+     the same layout, so a change of width moves the rows once. */
   .thread {
     position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: calc(22px + var(--room, 0px)) var(--conv-gutter) 12px;
+    padding: calc(max(16px, min(22px, var(--conv-wide))) + var(--room, 0px))
+      max(14px, min(var(--conv-gutter), var(--conv-wide))) max(10px, min(12px, var(--conv-wide)));
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1240,14 +1258,6 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: pre-wrap;
-  }
-
-  :global(.conv.narrow) .frame .thread {
-    padding: calc(16px + var(--room, 0px)) 14px 10px;
-  }
-
-  :global(.conv.narrow) .you .bubble {
-    max-width: 92%;
   }
 
   /* A thread that has earlier messages coming or read sits at the pane's
@@ -1326,8 +1336,11 @@
     align-items: flex-end;
   }
 
+  /* A message of the user's own takes more of a narrow row, one 492px
+     wide or narrower, as every row in a pane of 520px or less is. The row
+     decides, in the same layout as the pane's width. */
   .bubble {
-    max-width: min(82%, var(--conv-measure));
+    max-width: max(min(82%, var(--conv-measure)), min(92%, calc((492.5px - 100%) * 1000)));
     padding: 9px 13px;
     border-radius: calc(var(--radius) * 2) calc(var(--radius) * 2) var(--radius-sm)
       calc(var(--radius) * 2);

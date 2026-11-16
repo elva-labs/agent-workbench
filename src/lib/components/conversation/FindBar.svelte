@@ -366,15 +366,18 @@
 {/if}
 
 <style>
+  /* It keeps a little less room at the side in a narrow pane, as the
+     thread does. */
   .bar {
+    --bar-side: max(14px, min(16px, var(--conv-wide)));
     position: absolute;
     top: 8px;
-    right: 16px;
+    right: var(--bar-side);
     z-index: 4;
     display: flex;
     align-items: center;
     gap: 2px;
-    max-width: calc(100% - 32px);
+    max-width: calc(100% - 2 * var(--bar-side));
     padding: 4px;
     border-radius: calc(var(--radius) + 2px);
     background: var(--paint-surface);
@@ -480,11 +483,6 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
-  }
-
-  :global(.conv.narrow) .bar {
-    right: 14px;
-    max-width: calc(100% - 28px);
   }
 
   /* Every match drawn is tinted, and the current one filled. */

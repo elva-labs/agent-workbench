@@ -91,12 +91,13 @@
   }
 
   let view = $state<HTMLDivElement | null>(null);
-  /** The pane's width, once measured. A narrow pane keeps less room at the
-      sides of the thread, the find bar and the foot, and a tight one less
-      in the composer's menu; a menu that opens over the conversation is no
-      wider than it. The view is not a size container: WebKit puts
-      a scroller inside one back where it was after a style change, and the
-      thread would not stay at its foot. */
+  /** The pane's width, once measured: a tight pane keeps less in the
+      composer's slash menu, and a menu that opens over the conversation is
+      no wider than it. What lays out the thread does not wait for it: the
+      styles below take the pane's width in the same layout as the width
+      itself. The view is not a size container: WebKit puts a scroller
+      inside one back where it was after a style change, and the thread
+      would not stay at its foot. */
   let width = $state(0);
 
   // A call this session is to be opened at, once it is on screen: the call
@@ -188,9 +189,7 @@
 <div
   class="conv"
   class:active
-  class:narrow={width > 0 && width <= 520}
   class:tight={width > 0 && width <= 420}
-  style:--conv-width={width > 0 ? `${width}px` : null}
   bind:this={view}
   bind:clientWidth={width}
   data-testid="conversation"
@@ -244,7 +243,7 @@
       sender={(message) => senderOf(message)}
       opener={(path) => mentionOpener(session.key, path)}
     />
-    <div class="foot">
+    <div class="foot" style:--conv-width={width > 0 ? `${width}px` : null}>
       {#if over}
         <div class="ended" data-testid="session-ended">
           <span class="why"><Plain text={why} /></span>
@@ -306,14 +305,16 @@
   }
 
   /* The thread and the composer span the pane, with a gutter that grows a
-     little with it: a fortieth of the pane's own width, as the view
-     measures it. */
+     little with it: a fortieth of the pane's own width. Where these are
+     used, the thread's padding, the foot's and the find bar's place, a
+     percentage is of the pane's width, which they take in the same layout
+     as the width itself. A pane 520px wide or narrower keeps less room at
+     its sides: `--conv-wide` is no length there and longer than any room
+     here past it, so `max(narrow, min(wide, var(--conv-wide)))` is the
+     narrow pane's length in a narrow pane and the wide one's elsewhere. */
   .conv > :global(*) {
-    --conv-gutter: clamp(24px, calc(var(--conv-width, 100vw) / 40), 48px);
-  }
-
-  .conv.narrow .foot {
-    padding: 0 14px 12px;
+    --conv-gutter: clamp(24px, 2.5%, 48px);
+    --conv-wide: calc((100% - 520px) * 1000);
   }
 
   :global(:root:not([data-look="modern"])) .conv {
@@ -329,7 +330,7 @@
 
   .foot {
     flex: none;
-    padding: 0 var(--conv-gutter) 14px;
+    padding: 0 max(14px, min(var(--conv-gutter), var(--conv-wide))) max(12px, min(14px, var(--conv-wide)));
   }
 
   .ended {
