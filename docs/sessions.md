@@ -449,12 +449,37 @@ keeps, deny it, with words for the agent if the user wants, or deny it and
 stop the turn. A line under the choices says what the one in focus or under
 the pointer does. A question docks the same way with its options, answered by
 picking one where one is all it takes, with room for the user's own words
-where it takes them; a secret answer is typed hidden. Requests are answered
-one at a time, the oldest first, and the dock says how many more wait. A
+where it takes them; a secret answer is typed hidden. A
 permission the agent withdraws before it is answered says so on the step
 that asked for it, or where no step is known in a note that says what it
 was for, as a question that settles itself does. When the dock goes by
 itself while it has the keyboard, the keyboard goes back to the composer.
+
+The dock also holds the requests of the sessions this one started. One of
+them names the session that asks, after the step it was started for when
+it has one, as in "Work: Fix the cache asks to run cargo test", and a
+subagent inside it by both, as in "The subagent for Check every link in Fix
+the broken links"; Open beside it goes to that session, whose own dock
+holds the same request. It is answered exactly as it is there, and every
+choice acts on that session: the line under the choices names it, what a
+choice keeps is that session's, and Deny and stop stops that session's
+turn. The answer goes to that session's own request and to no other, it is
+the user's alone, and the agent of the session on screen is neither told
+of it nor given any way to answer. A request answered in one place goes
+from the other at once. A started session that runs in a terminal can be
+answered only in its terminal, so its ask shows with one choice, Open,
+which goes to it with its terminal focused, and leaves the dock once the
+session stops asking; its hooks say only that it asks, not what for.
+
+Requests are answered one at a time: the session's own first, in the order
+its agent asked, then those of the sessions it started, in the order they
+asked. The dock says how many more wait, and from which session when they
+are all one session's. While the pointer is over the dock or the keyboard
+is in it, the request shown stays until it is answered or goes, and what
+arrives meanwhile waits behind it. A request that takes the place of
+another, because the one before was answered, withdrawn or put behind the
+session's own, takes no answer for half a second, its choices faded
+meanwhile, so a click or a key meant for the one before never answers it.
 
 Every text that comes from an agent, a tool or a server is drawn by one
 rule, in the conversation and outside it: a command, a path, a URL, a
@@ -489,9 +514,9 @@ configuration says, and a mode taken from that configuration is shown as it
 is. It shows how much of the context window the conversation takes. While
 the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
-takes it. While the agent waits on an answer the composer says Up reaches
-it, and a lone digit sent then goes only on a second Enter, so it is not
-sent as a message by surprise. A message that was not delivered, refused
+takes it. While the dock holds a request the user answers there, the
+composer says Up reaches it, and a lone digit sent then goes only on a
+second Enter, so it is not sent as a message by surprise. A message that was not delivered, refused
 by the agent or never sent, can be put back in the composer. What is being
 written stays with its session while another is on screen. The keys are in
 [focus](focus-model.md#an-integrated-session).

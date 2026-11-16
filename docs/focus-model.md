@@ -333,7 +333,7 @@ reached.
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover is open it puts that away instead, and stops nothing |
-| <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
+| <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
 | <kbd>Tab</kbd> or <kbd>Enter</kbd> in the slash menu | Puts the marked one in the composer, a space after it |
@@ -368,7 +368,13 @@ asks for words takes them in a field where <kbd>Enter</kbd> denies and
 <kbd>Esc</kbd> goes back to the choices. Once an answer is on its way the
 keyboard goes to the next request, or back to the composer, and so it does
 when the request with the keyboard goes by itself: a question that settles
-itself, or a permission the agent withdraws. The model's menu
+itself, or a permission the agent withdraws. A request of a session this one
+started is answered with the same keys, its Open a stop of its own before
+the choices; a terminal session's ask has one choice, Open, which
+<kbd>Enter</kbd> takes to that session with its terminal focused. While the
+keyboard is in the dock the request it is on stays there whatever arrives,
+and a request that takes the place of another takes no key or click for
+half a second, so a key pressed for the one before never answers it. The model's menu
 opens from its button and is walked with the arrows, <kbd>Enter</kbd>
 picking and <kbd>Esc</kbd> closing it. The choice under the pointer takes
 the keyboard, so the pointer and the arrows move one mark, and the keyboard
