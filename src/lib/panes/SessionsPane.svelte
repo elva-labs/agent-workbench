@@ -1741,7 +1741,7 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="scrim" onclick={() => (projectMenu = null)}></div>
-    <div class="menu project-menu" class:up={projectMenu.up} role="menu" data-testid="project-menu">
+    <div class="menu project-menu" data-card class:up={projectMenu.up} role="menu" data-testid="project-menu">
       {#each projectItems as item, index (item.id)}
         {#if item.destructive && index > 0}<div class="separator" role="separator"></div>{/if}
         <button
@@ -1992,7 +1992,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="scrim" onclick={() => (sortOpen = false)}></div>
-      <div class="menu sort-menu" role="menu" data-testid="project-sort-menu">
+      <div class="menu sort-menu" data-card role="menu" data-testid="project-sort-menu">
         {#each SORTS as choice, index (choice.sort)}
           <button
             role="menuitemradio"
@@ -2029,7 +2029,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="scrim" onclick={() => (menuOpen = false)}></div>
-      <div class="menu more-menu" role="menu" data-testid="sessions-menu-items">
+      <div class="menu more-menu" data-card role="menu" data-testid="sessions-menu-items">
         {#each menuItems as item, index (item.id)}
           <button
             role="menuitem"
@@ -2549,7 +2549,7 @@
     z-index: 5;
     min-width: 184px;
     padding: 4px 0;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);
@@ -3272,7 +3272,7 @@
 
   /* Asking: a hollow accent ring, whatever else the dot was. */
   .dot.permission {
-    background: var(--surface);
+    background: var(--clear-surface);
     border-color: var(--accent);
     box-shadow: 0 0 0 2px var(--accent-soft);
     animation: none;

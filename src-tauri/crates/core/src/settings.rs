@@ -131,6 +131,8 @@ const FIRST_GRAIN: f64 = 0.25;
 /// How many backgrounds the file may hold: one for each palette and each
 /// theme, with room to spare.
 const MOST_BACKGROUNDS: usize = 64;
+/// The most of a background's strength the cards let through.
+const MOST_CARDS: f64 = 0.25;
 
 pub fn settings_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("settings.json")
@@ -244,6 +246,12 @@ pub struct Settings {
     /// The background each palette or theme keeps, by its name, with
     /// every field filled in.
     pub backgrounds: BTreeMap<String, Value>,
+    /// How much of its background each palette or theme lets through the
+    /// cards, by its name, as a share of the background's strength. Kept
+    /// beside the backgrounds rather than in one, so a version that knows
+    /// no such field still reads the background.
+    #[serde(default)]
+    pub cards: BTreeMap<String, Value>,
     /// Whether the user's own stylesheet is laid over the app's.
     pub user_styles: bool,
     /// Whether a session that starts waiting for the user while the window
@@ -276,6 +284,7 @@ impl Default for Settings {
             inactive_after: "week".into(),
             themes: BTreeMap::new(),
             backgrounds: BTreeMap::new(),
+            cards: BTreeMap::new(),
             user_styles: false,
             notifications: true,
             chime: false,
@@ -540,6 +549,7 @@ const TABLES: &[&str] = &[
     "accounts",
     "themes",
     "backgrounds",
+    "cards",
     "workflows",
 ];
 
@@ -552,6 +562,7 @@ fn holds(settings: &Settings, entry: &UnreadEntry) -> bool {
         ("keys", "") if !name.is_empty() => settings.keys.contains_key(name),
         ("themes", "") if !name.is_empty() => settings.themes.contains_key(name),
         ("backgrounds", "") if !name.is_empty() => settings.backgrounds.contains_key(name),
+        ("cards", "") if !name.is_empty() => settings.cards.contains_key(name),
         ("hooks", "overrides") => settings.hooks.overrides.contains_key(name),
         ("accounts", "list") => settings.accounts.list.contains_key(name),
         ("accounts", "overrides") => settings.accounts.overrides.contains_key(name),
@@ -944,6 +955,63 @@ fn backgrounds_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap
     kept
 }
 
+/// How much a palette or a theme lets through its cards, or the reason it
+/// will not do. It is kept by the name of a palette or of a theme.
+fn card_share(name: &str, value: &Value) -> Result<Value, String> {
+    if !PALETTES.contains(&name) && !is_theme_name(name) {
+        return Err(format!(
+            "{name:?} is not a palette's or a theme's name, which cards are kept by"
+        ));
+    }
+    within(Some(value), 0.0, MOST_CARDS)
+        .map(|_| value.clone())
+        .ok_or(format!(
+            "the cards of {name} let through from 0 to {MOST_CARDS} of the strength"
+        ))
+}
+
+/// The cards' shares a value holds: all of them, or the reason one will not do.
+fn cards(value: &Value) -> Result<BTreeMap<String, Value>, String> {
+    let table = value
+        .as_object()
+        .ok_or("cards is a table of shares by palette or theme")?;
+    if table.len() > MOST_BACKGROUNDS {
+        return Err(format!(
+            "the settings hold {MOST_BACKGROUNDS} cards' shares at most"
+        ));
+    }
+    table
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), card_share(name, value)?)))
+        .collect()
+}
+
+/// The cards' shares that read, each entry on its own; the rest are unread.
+fn cards_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> BTreeMap<String, Value> {
+    let mut kept = BTreeMap::new();
+    let Some(table) = value.as_object() else {
+        let reason = "cards is a table of shares by palette or theme".to_string();
+        unused(unread, "cards", "", "", reason, value);
+        return kept;
+    };
+    for (name, value) in table {
+        let read = if kept.len() >= MOST_BACKGROUNDS {
+            Err(format!(
+                "the settings hold {MOST_BACKGROUNDS} cards' shares at most"
+            ))
+        } else {
+            card_share(name, value)
+        };
+        match read {
+            Ok(share) => {
+                kept.insert(name.clone(), share);
+            }
+            Err(reason) => unused(unread, "cards", "", name, reason, value),
+        }
+    }
+    kept
+}
+
 /// The agents a value names as running integrated, each once, in the order
 /// the adapters list them, or why it will not do. Which agents can is the
 /// adapters' to say.
@@ -1002,6 +1070,11 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             let before = settings.clone();
             settings.backgrounds = backgrounds(value)?;
             mend(&before, settings, "backgrounds");
+        }
+        "cards" => {
+            let before = settings.clone();
+            settings.cards = cards(value)?;
+            mend(&before, settings, "cards");
         }
         "userStyles" => {
             settings.user_styles = value.as_bool().ok_or("userStyles is true or false")?;
@@ -1097,6 +1170,8 @@ pub fn parse(text: &str) -> Option<Settings> {
             settings.themes = themes_lenient(value, &mut unread);
         } else if field == "backgrounds" {
             settings.backgrounds = backgrounds_lenient(value, &mut unread);
+        } else if field == "cards" {
+            settings.cards = cards_lenient(value, &mut unread);
         } else if field == "workflows" {
             if value.is_object() && value.get("list").is_none_or(Value::is_array) {
                 settings.workflows = workflow::read_lenient(value);
@@ -1128,8 +1203,8 @@ pub fn parse(text: &str) -> Option<Settings> {
 }
 
 /// The settings with a change laid over them. The change names only the
-/// fields it changes; keys, hooks, accounts, workflows, themes and
-/// backgrounds are replaced whole.
+/// fields it changes; keys, hooks, accounts, workflows, themes,
+/// backgrounds and the cards' shares are replaced whole.
 pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     let fields = change
         .as_object()
@@ -2365,6 +2440,73 @@ mod tests {
             .unwrap()
             .backgrounds
             .is_empty());
+    }
+
+    #[test]
+    fn the_cards_share_is_kept_beside_the_backgrounds_by_palette_or_theme() {
+        let next = apply(
+            &Settings::default(),
+            &json!({
+                "themes": { "dusk": dusk() },
+                "backgrounds": { "teal": lagoon(), "dusk": lagoon() },
+                "cards": { "teal": 0.25, "dusk": 0 }
+            }),
+        )
+        .unwrap();
+        assert_eq!(next.cards["teal"], json!(0.25));
+        assert_eq!(next.cards["dusk"], json!(0));
+        // The background itself is untouched by it.
+        assert_eq!(next.backgrounds["teal"], lagoon());
+        let text = serde_json::to_string(&next).unwrap();
+        assert_eq!(parse(&text).unwrap().cards, next.cards);
+        // A file from before has none.
+        assert!(parse(r#"{ "palette": "rose" }"#).unwrap().cards.is_empty());
+    }
+
+    #[test]
+    fn a_cards_share_takes_only_what_it_may_and_says_why() {
+        let bad =
+            |cards: Value| apply(&Settings::default(), &json!({ "cards": cards })).unwrap_err();
+        assert!(bad(json!([0.1])).contains("table of shares"));
+        assert!(bad(json!({ "teal": 0.3 })).contains("from 0 to 0.25"));
+        assert!(bad(json!({ "teal": -0.1 })).contains("from 0 to 0.25"));
+        assert!(bad(json!({ "teal": "some" })).contains("from 0 to 0.25"));
+        assert!(bad(json!({ "Not A Name": 0.1 })).contains("not a palette's or a theme's name"));
+    }
+
+    #[test]
+    fn a_file_keeps_the_cards_shares_that_read_and_sets_the_rest_aside() {
+        let settings = parse(r#"{ "cards": { "teal": 0.2, "rose": 0.9 } }"#).unwrap();
+        assert_eq!(settings.cards.keys().collect::<Vec<_>>(), ["teal"]);
+        let set_aside = &settings.unread_entries[0];
+        assert_eq!(
+            (set_aside.field.as_str(), set_aside.name.as_str()),
+            ("cards", "rose")
+        );
+        assert_eq!(set_aside.entry, json!(0.9));
+        let next = apply(&settings, &json!({ "cards": { "teal": 0.2, "rose": 0.1 } })).unwrap();
+        assert!(next.unread_entries.is_empty());
+    }
+
+    #[test]
+    fn a_version_without_cards_keeps_them_in_the_file_and_the_background_whole() {
+        // Read as a field that is not a setting, the shares are written back
+        // as they stood and the background beside them still reads.
+        let mut fields: Map<String, Value> = serde_json::from_value(json!({
+            "backgrounds": { "teal": lagoon() },
+            "cards": { "teal": 0.2 }
+        }))
+        .unwrap();
+        let shares = fields.remove("cards").unwrap();
+        fields.insert("cardsFromALaterVersion".into(), shares.clone());
+        let settings = parse(&Value::Object(fields).to_string()).unwrap();
+        assert_eq!(settings.backgrounds["teal"], lagoon());
+        let kept = settings
+            .unread_entries
+            .iter()
+            .find(|entry| entry.field == "cardsFromALaterVersion")
+            .unwrap();
+        assert_eq!(kept.entry, shares);
     }
 
     #[test]

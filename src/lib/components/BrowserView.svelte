@@ -264,7 +264,7 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .bar {
@@ -273,7 +273,7 @@
     gap: 6px;
     padding: 6px var(--pane-pad);
     border-bottom: 1px solid var(--head-rule);
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .icon {
@@ -372,7 +372,7 @@
   }
 
   .tab.active {
-    background: var(--surface);
+    background: var(--paint-surface);
     border-color: var(--rule);
     color: var(--ink);
   }

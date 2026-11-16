@@ -946,7 +946,7 @@
     padding: 10px 12px 10px;
     border-radius: calc(var(--radius) + 5px);
     box-shadow: inset 0 0 0 1px var(--accent);
-    background: var(--surface);
+    background: var(--clear-surface);
     font-size: var(--conv-small);
     color: var(--ink-2);
     max-height: 55vh;

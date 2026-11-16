@@ -40,6 +40,7 @@ const DEFAULTS: Settings = {
   inactiveAfter: "week",
   themes: {},
   backgrounds: {},
+  cards: {},
   userStyles: false,
   notifications: true,
   chime: false,

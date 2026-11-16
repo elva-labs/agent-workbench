@@ -187,7 +187,7 @@
   }
 
   .cancel {
-    background: var(--surface);
+    background: var(--clear-surface);
     box-shadow: inset 0 0 0 1px var(--rule-strong);
     color: var(--ink);
   }

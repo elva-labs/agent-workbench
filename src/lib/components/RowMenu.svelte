@@ -105,6 +105,7 @@
   <div class="scrim" onclick={closeMenu} oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}></div>
   <div
     class="menu"
+    data-card
     role="menu"
     tabindex="-1"
     aria-label="File"
@@ -148,7 +149,7 @@
     width: 210px;
     padding: 4px;
     border-radius: var(--radius);
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule-strong);
     box-shadow: 0 12px 32px color-mix(in srgb, black 28%, transparent);
     outline: none;

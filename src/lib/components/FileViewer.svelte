@@ -209,7 +209,7 @@
     border-bottom: 1px solid var(--head-rule);
     position: sticky;
     top: 0;
-    background: var(--surface);
+    background: var(--paint-surface);
     z-index: 1;
   }
 
@@ -269,7 +269,7 @@
   .viewer {
     height: 100%;
     overflow: auto;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .rendered {

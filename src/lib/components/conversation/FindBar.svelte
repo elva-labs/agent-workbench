@@ -377,7 +377,7 @@
     max-width: calc(100% - 32px);
     padding: 4px;
     border-radius: calc(var(--radius) + 2px);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow:
       0 0 0 1px var(--divider, var(--rule)),
       0 8px 24px color-mix(in srgb, black 18%, transparent);

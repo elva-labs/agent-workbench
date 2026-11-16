@@ -433,7 +433,7 @@
     min-height: 0;
     display: flex;
     flex-direction: row-reverse;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .shells {
@@ -471,7 +471,7 @@
     position: absolute;
     z-index: -1;
     inset: calc(-1 * var(--term-air-y)) 0;
-    background: var(--well);
+    background: var(--paint-well);
   }
 
   .slot.on.beside.first::before {
@@ -489,7 +489,7 @@
     flex-direction: column;
     overflow-y: auto;
     padding-bottom: 6px;
-    background: var(--well);
+    background: var(--paint-well);
   }
 
   .owner {
@@ -627,6 +627,13 @@
     background: var(--surface-2);
   }
 
+  /* Where the cards let a background through, the second surface is a
+     fill let through, laid over the card's paint so this still covers
+     what is under it. */
+  :global(:root[data-cards]) .overlay {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .message {
     margin: 0;
     font-size: 12.5px;
@@ -640,7 +647,7 @@
     z-index: 2;
     padding: 8px 10px;
     border-bottom: 1px solid var(--rule);
-    background: var(--surface);
+    background: var(--paint-surface);
   }
 
   .overlay button {

@@ -3,6 +3,7 @@
   import {
     FIRST,
     HARMONIES,
+    MOST_CARDS,
     MOST_DOTS,
     READY_MADE,
     TERMINAL_STRENGTH,
@@ -29,9 +30,12 @@
     PALETTES,
     endPreview,
     previewBackground,
+    previewCards,
     resolvedTheme,
     setBackground,
+    setCards,
     shownBackground,
+    shownCards,
     theme,
   } from "$lib/theme.svelte";
 
@@ -43,7 +47,9 @@
    * carries the others while a harmony holds. Dragging a dot, or moving one
    * with the arrow keys, repaints the window as it goes, and what is let go
    * of is kept. The two small windows show it in light and in dark, since
-   * one choice serves both.
+   * one choice serves both. Cards says how much of it shows through the
+   * panes as well, as a share of the strength, and says so where the guard
+   * holds it back.
    */
 
   /** How far an arrow key moves a dot: degrees of hue and a share of the
@@ -89,6 +95,27 @@
   const followContrast = () => (setAside = moreContrast?.matches ?? false);
   moreContrast?.addEventListener?.("change", followContrast);
 
+  let cards = $derived.by(() => {
+    void theme.preview;
+    void theme.cards;
+    return shownCards();
+  });
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+
+  /** What the guard lets through the cards here, in this look and
+      appearance, and why it holds back. */
+  let through = $derived(
+    shown === null || cards === 0 || setAside
+      ? null
+      : paintOf(shown, theme.look, coloursOf(theme.palette, appearance, theme.themes), cards).cards,
+  );
+  let held = $derived(through !== null && through.held < cards - 1e-9 ? through.held : null);
+  /** Where the hold applies: the appearance on screen, which the guard
+      reads in the look on screen. */
+  let where = $derived(`in ${appearance}`);
+  /** The share held, in words: a percentage, or none. */
+  let heldWords = $derived(held === null ? "" : held === 0 ? `none ${where}` : `held at ${percent(held)} ${where}`);
+
   onDestroy(() => {
     moreContrast?.removeEventListener?.("change", followContrast);
     if (keepTimer !== null) {
@@ -116,7 +143,6 @@
     context.putImageData(image, 0, 0);
   });
 
-  const percent = (value: number) => `${Math.round(value * 100)}%`;
 
   /** A first dot: the palette's own hue, well into the pad. */
   function first(dot: Dot = accentDot()): Background {
@@ -291,6 +317,13 @@
     else show(next);
   }
 
+  function slideCards(event: Event, kept: boolean) {
+    if (shown === null) return;
+    const value = Number((event.target as HTMLInputElement).value) / 100;
+    if (kept) setCards(value);
+    else previewCards(value);
+  }
+
   /** The arrows walk a row of choices and choose as they go, as a row of
       radio buttons does; Home and End reach its ends. */
   function walk(event: KeyboardEvent, at: number, count: number, choose: (index: number) => void) {
@@ -313,15 +346,23 @@
   }
 
   /** A small window in one appearance, as the background paints it. */
-  function mini(background: Background | null, look: "modern" | "terminal", at: Appearance) {
+  function mini(background: Background | null, look: "modern" | "terminal", at: Appearance, share: number) {
     const colours = coloursOf(theme.palette, at, theme.themes);
     if (background === null) {
-      return { colours, grounds: null, gradient: null, text: colours };
+      return { colours, grounds: null, gradient: null, text: colours, card: null, cardText: colours };
     }
-    const painted = paintOf(background, look, colours);
+    const painted = paintOf(background, look, colours, setAside ? 0 : share);
     const tones = painted.colours.map((lab) => rgbToHex(labToRgb(lab)));
     const gradient = tones.length === 1 ? tones[0] : `linear-gradient(160deg, ${tones.join(", ")})`;
-    return { colours, grounds: painted.grounds, gradient, text: { ...colours, ...painted.text } };
+    const card = painted.cards !== null && painted.cards.amount > 0 ? painted.cards.card : null;
+    return {
+      colours,
+      grounds: painted.grounds,
+      gradient,
+      text: { ...colours, ...painted.text },
+      card,
+      cardText: card === null ? colours : { ...colours, ...painted.cards!.text },
+    };
   }
 
   function layer(ground: string | undefined, gradient: string | null, plain: string): string {
@@ -416,14 +457,14 @@
     </div>
     <div class="minis" aria-hidden="true">
       {#each ["light", "dark"] as const as at (at)}
-        {@const m = mini(shown, terminal ? "terminal" : "modern", at)}
+        {@const m = mini(shown, terminal ? "terminal" : "modern", at, cards)}
         <div class="mini-wrap">
           {#if terminal}
             <div class="mini" style:background={layer(m.grounds?.frame, m.gradient, m.colours.bg)}>
-              <i class="box side" style:background={m.colours.surface} style:border-color={m.colours.rule}></i>
-              <i class="box main" style:background={m.colours.surface} style:border-color={m.colours.accent}></i>
-              <b style:left="27px" style:top="10px" style:width="28px" style:background={m.colours["ink-3"]}></b>
-              <b style:left="27px" style:top="16px" style:width="40px" style:background={m.colours["ink-2"]}></b>
+              <i class="box side" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)} style:border-color={m.colours.rule}></i>
+              <i class="box main" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)} style:border-color={m.colours.accent}></i>
+              <b style:left="27px" style:top="10px" style:width="28px" style:background={m.cardText["ink-3"]}></b>
+              <b style:left="27px" style:top="16px" style:width="40px" style:background={m.cardText["ink-2"]}></b>
               <i class="status" style:background={layer(m.grounds?.status, m.gradient, m.colours["surface-2"])}></i>
               <b style:left="4px" style:bottom="2px" style:width="16px" style:background={m.text.accent}></b>
             </div>
@@ -431,12 +472,12 @@
             <!-- The ground across the window, the sessions column, the header
                  and the status bar on it, and a card standing on it. -->
             <div class="mini" style:background={layer(m.grounds?.side, m.gradient, rgbToHex(deepOf(m.colours)))}>
-              <i class="card" style:background={m.colours.surface}></i>
+              <i class="card" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)}></i>
               <b style:left="4px" style:top="13px" style:width="14px" style:background={m.text.ink}></b>
               <b style:left="4px" style:top="19px" style:width="11px" style:background={m.text["ink-3"]}></b>
               <b style:left="28px" style:top="4px" style:width="20px" style:background={m.text.accent}></b>
-              <b style:left="30px" style:top="16px" style:width="40px" style:background={m.colours["ink-2"]}></b>
-              <b style:left="30px" style:top="22px" style:width="34px" style:background={m.colours.ink}></b>
+              <b style:left="30px" style:top="16px" style:width="40px" style:background={m.cardText["ink-2"]}></b>
+              <b style:left="30px" style:top="22px" style:width="34px" style:background={m.cardText.ink}></b>
               <b style:left="4px" style:bottom="2px" style:width="16px" style:background={m.text.accent}></b>
             </div>
           {/if}
@@ -539,10 +580,39 @@
         {#if terminal}<em>None in this look</em>{:else}{percent(shown?.grain ?? FIRST.grain)}{/if}
       </span>
     </div>
+    <div class="row">
+      <label class="what" for="background-cards">Cards</label>
+      <input
+        id="background-cards"
+        type="range"
+        min="0"
+        max={MOST_CARDS * 100}
+        step="1"
+        value={Math.round(cards * 100)}
+        style:--fill="{(cards / MOST_CARDS) * 100}%"
+        disabled={shown === null || setAside}
+        oninput={(event) => slideCards(event, false)}
+        onchange={(event) => slideCards(event, true)}
+        aria-valuetext={cards === 0 ? "None" : `${percent(cards)} of the strength${held === null ? "" : `, ${heldWords}`}`}
+        data-testid="background-cards"
+      />
+      <span class="value" data-testid="background-cards-value">
+        {#if shown !== null && !setAside}{cards === 0 ? "None" : percent(cards)}{#if held !== null}<em>, {heldWords}</em>{/if}{/if}
+      </span>
+    </div>
     <p class="note" data-testid="background-note">
-      Kept with {paletteLabel}, for light and dark alike. Text on it always stays easy to read.
+      Kept with {paletteLabel}, for light and dark alike. Cards is how much of it shows through the panes as
+      well, as a share of the strength. Text on it always stays easy to read.
       {#if setAside}
         Off while the system asks for more contrast.
+      {:else if held === 0}
+        None shows through {where}, since any would {through?.heldBy === "terminal"
+          ? "leave a terminal colour hard to read"
+          : "melt the cards into the ground"}.
+      {:else if held !== null}
+        Held at {percent(held)} {where}, since more would {through?.heldBy === "terminal"
+          ? "leave a terminal colour hard to read"
+          : "melt the cards into the ground"}.
       {/if}
     </p>
   </div>

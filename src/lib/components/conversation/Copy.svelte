@@ -162,12 +162,12 @@
     top: 6px;
     right: 6px;
     z-index: 1;
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow: inset 0 0 0 1px var(--divider, var(--rule));
   }
 
   .corner:hover {
-    background: var(--surface);
+    background: var(--paint-surface);
   }
 
   /* Over the end of a row, the whole of its height, on the row's hover
@@ -200,6 +200,22 @@
 
   .overlay:hover {
     background: var(--rule);
+  }
+
+  /* Where the cards let a background through, the row's fills are let
+     through too: the overlay lays them over the card's paint, so it still
+     covers the title, and the fade is that paint faded in. */
+  :global(:root[data-cards]) .overlay,
+  :global(:root[data-cards]) .overlay::before {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
+  :global(:root[data-cards]) .overlay::before {
+    mask-image: linear-gradient(to right, transparent, black);
+  }
+
+  :global(:root[data-cards]) .overlay:hover {
+    background: linear-gradient(var(--rule), var(--rule)), var(--paint-surface);
   }
 
   .heard {

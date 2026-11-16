@@ -1224,6 +1224,10 @@ export interface Settings {
       grain: number;
     }
   >;
+  /** How much of its background each palette or theme lets through the
+      cards, as a share of the strength from 0 to 0.25, by its name. A file
+      from before has none. */
+  cards?: Record<string, number>;
   /** Whether the user's own stylesheet is laid over the app's. */
   userStyles: boolean;
   /** Whether a session that starts waiting for the user while the window

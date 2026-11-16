@@ -1,5 +1,5 @@
 import type { Settings } from "$lib/core";
-import { rounded, validBackgrounds, type Background } from "$lib/background";
+import { rounded, roundedCards, validBackgrounds, validCards, type Background } from "$lib/background";
 import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
 import { themeCss, validThemes, type CustomTheme } from "$lib/customThemes";
 import { coloursOf } from "$lib/paletteColours";
@@ -20,8 +20,10 @@ import { persist } from "$lib/persist";
  *
  * Each palette and each theme may keep a background of the user's own,
  * painted behind the chrome from a second stylesheet the window writes and
- * stamped as data-background while one shows; see background.ts. The
- * system's increase-contrast setting sets it aside.
+ * stamped as data-background while one shows; see background.ts. Each may
+ * also let a share of its background through the cards, kept beside it by
+ * the same name and stamped as data-cards while any shows. The system's
+ * increase-contrast setting sets both aside.
  *
  * The core keeps the choice for the machine. The window keeps a copy of
  * its own as well, read before the core has answered, so the first frame
@@ -101,6 +103,7 @@ const MONO_KEY = "workbench.mono";
 const SANS_KEY = "workbench.sans";
 const THEMES_KEY = "workbench.themes";
 const BACKGROUNDS_KEY = "workbench.backgrounds";
+const CARDS_KEY = "workbench.cards";
 
 export const theme = $state<{
   choice: ThemeChoice;
@@ -113,12 +116,18 @@ export const theme = $state<{
   themes: Record<string, CustomTheme>;
   /** The background each palette or theme keeps, by its name. */
   backgrounds: Record<string, Background>;
-  /** A background being picked, painted in place of the one kept until
-      it is let go; null while nothing is being picked. */
-  preview: { background: Background | null } | null;
+  /** How much of its background each palette or theme lets through the
+      cards, as a share of the strength, by its name. */
+  cards: Record<string, number>;
+  /** A background and a share being picked, painted in place of the ones
+      kept until they are let go; null while nothing is being picked. */
+  preview: { background: Background | null; cards?: number } | null;
   /** Counts every repaint, for what reads the colours back from the page,
       such as a terminal, to follow. */
   painted: number;
+  /** The share the cards let through in the appearance and look on
+      screen, after the guard: none where it holds the share at 0. */
+  cardsHeld: number;
 }>({
   choice: "system",
   palette: "teal",
@@ -127,8 +136,10 @@ export const theme = $state<{
   sans: "system",
   themes: {},
   backgrounds: {},
+  cards: {},
   preview: null,
   painted: 0,
+  cardsHeld: 0,
 });
 
 function isPalette(value: unknown): value is string {
@@ -164,6 +175,7 @@ export function loadTheme() {
     sans = localStorage.getItem(SANS_KEY);
     theme.themes = validThemes(JSON.parse(localStorage.getItem(THEMES_KEY) ?? "{}"));
     theme.backgrounds = validBackgrounds(JSON.parse(localStorage.getItem(BACKGROUNDS_KEY) ?? "{}"));
+    theme.cards = validCards(JSON.parse(localStorage.getItem(CARDS_KEY) ?? "{}"));
   } catch {
     // Storage can throw in a locked-down webview. The defaults hold.
   }
@@ -191,6 +203,7 @@ function remember(key: string, value: string) {
 function rememberAll() {
   remember(THEMES_KEY, JSON.stringify(theme.themes));
   remember(BACKGROUNDS_KEY, JSON.stringify(theme.backgrounds));
+  remember(CARDS_KEY, JSON.stringify(theme.cards));
   remember(KEY, theme.choice);
   remember(PALETTE_KEY, theme.palette);
   remember(LOOK_KEY, theme.look);
@@ -238,18 +251,25 @@ export function setTheme(choice: ThemeChoice) {
     backgrounds with them when they move: one change, so a theme, its
     background and the choice of it arrive together. A palette naming a
     theme the set no longer has goes back to the default, and a theme taken
-    away takes its background with it. */
+    away takes its background and its cards' share with it. */
 export function setThemes(
   themes: Record<string, CustomTheme>,
   palette = theme.palette,
   backgrounds = theme.backgrounds,
 ) {
-  const was = { palette: theme.palette, backgrounds: JSON.stringify(theme.backgrounds) };
+  const was = {
+    palette: theme.palette,
+    backgrounds: JSON.stringify(theme.backgrounds),
+    cards: JSON.stringify(theme.cards),
+  };
   const gone = Object.keys(theme.themes).filter((name) => !Object.hasOwn(themes, name));
   theme.themes = validThemes(themes);
   theme.palette = isPalette(palette) ? palette : "teal";
   theme.backgrounds = Object.fromEntries(
     Object.entries(validBackgrounds(backgrounds)).filter(([name]) => !gone.includes(name)),
+  );
+  theme.cards = Object.fromEntries(
+    Object.entries(theme.cards).filter(([name]) => !gone.includes(name) && Object.hasOwn(theme.backgrounds, name)),
   );
   rememberAll();
   applyTheme();
@@ -259,6 +279,7 @@ export function setThemes(
     ...(JSON.stringify(theme.backgrounds) === was.backgrounds
       ? {}
       : { backgrounds: { ...theme.backgrounds } }),
+    ...(JSON.stringify(theme.cards) === was.cards ? {} : { cards: { ...theme.cards } }),
   });
 }
 
@@ -269,13 +290,22 @@ export function deleteTheme(name: string) {
 }
 
 /** Keeps a new set of backgrounds, by palette and theme, and paints the
-    one the palette in use keeps. */
+    one the palette in use keeps. A share of the cards whose background is
+    gone goes with it. */
 export function setBackgrounds(backgrounds: Record<string, Background>) {
   theme.backgrounds = validBackgrounds(backgrounds);
   theme.preview = null;
   remember(BACKGROUNDS_KEY, JSON.stringify(theme.backgrounds));
+  const cards = Object.fromEntries(
+    Object.entries(theme.cards).filter(([name]) => Object.hasOwn(theme.backgrounds, name)),
+  );
+  const cardsMoved = Object.keys(cards).length !== Object.keys(theme.cards).length;
+  if (cardsMoved) {
+    theme.cards = cards;
+    remember(CARDS_KEY, JSON.stringify(theme.cards));
+  }
   applyTheme();
-  persist({ backgrounds: { ...theme.backgrounds } });
+  persist({ backgrounds: { ...theme.backgrounds }, ...(cardsMoved ? { cards: { ...theme.cards } } : {}) });
 }
 
 /** Keeps a background with the palette in use, or takes it away. */
@@ -284,11 +314,29 @@ export function setBackground(background: Background | null) {
   setBackgrounds(background === null ? others : { ...others, [theme.palette]: rounded(background) });
 }
 
+/** Keeps how much of its background the palette in use lets through the
+    cards; none is kept as no entry. */
+export function setCards(share: number) {
+  const { [theme.palette]: _was, ...others } = theme.cards;
+  const kept = roundedCards(share);
+  theme.cards = kept > 0 ? { ...others, [theme.palette]: kept } : others;
+  theme.preview = null;
+  remember(CARDS_KEY, JSON.stringify(theme.cards));
+  applyTheme();
+  persist({ cards: { ...theme.cards } });
+}
+
 /** Paints a background being picked in place of the one kept, without
     keeping it: the window follows the pad as a dot moves. Keeping one, or
     letting go with endPreview, ends it. */
 export function previewBackground(background: Background | null) {
-  theme.preview = { background };
+  theme.preview = { background, cards: theme.preview?.cards };
+  applyTheme();
+}
+
+/** Paints a share of the cards being picked, without keeping it. */
+export function previewCards(share: number) {
+  theme.preview = { background: shownBackground(), cards: roundedCards(share) };
   applyTheme();
 }
 
@@ -305,7 +353,8 @@ type ThemeFields =
   | "terminalFont"
   | "interfaceFont"
   | "themes"
-  | "backgrounds";
+  | "backgrounds"
+  | "cards";
 
 /** The theme's part of the settings. */
 export function themeSettings(): Pick<Settings, ThemeFields> {
@@ -317,6 +366,7 @@ export function themeSettings(): Pick<Settings, ThemeFields> {
     interfaceFont: theme.sans,
     themes: { ...theme.themes },
     backgrounds: { ...theme.backgrounds },
+    cards: { ...theme.cards },
   };
 }
 
@@ -329,6 +379,7 @@ export function adoptTheme(settings: Partial<Pick<Settings, ThemeFields>>) {
   }
   if (settings.themes !== undefined) theme.themes = validThemes(settings.themes);
   if (settings.backgrounds !== undefined) theme.backgrounds = validBackgrounds(settings.backgrounds);
+  if (settings.cards !== undefined) theme.cards = validCards(settings.cards);
   if (isPalette(settings.palette)) theme.palette = settings.palette;
   else if (!isPalette(theme.palette)) theme.palette = "teal";
   if (isLook(settings.look)) theme.look = settings.look;
@@ -368,11 +419,16 @@ function moreContrast(): boolean {
 
 let contrastFollowed = false;
 
-/** Repaints when the system's contrast setting changes. */
+/** Repaints when the system's contrast setting changes, and when its
+    appearance does while the choice follows it, since what the cards let
+    through is stamped for the appearance on screen. */
 function followContrast() {
   if (contrastFollowed || typeof window.matchMedia !== "function") return;
   contrastFollowed = true;
   window.matchMedia(MORE_CONTRAST).addEventListener?.("change", () => applyTheme());
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
+    if (theme.choice === "system") applyTheme();
+  });
 }
 
 /** The background the window paints now: the one being picked, else the
@@ -380,6 +436,20 @@ function followContrast() {
 export function shownBackground(): Background | null {
   if (theme.preview !== null) return theme.preview.background;
   return Object.hasOwn(theme.backgrounds, theme.palette) ? theme.backgrounds[theme.palette] : null;
+}
+
+/** The share of the cards asked for now: the one being picked, else the
+    one the palette keeps, else none. */
+export function shownCards(): number {
+  if (theme.preview?.cards !== undefined) return theme.preview.cards;
+  return Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
+}
+
+/** Whether the cards let anything through now, in the appearance and look
+    on screen: a background shows, the system asks for no more contrast,
+    and the guard lets some of the share asked through. */
+export function cardsThrough(): boolean {
+  return theme.cardsHeld > 0;
 }
 
 /** The stylesheet the background is painted from, worked out from the
@@ -396,23 +466,34 @@ function paintBackground() {
   const root = document.documentElement;
   if (background === null || moreContrast()) {
     delete root.dataset.background;
+    delete root.dataset.cards;
+    theme.cardsHeld = 0;
     if (sheet.textContent !== "") sheet.textContent = "";
     return;
   }
+  const cards = shownCards();
   const colours = {
     light: coloursOf(theme.palette, "light", theme.themes),
     dark: coloursOf(theme.palette, "dark", theme.themes),
   };
   // While one is being picked, only what is on screen is worked out.
-  const only = theme.preview === null ? null : { appearance: resolvedTheme(), look: theme.look };
+  const appearance = resolvedTheme();
+  const only = theme.preview === null ? null : { appearance, look: theme.look };
+  const held: Partial<Record<string, number>> = {};
   const css = backgroundCss(
     background,
     colours,
     imagesOf(background, only === null ? colours : { [only.appearance]: colours[only.appearance] }),
     only,
+    cards,
+    held,
   );
   if (sheet.textContent !== css) sheet.textContent = css;
   root.dataset.background = "";
+  // Where the guard holds the share at none on screen, nothing changes.
+  theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
+  if (theme.cardsHeld > 0) root.dataset.cards = "";
+  else delete root.dataset.cards;
 }
 
 function applyTheme() {

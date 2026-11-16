@@ -99,3 +99,86 @@
 :root[data-background] [data-testid="status-bar"] {
   background: linear-gradient(var(--tint-status), var(--tint-status)), var(--tint-backdrop);
 }
+
+/*
+ * Cards that let the background through.
+ *
+ * While the palette in use lets a share of its background through the
+ * cards, the window stamps data-cards beside data-background and writes,
+ * for each appearance and look:
+ *
+ *   --tint-card-backdrop
+ *                     the same gradient, fixed to the window, with the
+ *                     grain blurred into a flat veil, so a card shows its
+ *                     piece of the picture soft rather than speckled;
+ *   --tint-card, --tint-well
+ *                     the surface and the well let through by the strength
+ *                     times the cards' share, which the guard holds back
+ *                     where a terminal colour would fall under 4.5:1 or, in
+ *                     dark, where cards would stop standing off the ground;
+ *   --tint-card-ink and the other text tokens
+ *                     each text on a card a step stronger where it needs it.
+ *
+ * A card is the modern look's card under a pane's header, every box of the
+ * terminal look, and what stands over the window as one, marked
+ * data-card: the settings, the palette, and every dialog, menu, popover
+ * and question. Every solid fill inside one is the card's paint, a fill let
+ * through, or a menu or popover in the card's own tint, so nothing in it
+ * looks patched. --paint-surface and --paint-well are the card's and the
+ * well's paint for what has to cover what is under it, such as a menu, a
+ * bar standing over a scrolled list, or a list beside what is read;
+ * --clear-surface is clear, for what only lies on the card in the surface;
+ * a hovered, chosen or selected row, a field and the rest lay the ink or
+ * the accent over it. The browser pane's page and media stay as they are.
+ */
+
+:root[data-background][data-cards] {
+  --paint-card: linear-gradient(var(--tint-card), var(--tint-card)), var(--tint-card-backdrop);
+  --paint-card-well: linear-gradient(var(--tint-well), var(--tint-well)), var(--tint-card-backdrop);
+}
+
+:root[data-background][data-cards][data-look="modern"] {
+  --card-bg: var(--paint-card);
+}
+
+:root[data-background][data-cards]:not([data-look]) {
+  --pane-bg: var(--paint-card);
+}
+
+:root[data-background][data-cards][data-look="modern"]
+  section[data-pane]:not([data-pane="sessions"])
+  > .body,
+:root[data-background][data-cards]:not([data-look]) section[data-pane],
+:root[data-background][data-cards] [data-card] {
+  --paint-surface: var(--paint-card);
+  --paint-well: var(--paint-card-well);
+  --clear-surface: transparent;
+  --ink: var(--tint-card-ink);
+  --ink-2: var(--tint-card-ink-2);
+  --ink-3: var(--tint-card-ink-3);
+  --accent: var(--tint-card-accent);
+  --add: var(--tint-card-add);
+  --del: var(--tint-card-del);
+  --ansi-yellow: var(--tint-card-ansi-yellow);
+  --rule: var(--tint-line);
+  --rule-strong: var(--tint-line-strong);
+  --divider: var(--tint-line);
+  --head-rule: var(--tint-line);
+  --field-border: var(--tint-line);
+  --surface-2: var(--tint-fill);
+  --field-bg: var(--tint-fill);
+  --accent-soft: var(--tint-fill-accent);
+  --hover: var(--tint-fill);
+  --ground-quiet: var(--tint-card-ink-3);
+  --title-color-on: var(--tint-card-accent);
+}
+
+:root[data-background][data-cards]:not([data-look]) :is(section[data-pane], [data-card]) {
+  --title-color: var(--tint-card-ink-3);
+  --heading-color: var(--tint-card-ink-3);
+}
+
+/* The terminal look's box keeps its rule over the ground outside it. */
+:root[data-background][data-cards]:not([data-look]) section[data-pane] {
+  background-clip: padding-box;
+}

@@ -137,6 +137,7 @@
 <div
   bind:this={menu}
   class="menu"
+  data-card
   class:placed={at !== null}
   class:end
   class:pointing
@@ -184,7 +185,7 @@
     flex-direction: column;
     padding: 4px;
     border-radius: calc(var(--radius) + 2px);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow:
       0 0 0 1px var(--divider, var(--rule)),
       0 12px 32px color-mix(in srgb, black 24%, transparent);
