@@ -90,10 +90,15 @@ its distance from the centre how much colour it has. A click places the
 first colour, and dragging a colour repaints the window as it moves; what
 is let go of is kept. A harmony keeps the colours a fixed turn of the hue
 apart: single holds one, complementary two opposite each other, analogous
-three close together and triad three evenly spread. Dragging the first
-colour carries the others with it, and dragging another sets them free.
-The plus and minus under the pad add a colour, up to three, and take one
-away: the minus shows the colour it takes, which is the one last moved or
+three close together, 50 degrees either side of the first, and triad three
+evenly spread. The first colour is drawn larger. Dragging it carries the
+others with it, each keeping its own turn from it, and dragging another
+sets them free. The plus and minus under the pad add a colour, up to
+three, and take one away. A second colour is placed opposite the first,
+and a third makes three close colours around the first, since colours
+near in hue belong together and mix cleanly; to two colours placed freely
+the plus adds one close to the first, on the side away from the second.
+The minus shows the colour it takes, which is the one last moved or
 focused and has a white centre on the pad. Taking the last leaves none. A row of ready-made
 backgrounds sets the colours and keeps the strength and grain, and None
 goes back to the plain chrome. Strength is how far the background shows
@@ -112,7 +117,10 @@ each, walked with the arrows.
 One choice serves light and dark. The pad sets the hue and how much
 colour, and the chrome it lies on sets how light it paints: light on a
 light chrome and dark on a dark one, read from the palette's own colours,
-so a theme that is dark in both appearances is painted dark in both.
+so a theme that is dark in both appearances is painted dark in both. It
+paints at about the lightness of the chrome's darkest tone, so the tinted
+ground stays below the cards, and a dark chrome takes more colour at the
+rim, since near black the screen shows little of it.
 Switching between them cannot leave anything hard to read, and the rim of
 the pad is held where the strongest choice is still a tint. Text on a
 tinted part is judged at the worst point of the gradient behind it, grain
@@ -142,10 +150,13 @@ so, with Cards greyed out.
 Cards, under strength and grain, lets a little of the background show
 through the cards as well: the panes in the modern look, the boxes in the
 terminal look, and what stands over the window, such as the settings, the
-palette and a menu. It is a share of the strength, from none, the default,
-to a quarter, so a card shows a quarter of what the chrome shows at most.
+palette and a menu. It runs from none, the default, to 100%, where a card
+shows as much of the background's colour as the window around it does.
+A card keeps its own lightness while it takes on the colour, so cards
+still stand off the window around them at every step, in light and dark.
 It does nothing while there is no background, and each palette and theme
-keeps its own share with its background.
+keeps its own share with its background. The settings file keeps it as a
+number from 0 to 0.25, a quarter of what the section shows.
 
 A card shows the background soft: the gradient, with the grain blurred
 into an even veil rather than speckled. Everything inside a card takes
@@ -175,10 +186,13 @@ the gradient behind it, and the app's own text is drawn a step stronger
 where it would fall under 4.5 to 1, quiet text included. A terminal draws
 its sixteen colours as they are, so the share is held back where one of
 them that holds 4.5 to 1 on a solid card would fall under it. In dark the
-background lifts the ground toward the cards' lightness, so the share is
-also held back where the cards would stop standing off the ground. The
-section says when either holds the share back, by how much, and in which
-appearance. Where it holds the share at none, nothing changes.
+share is also held back where the cards would stop standing off the
+ground, which happens only near the top of the range at full strength. A
+white card in light cannot keep its lightness and darkens a little toward
+the colour, so in light a terminal colour is what most often holds it
+back. The section says beside the slider when either holds the share
+back, by how much, and in which appearance. Where it holds the share at
+none, nothing changes.
 
 ## Custom styles
 

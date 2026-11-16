@@ -255,6 +255,9 @@ fn config_file(home: &Path, config_dir: Option<&Path>, env: &HashMap<String, Str
 const NOT_LOGGED_IN: &str =
     "This account is not signed in to Codex. Run codex login in a terminal and sign in.";
 
+/// What a thread Codex marks as failed by an error of its own says.
+const SYSTEM_ERROR: &str = "Codex reported an error of its own on the thread";
+
 /// A request this side sent, by what its answer means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
@@ -1425,8 +1428,8 @@ impl AppServer {
                         "command": server.to_string_lossy(),
                         "args": ["mcp"],
                         "env": env,
-                        // The workbench's own tools run without asking, as
-                        // they do in a terminal session.
+                        // The workbench's own tools run without asking; the
+                        // servers the user configured ask as they would.
                         "default_tools_approval_mode": "approve",
                     }
                 }),
@@ -1452,6 +1455,18 @@ impl AppServer {
             .find(|(info, _)| info.value == model)
             .map(|(info, _)| info.efforts.clone())
             .unwrap_or_default()
+    }
+
+    /// The effort a model runs at when none is set, where it is one the
+    /// model takes.
+    fn default_effort(&self, model: Option<&str>) -> Option<String> {
+        let model = model?;
+        let efforts = self.efforts_of(Some(model));
+        self.models
+            .iter()
+            .find(|(info, _)| info.value == model)
+            .and_then(|(_, default)| default.clone())
+            .filter(|default| efforts.is_empty() || efforts.contains(default))
     }
 
     fn configured(&self) -> Event {
@@ -1488,7 +1503,11 @@ impl AppServer {
             self.workspace = Some(started["sandbox"].clone());
         }
         self.model = text(&started["model"]).or_else(|| self.start_model.clone());
-        self.effort = text(&started["reasoningEffort"]).or_else(|| self.start_effort.clone());
+        // Codex names no effort where nothing sets one, and the model then
+        // runs at its own default.
+        self.effort = text(&started["reasoningEffort"])
+            .or_else(|| self.start_effort.clone())
+            .or_else(|| self.default_effort(self.model.as_deref()));
         self.mode =
             mode_of(&started["approvalPolicy"], &started["sandbox"]).or(self.start_mode.clone());
         self.ready = true;
@@ -2094,10 +2113,16 @@ impl AppServer {
             }
             "thread/status/changed" => {
                 if params["status"]["type"] == "systemError" {
-                    out.events.push(Event::Error {
-                        kind: ErrorKind::Agent,
-                        message: "Codex reported an error of its own on the thread".into(),
-                    });
+                    // Codex says so just before a turn fails, and the turn's
+                    // end says why; outside a turn, nothing else will.
+                    if self.turn.is_some() {
+                        self.failure.get_or_insert_with(|| SYSTEM_ERROR.into());
+                    } else {
+                        out.events.push(Event::Error {
+                            kind: ErrorKind::Agent,
+                            message: SYSTEM_ERROR.into(),
+                        });
+                    }
                 }
             }
             "serverRequest/resolved" => {
@@ -2571,11 +2596,7 @@ impl Driver for AppServer {
                 if !efforts.is_empty() && !self.effort.as_ref().is_some_and(|e| efforts.contains(e))
                 {
                     let default = self
-                        .models
-                        .iter()
-                        .find(|(info, _)| info.value == model)
-                        .and_then(|(_, default)| default.clone())
-                        .filter(|default| efforts.contains(default))
+                        .default_effort(Some(model))
                         .or_else(|| efforts.first().cloned());
                     self.effort = default.clone();
                     self.changes.effort = default;

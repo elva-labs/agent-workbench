@@ -47,8 +47,8 @@
    * carries the others while a harmony holds. Dragging a dot, or moving one
    * with the arrow keys, repaints the window as it goes, and what is let go
    * of is kept. The two small windows show it in light and in dark, since
-   * one choice serves both. Cards says how much of it shows through the
-   * panes as well, as a share of the strength, and says so where the guard
+   * one choice serves both. Cards says how far the panes let it through as
+   * well, from none to the most they show, and says so where the guard
    * holds it back.
    */
 
@@ -101,6 +101,8 @@
     return shownCards();
   });
   const percent = (value: number) => `${Math.round(value * 100)}%`;
+  /** A cards' share as the slider reads it: how far along its range. */
+  const cardsPercent = (share: number) => percent(share / MOST_CARDS);
 
   /** What the guard lets through the cards here, in this look and
       appearance, and why it holds back. */
@@ -114,7 +116,7 @@
       reads in the look on screen. */
   let where = $derived(`in ${appearance}`);
   /** The share held, in words: a percentage, or none. */
-  let heldWords = $derived(held === null ? "" : held === 0 ? `none ${where}` : `held at ${percent(held)} ${where}`);
+  let heldWords = $derived(held === null ? "" : held === 0 ? `none ${where}` : `held at ${cardsPercent(held)} ${where}`);
 
   onDestroy(() => {
     moreContrast?.removeEventListener?.("change", followContrast);
@@ -593,16 +595,16 @@
         disabled={shown === null || setAside}
         oninput={(event) => slideCards(event, false)}
         onchange={(event) => slideCards(event, true)}
-        aria-valuetext={cards === 0 ? "None" : `${percent(cards)} of the strength${held === null ? "" : `, ${heldWords}`}`}
+        aria-valuetext={cards === 0 ? "None" : `${cardsPercent(cards)}${held === null ? "" : `, ${heldWords}`}`}
         data-testid="background-cards"
       />
       <span class="value" data-testid="background-cards-value">
-        {#if shown !== null && !setAside}{cards === 0 ? "None" : percent(cards)}{#if held !== null}<em>, {heldWords}</em>{/if}{/if}
+        {#if shown !== null && !setAside}{cards === 0 ? "None" : cardsPercent(cards)}{#if held !== null}<em>, {heldWords}</em>{/if}{/if}
       </span>
     </div>
     <p class="note" data-testid="background-note">
       Kept with {paletteLabel}, for light and dark alike. Cards is how much of it shows through the panes as
-      well, as a share of the strength. Text on it always stays easy to read.
+      well, up to as much as around them. Text on it always stays easy to read.
       {#if setAside}
         Off while the system asks for more contrast.
       {:else if held === 0}
@@ -610,7 +612,7 @@
           ? "leave a terminal colour hard to read"
           : "melt the cards into the ground"}.
       {:else if held !== null}
-        Held at {percent(held)} {where}, since more would {through?.heldBy === "terminal"
+        Held at {cardsPercent(held)} {where}, since more would {through?.heldBy === "terminal"
           ? "leave a terminal colour hard to read"
           : "melt the cards into the ground"}.
       {/if}
