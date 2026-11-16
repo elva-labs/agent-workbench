@@ -657,9 +657,9 @@
             <p class="note">
               In a terminal, a session is the agent's own interface. Integrated, the workbench draws
               the conversation and the agent works behind it, with the same login, settings, hooks
-              and tools. An agent the workbench can drive this way offers the choice. A session that
-              is running keeps the way it started, and a single new one can be started the other way
-              from the agent pane, the palette or the project's menu.
+              and tools. An agent the workbench can drive this way offers the choice. A single new
+              session can be started the other way from the agent pane, the palette or the project's
+              menu.
             </p>
             <div class="projects kinds">
               {#each installed().length > 0 ? installed() : AGENTS as id (id)}
@@ -690,6 +690,10 @@
                 </div>
               {/each}
             </div>
+            <p class="note quiet" data-testid="session-kind-when">
+              A change applies to sessions started after it. To move one that is running, right-click
+              its row and choose Reopen.
+            </p>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">

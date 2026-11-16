@@ -6,7 +6,7 @@
   import { register, unregister } from "$lib/drops.svelte";
   import { compact, follow, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
-  import { choose, heldModel, modeChoices, modelChoices, workflowChoices } from "$lib/settingChoices";
+  import { choose, heldModel, modeChoices, modeName, modelChoices, workflowChoices } from "$lib/settingChoices";
   import type { AgentId, Workflow } from "$lib/core";
   import { modelName, tokens } from "$lib/thread";
   import { pieces } from "$lib/completion";
@@ -765,7 +765,7 @@
 
   let modes = $derived(conversation.ready?.modes ?? []);
   let mode = $derived(conversation.settings.mode);
-  let modeLabel = $derived(modes.find((known) => known.value === mode)?.name ?? mode ?? "Mode");
+  let modeLabel = $derived(mode === null ? "Mode" : modeName(conversation, mode));
 
   function pick(setting: "model" | "mode", value: string) {
     menu = null;
