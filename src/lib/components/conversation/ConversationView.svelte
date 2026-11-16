@@ -93,7 +93,8 @@
   let view = $state<HTMLDivElement | null>(null);
   /** The pane's width, once measured. A narrow pane keeps less room at the
       sides of the thread, the find bar and the foot, and a tight one less
-      in the composer's menu. The view is not a size container: WebKit puts
+      in the composer's menu; a menu that opens over the conversation is no
+      wider than it. The view is not a size container: WebKit puts
       a scroller inside one back where it was after a style change, and the
       thread would not stay at its foot. */
   let width = $state(0);
@@ -189,6 +190,7 @@
   class:active
   class:narrow={width > 0 && width <= 520}
   class:tight={width > 0 && width <= 420}
+  style:--conv-width={width > 0 ? `${width}px` : null}
   bind:this={view}
   bind:clientWidth={width}
   data-testid="conversation"
