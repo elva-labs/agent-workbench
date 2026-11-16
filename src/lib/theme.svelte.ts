@@ -125,6 +125,9 @@ export const theme = $state<{
   /** Counts every repaint, for what reads the colours back from the page,
       such as a terminal, to follow. */
   painted: number;
+  /** The share the cards let through in the appearance and look on
+      screen, after the guard: none where it holds the share at 0. */
+  cardsHeld: number;
 }>({
   choice: "system",
   palette: "teal",
@@ -136,6 +139,7 @@ export const theme = $state<{
   cards: {},
   preview: null,
   painted: 0,
+  cardsHeld: 0,
 });
 
 function isPalette(value: unknown): value is string {
@@ -264,7 +268,9 @@ export function setThemes(
   theme.backgrounds = Object.fromEntries(
     Object.entries(validBackgrounds(backgrounds)).filter(([name]) => !gone.includes(name)),
   );
-  theme.cards = Object.fromEntries(Object.entries(theme.cards).filter(([name]) => !gone.includes(name)));
+  theme.cards = Object.fromEntries(
+    Object.entries(theme.cards).filter(([name]) => !gone.includes(name) && Object.hasOwn(theme.backgrounds, name)),
+  );
   rememberAll();
   applyTheme();
   persist({
@@ -413,11 +419,16 @@ function moreContrast(): boolean {
 
 let contrastFollowed = false;
 
-/** Repaints when the system's contrast setting changes. */
+/** Repaints when the system's contrast setting changes, and when its
+    appearance does while the choice follows it, since what the cards let
+    through is stamped for the appearance on screen. */
 function followContrast() {
   if (contrastFollowed || typeof window.matchMedia !== "function") return;
   contrastFollowed = true;
   window.matchMedia(MORE_CONTRAST).addEventListener?.("change", () => applyTheme());
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => {
+    if (theme.choice === "system") applyTheme();
+  });
 }
 
 /** The background the window paints now: the one being picked, else the
@@ -434,11 +445,11 @@ export function shownCards(): number {
   return Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
 }
 
-/** Whether the cards let anything through now: a background shows, the
-    system asks for no more contrast, and a share is asked for. */
+/** Whether the cards let anything through now, in the appearance and look
+    on screen: a background shows, the system asks for no more contrast,
+    and the guard lets some of the share asked through. */
 export function cardsThrough(): boolean {
-  void theme.painted;
-  return shownBackground() !== null && shownCards() > 0 && !moreContrast();
+  return theme.cardsHeld > 0;
 }
 
 /** The stylesheet the background is painted from, worked out from the
@@ -456,6 +467,7 @@ function paintBackground() {
   if (background === null || moreContrast()) {
     delete root.dataset.background;
     delete root.dataset.cards;
+    theme.cardsHeld = 0;
     if (sheet.textContent !== "") sheet.textContent = "";
     return;
   }
@@ -465,17 +477,22 @@ function paintBackground() {
     dark: coloursOf(theme.palette, "dark", theme.themes),
   };
   // While one is being picked, only what is on screen is worked out.
-  const only = theme.preview === null ? null : { appearance: resolvedTheme(), look: theme.look };
+  const appearance = resolvedTheme();
+  const only = theme.preview === null ? null : { appearance, look: theme.look };
+  const held: Partial<Record<string, number>> = {};
   const css = backgroundCss(
     background,
     colours,
     imagesOf(background, only === null ? colours : { [only.appearance]: colours[only.appearance] }),
     only,
     cards,
+    held,
   );
   if (sheet.textContent !== css) sheet.textContent = css;
   root.dataset.background = "";
-  if (cards > 0) root.dataset.cards = "";
+  // Where the guard holds the share at none on screen, nothing changes.
+  theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
+  if (theme.cardsHeld > 0) root.dataset.cards = "";
   else delete root.dataset.cards;
 }
 

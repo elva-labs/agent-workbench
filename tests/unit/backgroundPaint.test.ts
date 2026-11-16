@@ -241,7 +241,29 @@ describe("keeping the cards' share", () => {
     theme.backgrounds = {};
     theme.cards = {};
     theme.preview = null;
+    theme.choice = "system";
     localStorage.clear();
+  });
+
+  it("stamps nothing in the appearance where the guard holds the share at none", () => {
+    const fog: Background = { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 };
+    adoptTheme({ appearance: "dark", backgrounds: { teal: fog }, cards: { teal: 0.2 } });
+    expect(theme.cardsHeld).toBe(0);
+    expect(cardsThrough()).toBe(false);
+    expect(document.documentElement.dataset.cards).toBeUndefined();
+    adoptTheme({ appearance: "light" });
+    expect(theme.cardsHeld).toBeGreaterThan(0);
+    expect(cardsThrough()).toBe(true);
+    expect(document.documentElement.dataset.cards).toBe("");
+    adoptTheme({ appearance: "system" });
+  });
+
+  it("drops a share whose background a change of themes takes away", () => {
+    const dusk = { label: "Dusk", light: {}, dark: {}, shape: {} };
+    setThemes({ dusk }, "teal", { dusk: LAGOON, teal: LAGOON });
+    adoptTheme({ cards: { teal: 0.2, dusk: 0.1 } });
+    setThemes({ dusk }, "teal", { dusk: LAGOON });
+    expect(theme.cards).toEqual({ dusk: 0.1 });
   });
 
   it("keeps a share with the palette in use, beside its background, and stamps it while one shows", () => {

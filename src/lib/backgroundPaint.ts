@@ -106,7 +106,9 @@ function valuesOf(painted: Painted, appearance: Appearance, images: Images): Rec
 
 /** The stylesheet for a background: what it paints in each appearance and
     look, worked out for the palette's colours in each appearance, the
-    cards' share included where they let any through. While a
+    cards' share included where they let any through, with the share the
+    guard lets through in each appearance and look written into `held`,
+    keyed "appearance:look". While a
     background is being picked only the appearance and look on screen are
     worked out, so the window keeps up with the pointer. */
 export function backgroundCss(
@@ -115,6 +117,7 @@ export function backgroundCss(
   images: Images,
   only: { appearance: Appearance; look: Look } | null = null,
   cards = 0,
+  held: Partial<Record<string, number>> = {},
 ): string {
   const named: Record<string, string> = {};
   if (images.light !== null) named["tint-image-light"] = `url("${images.light}")`;
@@ -126,7 +129,11 @@ export function backgroundCss(
     only !== null && only.appearance !== appearance
       ? []
       : looks.map(
-          (look) => [look, valuesOf(paintOf(background, look, colours[appearance], cards), appearance, images)] as const,
+          (look) => {
+            const painted = paintOf(background, look, colours[appearance], cards);
+            held[`${appearance}:${look}`] = painted.cards?.held ?? 0;
+            return [look, valuesOf(painted, appearance, images)] as const;
+          },
         );
   for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
   const dark = sets("dark");

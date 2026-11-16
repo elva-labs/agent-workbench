@@ -338,19 +338,26 @@ test("with no share on the cards stamps nothing and leaves the agent's card soli
     on, as the window paints it: the text and what else is drawn in the
     element are hidden, the element's box is read pixel by pixel, and every
     pixel is held against the colour. */
-async function lowestContrast(page: Page, selector: string, colour: string, hide: string): Promise<number> {
-  const element = page.locator(selector).first();
-  await element.evaluate((node, hide) => {
-    const style = document.createElement("style");
-    style.id = "hide-text";
-    style.textContent = `${hide} { color: transparent !important; text-shadow: none !important; visibility: hidden; }`;
-    document.head.append(style);
-    void node;
-  }, hide);
-  const box = (await element.boundingBox())!;
+async function lowestContrast(
+  page: Page,
+  selector: string | { x: number; y: number; width: number; height: number },
+  colour: string,
+  hide: string,
+  { keepGround = false, top = 12 } = {},
+): Promise<number> {
+  const box = typeof selector === "string" ? (await page.locator(selector).first().boundingBox())! : selector;
+  await page.evaluate(
+    ({ hide, keepGround }) => {
+      const style = document.createElement("style");
+      style.id = "hide-text";
+      style.textContent = `${hide} { color: transparent !important; text-shadow: none !important; ${keepGround ? "" : "visibility: hidden;"} }`;
+      document.head.append(style);
+    },
+    { hide, keepGround },
+  );
   const shot = await page.screenshot({
     // Clear of the focused card's mark along its top and its corners.
-    clip: { x: box.x + 2, y: box.y + 12, width: Math.max(1, box.width - 4), height: Math.max(1, box.height - 14) },
+    clip: { x: box.x + 2, y: box.y + top, width: Math.max(1, box.width - 4), height: Math.max(1, box.height - top - 2) },
   });
   await page.evaluate(() => document.getElementById("hide-text")?.remove());
   return page.evaluate(
@@ -444,3 +451,80 @@ for (const look of LOOKS)
         expect(low, `the terminal's text in ${ink}`).toBeGreaterThanOrEqual(LEAST);
       });
     });
+
+test("where the guard holds the share at none, the window is exactly as with none asked", async ({ browser }) => {
+  const FOG = { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 };
+  const shot = async (cards: Record<string, number>) => {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { appearance: "dark", look: "modern", backgrounds: { teal: FOG }, cards },
+    });
+    await page.goto("/");
+    await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
+    await expect(page.locator(":root")).not.toHaveAttribute("data-cards", /.*/);
+    await page.locator(TREE).getByText("mod.rs", { exact: true }).click();
+    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "diff");
+    // The sessions column folds as the diff opens: shot once it has.
+    const width = () => page.locator(AGENT).evaluate((pane) => pane.getBoundingClientRect().width);
+    await expect
+      .poll(async () => {
+        const before = await width();
+        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+        return before === (await width()) ? before : -1;
+      })
+      .toBeGreaterThan(0);
+    const image = await page.screenshot({ mask: [page.locator("time")], animations: "disabled" });
+    await page.close();
+    return image;
+  };
+  const none = await shot({});
+  const held = await shot({ teal: 0.2 });
+  expect(held.equals(none)).toBe(true);
+});
+
+test.describe("a terminal on a see-through card", () => {
+  for (const appearance of APPEARANCES)
+    test(`keeps its selection and its inverse cells readable, ${appearance}`, async ({ page }) => {
+      await open(page, "modern", appearance, { backgrounds: { teal: STRONG } });
+      await page.getByTestId("start-agent").click();
+      await expect(page.locator(`${AGENT} .xterm-screen`)).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => Object.keys((window as unknown as { __outputs?: object }).__outputs ?? {})))
+        .toContain("pty-1");
+      await page.evaluate(() =>
+        (window as unknown as { __say: (id: string, text: string) => void }).__say(
+          "pty-1",
+          "selected words to read back\r\n\x1b[7m inverse text \x1b[0m\r\n",
+        ),
+      );
+      const words = page.locator(`${AGENT} .xterm-rows > div`).first();
+      await expect(words).toContainText("selected words");
+      const row = (await words.boundingBox())!;
+      await page.mouse.move(row.x + 2, row.y + row.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(row.x + 160, row.y + row.height / 2, { steps: 4 });
+      await page.mouse.up();
+      const selection = `${AGENT} .xterm-selection div`;
+      await expect(page.locator(selection).first()).toBeVisible();
+      const ink = await colourOf(page, `${AGENT} .xterm-rows`);
+      const onSelection = await lowestContrast(page, selection, ink, `${AGENT} .xterm-rows`);
+      expect(onSelection, `the terminal's text on its selection in ${ink}`).toBeGreaterThanOrEqual(4.45);
+
+      await page.keyboard.press("Escape");
+      const cell = await page.evaluate((agent) => {
+        const span = [...document.querySelectorAll(`${agent} .xterm-rows span`)].find((node) =>
+          node.textContent?.includes("inverse text"),
+        )!;
+        const box = span.getBoundingClientRect();
+        return { colour: getComputedStyle(span).color, box: { x: box.x, y: box.y, width: box.width, height: box.height } };
+      }, AGENT);
+      const colour = cell.colour;
+      // Only the glyphs are hidden: the cell's own ground is what is read.
+      const low = await lowestContrast(page, cell.box, colour, `${AGENT} .xterm-rows, ${AGENT} .xterm-rows *`, {
+        keepGround: true,
+        top: 1,
+      });
+      expect(low, `an inverse cell's text in ${colour}`).toBeGreaterThanOrEqual(4.45);
+    });
+});

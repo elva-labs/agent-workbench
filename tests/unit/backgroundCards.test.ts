@@ -282,8 +282,11 @@ describe("the guard on the cards", () => {
               }
             }
 
-            // Where it holds back, a hundredth more would not do.
+            // Where it holds back, a hundredth more would not do, and a
+            // smaller share asked is let through whole.
             if (cards.held < MOST_CARDS) {
+              const less = Math.round(cards.held * 50) / 100;
+              if (less > 0) expect(paintOf({ ...choice, strength }, look, colours, less).cards!.held, said).toBe(less);
               expect(cards.heldBy, said).not.toBeNull();
               const more = paintOf({ ...choice, strength }, look, colours, cards.held + 0.01).cards!;
               expect(more.held, said).toBe(cards.held);
