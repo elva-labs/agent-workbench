@@ -65,8 +65,6 @@
     allowedProjects,
     revoke,
     startedBy,
-    stateOf,
-    stopAll,
     stopStarted,
   } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
@@ -77,8 +75,6 @@
     cleanQuestion,
     cleanWorktrees,
     isAsking,
-    isConductor,
-    leftBehind,
     madeTrees,
     quotedStarted,
     readWorktrees,
@@ -116,11 +112,10 @@
     ago,
     close as closeSession,
     isLive,
-    label,
-    select as selectSession,
     type Session,
   } from "$lib/sessions.svelte";
-  import { activate, activeProject, followedWorktree, goTo, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { activeProject, followedWorktree, goTo, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { isOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import {
     DEFAULT,
     MIN,
@@ -149,6 +144,9 @@
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
   let notGit = $derived(activeProject() !== null && root === null);
+  /** The orchestrator folder is in front: it is no open project, so there
+      is nothing of it to watch. */
+  let folderInFront = $derived(isOrchestratorFolder(workspace.active));
 
   let field = $state<HTMLInputElement | null>(null);
   let menuOpen = $state(false);
@@ -698,59 +696,35 @@
     saveLayout();
   }
 
-  /**
-   * The board: what an orchestrator session has started.
-   *
-   * A session that directs others runs in a directory of its own with no
-   * repository behind it and nothing to diff, so while one is on screen the
-   * pane shows its sessions in place of the tree. The board is one tab stop
-   * with a cursor inside it, as the sessions pane is: Up and Down move the
-   * cursor, Enter goes to the session under it.
-   */
-  let conducting = $derived.by(() => {
-    const session = activeSession();
-    return session !== null && isConductor(session) ? session : null;
-  });
-  /** Any other session on screen that started sessions of its own has
+  /** The session on screen, while it has started sessions of its own, has
       them in a section at the foot of the tree's column, beside Processes
       and Browser, walked by the tree's cursor as they are. */
-  let board = $derived(conducting === null ? boardOf(activeSession()) : null);
-  /** The session whose started sessions are shown, in either place. */
-  let starter = $derived(conducting ?? board);
-  let started = $derived(starter === null ? [] : startedBy(starter.token));
+  let board = $derived(boardOf(activeSession()));
+  let started = $derived(board === null ? [] : startedBy(board.token));
   let asking = $derived(started.filter(isAsking).length);
-  let boardMeta = $derived(
-    `${started.length} session${started.length === 1 ? "" : "s"}${asking === 0 ? "" : `, ${asking} asking`}`,
-  );
   let paneMeta = $derived.by(() => {
-    if (conducting !== null) return boardMeta;
     if (editing) return worktree === null ? undefined : `worktree ${worktree}`;
     return worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`;
   });
   /** While editing the pane is named for the project, heading the tree's
       column, and the editor's tabs head the column beside it. */
   let paneTitle = $derived.by(() => {
-    if (conducting !== null) return "Orchestrator";
     if (editing) return workspace.active === null ? "Files" : projectLabel(workspace.active);
     return "Changes";
   });
   let titleWidth = $derived.by(() => {
-    if (!editing || conducting !== null) return null;
+    if (!editing) return null;
     // The cell is as wide as the column under it, so the tabs beside it
     // stand over the editor.
     return editTreeVisible() ? `calc(${layout.editTreeDrawn}px + var(--splitter-inner-w))` : "auto";
   });
 
-  let startedOpen = $state(true);
-  let boardCursor = $state<string | null>(null);
-  let boardNav = $state<HTMLDivElement | null>(null);
   /** The projects this session may start sessions in without being
       asked, each with the × that takes the standing answer back. */
-  let allowedHere = $derived(starter === null ? [] : allowedProjects(starter.token));
-  /** The worktrees the line under the sessions counts: every one left
-      behind for the orchestrator, and for any other session those in the
-      projects it starts sessions in. */
-  let boardTrees = $derived(conducting !== null ? leftBehind.trees : board === null ? [] : treesFor(board));
+  let allowedHere = $derived(board === null ? [] : allowedProjects(board.token));
+  /** The worktrees the line under the sessions counts: those its own
+      starts made and left behind. */
+  let boardTrees = $derived(board === null ? [] : treesFor(board));
   /** The row with the send field under it: one at a time, and only while
       that session is running. */
   let sending = $state<string | null>(null);
@@ -761,87 +735,10 @@
   /** Whether the line says what is left behind or why what is left stayed. */
   let cleaned = $state(false);
 
-  /** The row under the cursor: the one it was put on while that session is
-      still there, else the first. */
-  let boardRow = $derived.by(() => {
-    if (boardCursor !== null && started.some((session) => session.key === boardCursor)) return boardCursor;
-    return started[0]?.key ?? null;
-  });
-
-  // Focusing the pane by key puts the keyboard on the board, so the arrows
-  // work at once. A click inside already has it.
-  $effect(() => {
-    layout.focusRequest;
-    if (conducting === null || layout.focus !== "changes") return;
-    if (!boardNav || boardNav.contains(document.activeElement)) return;
-    boardNav.focus();
-  });
-
-  function moveBoard(index: number) {
-    if (started.length === 0) return;
-    const at = Math.max(0, Math.min(index, started.length - 1));
-    boardCursor = started[at].key;
-    boardNav?.querySelector(`[data-row="${CSS.escape(boardCursor)}"]`)?.scrollIntoView({ block: "nearest" });
-  }
-
-  function onBoardKeydown(e: KeyboardEvent) {
-    const at = started.findIndex((session) => session.key === boardRow);
-    switch (e.key) {
-      case "ArrowDown":
-        moveBoard(at + 1);
-        break;
-      case "ArrowUp":
-        moveBoard(at - 1);
-        break;
-      case "Home":
-        moveBoard(0);
-        break;
-      case "End":
-        moveBoard(started.length - 1);
-        break;
-      case "Enter":
-      case " ":
-        if (at === -1) return;
-        go(started[at]);
-        break;
-      default:
-        return;
-    }
-    // The arrows put the keyboard back on the board, so Enter is the row
-    // under the cursor and not a button a click left focused.
-    boardNav?.focus();
-    e.preventDefault();
-  }
-
-  /** Going to a started session is wanting to type into it, and to see its
-      project: one under another project brings that project forward first. */
-  function go(session: Session) {
-    if (session.project !== workspace.active) activate(session.project);
-    selectSession(session.key);
-    focusPane("agent");
-  }
-
-  function stopEveryStarted() {
-    if (conducting !== null) stopAll(conducting.token);
-  }
-
-  /** The line under a started session's name: where it runs, what it is
-      doing, how long it has been at it, and the last line it left. */
-  function startedLine(session: Session): string {
-    const parts = [projectLabel(session.project)];
-    const tree = session.worktree ?? session.startIn;
-    if (tree !== null && tree !== session.project) parts.push(`worktree ${lastSegment(tree)}`);
-    // A session's start is a millisecond clock; `ago` reads one in seconds.
-    const since = session.startedAt === null ? null : ago(Math.floor(session.startedAt / 1000));
-    parts.push(since === null ? stateOf(session) : `${stateOf(session)}, ${since}`);
-    if (session.note !== null) parts.push(session.note);
-    return parts.join(" · ");
-  }
-
   /** The next start this caller makes in that project is put to the user. */
   function revokeProject(project: string) {
-    if (starter === null) return;
-    revoke(starter.token, project);
+    if (board === null) return;
+    revoke(board.token, project);
   }
 
   function stopRow(session: Session) {
@@ -888,11 +785,11 @@
     if (sending !== null) sendField?.focus();
   });
 
-  /** The session whose worktrees left behind are read: the orchestrator,
-      the one whose section shows, or the one on screen whose starts made a
-      worktree, so the section can show for what they left. */
+  /** The session whose worktrees left behind are read: the one whose
+      section shows, or the one on screen whose starts made a worktree, so
+      the section can show for what they left. */
   let readFor = $derived.by(() => {
-    if (starter !== null) return starter.key;
+    if (board !== null) return board.key;
     const session = activeSession();
     return madeTrees(session) ? session!.key : null;
   });
@@ -908,7 +805,7 @@
     });
   });
 
-  async function cleanUp(trees?: LeftTree[]) {
+  async function cleanUp(trees: LeftTree[]) {
     cleaning = true;
     try {
       await cleanWorktrees(trees);
@@ -1006,7 +903,7 @@
   // A question or a send field is about the session it was opened for:
   // another session on screen puts it away, and so does nothing being left
   // to ask about.
-  let starterKey = $derived(starter?.key ?? null);
+  let starterKey = $derived(board?.key ?? null);
   $effect(() => {
     starterKey;
     untrack(() => {
@@ -1175,707 +1072,567 @@
   head={titleWidth === null ? undefined : tabs}
   cellEnd={titleWidth !== null && editTreeVisible() ? makers : undefined}
 >
-  {#if conducting !== null}
-    <!-- The sessions an orchestrator started, in place of the tree. One tab
-         stop with a cursor inside it, the sessions pane's pattern: the rows
-         stay buttons for the mouse, and the keyboard goes through here. -->
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="board"
-      tabindex="0"
-      aria-label="Sessions it started"
-      bind:this={boardNav}
-      onkeydown={onBoardKeydown}
-      data-testid="started-board"
-    >
-      {#if started.length === 0}
-        <p class="notice" data-testid="started-empty">This session has started none of its own yet.</p>
-      {:else}
-        <section class="section open" data-testid="started-section">
-          <div class="section-head">
-            <button
-              class="fold"
-              tabindex="-1"
-              onpointerdown={(e) => e.preventDefault()}
-              onclick={() => (startedOpen = !startedOpen)}
-              aria-expanded={startedOpen}
-              data-testid="started-head"
-            >
-              <span class="chevron">{startedOpen ? "▾" : "▸"}</span>
-              Sessions it started ({started.length})
-            </button>
-            <span class="head-actions">
-              <button
-                class="head-action"
-                tabindex="-1"
-                onpointerdown={(e) => e.preventDefault()}
-                onclick={stopEveryStarted}
-                data-testid="stop-all">Stop all</button
-              >
-            </span>
-          </div>
-          {#if startedOpen}
-            <ul class="rows">
-              {#each started as session (session.key)}
-                <li class="started" class:cursor={boardRow === session.key} data-row={session.key}>
-                  <div class="row-box">
-                    <button
-                      class="media-row"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => {
-                        boardCursor = session.key;
-                        go(session);
-                      }}
-                      title={session.project}
-                      data-testid="started-row"
-                    >
-                      <span class="row-line">
-                        <span class="dot" data-state={startedDot(session)}></span>
-                        <span class="media-caption">{label(session)}</span>
-                      </span>
-                      <span class="media-meta">{startedLine(session)}</span>
-                    </button>
-                    <!-- Over the row's end rather than beside it, so a name is
-                         never squeezed to make room for them. -->
-                    <span class="actions">
-                      <button
-                        class="icon word"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => openSend(session)}
-                        disabled={!canSend(session)}
-                        title="Send this session a line"
-                        data-testid="send-started-row">Send</button
-                      >
-                      <button
-                        class="icon"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={() => stopRow(session)}
-                        aria-label="Stop {label(session)}"
-                        title="Stop"
-                        data-testid="stop-started-row">×</button
-                      >
-                    </span>
-                  </div>
-                  {#if sending === session.key}
-                    <input
-                      class="send"
-                      bind:this={sendField}
-                      bind:value={sendLine}
-                      onkeydown={(e) => onSendKeydown(e, session)}
-                      placeholder="a line to send…"
-                      aria-label="Send a line to {label(session)}"
-                      spellcheck="false"
-                      autocomplete="off"
-                      data-testid="send-field"
-                    />
-                  {/if}
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </section>
-      {/if}
-      <!-- What the orchestrator has been given, and what its starts left
-           behind: one muted line each, under the sessions themselves. -->
-      {#if allowedHere.length > 0}
-        <p class="board-line" data-testid="allowed-line">
-          <span>Allowed to start sessions in</span>
-          {#each allowedHere as project, index (project)}
-            <span class="allowed">
-              <span data-testid="allowed-project">{projectLabel(project)}</span><button
-                class="revoke"
-                tabindex="-1"
-                onpointerdown={(e) => e.preventDefault()}
-                onclick={() => revokeProject(project)}
-                aria-label="Ask again before starting a session in {projectLabel(project)}"
-                title="Ask again"
-                data-testid="revoke-project">×</button
-              >{index === allowedHere.length - 1 ? "" : ","}
-            </span>
-          {/each}
-        </p>
-      {/if}
-      {#if boardTrees.length > 0}
-        <p class="board-line" data-testid="worktrees-left">
-          <span>{worktreeLine(boardTrees, cleaned)}</span>
-          <button
-            class="head-action"
-            tabindex="-1"
-            onpointerdown={(e) => e.preventDefault()}
-            onclick={() => void cleanUp()}
-            disabled={cleaning || removable(boardTrees).length === 0}
-            data-testid="clean-worktrees">Clean up</button
-          >
-        </p>
-      {/if}
-    </div>
-  {:else}
-    {#if !editing}
-      {@render fieldRow()}
-    {/if}
+  {#if !editing}
+    {@render fieldRow()}
+  {/if}
 
-    <!-- The tree is the same component in both shapes. Working, it has the pane
-         to itself; reviewing, it becomes the left column and keeps its scroll
-         position, its open folders and its selection. -->
-    <div
-      class="split"
-      class:reviewing
-      class:editing
-      class:treeless={editing && !editTreeVisible()}
-      class:full={fullView}
-      style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
-    >
-      <!-- The tree's column: the tree, and beneath it what the agent
-           presented for the session on screen, a section of its own with a
-           divider to drag, folded to its header when asked. -->
-      {#if !fullView && treeColumn}
-        <!-- While editing, the keyboard anywhere in this column, the field
-             or the tree, is the tree's side of the pane. -->
-        <div
-          class="column"
-          bind:clientHeight={columnHeight}
-          onfocusin={() => (editor.target = "tree")}
-          data-testid="tree-column"
-        >
-          {#if editing}
-            {@render fieldRow()}
-            {#if fileOps.failed !== null}
-              <p class="notice error" role="alert" data-testid="tree-failed">{fileOps.failed}</p>
-            {/if}
-            {#if deleting !== null}
-              <div class="delete">
-                <ConfirmStrip
-                  question={deleting.question}
-                  detail={deleting.detail}
-                  action="Delete"
-                  onConfirm={() => void confirmDelete()}
-                  onCancel={cancelDelete}
-                  testid="delete-confirm"
-                />
-              </div>
-            {/if}
+  <!-- The tree is the same component in both shapes. Working, it has the pane
+       to itself; reviewing, it becomes the left column and keeps its scroll
+       position, its open folders and its selection. -->
+  <div
+    class="split"
+    class:reviewing
+    class:editing
+    class:treeless={editing && !editTreeVisible()}
+    class:full={fullView}
+    style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
+  >
+    <!-- The tree's column: the tree, and beneath it what the agent
+         presented for the session on screen, a section of its own with a
+         divider to drag, folded to its header when asked. -->
+    {#if !fullView && treeColumn}
+      <!-- While editing, the keyboard anywhere in this column, the field
+           or the tree, is the tree's side of the pane. -->
+      <div
+        class="column"
+        bind:clientHeight={columnHeight}
+        onfocusin={() => (editor.target = "tree")}
+        data-testid="tree-column"
+      >
+        {#if editing}
+          {@render fieldRow()}
+          {#if fileOps.failed !== null}
+            <p class="notice error" role="alert" data-testid="tree-failed">{fileOps.failed}</p>
           {/if}
-          <div class="tree-slot">
-            {#if searchingLines()}
-              <SearchResults onOpen={openHit} />
-            {:else}
-              <FileTree
-                onOpen={open}
-                onDouble={editing ? keepOpen : undefined}
-                onBlank={editing ? undefined : closeViewer}
-                focused={layout.focus === "changes" && (!editing || editor.target === "tree")}
-                unsaved={unsavedAt}
-                field={nameField}
-                onMenu={editing ? openMenu : undefined}
-                onCursorRow={(row) => (fileOps.cursor = row)}
-                marked={fileOps.menu?.path ?? fileOps.deleting?.path ?? null}
-                {beyond}
+          {#if deleting !== null}
+            <div class="delete">
+              <ConfirmStrip
+                question={deleting.question}
+                detail={deleting.detail}
+                action="Delete"
+                onConfirm={() => void confirmDelete()}
+                onCancel={cancelDelete}
+                testid="delete-confirm"
               />
-            {/if}
-          </div>
-          {#if anyOpen}
-            <Splitter
-              label="Resize the sections under the tree"
-              orientation="horizontal"
-              inner
-              onDelta={resizeMedia}
-              onReset={resetMedia}
-              onCommit={saveLayout}
+            </div>
+          {/if}
+        {/if}
+        <div class="tree-slot">
+          {#if searchingLines()}
+            <SearchResults onOpen={openHit} />
+          {:else}
+            <FileTree
+              onOpen={open}
+              onDouble={editing ? keepOpen : undefined}
+              onBlank={editing ? undefined : closeViewer}
+              focused={layout.focus === "changes" && (!editing || editor.target === "tree")}
+              unsaved={unsavedAt}
+              field={nameField}
+              onMenu={editing ? openMenu : undefined}
+              onCursorRow={(row) => (fileOps.cursor = row)}
+              marked={fileOps.menu?.path ?? fileOps.deleting?.path ?? null}
+              {beyond}
             />
           {/if}
-          <!-- The rows here are the tree's cursor's to walk, so a click keeps
-               the keyboard on the tree rather than moving it to the row, and
-               Tab does not stop on each of them. Two sections share the
-               height when both are open. -->
-          <div
-            class="sections"
-            class:open={anyOpen}
-            class:keyed={layout.focus === "changes"}
-            style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
-            data-testid="sections"
-          >
-            {#if presented.length > 0}
-              <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
+        </div>
+        {#if anyOpen}
+          <Splitter
+            label="Resize the sections under the tree"
+            orientation="horizontal"
+            inner
+            onDelta={resizeMedia}
+            onReset={resetMedia}
+            onCommit={saveLayout}
+          />
+        {/if}
+        <!-- The rows here are the tree's cursor's to walk, so a click keeps
+             the keyboard on the tree rather than moving it to the row, and
+             Tab does not stop on each of them. Two sections share the
+             height when both are open. -->
+        <div
+          class="sections"
+          class:open={anyOpen}
+          class:keyed={layout.focus === "changes"}
+          style:--sections-h="{Math.round(layout.mediaShare * 100)}%"
+          data-testid="sections"
+        >
+          {#if presented.length > 0}
+            <section class="section" class:open={layout.mediaOpen} data-testid="media-section">
+              <button
+                id={FOLD_ID}
+                class="fold"
+                class:cursor={cursorId === FOLD_ID}
+                tabindex="-1"
+                onpointerdown={(e) => e.preventDefault()}
+                onclick={() => {
+                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
+                  toggleMedia();
+                }}
+                aria-expanded={layout.mediaOpen}
+                data-testid="media-fold"
+              >
+                <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
+                Media ({presented.length})
+              </button>
+              {#if layout.mediaOpen}
+                <ul class="rows">
+                  {#each presented as item (item.id)}
+                    <li>
+                      <button
+                        id={rowIdOf(item.id)}
+                        class="media-row"
+                        class:on={files.media?.id === item.id}
+                        class:cursor={cursorId === rowIdOf(item.id)}
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => {
+                          sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
+                          openItem(item);
+                        }}
+                        title={item.files.join("\n")}
+                        data-testid="media-item"
+                      >
+                        <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
+                        <span class="media-meta"
+                          >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
+                        >
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </section>
+          {/if}
+          <!-- The sessions the session on screen started, with what it was
+               allowed and what their worktrees left: a section like its
+               neighbours, folded and walked the same way, there while it
+               has any of them. A name is the agent's text, drawn as it is
+               and cut to what a row holds. Each row's buttons act on the
+               session that row shows, and stopping them all or cleaning
+               up asks first. -->
+          {#if board !== null}
+            <section class="section board-section" class:open={layout.startedOpen} data-testid="board-section">
+              <div class="section-head">
                 <button
-                  id={FOLD_ID}
-                  class="fold"
-                  class:cursor={cursorId === FOLD_ID}
+                  id={STARTED_FOLD_ID}
+                  class="fold strong"
+                  class:cursor={cursorId === STARTED_FOLD_ID}
                   tabindex="-1"
                   onpointerdown={(e) => e.preventDefault()}
                   onclick={() => {
-                    sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "media-head");
-                    toggleMedia();
+                    sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "started-head");
+                    toggleStarted();
                   }}
-                  aria-expanded={layout.mediaOpen}
-                  data-testid="media-fold"
+                  aria-expanded={layout.startedOpen}
+                  data-testid="board-fold"
                 >
-                  <span class="chevron">{layout.mediaOpen ? "▾" : "▸"}</span>
-                  Media ({presented.length})
+                  <span class="chevron">{layout.startedOpen ? "▾" : "▸"}</span>
+                  Sessions it started ({started.length})
                 </button>
-                {#if layout.mediaOpen}
-                  <ul class="rows">
-                    {#each presented as item (item.id)}
-                      <li>
+                {#if started.some(isLive)}
+                  <span class="head-actions">
+                    <button
+                      class="head-action accent"
+                      tabindex="-1"
+                      onpointerdown={(e) => e.preventDefault()}
+                      onclick={askStopAll}
+                      title="Stop every session it started (Delete)"
+                      data-testid="board-stop-all">Stop all</button
+                    >
+                  </span>
+                {/if}
+              </div>
+              {#if layout.startedOpen}
+                {#if asked?.kind === "stop-all"}
+                  {@const ask = stopAllQuestion(askedRows)}
+                  <div class="board-ask">
+                    <ConfirmStrip
+                      question={ask.question}
+                      detail={ask.detail}
+                      action={ask.action}
+                      onConfirm={confirmAsked}
+                      onCancel={cancelAsked}
+                      testid="board-stop-all-ask"
+                    />
+                  </div>
+                {/if}
+                <!-- The tree's cursor walks the list, so it is no stop of its
+                     own, even where it scrolls. -->
+                <ul class="rows" tabindex="-1">
+                  {#if started.length === 0}
+                    <li class="section-empty" data-testid="board-empty">None open now.</li>
+                  {/if}
+                  {#each started as session (session.key)}
+                    <li
+                      id={startedRowId(session.key)}
+                      class="started"
+                      class:cursor={cursorId === startedRowId(session.key)}
+                      data-row={session.key}
+                      data-testid="board-row"
+                    >
+                      <div class="row-box">
                         <button
-                          id={rowIdOf(item.id)}
                           class="media-row"
-                          class:on={files.media?.id === item.id}
-                          class:cursor={cursorId === rowIdOf(item.id)}
                           tabindex="-1"
                           onpointerdown={(e) => e.preventDefault()}
                           onclick={() => {
-                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === rowIdOf(item.id));
-                            openItem(item);
+                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === startedRowId(session.key));
+                            openStarted(session.key);
                           }}
-                          title={item.files.join("\n")}
-                          data-testid="media-item"
+                          title={shownStarted(session)}
+                          data-testid="board-open"
                         >
-                          <span class="media-caption">{item.caption ?? lastSegment(item.files[0])}</span>
-                          <span class="media-meta"
-                            >{item.files.length === 1 ? lastSegment(item.files[0]) : `${item.files.length} files`} · {ago(item.at)}</span
-                          >
+                          <span class="row-line">
+                            <span class="dot" data-state={startedDot(session)} data-testid="board-dot"></span>
+                            <span class="media-caption" data-testid="board-name"><Plain text={startedName(session)} /></span>
+                          </span>
+                          <span class="media-meta" data-testid="board-detail">{startedDetail(board, session, now)}</span>
                         </button>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              </section>
-            {/if}
-            <!-- The sessions the session on screen started, with what it was
-                 allowed and what their worktrees left: a section like its
-                 neighbours, folded and walked the same way, there while it
-                 has any of them. A name is the agent's text, drawn as it is
-                 and cut to what a row holds. Each row's buttons act on the
-                 session that row shows, and stopping them all or cleaning
-                 up asks first. -->
-            {#if board !== null}
-              <section class="section board-section" class:open={layout.startedOpen} data-testid="board-section">
-                <div class="section-head">
-                  <button
-                    id={STARTED_FOLD_ID}
-                    class="fold strong"
-                    class:cursor={cursorId === STARTED_FOLD_ID}
-                    tabindex="-1"
-                    onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => {
-                      sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "started-head");
-                      toggleStarted();
-                    }}
-                    aria-expanded={layout.startedOpen}
-                    data-testid="board-fold"
-                  >
-                    <span class="chevron">{layout.startedOpen ? "▾" : "▸"}</span>
-                    Sessions it started ({started.length})
-                  </button>
-                  {#if started.some(isLive)}
-                    <span class="head-actions">
-                      <button
-                        class="head-action accent"
-                        tabindex="-1"
-                        onpointerdown={(e) => e.preventDefault()}
-                        onclick={askStopAll}
-                        title="Stop every session it started (Delete)"
-                        data-testid="board-stop-all">Stop all</button
-                      >
-                    </span>
-                  {/if}
-                </div>
-                {#if layout.startedOpen}
-                  {#if asked?.kind === "stop-all"}
-                    {@const ask = stopAllQuestion(askedRows)}
-                    <div class="board-ask">
-                      <ConfirmStrip
-                        question={ask.question}
-                        detail={ask.detail}
-                        action={ask.action}
-                        onConfirm={confirmAsked}
-                        onCancel={cancelAsked}
-                        testid="board-stop-all-ask"
-                      />
-                    </div>
-                  {/if}
-                  <!-- The tree's cursor walks the list, so it is no stop of its
-                       own, even where it scrolls. -->
-                  <ul class="rows" tabindex="-1">
-                    {#if started.length === 0}
-                      <li class="section-empty" data-testid="board-empty">None open now.</li>
-                    {/if}
-                    {#each started as session (session.key)}
-                      <li
-                        id={startedRowId(session.key)}
-                        class="started"
-                        class:cursor={cursorId === startedRowId(session.key)}
-                        data-row={session.key}
-                        data-testid="board-row"
-                      >
-                        <div class="row-box">
+                        <span class="actions">
                           <button
-                            class="media-row"
+                            class="icon word"
                             tabindex="-1"
                             onpointerdown={(e) => e.preventDefault()}
                             onclick={() => {
                               sectionCursor = sectionEntries.findIndex((entry) => entry.id === startedRowId(session.key));
-                              openStarted(session.key);
+                              openSend(session);
                             }}
-                            title={shownStarted(session)}
-                            data-testid="board-open"
-                          >
-                            <span class="row-line">
-                              <span class="dot" data-state={startedDot(session)} data-testid="board-dot"></span>
-                              <span class="media-caption" data-testid="board-name"><Plain text={startedName(session)} /></span>
-                            </span>
-                            <span class="media-meta" data-testid="board-detail">{startedDetail(board, session, now)}</span>
-                          </button>
-                          <span class="actions">
-                            <button
-                              class="icon word"
-                              tabindex="-1"
-                              onpointerdown={(e) => e.preventDefault()}
-                              onclick={() => {
-                                sectionCursor = sectionEntries.findIndex((entry) => entry.id === startedRowId(session.key));
-                                openSend(session);
-                              }}
-                              disabled={!canSend(session)}
-                              aria-label="Send a line to {quotedStarted(session)}"
-                              title="Send this session a line (Shift+Enter)"
-                              data-testid="board-send">Send</button
-                            >
-                            <button
-                              class="icon"
-                              tabindex="-1"
-                              onpointerdown={(e) => e.preventDefault()}
-                              onclick={() => stopRow(session)}
-                              aria-label="Stop {quotedStarted(session)}"
-                              title="Stop (Delete asks first)"
-                              data-testid="board-stop">×</button
-                            >
-                          </span>
-                        </div>
-                        {#if sending === session.key}
-                          <input
-                            class="send"
-                            bind:this={sendField}
-                            bind:value={sendLine}
-                            onkeydown={(e) => onSendKeydown(e, session)}
-                            placeholder="a line to send…"
+                            disabled={!canSend(session)}
                             aria-label="Send a line to {quotedStarted(session)}"
-                            spellcheck="false"
-                            autocomplete="off"
-                            data-testid="board-send-field"
-                          />
-                        {/if}
-                        {#if asked?.kind === "stop-one" && asked.keys[0] === session.key}
-                          {@const ask = stopOneQuestion(session)}
-                          <div class="board-ask row-ask">
-                            <ConfirmStrip
-                              question={ask.question}
-                              detail={ask.detail}
-                              action={ask.action}
-                              onConfirm={confirmAsked}
-                              onCancel={cancelAsked}
-                              testid="board-stop-ask"
-                            />
-                          </div>
-                        {/if}
-                      </li>
-                    {/each}
-                    {#each allowedHere as project (project)}
-                      <li class="board-line" data-testid="board-allowed">
-                        <span>Allowed to start sessions in</span>
-                        <span id={allowedId(project)} class="allowed" class:cursor={cursorId === allowedId(project)}
-                          ><span data-testid="board-allowed-project">{projectLabel(project)}</span><button
-                            class="revoke"
+                            title="Send this session a line (Shift+Enter)"
+                            data-testid="board-send">Send</button
+                          >
+                          <button
+                            class="icon"
                             tabindex="-1"
                             onpointerdown={(e) => e.preventDefault()}
-                            onclick={() => {
-                              sectionCursor = sectionEntries.findIndex((entry) => entry.id === allowedId(project));
-                              revokeProject(project);
-                            }}
-                            aria-label="Ask again before starting a session in {projectLabel(project)}"
-                            title="Ask again"
-                            data-testid="board-revoke">×</button
-                          ></span
-                        >
-                      </li>
-                    {/each}
-                    {#if boardTrees.length > 0}
-                      {#if asked?.kind === "clean"}
-                        {@const ask = cleanQuestion(
-                          boardTrees.filter((left) => asked?.kind === "clean" && (asked.paths.includes(left.path) || removable([left]).length === 0)),
-                        )}
-                        <li class="board-ask">
+                            onclick={() => stopRow(session)}
+                            aria-label="Stop {quotedStarted(session)}"
+                            title="Stop (Delete asks first)"
+                            data-testid="board-stop">×</button
+                          >
+                        </span>
+                      </div>
+                      {#if sending === session.key}
+                        <input
+                          class="send"
+                          bind:this={sendField}
+                          bind:value={sendLine}
+                          onkeydown={(e) => onSendKeydown(e, session)}
+                          placeholder="a line to send…"
+                          aria-label="Send a line to {quotedStarted(session)}"
+                          spellcheck="false"
+                          autocomplete="off"
+                          data-testid="board-send-field"
+                        />
+                      {/if}
+                      {#if asked?.kind === "stop-one" && asked.keys[0] === session.key}
+                        {@const ask = stopOneQuestion(session)}
+                        <div class="board-ask row-ask">
                           <ConfirmStrip
                             question={ask.question}
                             detail={ask.detail}
                             action={ask.action}
                             onConfirm={confirmAsked}
                             onCancel={cancelAsked}
-                            testid="board-clean-ask"
+                            testid="board-stop-ask"
                           />
-                        </li>
-                      {:else}
-                        <li
-                          id={STARTED_TREES_ID}
-                          class="board-line"
-                          class:cursor={cursorId === STARTED_TREES_ID}
-                          data-testid="board-trees"
-                        >
-                          <span>{worktreeLine(boardTrees, cleaned)}</span>
-                          <button
-                            class="head-action accent"
-                            tabindex="-1"
-                            onpointerdown={(e) => e.preventDefault()}
-                            onclick={() => {
-                              sectionCursor = sectionEntries.findIndex((entry) => entry.id === STARTED_TREES_ID);
-                              askClean();
-                            }}
-                            disabled={cleaning || removable(boardTrees).length === 0}
-                            data-testid="board-clean">Clean up</button
-                          >
-                        </li>
+                        </div>
                       {/if}
+                    </li>
+                  {/each}
+                  {#each allowedHere as project (project)}
+                    <li class="board-line" data-testid="board-allowed">
+                      <span>Allowed to start sessions in</span>
+                      <span id={allowedId(project)} class="allowed" class:cursor={cursorId === allowedId(project)}
+                        ><span data-testid="board-allowed-project">{projectLabel(project)}</span><button
+                          class="revoke"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => {
+                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === allowedId(project));
+                            revokeProject(project);
+                          }}
+                          aria-label="Ask again before starting a session in {projectLabel(project)}"
+                          title="Ask again"
+                          data-testid="board-revoke">×</button
+                        ></span
+                      >
+                    </li>
+                  {/each}
+                  {#if boardTrees.length > 0}
+                    {#if asked?.kind === "clean"}
+                      {@const ask = cleanQuestion(
+                        boardTrees.filter((left) => asked?.kind === "clean" && (asked.paths.includes(left.path) || removable([left]).length === 0)),
+                      )}
+                      <li class="board-ask">
+                        <ConfirmStrip
+                          question={ask.question}
+                          detail={ask.detail}
+                          action={ask.action}
+                          onConfirm={confirmAsked}
+                          onCancel={cancelAsked}
+                          testid="board-clean-ask"
+                        />
+                      </li>
+                    {:else}
+                      <li
+                        id={STARTED_TREES_ID}
+                        class="board-line"
+                        class:cursor={cursorId === STARTED_TREES_ID}
+                        data-testid="board-trees"
+                      >
+                        <span>{worktreeLine(boardTrees, cleaned)}</span>
+                        <button
+                          class="head-action accent"
+                          tabindex="-1"
+                          onpointerdown={(e) => e.preventDefault()}
+                          onclick={() => {
+                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === STARTED_TREES_ID);
+                            askClean();
+                          }}
+                          disabled={cleaning || removable(boardTrees).length === 0}
+                          data-testid="board-clean">Clean up</button
+                        >
+                      </li>
                     {/if}
-                  </ul>
-                {/if}
-              </section>
+                  {/if}
+                </ul>
+              {/if}
+            </section>
+          {/if}
+          <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
+            <button
+              id={PROCESSES_FOLD_ID}
+              class="fold"
+              class:cursor={cursorId === PROCESSES_FOLD_ID}
+              tabindex="-1"
+              onpointerdown={(e) => e.preventDefault()}
+              onclick={() => {
+                sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
+                toggleProcesses();
+              }}
+              aria-expanded={layout.processesOpen}
+              data-testid="processes-fold"
+            >
+              <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
+              Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
+            </button>
+            {#if layout.processesOpen}
+              {#if processes.rows.length === 0}
+                <p class="section-empty" data-testid="processes-empty">{emptyProcesses()}</p>
+              {:else}
+                <ul class="rows">
+                  {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
+                    <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
+                      <button
+                        class="media-row"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
+                        title={row.command}
+                      >
+                        <span class="media-caption">{row.command || row.name}</span>
+                        <span class="media-meta"
+                          >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
+                        >
+                      </button>
+                      <button
+                        class="stop"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => void stopProcess(row)}
+                        aria-label="Stop {row.name}"
+                        title="Stop"
+                        data-testid="process-stop">×</button
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
             {/if}
-            <section class="section" class:open={layout.processesOpen} data-testid="processes-section">
+          </section>
+          <!-- The browser: how it is opened, and its open tabs. Stands
+               even with none open, since opening one is what the fold is
+               for; its header carries that action beside the fold. -->
+          <section class="section" class:open={layout.browserOpen} data-testid="browser-section">
+            <div class="section-head">
               <button
-                id={PROCESSES_FOLD_ID}
+                id={BROWSER_FOLD_ID}
                 class="fold"
-                class:cursor={cursorId === PROCESSES_FOLD_ID}
+                class:cursor={cursorId === BROWSER_FOLD_ID}
                 tabindex="-1"
                 onpointerdown={(e) => e.preventDefault()}
                 onclick={() => {
-                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "processes-head");
-                  toggleProcesses();
+                  sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "browser-head");
+                  toggleBrowser();
                 }}
-                aria-expanded={layout.processesOpen}
-                data-testid="processes-fold"
+                aria-expanded={layout.browserOpen}
+                data-testid="browser-fold"
               >
-                <span class="chevron">{layout.processesOpen ? "▾" : "▸"}</span>
-                Processes{processes.rows.length > 0 ? ` (${processes.rows.length})` : ""}
+                <span class="chevron">{layout.browserOpen ? "▾" : "▸"}</span>
+                Browser ({ownBrowserTabs().length})
               </button>
-              {#if layout.processesOpen}
-                {#if processes.rows.length === 0}
-                  <p class="section-empty" data-testid="processes-empty">{emptyProcesses()}</p>
-                {:else}
-                  <ul class="rows">
-                    {#each processes.rows as row (`${row.ptyId}:${row.pid}`)}
-                      <li class="process" class:cursor={cursorId === processRowId(row)} id={processRowId(row)} data-testid="process-row">
-                        <button
-                          class="media-row"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => (sectionCursor = sectionEntries.findIndex((entry) => entry.id === processRowId(row)))}
-                          title={row.command}
-                        >
-                          <span class="media-caption">{row.command || row.name}</span>
-                          <span class="media-meta"
-                            >{row.owner} · {elapsed(row.started)} · {Math.round(row.cpu)}% · {Math.round(row.memory / 1048576)} MB</span
-                          >
-                        </button>
-                        <button
-                          class="stop"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => void stopProcess(row)}
-                          aria-label="Stop {row.name}"
-                          title="Stop"
-                          data-testid="process-stop">×</button
-                        >
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-              {/if}
-            </section>
-            <!-- The browser: how it is opened, and its open tabs. Stands
-                 even with none open, since opening one is what the fold is
-                 for; its header carries that action beside the fold. -->
-            <section class="section" class:open={layout.browserOpen} data-testid="browser-section">
-              <div class="section-head">
+              <span class="head-actions">
                 <button
-                  id={BROWSER_FOLD_ID}
-                  class="fold"
-                  class:cursor={cursorId === BROWSER_FOLD_ID}
+                  class="head-action"
                   tabindex="-1"
                   onpointerdown={(e) => e.preventDefault()}
-                  onclick={() => {
-                    sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "browser-head");
-                    toggleBrowser();
-                  }}
-                  aria-expanded={layout.browserOpen}
-                  data-testid="browser-fold"
+                  onclick={() => void newBrowserTab()}
+                  data-testid="browser-fold-new-tab">New tab</button
                 >
-                  <span class="chevron">{layout.browserOpen ? "▾" : "▸"}</span>
-                  Browser ({ownBrowserTabs().length})
-                </button>
-                <span class="head-actions">
+              </span>
+            </div>
+            {#if layout.browserOpen}
+              {#if ownBrowserTabs().length === 0}
+                <p class="section-empty" data-testid="browser-fold-empty">No tabs open.</p>
+              {:else}
+                <ul class="rows">
+                  {#each ownBrowserTabs() as tab (tab.id)}
+                    <li
+                      class="browser-tab"
+                      class:cursor={cursorId === browserRowId(tab)}
+                      id={browserRowId(tab)}
+                      data-testid="browser-fold-row"
+                    >
+                      <button
+                        class="media-row"
+                        class:on={browser.showing && tab.front}
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => {
+                          sectionCursor = sectionEntries.findIndex((entry) => entry.id === browserRowId(tab));
+                          void selectBrowserTab(tab.id);
+                        }}
+                        title={tab.url}
+                      >
+                        <span class="row-line">
+                          <span class="dot" data-state={browserDot(tab)} data-testid="browser-fold-dot"></span>
+                          <span class="media-caption">{browserTitleFor(tab)}</span>
+                        </span>
+                        <span class="media-meta">
+                          {#if tab.opener.kind === "agent"}<span class="by" data-testid="browser-fold-agent">agent</span>{" "}{/if}{withoutScheme(tab.url)}
+                        </span>
+                      </button>
+                      <button
+                        class="stop"
+                        tabindex="-1"
+                        onpointerdown={(e) => e.preventDefault()}
+                        onclick={() => void closeBrowserTab(tab.id)}
+                        aria-label="Close {browserTitleFor(tab)}"
+                        title="Close"
+                        data-testid="browser-fold-close">×</button
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            {/if}
+          </section>
+          <!-- A plugin's sections: one fold, named and counted for the
+               plugin, with the first section on the fold itself and every
+               further one a group inside it. -->
+          {#each pluginList as group (group.key)}
+            {@const open = sectionOpen(group.key)}
+            {@const notice = noticeOf(group)}
+            {@const page = pluginViewOf(group.key)}
+            {@const head = group.sections[0]}
+            <section class="section" class:open data-plugin={group.key} data-testid="plugin-section">
+              {#snippet viewButton()}
+                {#if page !== null}
                   <button
                     class="head-action"
                     tabindex="-1"
                     onpointerdown={(e) => e.preventDefault()}
-                    onclick={() => void newBrowserTab()}
-                    data-testid="browser-fold-new-tab">New tab</button
+                    onclick={() => openPluginView(page.key, page.project)}
+                    data-testid="plugin-view-open">View</button
                   >
-                </span>
-              </div>
-              {#if layout.browserOpen}
-                {#if ownBrowserTabs().length === 0}
-                  <p class="section-empty" data-testid="browser-fold-empty">No tabs open.</p>
-                {:else}
-                  <ul class="rows">
-                    {#each ownBrowserTabs() as tab (tab.id)}
-                      <li
-                        class="browser-tab"
-                        class:cursor={cursorId === browserRowId(tab)}
-                        id={browserRowId(tab)}
-                        data-testid="browser-fold-row"
-                      >
-                        <button
-                          class="media-row"
-                          class:on={browser.showing && tab.front}
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => {
-                            sectionCursor = sectionEntries.findIndex((entry) => entry.id === browserRowId(tab));
-                            void selectBrowserTab(tab.id);
-                          }}
-                          title={tab.url}
-                        >
-                          <span class="row-line">
-                            <span class="dot" data-state={browserDot(tab)} data-testid="browser-fold-dot"></span>
-                            <span class="media-caption">{browserTitleFor(tab)}</span>
-                          </span>
-                          <span class="media-meta">
-                            {#if tab.opener.kind === "agent"}<span class="by" data-testid="browser-fold-agent">agent</span>{" "}{/if}{withoutScheme(tab.url)}
-                          </span>
-                        </button>
-                        <button
-                          class="stop"
-                          tabindex="-1"
-                          onpointerdown={(e) => e.preventDefault()}
-                          onclick={() => void closeBrowserTab(tab.id)}
-                          aria-label="Close {browserTitleFor(tab)}"
-                          title="Close"
-                          data-testid="browser-fold-close">×</button
-                        >
-                      </li>
-                    {/each}
-                  </ul>
                 {/if}
+              {/snippet}
+              <FoldHead
+                {open}
+                title={group.title}
+                detail={group.detail}
+                count={group.count}
+                actions={head.actions}
+                onToggle={() => {
+                  sectionCursor = sectionEntries.findIndex(
+                    (entry) => entry.kind === "plugin-head" && entry.group === group.key,
+                  );
+                  toggleSection(group.key);
+                }}
+                onAct={(action) => act(head, action, null)}
+                foldId={pluginFoldId(group.key)}
+                cursor={cursorId === pluginFoldId(group.key)}
+                testId="plugin-fold"
+                lead={page === null ? undefined : viewButton}
+              />
+              {#if notice !== null}
+                <p class="section-notice" data-testid="plugin-notice">{notice}</p>
+              {/if}
+              {#if open}
+                <ul class="rows">
+                  {@render pluginRows(head, false)}
+                  {#each group.sections.slice(1) as section (section.key)}
+                    {@const lineIsOpen = lineOpen(section)}
+                    <li
+                      id={pluginGroupId(section.key)}
+                      class="group-line"
+                      class:cursor={cursorId === pluginGroupId(section.key)}
+                      data-section={section.section}
+                      data-testid="plugin-group"
+                    >
+                      <FoldHead
+                        open={lineIsOpen}
+                        title={section.title}
+                        detail={section.detail}
+                        count={section.rows.length}
+                        actions={section.actions}
+                        onToggle={() => {
+                          sectionCursor = sectionEntries.findIndex(
+                            (entry) => entry.id === pluginGroupId(section.key),
+                          );
+                          setSectionOpen(section.key, !lineIsOpen);
+                        }}
+                        onAct={(action) => act(section, action, null)}
+                        testId="plugin-group-fold"
+                        group
+                      />
+                    </li>
+                    {#if lineIsOpen}
+                      {@render pluginRows(section, true)}
+                    {/if}
+                  {/each}
+                </ul>
               {/if}
             </section>
-            <!-- A plugin's sections: one fold, named and counted for the
-                 plugin, with the first section on the fold itself and every
-                 further one a group inside it. -->
-            {#each pluginList as group (group.key)}
-              {@const open = sectionOpen(group.key)}
-              {@const notice = noticeOf(group)}
-              {@const page = pluginViewOf(group.key)}
-              {@const head = group.sections[0]}
-              <section class="section" class:open data-plugin={group.key} data-testid="plugin-section">
-                {#snippet viewButton()}
-                  {#if page !== null}
-                    <button
-                      class="head-action"
-                      tabindex="-1"
-                      onpointerdown={(e) => e.preventDefault()}
-                      onclick={() => openPluginView(page.key, page.project)}
-                      data-testid="plugin-view-open">View</button
-                    >
-                  {/if}
-                {/snippet}
-                <FoldHead
-                  {open}
-                  title={group.title}
-                  detail={group.detail}
-                  count={group.count}
-                  actions={head.actions}
-                  onToggle={() => {
-                    sectionCursor = sectionEntries.findIndex(
-                      (entry) => entry.kind === "plugin-head" && entry.group === group.key,
-                    );
-                    toggleSection(group.key);
-                  }}
-                  onAct={(action) => act(head, action, null)}
-                  foldId={pluginFoldId(group.key)}
-                  cursor={cursorId === pluginFoldId(group.key)}
-                  testId="plugin-fold"
-                  lead={page === null ? undefined : viewButton}
-                />
-                {#if notice !== null}
-                  <p class="section-notice" data-testid="plugin-notice">{notice}</p>
-                {/if}
-                {#if open}
-                  <ul class="rows">
-                    {@render pluginRows(head, false)}
-                    {#each group.sections.slice(1) as section (section.key)}
-                      {@const lineIsOpen = lineOpen(section)}
-                      <li
-                        id={pluginGroupId(section.key)}
-                        class="group-line"
-                        class:cursor={cursorId === pluginGroupId(section.key)}
-                        data-section={section.section}
-                        data-testid="plugin-group"
-                      >
-                        <FoldHead
-                          open={lineIsOpen}
-                          title={section.title}
-                          detail={section.detail}
-                          count={section.rows.length}
-                          actions={section.actions}
-                          onToggle={() => {
-                            sectionCursor = sectionEntries.findIndex(
-                              (entry) => entry.id === pluginGroupId(section.key),
-                            );
-                            setSectionOpen(section.key, !lineIsOpen);
-                          }}
-                          onAct={(action) => act(section, action, null)}
-                          testId="plugin-group-fold"
-                          group
-                        />
-                      </li>
-                      {#if lineIsOpen}
-                        {@render pluginRows(section, true)}
-                      {/if}
-                    {/each}
-                  </ul>
-                {/if}
-              </section>
-            {/each}
-          </div>
+          {/each}
         </div>
+      </div>
+    {/if}
+    {#if reviewing}
+      {#if !fullView}
+        <Splitter label="Resize the file tree" inner onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
       {/if}
-      {#if reviewing}
-        {#if !fullView}
-          <Splitter label="Resize the file tree" inner onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
-        {/if}
-        {#if browser.showing}
-          <BrowserView />
-        {:else}
-          <FileViewer />
-        {/if}
+      {#if browser.showing}
+        <BrowserView />
+      {:else}
+        <FileViewer />
       {/if}
-      {#if editing}
-        {#if !fullView && treeColumn}
-          <Splitter
-            label="Resize the file tree"
-            inner
-            onDelta={resizeEditTree}
-            onReset={resetEditTree}
-            onCommit={saveLayout}
-          />
-        {/if}
-        <EditorColumn />
+    {/if}
+    {#if editing}
+      {#if !fullView && treeColumn}
+        <Splitter
+          label="Resize the file tree"
+          inner
+          onDelta={resizeEditTree}
+          onReset={resetEditTree}
+          onCommit={saveLayout}
+        />
       {/if}
-    </div>
-  {/if}
+      <EditorColumn />
+    {/if}
+  </div>
 </Pane>
 
 
@@ -2011,6 +1768,10 @@
   {#if notGit}
     <p class="notice" data-testid="not-git">
       This folder is not a git repository, so there are no changes to show. Sessions still run in it.
+    </p>
+  {:else if folderInFront}
+    <p class="notice" data-testid="folder-notice">
+      This folder holds sessions to resume. It is not a project, so there are no changes to show.
     </p>
   {/if}
 
@@ -2369,24 +2130,8 @@
     overflow: hidden;
   }
 
-  /* The board stands where the tree does while an orchestrator session is on
-     screen: one tab stop, with the cursor drawn on its rows as the sections
-     draw theirs. */
-  .board {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow: auto;
-    outline: none;
-  }
-
   .started {
     position: relative;
-  }
-
-  .board:focus-within .started.cursor {
-    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   /* A row's own buttons, over its end on hover, on the row's own colour so
@@ -2480,7 +2225,7 @@
     color: var(--ink-3);
   }
 
-  /* What the orchestrator has been given, and what its starts left behind. */
+  /* What the starter has been allowed, and what its starts left behind. */
   .board-line {
     display: flex;
     align-items: center;

@@ -8,6 +8,9 @@ import { BUILD_AND_REVIEW, PROJECT, WITH_WORKFLOW, installFakeCore } from "./fak
 
 const AGENT = "section[data-pane='agent']";
 const H = "int-1";
+/** A second project, where a session that starts others in the first
+    runs. */
+const LEAD = "/home/ada/dev/lead";
 
 /** Runs a script against the scripted session, as the agent would act. */
 function agent(page: Page, script: string) {
@@ -1915,10 +1918,10 @@ test.describe("in the sessions pane, an integrated session", () => {
   });
 
   test("hangs under the session that started it", async ({ page }) => {
-    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+    await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
     await page.goto("/");
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    // The starter, a session of a second project's own.
+    await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await page.evaluate(
       (project) =>
@@ -2094,10 +2097,10 @@ test.describe("the keyboard, when the dock goes by itself", () => {
 });
 
 test("shows a message another session sent under that session, and never the workbench's sentence as its words", async ({ page }) => {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
     page.evaluate(
@@ -2139,10 +2142,10 @@ test("shows a message another session sent under that session, and never the wor
 });
 
 test("gives an integrated starter what it has not heard with the user's message, folded under the user's words", async ({ page }) => {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   await page.evaluate(
     (project) =>
@@ -2187,10 +2190,10 @@ test("gives an integrated starter what it has not heard with the user's message,
 });
 
 test("wakes an idle integrated starter with what a session it started said, as the workbench's message", async ({ page }) => {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   await page.evaluate(
     (project) =>
@@ -2388,10 +2391,10 @@ test.describe("a request too long for its line", () => {
 test("shows the user's own words as theirs when another session sent the same words", async ({ page }) => {
   // The reviewer's case: session 1 starts a session and sends it "yes",
   // and the user goes there and types "yes" too.
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
     page.evaluate(
@@ -2422,10 +2425,10 @@ test("shows the user's own words as theirs when another session sent the same wo
 });
 
 test("writes out what an agent's name or line hides, wherever it is drawn", async ({ page }) => {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
     page.evaluate(
@@ -2476,10 +2479,10 @@ test("writes out what an agent's name or line hides, wherever it is drawn", asyn
 });
 
 test("does not call a session You, whatever the name it is started with", async ({ page }) => {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter, a session of a second project's own.
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
   await expect(page.getByTestId("conversation")).toBeVisible();
   await page.evaluate(
     (project) =>
@@ -2502,10 +2505,10 @@ test("does not call a session You, whatever the name it is started with", async 
 
 test.describe("after a reload, an orchestrated session", () => {
   async function orchestrate(page: Page) {
-    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] }, keepIntegrated: true });
+    await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] }, keepIntegrated: true });
     await page.goto("/");
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    // The starter, a session of a second project's own.
+    await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await page.evaluate(
       (project) =>
@@ -2538,7 +2541,7 @@ test.describe("after a reload, an orchestrated session", () => {
   });
 
   test("that was never sent a message comes back as itself, not as a new one", async ({ page }) => {
-    // The orchestrator's own session here was never sent a message.
+    // The starter itself was never sent a message.
     await orchestrate(page);
     await page.reload();
     const own = page.getByTestId("session-row").filter({ has: page.getByTestId("orchestrator-summary") });

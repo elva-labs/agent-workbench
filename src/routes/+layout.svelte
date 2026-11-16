@@ -34,7 +34,7 @@
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen, settleWhen } from "$lib/reopen.svelte";
-  import { dirKnown } from "$lib/orchestrator.svelte";
+  import { dirKnown } from "$lib/orchestratorFolder.svelte";
   import { listenIntegrated } from "$lib/integrated.svelte";
   import { followOpenRequests, restore, workspace } from "$lib/workspace.svelte";
   import { followTabStops } from "$lib/tabStops";

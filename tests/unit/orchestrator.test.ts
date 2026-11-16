@@ -7,12 +7,8 @@ import {
   cleanQuestion,
   cleanWorktrees,
   childrenOf,
-  conductors,
   isAsking,
-  isConductor,
   leftBehind,
-  load,
-  orchestrator,
   ownFor,
   parentOf,
   readWorktrees,
@@ -49,30 +45,21 @@ import {
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
-const DIR = "/home/ada/.agent-workbench/orchestrator";
+/** The project the starters in these tests run in. */
+const LEAD = "/home/ada/dev/lead";
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
 
-/** Where the core says an orchestrator runs, what worktrees each project
-    has, and what a test asked to be removed. */
+/** What worktrees each project has, and what a test asked to be
+    removed. */
 const fake = {
-  dir: DIR as string | null,
   trees: {} as Record<string, Worktree[]>,
   removed: [] as string[],
-  hooked: [] as string[],
   written: [] as [string, string][],
 };
 
 vi.mock("$lib/core", () => ({
   core: () => ({
-    async orchestratorDir() {
-      if (fake.dir === null) throw new Error("no core");
-      return fake.dir;
-    },
-    async hookInstall(project: string) {
-      fake.hooked.push(project);
-      return { installed: true, settings: "", events: "" };
-    },
     async write(ptyId: string, data: string) {
       fake.written.push([ptyId, data]);
     },
@@ -145,51 +132,17 @@ beforeEach(() => {
   resetSessions();
   resetConductor();
   resetWorkspace();
-  fake.dir = DIR;
   fake.trees = {};
   fake.removed = [];
-  fake.hooked = [];
   fake.written = [];
   leftBehind.trees = [];
   leftBehind.loading = false;
-  orchestrator.dir = DIR;
-});
-
-describe("the orchestrator's own project", () => {
-  it("is where the core says, and nowhere when the core cannot say", async () => {
-    orchestrator.dir = null;
-    await load();
-    expect(orchestrator.dir).toBe(DIR);
-
-    fake.dir = null;
-    await load();
-    expect(orchestrator.dir).toBeNull();
-  });
-
-  it("has the agent's tools written into it, whatever the projects chose", async () => {
-    orchestrator.dir = null;
-    await load();
-    expect(fake.hooked).toEqual([DIR]);
-  });
-
-  it("holds the sessions that run in it, and no others", () => {
-    const one = live(DIR, "pty-1", "sid-1");
-    const mine = live(A, "pty-2", "sid-2");
-    expect(isConductor(one)).toBe(true);
-    expect(isConductor(mine)).toBe(false);
-    expect(keys(conductors())).toEqual([one.key]);
-
-    // With nowhere for one to run, there are none.
-    orchestrator.dir = null;
-    expect(isConductor(one)).toBe(false);
-    expect(conductors()).toEqual([]);
-  });
 });
 
 describe("a project's sessions", () => {
   it("hangs the started ones under the session that started them, wherever they run", () => {
-    const one = live(DIR, "pty-1", "sid-1");
-    const two = live(DIR, "pty-2", "sid-2");
+    const one = live(LEAD, "pty-1", "sid-1");
+    const two = live(LEAD, "pty-2", "sid-2");
     const mine = live(A, "pty-3", "sid-3");
     const first = startedIn(A, one, "pty-4", "sid-4");
     const second = startedIn(A, two, "pty-5", "sid-5");
@@ -223,7 +176,7 @@ describe("a project's sessions", () => {
 
 describe("what an orchestrator has out", () => {
   it("counts what is running and what is waiting on you", () => {
-    const one = live(DIR, "pty-1", "sid-1");
+    const one = live(LEAD, "pty-1", "sid-1");
     expect(summary(one)).toEqual({ running: 0, asking: 0, working: false });
     expect(summaryLine(one)).toBeNull();
 
@@ -249,7 +202,7 @@ describe("what an orchestrator has out", () => {
   });
 
   it("breathes when its own agent works, or one it started does", () => {
-    const one = live(DIR, "pty-1", "sid-1");
+    const one = live(LEAD, "pty-1", "sid-1");
     // Nothing out, nothing at work: the dot rests.
     expect(conducting(one)).toBe(false);
 
@@ -272,7 +225,7 @@ describe("what an orchestrator has out", () => {
   });
 
   it("lets its own call for attention hold the dot over a working child", () => {
-    const one = live(DIR, "pty-1", "sid-1");
+    const one = live(LEAD, "pty-1", "sid-1");
     const child = startedIn(A, one, "pty-2", "sid-2");
     child.working = true;
     expect(conducting(one)).toBe(true);
@@ -287,7 +240,7 @@ describe("what an orchestrator has out", () => {
   });
 
   it("leaves a started session read when it stops, and unread for a permission", () => {
-    const one = live(DIR, "pty-1", "sid-1");
+    const one = live(LEAD, "pty-1", "sid-1");
     const own = live(A, "pty-2", "sid-2");
     const child = startedIn(A, one, "pty-3", "sid-3");
     // Both end a turn behind the orchestrator's row. The user's own
@@ -318,7 +271,7 @@ describe("what an orchestrator has out", () => {
   });
 
   it("leaves a started session that only stopped out of the jump", () => {
-    const one = live(DIR, "pty-1", "sid-1");
+    const one = live(LEAD, "pty-1", "sid-1");
     const own = live(A, "pty-2", "sid-2");
     const child = startedIn(A, one, "pty-3", "sid-3");
     sessions.active = one.key;
@@ -336,8 +289,8 @@ describe("what an orchestrator has out", () => {
   });
 
   it("counts only what the orchestrator itself started", () => {
-    const one = live(DIR, "pty-1", "sid-1");
-    const two = live(DIR, "pty-2", "sid-2");
+    const one = live(LEAD, "pty-1", "sid-1");
+    const two = live(LEAD, "pty-2", "sid-2");
     startedIn(A, one, "pty-3", "sid-3");
     startedIn(A, two, "pty-4", "sid-4");
     startedIn(A, two, "pty-5", "sid-5");
@@ -395,7 +348,7 @@ describe("the worktrees the starts left behind", () => {
     await readWorktrees();
     expect(leftBehind.trees).toHaveLength(3);
 
-    await cleanWorktrees();
+    await cleanWorktrees(leftBehind.trees);
 
     expect(fake.removed).toEqual(["clean"]);
     expect(names(leftBehind.trees)).toEqual(["working", "ahead"]);
@@ -422,7 +375,7 @@ describe("the board for any session", () => {
     ],
   };
 
-  it("is the session on screen once it has started some, and never the orchestrator's", () => {
+  it("is the session on screen once it has started some, wherever it runs", () => {
     const starter = live(A, "pty-1", "sid-1");
     expect(boardOf(starter)).toBeNull();
     expect(boardOf(null)).toBeNull();
@@ -433,10 +386,10 @@ describe("the board for any session", () => {
     // The one it started has started none.
     expect(boardOf(fix)).toBeNull();
 
-    // An orchestrator's board stands in place of the tree instead.
-    const top = live(DIR, "pty-3", "sid-3");
+    // A session in the orchestrator folder is a session like any other.
+    const top = live("/home/ada/.agent-workbench/orchestrator", "pty-3", "sid-3");
     startedIn(A, top, "pty-4", "sid-4");
-    expect(boardOf(top)).toBeNull();
+    expect(boardOf(top)).toBe(top);
   });
 
   it("says each one's step and round, where it runs and what it is doing", () => {

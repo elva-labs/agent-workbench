@@ -1513,35 +1513,6 @@ test.describe("the corner and the keyboard", () => {
   });
 });
 
-test.describe("the leave question with an orchestrator's board on screen", () => {
-  test("is drawn over the board, and heard only then", async ({ page }) => {
-    const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
-    await page.setViewportSize({ width: 1728, height: 1000 });
-    await installFakeCore(page, { open: [ORCHESTRATOR, "/home/ada/dev/demo"] });
-    await page.goto("/");
-    await expect(page.locator(AGENT)).toBeVisible();
-    await page.getByTestId("start-agent").click();
-    await expect(page.getByTestId("started-board")).toBeVisible();
-    // Unsaved edits in the project, then back to the orchestrator in editor mode.
-    await page.locator(`${SESSIONS} .project-row`).filter({ hasText: "demo" }).first().click();
-    await flip(page);
-    await treeRow(page, "README.md").click();
-    await typeAtEnd(page, "mine");
-    await page.locator(`${SESSIONS} [data-testid='session-row']`).first().click();
-    await expect(page.getByTestId("started-board")).toBeVisible();
-    await expect(page.getByTestId("editor-column")).toHaveCount(0);
-
-    await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
-    await expect(page.getByTestId("leave-ask")).toBeVisible();
-    await expect(page.getByTestId("leave-ask")).toContainText("Quit with unsaved edits?");
-    expect(
-      await page.evaluate(() => (window as unknown as { __leave: { heard: number } }).__leave.heard),
-    ).toBe(1);
-    await page.getByTestId("close-window-confirm").click();
-    await expect.poll(() => controls(page)).toEqual(["quit"]);
-  });
-});
-
 test.describe("the name field while the agent writes files", () => {
   test("stays the same field, text and all, and writes nothing", async ({ page }) => {
     await open(page, 1728);
@@ -1821,10 +1792,13 @@ test.describe("closing what the pane folds away or hangs under another", () => {
   });
 
   test("asks before the × on a started session stops it, naming its project where the name repeats", async ({ page }) => {
-    await open(page, 1728);
-    // The orchestrator's own session 1, which starts a session 1 in demo.
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    const LEAD = "/home/ada/dev/lead";
+    await page.setViewportSize({ width: 1728, height: 900 });
+    await installFakeCore(page, { open: [PROJECT, LEAD] });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    // A second project's own session 1, which starts a session 1 in demo.
+    await page.locator(`${SESSIONS} [data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
     await expect(page.locator(AGENT)).toContainText("running");
     await page.evaluate(
       (project) =>

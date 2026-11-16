@@ -4,7 +4,9 @@ import {
   addStep,
   addWorkflow,
   adoptWorkflows,
+  DIRECT,
   defaultWorkflow,
+  directWorkflow,
   deleteWorkflow,
   duplicateWorkflow,
   moveStep,
@@ -68,20 +70,29 @@ beforeEach(() => {
   sent.length = 0;
   refusal = null;
   stored = null;
-  adoptWorkflows(undefined);
-  // The tests below start from the shipped workflow turned on.
-  workflows.default = NAME;
+  // The tests below start from Build and review alone, turned on.
+  adoptWorkflows({ list: [defaultWorkflow()], default: NAME, overrides: {} });
 });
 
 describe("a fresh window", () => {
-  it("has the default workflow, with new sessions following none", () => {
+  it("has the shipped workflows, with new sessions following none", () => {
     adoptWorkflows(undefined);
-    expect(workflows.list).toEqual([defaultWorkflow()]);
+    expect(workflows.list).toEqual([defaultWorkflow(), directWorkflow()]);
     expect(workflows.default).toBeNull();
     const workflow = workflows.list[0];
     expect(workflow.orchestrator).toEqual({ agent: "claude-code", model: "fable" });
     expect(workflow.steps.map((step) => step.kind)).toEqual(["work", "review"]);
     expect(workflowProblem(workflow)).toBeNull();
+    // Direct: one step of work, on any model, as many at once as a session
+    // may run, and the orchestrator hands out work only through start.
+    const direct = workflows.list[1];
+    expect(direct.name).toBe(DIRECT);
+    expect(direct.orchestrator).toEqual({ agent: "claude-code", model: "fable" });
+    expect(direct.steps).toEqual([{ kind: "work", name: "Work", models: [], parallel: 8 }]);
+    expect(startsOnly(direct)).toBe(true);
+    expect(workflowProblem(direct)).toBeNull();
+    expect(workflowGist(direct)).toBe("Fable directs, any model works");
+    expect(stepsGist(direct)).toBe("any model works");
   });
 
   it("takes the core's workflows, and drops a choice that names one it does not hold", () => {

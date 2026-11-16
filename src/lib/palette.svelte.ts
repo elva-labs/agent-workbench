@@ -43,6 +43,7 @@ import {
   workspace,
 } from "$lib/workspace.svelte";
 import { liveUnder } from "$lib/projects.svelte";
+import { startsIn } from "$lib/orchestratorFolder.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
 
@@ -345,7 +346,9 @@ export function commandItems(query: string): PaletteItem[] {
     command: id,
     chord: "",
   });
-  const here = onScreen();
+  // Nothing new starts in the orchestrator folder, so with it on screen
+  // only New session is offered, which asks for the project.
+  const here = startsIn(onScreen()) ? onScreen() : null;
   const other = here === null ? null : otherWay(here);
   const commands: PaletteItem[] = [
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
@@ -620,11 +623,13 @@ function answer(steps: Step[]): Outcome {
 }
 
 /** Starts asking for a new session, in a project when it is known. With
-    one project open the project is known, and is not asked. */
+    one project open the project is known, and is not asked. The
+    orchestrator folder is never the project, so a new session from one of
+    its rows asks which. */
 export function beginNew(path: string | null): Outcome {
   if (!isReady()) return { type: "stay" };
   const only = workspace.open.length === 1 ? workspace.open[0].path : null;
-  const project = path ?? only;
+  const project = (startsIn(path) ? path : null) ?? only;
   if (palette.mode !== "new")
     palette.came = palette.mode === "commands" ? palette.query : "";
   return answer(project === null ? [] : [{ kind: "project", path: project }]);
@@ -692,7 +697,7 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
           return beginNew(onScreen());
         case "newOther": {
           const here = onScreen();
-          if (here === null) return { type: "stay" };
+          if (here === null || !startsIn(here)) return { type: "stay" };
           const agent = defaultAgent(here);
           const kind = otherWay(here);
           if (kind === null) return { type: "stay" };

@@ -2,9 +2,8 @@
  * The orchestrator, as the panes show it.
  *
  * A session that directs others is a session like any other: an agent in a
- * project, on the same keys and in the same panes. What it has of its own
- * is a project to run in, the workbench's orchestrator directory, which
- * the sessions pane pins above the projects you opened.
+ * project, on the same keys and in the same panes. Any session may start
+ * others, and one that follows a workflow is its orchestrator.
  *
  * The sessions a session starts hang under it in the pane, one line each
  * on a rail from its dot, wherever they run, and speak up only when one of
@@ -29,51 +28,6 @@ import { isLive, label, lastChanged, sessions, since, statusLabel, type Session 
 import { shown } from "$lib/unseen";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
 import { drawnWith } from "$lib/projects.svelte";
-
-/** The name the pane gives the orchestrator's own project. */
-export const LABEL = "orchestrator";
-
-export const orchestrator = $state<{ dir: string | null }>({ dir: null });
-
-let knowDir: (dir: string | null) => void = () => {};
-/** Settles with the orchestrator's directory once the core has said where
-    it is, or with null when it cannot say. */
-export const dirKnown: Promise<string | null> = new Promise((resolve) => (knowDir = resolve));
-
-/** Asks the core where an orchestrator session runs, and makes the
-    directory if it is not there yet. A core that cannot say leaves the
-    project out of the pane rather than showing one that cannot start. */
-export async function load(): Promise<void> {
-  try {
-    orchestrator.dir = await core().orchestratorDir();
-  } catch {
-    orchestrator.dir = null;
-    knowDir(null);
-    return;
-  }
-  knowDir(orchestrator.dir);
-  // The tools are what make an orchestrator one, and they reach an agent
-  // through the hooks and the tool server written into the directory it
-  // runs in. The directory is the app's own, so they are always there,
-  // whatever the projects were told about live updates.
-  await core()
-    .hookInstall(orchestrator.dir, dirsOf())
-    .catch(() => {
-      // A directory that cannot take them is one no session will get far
-      // in either; the session's own start says so.
-    });
-}
-
-/** A session in the orchestrator's own project. */
-export function isConductor(session: Session): boolean {
-  return orchestrator.dir !== null && session.project === orchestrator.dir;
-}
-
-/** The orchestrator sessions, in the order they were started. */
-export function conductors(): Session[] {
-  if (orchestrator.dir === null) return [];
-  return sessions.all.filter((session) => session.project === orchestrator.dir);
-}
 
 /** A started session that is waiting on the user: it needs a permission,
     which only the user can grant. Everything else it waits on is its
@@ -194,14 +148,6 @@ export function ownFor(project: string): Session[] {
 
 drawnWith({ ownFor, childrenOf, parentOf });
 
-/** What an orchestrator is called where its own row is not in sight. */
-export function conductorLabel(id: string): string {
-  const session = sessions.all.find(
-    (candidate) => candidate.id === id || candidate.key === id,
-  );
-  return session === undefined ? "an orchestrator" : label(session);
-}
-
 /** A worktree found under a project, with the project it is under. */
 export type LeftTree = Worktree & { project: string };
 
@@ -246,10 +192,10 @@ export async function readWorktrees(): Promise<void> {
   }
 }
 
-/** Removes the trees that can go, of those given or else of every one left
-    behind, one at a time, and reads what is left. A tree the core will not
-    part with stays, and says why on the next read. */
-export async function cleanWorktrees(trees: LeftTree[] = leftBehind.trees): Promise<void> {
+/** Removes the trees that can go of those given, one at a time, and reads
+    what is left. A tree the core will not part with stays, and says why on
+    the next read. */
+export async function cleanWorktrees(trees: LeftTree[]): Promise<void> {
   for (const tree of removable(trees)) {
     try {
       await core().worktreeRemove(tree.project, tree.name, dirsOf());
@@ -275,9 +221,8 @@ function inUse(path: string): boolean {
  *
  * The changes pane shows a session's started sessions in a section at its
  * foot, under the tree: each with its state, its step and round where it
- * runs for a workflow's step, and the controls an orchestrator's board has.
- * The orchestrator's own project has no tree to sit under, so its board
- * stands in place of the tree instead.
+ * runs for a workflow's step, and the controls to stop them, send them a
+ * line, take back a project allowed and clean up worktrees left behind.
  */
 
 /** The rows a session started, running or not, in the order they were
@@ -290,10 +235,9 @@ export function startedRows(session: Session): Session[] {
     on screen, while it has sessions it started, holds a standing answer to
     start more, or has worktrees its starts left behind, so what it was
     allowed can be taken back and what it left cleaned up once they are
-    gone. None for an orchestrator in its own project, whose board stands
-    in place of the tree. */
+    gone. */
 export function boardOf(session: Session | null): Session | null {
-  if (session === null || isConductor(session)) return null;
+  if (session === null) return null;
   if (
     startedRows(session).length > 0 ||
     allowedProjects(session.token).length > 0 ||
@@ -306,7 +250,7 @@ export function boardOf(session: Session | null): Session | null {
 /** Whether the worktrees left behind are worth reading for a session: one
     of its starts made a worktree that may still be there. */
 export function madeTrees(session: Session | null): boolean {
-  return session !== null && !isConductor(session) && treesMadeBy(session.token).length > 0;
+  return session !== null && treesMadeBy(session.token).length > 0;
 }
 
 /** A started row's dot, as the pane draws a plugin row's: hollow once the

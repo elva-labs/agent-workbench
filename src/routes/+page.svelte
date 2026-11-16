@@ -28,7 +28,7 @@
   } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
-  import { load as loadOrchestrator, orchestrator } from "$lib/orchestrator.svelte";
+  import { folderToRead, load as loadOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
@@ -125,7 +125,7 @@
     ownerOnScreen as shellOwner,
     terminals,
   } from "$lib/terminals.svelte";
-  import { goTo, workspace } from "$lib/workspace.svelte";
+  import { goTo, hookedProjects, settleFolder, workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
     DEFAULT,
@@ -190,9 +190,10 @@
   watchPluginProjects();
 
   // Every project opened after the start is brought to the hooks answer,
-  // once; the ones the window opened with are asked about together.
+  // once; the ones the window opened with are asked about together. The
+  // orchestrator folder is one more while it is listed.
   $effect(() => {
-    for (const project of workspace.open) ensureHooks(project.path);
+    for (const path of hookedProjects()) ensureHooks(path);
   });
 
   // Every pty ends through one event, agent or shell. Whichever store has the
@@ -302,11 +303,11 @@
         workspace.error = `${closed.host}: ${closed.reason}`;
       })
       .then((unlisten) => offs.push(unlisten));
-    void loadOrchestrator();
+    void loadOrchestratorFolder().then(settleFolder);
     offs.push(followCwd());
     offs.push(
       followHistory(() => {
-        const dir = orchestrator.dir;
+        const dir = folderToRead();
         const open = workspace.open.map((project) => project.path);
         const due = untrack(() => historyDue(open, workspace.active));
         return dir === null ? due : [...due, dir];

@@ -61,9 +61,9 @@ pub struct LaunchCtx<'a> {
     /// it as `CLAUDE_CONFIG_DIR`, Codex as `CODEX_HOME`. The agent's own
     /// directory otherwise.
     pub config_dir: Option<&'a Path>,
-    /// Whether this session is the one that directs the others: it runs in
-    /// the workbench's own orchestrator directory, or follows a workflow.
-    /// The tools it starts tell it what directing work means.
+    /// Whether this session is the one that directs the others, which is
+    /// a session that follows a workflow. The tools it starts tell it what
+    /// directing work means.
     pub orchestrator: bool,
     /// What a session that follows a workflow is told: the workflow's
     /// instructions, added to what the agent tells itself, from the first

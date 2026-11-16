@@ -74,6 +74,18 @@ export const BUILD_AND_REVIEW = {
   ],
 };
 
+/** The other workflow a fresh install has: one step of work, on any
+    model, as many sessions at once as a session may run. */
+export const DIRECT = {
+  name: "Direct",
+  orchestrator: { agent: "claude-code", model: "fable" },
+  steps: [{ kind: "work", name: "Work", models: [], parallel: 8 }],
+};
+
+/** The `orchestrator` folder under the workbench's home, where the fake
+    reports the past sessions a test gives it. */
+export const ORCHESTRATOR_FOLDER = "/home/ada/.agent-workbench/orchestrator";
+
 /** A settings file with no workflows at all, for tests of starting and
     directing sessions as a session with none does. */
 export const NO_WORKFLOW = {
@@ -137,6 +149,17 @@ export async function installFakeCore(
     /** Projects whose description waits until the test answers for them
         with `__describe(path)`, as a machine that is slow to answer does. */
     held?: string[];
+    /** Past sessions the core reports for the `orchestrator` folder under
+        the workbench's home, as for the first project. With none the folder
+        is not there. */
+    orchestratorTranscripts?: {
+      id: string;
+      modified: number;
+      size: number;
+      title: string | null;
+      configDir?: string;
+      agent?: string;
+    }[];
   } = {},
 ) {
   // The scripted integrated session, as `window.__integrated`, for a test
@@ -145,7 +168,7 @@ export async function installFakeCore(
     `window.__integrated = (${fakeIntegrated.toString()})(${options.keepIntegrated ? '{ keep: "fake.integrated" }' : ""});`,
   );
   await page.addInitScript(
-    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable, active, used, held, buildAndReview }) => {
+    ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable, active, used, held, buildAndReview, direct, orchestratorFolder, orchestratorTranscripts }) => {
       const state = { fixture, changed: null as unknown, opened };
       (window as unknown as Record<string, unknown>).__fixture = state;
       const remotes = { reachable: new Set(["lab", "ada@lab"]) };
@@ -190,6 +213,11 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+
+      // The past sessions the core finds in a folder: the test's for the
+      // first project and for the orchestrator folder, none elsewhere.
+      const pastIn = (project: string) =>
+        project === open[0] ? transcripts : project === orchestratorFolder ? orchestratorTranscripts : [];
 
       // The core's side of leaving with unsaved edits: what the window last
       // said, and the questions asked. A test quits through `__quit` and
@@ -530,8 +558,8 @@ export async function installFakeCore(
         keys: {},
         hooks: { everywhere: true, overrides: {} },
         accounts: { list: {}, everywhere: null, overrides: {} },
-        // A fresh install: the shipped workflow, followed by nothing.
-        workflows: { list: [buildAndReview], default: null, overrides: {} },
+        // A fresh install: the shipped workflows, followed by nothing.
+        workflows: { list: [buildAndReview, direct], default: null, overrides: {} },
         pastSessions: "forever",
         integrated: [],
         inactiveAfter: "week",
@@ -985,7 +1013,7 @@ export async function installFakeCore(
         },
         worktreeAdd: async (project: string, name: string) =>
           `${project}/.claude/worktrees/${name}`,
-        orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
+        orchestratorDir: async () => orchestratorFolder,
         // The worktrees a test has put under a project, in __worktrees by
         // project; removing one takes it out of the list.
         worktrees: async (project: string) => {
@@ -1313,11 +1341,9 @@ export async function installFakeCore(
         },
 
         transcripts: async (project: string, agent: string, configDir?: string) =>
-          project === open[0]
-            ? transcripts.filter(
-                (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
-              )
-            : [],
+          pastIn(project).filter(
+            (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
+          ),
         transcriptsMany: async (
           projects: string[],
           agent: string,
@@ -1326,11 +1352,9 @@ export async function installFakeCore(
           const w = window as unknown as { __historyReads?: string[][] };
           (w.__historyReads ??= []).push(projects);
           return projects.map((project) =>
-            project === open[0]
-              ? transcripts.filter(
-                  (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
-                )
-              : [],
+            pastIn(project).filter(
+              (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
+            ),
           );
         },
         sessionTitle: async () => null,
@@ -1341,16 +1365,17 @@ export async function installFakeCore(
         }),
         hookStatusMany: async (projects: string[]) =>
           projects.map(() => ({ installed: false, settings: "", events: "" })),
-        hookInstall: async () => ({
-          installed: true,
-          settings: "",
-          events: "",
-        }),
-        hookUninstall: async () => ({
-          installed: false,
-          settings: "",
-          events: "",
-        }),
+        // What the window asked of the hooks, by project, in order.
+        hookInstall: async (project: string) => {
+          const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };
+          (w.__hookCalls ??= []).push({ kind: "install", project });
+          return { installed: true, settings: "", events: "" };
+        },
+        hookUninstall: async (project: string) => {
+          const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };
+          (w.__hookCalls ??= []).push({ kind: "uninstall", project });
+          return { installed: false, settings: "", events: "" };
+        },
         gitStatus: async () => state.fixture.status,
         // As the core does: the index and what is untracked, so a file
         // deleted from the tree but not from the index is still listed.
@@ -1648,6 +1673,9 @@ export async function installFakeCore(
       used: options.used ?? null,
       held: options.held ?? [],
       buildAndReview: BUILD_AND_REVIEW,
+      direct: DIRECT,
+      orchestratorFolder: ORCHESTRATOR_FOLDER,
+      orchestratorTranscripts: options.orchestratorTranscripts ?? [],
     },
   );
 }
