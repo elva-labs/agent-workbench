@@ -32,7 +32,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
-use crate::adapter::{CODEX_SERVER_KEY, SERVER_NAME};
+use crate::adapter::{CODEX_APPROVAL_SETTING, CODEX_APPROVE, CODEX_SERVER_KEY, SERVER_NAME};
 
 /// Held across each read, change and write of an account's agent state, so
 /// two installs, removals or trust writes at the same moment cannot each
@@ -150,9 +150,8 @@ pub fn tool_server(
                 document
                     .get("mcp_servers")
                     .and_then(|servers| servers.get(CODEX_SERVER_KEY))
-                    .and_then(|server| server.get("command"))
-                    .and_then(|command| command.as_str())
-                    == Some(command.as_str())
+                    .and_then(|server| server.as_table_like())
+                    .is_some_and(|server| runs_daemon(server, &command))
             }),
         _ => true,
     };
@@ -392,15 +391,18 @@ pub fn status_many(
             let hooks = has_hooks_in(&read, home);
             // With a daemon here the server and the prompt hook that asks
             // through it are part of what is installed: a project that got
-            // the hooks before there was either is brought up to date by the
-            // next install.
+            // the hooks before there was either, or whose Codex entry for
+            // the server says nothing of its tools' approval, is brought up
+            // to date by the next install.
             let installed = hooks
                 && (!daemon_here
-                    || has_command(&read, PROMPT_EVENT, &reports_command(home)) && {
-                        let states =
-                            servers.get_or_insert_with(|| read_servers(home, accounts, env));
-                        has_server(states, home, project)
-                    });
+                    || has_command(&read, PROMPT_EVENT, &reports_command(home))
+                        && codex_current(home, project)
+                        && {
+                            let states =
+                                servers.get_or_insert_with(|| read_servers(home, accounts, env));
+                            has_server(states, home, project)
+                        });
             HookStatus {
                 installed,
                 settings: settings.to_string_lossy().to_string(),
@@ -1102,8 +1104,38 @@ fn claude_servers(
     Ok(())
 }
 
+/// Whether a server's entry in a Codex config is the daemon's, by its
+/// command.
+fn runs_daemon(server: &dyn toml_edit::TableLike, daemon: &str) -> bool {
+    server.get("command").and_then(|command| command.as_str()) == Some(daemon)
+}
+
+/// Whether the folder's Codex config is as [`point_codex`] writes it, as
+/// far as the entry for the daemon goes: an entry that says nothing of its
+/// tools' approval lacks the setting the install writes, and the next
+/// install adds it. A config with no such entry, or one that cannot be
+/// read, has nothing of the hooks' to bring up to date.
+fn codex_current(home: &Path, folder: &Path) -> bool {
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    let Ok(text) = std::fs::read_to_string(codex_config_path(folder)) else {
+        return true;
+    };
+    let Ok(document) = text.parse::<toml_edit::DocumentMut>() else {
+        return true;
+    };
+    document
+        .get("mcp_servers")
+        .and_then(|servers| servers.get(CODEX_SERVER_KEY))
+        .and_then(|server| server.as_table_like())
+        .filter(|server| runs_daemon(*server, &daemon))
+        .is_none_or(|server| server.contains_key(CODEX_APPROVAL_SETTING))
+}
+
 /// Points Codex at the daemon as an MCP server in the folder's own config,
-/// beside its hooks file.
+/// beside its hooks file, its tools allowed without asking. An entry for
+/// the daemon that says nothing of its tools' approval is given the
+/// setting and keeps the rest of what it says; one that says anything of
+/// it is left as the user has it.
 fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
     let daemon = daemon_path(home).to_string_lossy().to_string();
     let codex = codex_config_path(folder);
@@ -1111,11 +1143,6 @@ fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
     let mut document = text
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
-    let mut server = toml_edit::Table::new();
-    server["command"] = toml_edit::value(daemon.as_str());
-    let mut args = toml_edit::Array::new();
-    args.push("mcp");
-    server["args"] = toml_edit::value(args);
     let servers = document
         .entry("mcp_servers")
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
@@ -1123,14 +1150,33 @@ fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
         .as_table_mut()
         .ok_or("the mcp_servers setting is not a table")?;
     servers.set_implicit(true);
-    let same = servers
-        .get(CODEX_SERVER_KEY)
-        .and_then(|item| item.as_table())
-        .is_some_and(|table| {
-            table.get("command").and_then(|c| c.as_str()) == Some(daemon.as_str())
-        });
-    if !same {
-        servers.insert(CODEX_SERVER_KEY, toml_edit::Item::Table(server));
+    let ours = servers.get_mut(CODEX_SERVER_KEY).filter(|item| {
+        item.as_table_like()
+            .is_some_and(|server| runs_daemon(server, &daemon))
+    });
+    let changed = match ours {
+        Some(server) if server.get(CODEX_APPROVAL_SETTING).is_some() => false,
+        Some(server) => {
+            server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
+            // An inline entry is one line with no comments in it, spaced
+            // afresh so the setting sits as the others do.
+            if let Some(inline) = server.as_inline_table_mut() {
+                inline.fmt();
+            }
+            true
+        }
+        None => {
+            let mut server = toml_edit::Table::new();
+            server["command"] = toml_edit::value(daemon.as_str());
+            let mut args = toml_edit::Array::new();
+            args.push("mcp");
+            server["args"] = toml_edit::value(args);
+            server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
+            servers.insert(CODEX_SERVER_KEY, toml_edit::Item::Table(server));
+            true
+        }
+    };
+    if changed {
         if let Some(parent) = codex.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("could not create {parent:?}: {e}"))?;
@@ -2036,6 +2082,16 @@ mod tests {
         assert!(codex.contains("[mcp_servers.other]"));
         assert!(codex.contains("[mcp_servers.agent_workbench]"));
         assert!(codex.contains("args = [\"mcp\"]"));
+        // The workbench's tools run without asking; the other server asks
+        // as the user configured it.
+        let document = codex.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            document["mcp_servers"]["agent_workbench"]["default_tools_approval_mode"].as_str(),
+            Some("approve")
+        );
+        assert!(document["mcp_servers"]["other"]
+            .get("default_tools_approval_mode")
+            .is_none());
 
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
@@ -2055,6 +2111,61 @@ mod tests {
         assert!(project.join(".codex/config.toml").exists());
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         assert!(!project.join(".codex/config.toml").exists());
+    }
+
+    // An entry written before it carried its tools' approval reads as not
+    // installed, and the next install adds that one line to it, leaving the
+    // rest of the file as the user has it.
+    #[test]
+    fn an_older_codex_entry_gains_its_tools_approval_and_nothing_else() {
+        let (home, project) = fixture("codex-approval");
+        with_daemon(&home);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+
+        let daemon = toml_edit::Value::from(daemon_path(&home).to_string_lossy().as_ref());
+        let older = |entry: &str| {
+            format!(
+                "# the user's own\n\
+                 approval_policy = \"on-request\"\n\n\
+                 [mcp_servers.agent_workbench]\n\
+                 command = {daemon}\n\
+                 args = [\"mcp\"]\n{entry}\n\
+                 [mcp_servers.other] # theirs\n\
+                 command = \"other\"\n"
+            )
+        };
+        let config = project.join(".codex/config.toml");
+        std::fs::write(&config, older("")).unwrap();
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            older("default_tools_approval_mode = \"approve\"\n")
+        );
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+
+        // An approval the user chose for it stays theirs.
+        let theirs = older("default_tools_approval_mode = \"prompt\"\n");
+        std::fs::write(&config, &theirs).unwrap();
+        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), theirs);
+
+        // An entry the user wrote inline gains it inline.
+        let inline = format!(
+            "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"
+        );
+        std::fs::write(&config, &inline).unwrap();
+        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&config).unwrap(),
+            format!(
+                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
+                 default_tools_approval_mode = \"approve\" }}\n"
+            )
+        );
     }
 
     #[test]

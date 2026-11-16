@@ -1424,7 +1424,7 @@ impl AppServer {
                         "env": env,
                         // The workbench's own tools run without asking; the
                         // servers the user configured ask as they would.
-                        "default_tools_approval_mode": "approve",
+                        crate::adapter::CODEX_APPROVAL_SETTING: crate::adapter::CODEX_APPROVE,
                     }
                 }),
             );

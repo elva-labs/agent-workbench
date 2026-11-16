@@ -121,6 +121,14 @@ pub const CODEX_NO_SUBAGENTS: &[&str] = &[
 pub const SERVER_NAME: &str = "agent-workbench";
 pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
+/// The setting of a Codex server's entry that says whether its tools ask
+/// before they run, and the value that lets them run without asking. The
+/// workbench's own entry carries it wherever the workbench names the
+/// server to Codex; the servers the user configured ask as their entries
+/// say. A Codex that does not know the setting passes over it.
+pub const CODEX_APPROVAL_SETTING: &str = "default_tools_approval_mode";
+pub const CODEX_APPROVE: &str = "approve";
+
 /// The variable that names the session to the tools the agent starts: the
 /// token the workbench chose for it.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
@@ -378,7 +386,8 @@ fn codex_version(
 /// server is named whole wherever the session has it, with the variables
 /// that say which session it serves among those passed on: an entry that
 /// named only the variables, where no configuration Codex reads names the
-/// server, would stop Codex from starting.
+/// server, would stop Codex from starting. The entry lets the server's
+/// tools run without asking.
 ///
 /// A Codex the command interpreter runs, a script on Windows, is not told
 /// the server its configuration already names. Each setting of the server
@@ -405,6 +414,10 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
             "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}]",
             text(SESSION_VAR),
             text(ROLE_VAR)
+        ));
+        settings.push(format!(
+            "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_APPROVAL_SETTING}={}",
+            text(CODEX_APPROVE)
         ));
     }
     if ctx.start_only {
@@ -992,6 +1005,8 @@ mod tests {
             "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                 .to_string(),
             "-c".to_string(),
+            "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
+            "-c".to_string(),
             "features.multi_agent=false".to_string(),
             "-c".to_string(),
             "features.multi_agent_v2.disable_native_tools=true".to_string(),
@@ -1129,6 +1144,73 @@ mod tests {
         }
     }
 
+    /// Codex reads the workbench's server, as the command line names it and
+    /// as the hooks write it into a project's configuration, with its tools
+    /// allowed without asking. A Codex from before the setting starts all
+    /// the same. Run where Codex is installed, on a home of its own; a
+    /// machine without it has nothing to check.
+    #[test]
+    fn codex_runs_the_workbench_s_tools_without_asking_from_either_entry() {
+        /// The first Codex that knows the setting.
+        const KNOWS_APPROVAL: (u64, u64, u64) = (0, 122, 0);
+        let vars: HashMap<String, String> = std::env::vars().collect();
+        let Some(codex) = find_on_path(&vars, "codex") else {
+            return;
+        };
+        let workbench = Scratch::new("codex-approval-workbench");
+        let codex_home = Scratch::new("codex-approval-codex-home");
+        let project = Scratch::new("codex-approval-project");
+        let knows =
+            codex_version(&codex, &project, &vars).is_some_and(|version| version >= KNOWS_APPROVAL);
+        let get = |settings: &[String]| {
+            let output = std::process::Command::new(&codex)
+                .args(settings)
+                .args(["mcp", "get", CODEX_SERVER_KEY])
+                .env(CODEX_HOME_VAR, codex_home.path())
+                .current_dir(&project)
+                .output()
+                .unwrap();
+            let said = String::from_utf8_lossy(&output.stdout).to_string();
+            assert!(
+                output.status.success(),
+                "{said}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            said
+        };
+        let approves = format!("{CODEX_APPROVAL_SETTING}: {CODEX_APPROVE}");
+
+        let daemon = crate::hook::daemon_path(&workbench);
+        let named = LaunchCtx {
+            project: &project,
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: None,
+            prompt: None,
+            model: None,
+            orchestrator: false,
+            instructions: None,
+            instructions_file: None,
+            start_only: false,
+            server: Some(&daemon),
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        let said = get(&codex_workflow(&named, false, false).unwrap());
+        assert!(said.contains(&*daemon.to_string_lossy()), "{said}");
+        assert_eq!(said.contains(&approves), knows, "{said}");
+
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, "").unwrap();
+        crate::hook::install(&workbench, &project, &[], &HashMap::new()).unwrap();
+        crate::hook::codex_trust(&codex_home.join("config.toml"), &project).unwrap();
+        let said = get(&[]);
+        assert!(said.contains(&*daemon.to_string_lossy()), "{said}");
+        assert_eq!(said.contains(&approves), knows, "{said}");
+    }
+
     #[test]
     fn finds_the_binary_on_the_given_path() {
         let dir = fake_claude("adapter-detect");
@@ -1252,7 +1334,14 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                 .to_string(),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
         ];
+        // Its tools run without asking; no other server and no approval
+        // policy of the user's is spoken of.
+        assert!(whole
+            .iter()
+            .all(|arg| arg == "-c" || arg.starts_with("mcp_servers.agent_workbench.")));
         assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
         assert_eq!(codex_workflow(&configured, true, false).unwrap(), whole);
         // A script on Windows is told nothing of it: the interpreter would

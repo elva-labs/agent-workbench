@@ -44,11 +44,14 @@ environment to the servers it starts. Codex passes a server only the
 variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
-those two variables to pass on. An entry that named only the variables,
-for a server no configuration names, would stop Codex from starting, so a
-session without the tool server is told nothing of it. On Windows a Codex
-installed as a script is not told the server either; see [under a
-workflow](#under-a-workflow).
+those two variables to pass on, with its tools allowed to run without
+asking, as the [hooks' entry](hooks.md#the-agents-tools) and an integrated
+session's have them. Every other server asks as the user configured it,
+and the approval policy is the user's. An entry that named only the
+variables, for a server no configuration names, would stop Codex from
+starting, so a session without the tool server is told nothing of it. On
+Windows a Codex installed as a script is not told the server either; see
+[under a workflow](#under-a-workflow).
 
 Codex passes a server the variables its entry names from 0.47.0 on. An
 older Codex takes the entry without a word and passes the server none of
@@ -135,7 +138,9 @@ Codex hold quotes. So a Codex installed as a script is not told the server
 on Windows: it starts the server from its own configuration, which passes
 the server none of the session's variables, and every call the session
 makes names no session. The workbench takes such a call for one from [an
-agent it did not start](orchestrator.md#who-is-calling).
+agent it did not start](orchestrator.md#who-is-calling). The tools still
+run without asking where that configuration is the entry the
+[hooks](hooks.md#the-agents-tools) write.
 
 ## Detection
 
