@@ -849,8 +849,9 @@ export function changeLines(change: IntegratedFileChange): ChangeLine[] {
 }
 
 /** What opening a step shows of a call, in the order drawn: its input,
-    the files it changed, each by its path and its lines, and its output.
-    A subagent's run, drawn there too, is held apart. */
+    the files it changed, each by its path and its lines, its output, and
+    what the user told the agent when refusing it. A subagent's run, drawn
+    there too, is held apart. */
 export function stepShows(part: ToolCall, root: string | null = null): string[] {
   const pieces: string[] = [];
   if (part.tool !== "agent") {
@@ -869,6 +870,8 @@ export function stepShows(part: ToolCall, root: string | null = null): string[] 
     }
   }
   if (showsOutput(part)) pieces.push(stepOutput(part));
+  // What the user told the agent with a refusal, under its label.
+  if (part.answer?.message) pieces.push(part.answer.message);
   return pieces;
 }
 
@@ -1005,7 +1008,8 @@ export function entryPrint(conversation: Conversation, entry: Entry): unknown[] 
       if (part.kind === "text" || part.kind === "thinking") out.push(part.block, part.text);
       else if (part.kind === "tool")
         out.push(part.call, part.tool, part.plan, part.input, part.inputText, part.inputDone);
-      if (part.kind === "tool") out.push(part.output, part.result, part.done, part.changes, part.changes.length);
+      if (part.kind === "tool")
+        out.push(part.output, part.result, part.done, part.changes, part.changes.length, part.answer, part.answer?.message);
       else if (part.kind === "plan") {
         out.push(part.at, part.text, part.steps.length);
         for (const step of part.steps) out.push(step.text);

@@ -173,7 +173,7 @@
           <p class="cut" data-find-skip>Some of the output did not reach the window; the result will hold all of it.</p>
         {/if}
         {#if part.answer?.message}
-          <p class="said" data-find-skip>You told the agent: {part.answer.message}</p>
+          <p class="said"><span data-find-skip>You told the agent: </span><Plain text={part.answer.message} /></p>
         {/if}
       {/if}
     </div>

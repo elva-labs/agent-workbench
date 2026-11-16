@@ -325,6 +325,10 @@ test.describe("find in the conversation", () => {
       const total = await counted(page);
       await expect.poll(all, { message: `"${words}"` }).toBe(total);
     }
+    // The words the user told the agent with the refusal are found.
+    await input.fill("the log instead");
+    await expect(page.getByTestId("find-count")).toHaveText("1 of 1");
+    await expect.poll(async () => (await painted(page)).current).toEqual(["the log instead"]);
   });
 
   test("glides to a near match, and is there at once where the system asks for less motion", async ({ page }) => {

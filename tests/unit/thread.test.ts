@@ -712,6 +712,13 @@ describe("what the thread holds, drawn or not", () => {
     expect(shows("c-5")).toMatchObject({ text: "say" });
     expect(shows("c-5:shows")).toMatchObject({ text: "*.ts" });
     expect(locate(c, "m-3")).toMatchObject({ entry: null, folds: [] });
+    // What the user told the agent when refusing a call, without its label.
+    c.apply({ type: "toolStarted", call: "c-6", parent: null, name: "Bash", kind: "command" });
+    c.apply({ type: "toolInput", call: "c-6", parent: null, delta: null, truncated: false, input: { command: "rm -rf build" } });
+    c.apply({ type: "permissionAsked", request: "r-6", call: "c-6", parent: null, tool: "Bash", input: { command: "rm -rf build" }, truncated: false, description: null, path: null, choices: [] });
+    c.apply({ type: "answered", request: "r-6", choice: "deny", answers: null, message: "Keep the build folder" });
+    c.apply({ type: "toolFinished", call: "c-6", parent: null, output: "denied", error: true, truncated: false, changes: [] });
+    expect(shows("c-6:shows").text).toBe("denied\nKeep the build folder");
     const over = conversation();
     over.apply({ type: "error", kind: "process", message: "the agent crashed" });
     over.apply({ type: "ended", code: 1, clean: false });
