@@ -557,3 +557,34 @@ test("the dock's round question stands inside the agent's card, clear of its cor
   expect(composer.y).toBeGreaterThanOrEqual(inside.y + inside.height);
   expect(card.y + card.height - (composer.y + composer.height)).toBeGreaterThanOrEqual(radius);
 });
+
+// Find in the conversation opens a bar near the card's top right: inside
+// the card, clear of its rounded corner, and under the card's mark, which
+// runs on above it.
+test("the conversation's find bar stands inside the agent's card, under its mark", async ({ page }) => {
+  await open(page, { settings: { integrated: ["claude-code"] } });
+  await page.getByTestId("start-agent").click();
+  const input = page.getByTestId("composer-input");
+  await expect(input).toBeVisible();
+  await input.fill("The cache is built again on every start.");
+  await page.keyboard.press("Enter");
+  await input.click();
+  await page.keyboard.press(`${MOD}+f`);
+  await expect(page.getByTestId("conversation-find-input")).toBeFocused();
+  const bar = (await page.getByTestId("conversation-find-bar").boundingBox())!;
+  const card = await box(page, `${AGENT} > .body`);
+  const radius = 10;
+  expect(card.x + card.width - (bar.x + bar.width)).toBeGreaterThanOrEqual(radius);
+  expect(bar.y - card.y).toBeGreaterThan(2);
+  expect(bar.x).toBeGreaterThan(card.x);
+  const accent = await page.evaluate(() => {
+    const probe = document.createElement("i");
+    probe.style.color = "var(--accent)";
+    document.body.append(probe);
+    const [r, g, b] = getComputedStyle(probe).color.match(/\d+/g)!.map(Number);
+    probe.remove();
+    return [r, g, b];
+  });
+  const above = await pixel(page, bar.x + bar.width / 2, card.y + 0.5);
+  expect(Math.max(...above.map((value, at) => Math.abs(value - accent[at])))).toBeLessThan(40);
+});
