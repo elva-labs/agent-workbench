@@ -459,7 +459,7 @@ test.describe("a session that follows a workflow", () => {
         ).__spawns ?? [],
     );
 
-  test("puts the tag's rules away on Escape with the keyboard in the terminal, which hears nothing", async ({ page }) => {
+  test("puts the run chip's popover away on Escape with the keyboard in the terminal, which hears nothing", async ({ page }) => {
     const written = () =>
       page.evaluate(() =>
         ((window as unknown as { __written?: [string, string][] }).__written ?? []).map((w) => w[1]).join(""),
@@ -467,16 +467,16 @@ test.describe("a session that follows a workflow", () => {
     const keyboard = page.locator(`${AGENT} .xterm-helper-textarea`);
     await keyboard.focus();
     const before = await written();
-    const rules = page.getByTestId("workflow-rules");
+    const rules = page.getByTestId("run-popover");
     // Opened by a click that leaves the keyboard in the terminal, as a
     // click does in the macOS webview.
-    await page.getByTestId("workflow-tag").dispatchEvent("click");
+    await page.getByTestId("run-chip").dispatchEvent("click");
     await expect(rules).toBeVisible();
     await expect(keyboard).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(rules).toHaveCount(0);
     expect(await written()).toBe(before);
-    // With no rules open, Escape is the agent's.
+    // With no popover open, Escape is the agent's.
     await page.keyboard.press("Escape");
     await expect.poll(written).toBe(`${before}\u001b`);
   });
@@ -551,26 +551,25 @@ test.describe("a session that follows a workflow", () => {
     page,
   }) => {
     const header = page.locator(`${AGENT} header`);
-    const tag = page.getByTestId("workflow-tag");
-    await expect(page.getByTestId("workflow-tag-flow")).toHaveText("Build and review·");
-    await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
-    // Quiet, and in the header beside the title, the workflow's name first.
+    // The run's chip names the workflow until a step has begun.
+    const tag = page.getByTestId("run-chip");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    // In the header beside the title.
     const head = (await header.boundingBox())!;
     const box = (await tag.boundingBox())!;
     expect(box.y).toBeGreaterThanOrEqual(head.y);
     expect(box.y + box.height).toBeLessThanOrEqual(head.y + head.height + 1);
-    const flowBox = (await page.getByTestId("workflow-tag-flow").boundingBox())!;
-    const roleBox = (await page.getByTestId("workflow-tag-role").boundingBox())!;
-    expect(flowBox.x + flowBox.width).toBeLessThanOrEqual(roleBox.x + 1);
-    // No tooltip of the platform's: the rules are a popover of the app's,
-    // shown while the pointer rests on the tag.
+    // No tooltip of the platform's: where the run stands is a popover of
+    // the app's, shown while the pointer rests on the chip, with the rules
+    // folded at its foot.
     await expect(tag).not.toHaveAttribute("title");
-    const rules = page.getByTestId("workflow-rules");
+    const rules = page.getByTestId("run-popover");
     await expect(rules).toHaveCount(0);
-    // Closed, the tag points at no element that is not there.
+    // Closed, the chip points at no element that is not there.
     await expect(tag).not.toHaveAttribute("aria-controls");
     await tag.hover();
     await expect(rules).toBeVisible();
+    await page.getByTestId("run-rules-toggle").click();
     await expect(rules).toContainText('For the step "Work"');
     await expect(rules).not.toContainText("`");
     const controls = await tag.getAttribute("aria-controls");
@@ -616,20 +615,16 @@ test.describe("the workflow tag", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
-    const tag = page.getByTestId("workflow-tag");
-    const role = page.getByTestId("workflow-tag-role");
-    const flow = page.getByTestId("workflow-tag-flow");
-    await expect(role).toHaveText("orchestrator");
     const type = (selector: string) =>
       page.locator(selector).first().evaluate((element) => {
         const style = getComputedStyle(element);
         return [style.fontFamily, style.textTransform];
       });
     // The header's own type, small capitals in the terminal look, for the
-    // tag and for a refused start alike.
+    // run's chip and for a refused start alike.
     const title = await type(`${AGENT} header .title`);
     expect(title[1]).toBe("uppercase");
-    expect(await type("[data-testid='workflow-tag']")).toEqual(title);
+    expect(await type("[data-testid='run-chip']")).toEqual(title);
     await push(page, {
       id: "c-1",
       tool: "start",
@@ -640,13 +635,37 @@ test.describe("the workflow tag", () => {
     expect((await type("[data-testid='workflow-refused'] .refused-lead"))[0]).toBe(title[0]);
     expect((await type("[data-testid='workflow-refused'] .refused-text"))[0]).toBe(title[0]);
 
+    // A session started for a step has the tag: the workflow and its
+    // place in it, here a review's.
+    await push(page, {
+      id: "c-2",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix it", step: "Work" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await expect.poll(() => answerTo(page, "c-2")).not.toBeNull();
+    await push(page, {
+      id: "c-3",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Review it", step: "Review", work: "session-2" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-3")).not.toBeNull();
+    await page.getByTestId("started-session").nth(1).click();
+    const tag = page.getByTestId("workflow-tag");
+    const role = page.getByTestId("workflow-tag-role");
+    const flow = page.getByTestId("workflow-tag-flow");
+    await expect(role).toHaveText("Review, round 1 of 4");
+    expect(await type("[data-testid='workflow-tag']")).toEqual(title);
+
     // Narrowed, the workflow's name gives way, first cut short and then
     // gone from the line, and the place stays whole on it. Where the app
     // draws the window's own buttons the changes pane opens 60 wider, so the
     // window is 60 wider for the agent to pass through the same widths.
     const step = await page.evaluate(() => (/Win|Linux/.test(navigator.platform) ? 60 : 0));
     const sizes: { flow: number; on: boolean }[] = [];
-    for (const width of [1440, 1100 + step, 1000 + step, 900 + step]) {
+    for (const width of [1440, 1300 + step, 1200 + step, 1150 + step, 1100 + step, 1050 + step, 1000 + step, 900 + step]) {
       await page.setViewportSize({ width, height: 900 });
       // Measured once the panes have settled at the new width: the agent's
       // width the same on two readings a frame apart. Read at once, the

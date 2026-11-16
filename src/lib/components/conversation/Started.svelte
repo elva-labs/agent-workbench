@@ -3,11 +3,13 @@
   import { agentLabel } from "$lib/agent.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { modelLabel } from "$lib/models";
+  import { placeTextOf } from "$lib/conductor.svelte";
   import { isLive, label, sessions, statusLabel, type Session } from "$lib/sessions.svelte";
   import { goTo } from "$lib/workspace.svelte";
 
   /** The sessions a run started with the workbench's start tool, one row
-      each: how it stands, its name, its model, and the way to it. */
+      each: how it stands, the step it was started for when it was, its
+      name, its round and state, its model, and the way to it. */
   interface Props {
     ids: string[];
   }
@@ -20,14 +22,18 @@
       .filter((session): session is Session => session !== undefined),
   );
 
+  /** Whether any row has a step, so the rows keep a column for it. */
+  let stepped = $derived(rows.some((session) => placeTextOf(session.key) !== null));
+
   function open(session: Session) {
     if (goTo(session.key)) focusPane("agent");
   }
 </script>
 
 {#if rows.length > 0}
-  <div class="card" data-testid="started-sessions">
+  <div class="card" class:stepped data-testid="started-sessions">
     {#each rows as session (session.key)}
+      {@const at = placeTextOf(session.key)}
       <div class="row" data-testid="started-session">
         <span
           class="dot"
@@ -37,9 +43,10 @@
           class:dormant={session.status === "dormant"}
           title={statusLabel(session)}
         ></span>
+        {#if stepped}<span class="step" data-testid="started-step">{at?.step ?? ""}</span>{/if}
         <span class="name"><Plain text={label(session)} /></span>
-        <span class="state" class:asking={session.needs === "permission"}>
-          {session.needs === "permission" ? "asking" : statusLabel(session)}
+        <span class="state" class:asking={session.needs === "permission"} data-testid="started-state">
+          {at?.round == null ? "" : `${at.round}, `}{session.needs === "permission" ? "asking" : statusLabel(session)}
         </span>
         <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
         <button class="open" tabindex="-1" data-thread-item onclick={() => open(session)} data-testid="open-started">Open</button>
@@ -63,6 +70,17 @@
     column-gap: 10px;
     padding: 5px 6px 5px 12px;
     font-size: var(--conv-small);
+  }
+
+  .stepped .row {
+    grid-template-columns: 17px auto minmax(0, 1fr) auto auto auto;
+  }
+
+  .step {
+    min-width: 3.4em;
+    font-size: var(--conv-meta);
+    color: var(--ink-3);
+    white-space: nowrap;
   }
 
   .row + .row {
