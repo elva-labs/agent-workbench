@@ -288,7 +288,10 @@ be typed into, and the rows come in the order the subagents started.
 
 The rows are worked out from the conversation alone. A subagent shows from
 the call that starts it until it is done; one started in the background is
-followed past the turn that started it until its own run ends. Once done
+followed past the turn that started it until its own run ends. A window
+that comes to the session late, after a reload, is told by the core which
+subagents are still at work, which no transcript holds, and finds their
+calls in what the conversation said before. Once done
 it stays, greyed, while the session is still at work and no turn has ended
 since, so the subagents of a piece of work go together once the turn that
 waits on them is over, or the session stops working. A subagent that asks
@@ -298,8 +301,10 @@ that one, as described under the dock below.
 
 A click on a row, or Enter on it from the keyboard, opens the session at
 the call that started the subagent: the folds around it and the call itself
-open, the call comes into view and is ringed in the accent for a moment,
-and the keyboard goes to the composer. The rows are on the pane's cursor
+open, the call comes into the middle of the view and is ringed in the
+accent for a moment, and the keyboard goes to the composer. The thread
+stops following its foot there, so what the run goes on to do leaves the
+call in view. The call's step says `asking` while its subagent asks. The rows are on the pane's cursor
 walk, and Left on one climbs to its session. They are no stops for Tab of
 their own, as no row in the pane is.
 
@@ -307,13 +312,19 @@ Rows coming and going never move what is under the pointer or where the
 keyboard is walking: while either is in the pane, the subagent rows of the
 sessions above it keep what they show, a row that has gone standing as
 done and one that has come waiting, until both have moved off or away;
-the rows below come and go as they will. Each new subagent is told to a
-screen reader once, politely, as the session's name and what it was asked.
+the rows below come and go as they will, and the session's line counts the
+rows it shows. A screen reader is told politely as subagents start: a
+session's starts within a moment and a half are said in one line, with
+what it was asked for one alone and a count for several, each subagent
+once. One whose call was made before the window came, such as one read
+from what the conversation said before, is not news and is not said.
 
 Folded to the narrow column, the subagent rows keep their height so nothing
 moves when the pane opens, and show only a small dot for each, packed
 beside the session's rail, which runs straight past them to the sessions it
-started.
+started. With no words beside them the dots differ in shape: running is
+filled, asking a ring with a halo, done a plain hollow ring, failed a
+cross.
 
 A session in a terminal shows no subagent rows. Its hooks could say when a
 subagent starts and stops, but not what it was asked or which call started
@@ -560,9 +571,9 @@ it has one, as in "Work: Fix the cache asks to run cargo test", and a
 subagent inside it by both, as in "The subagent for Check every link in Fix
 the broken links"; Open beside it goes to that session, whose own dock
 holds the same request, and for a subagent's request opens it at the call
-that started the subagent, as its row on the rail does. A name longer than the line holds is cut wherever
-the dock says it, and the line says in the warning colour how many
-characters are cut. It is answered exactly as it is there, and every
+that started the subagent, as its row on the rail does. A name longer
+than the line holds is cut wherever the dock says it, and the line says
+in the warning colour how many characters are cut. It is answered exactly as it is there, and every
 choice acts on that session: the line under the choices names it, what a
 choice keeps is that session's, and Deny and stop stops that session's
 turn. A rule kept for good goes in the local settings of the folder that
