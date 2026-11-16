@@ -147,6 +147,16 @@ struct IntegratedStartParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct AccountLimitsParams {
+    agent: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+    #[serde(default)]
+    read: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegratedHistoryParams {
     agent: String,
     project: PathBuf,
@@ -540,6 +550,10 @@ pub fn dispatch(
                 p.config_dir.as_deref(),
             )?)
         }
+        "account_limits" => {
+            let p: AccountLimitsParams = parse(params)?;
+            value(core.account_limits(&p.agent, p.config_dir.as_deref(), p.read))
+        }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
             core.integrated_stop(&p.id)?;
@@ -856,6 +870,30 @@ mod tests {
         let none = dispatch(&core(), "integrated_history", params("nobody"), no_output).unwrap();
         assert_eq!(none, Value::Null);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn account_limits_held_are_none_before_any_and_nothing_is_read_unasked() {
+        let core = core();
+        for agent in ["claude-code", "codex", "nobody"] {
+            let held = dispatch(
+                &core,
+                "account_limits",
+                json!({ "agent": agent, "configDir": "~/.claude-elsewhere" }),
+                no_output,
+            )
+            .unwrap();
+            assert_eq!(held, Value::Null, "{agent}");
+        }
+        // An agent with no limits is never read.
+        let read = dispatch(
+            &core,
+            "account_limits",
+            json!({ "agent": "nobody", "read": true }),
+            no_output,
+        )
+        .unwrap();
+        assert_eq!(read, Value::Null);
     }
 
     #[test]

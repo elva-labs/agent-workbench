@@ -482,7 +482,7 @@ pub enum CompactReason {
 /// is used, 0 to 100; `resetsAt` when it starts over, in seconds since the
 /// epoch, where the agent says; `severity` how near its end the agent
 /// reads it, where it gives a reading.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LimitWindow {
     pub kind: LimitKind,
@@ -493,7 +493,7 @@ pub struct LimitWindow {
 }
 
 /// Which window a limit counts over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LimitKind {
     /// The five hours a session of work is metered over.
@@ -504,7 +504,7 @@ pub enum LimitKind {
     WeeklyScoped,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LimitSeverity {
     Normal,

@@ -398,6 +398,30 @@ async fn integrated_snapshot(
     .await
 }
 
+/// The usage limits of an account on the machine the project is on, read
+/// there first where `read` asks and a read is due. Null where there are
+/// none.
+#[tauri::command]
+async fn account_limits(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    agent: String,
+    config_dir: Option<String>,
+    read: bool,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(_) => value(core.account_limits(&agent, config_dir.as_deref(), read)),
+        Route::Remote { host, .. } => remotes.connection(&host)?.call(
+            "account_limits",
+            json!({ "agent": agent, "configDir": config_dir, "read": read }),
+        ),
+    })
+    .await
+}
+
 /// What a conversation said and did before, read on the machine the
 /// project is on, with the host put back on the paths it names for a
 /// project elsewhere. Null for an agent whose history is not read; an
@@ -1793,6 +1817,7 @@ pub fn run() {
             integrated_configure,
             integrated_snapshot,
             integrated_history,
+            account_limits,
             integrated_stop,
             settings_get,
             settings_set,

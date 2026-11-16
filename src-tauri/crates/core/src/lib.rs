@@ -24,6 +24,7 @@ pub mod git;
 pub mod hook;
 pub mod integrated;
 pub mod known;
+pub mod limits;
 pub mod mcp;
 pub mod pair;
 pub mod plugins;

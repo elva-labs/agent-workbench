@@ -42,7 +42,7 @@ pub static CLAUDE_STREAM: ClaudeStream = ClaudeStream;
 const TOOL_SERVER: &str = "agent-workbench";
 
 /// The agent's id, as a start names it, on the limits it reports.
-const AGENT: &str = "claude-code";
+pub(crate) const AGENT: &str = "claude-code";
 
 /// The media types the agent takes an image in.
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -769,7 +769,7 @@ fn window_kind(name: &str) -> Option<LimitKind> {
 /// server's own rows of limits, kept as an event may carry them. A row of a
 /// kind not known here, or of one model with no model named, is left out.
 /// None for a reply with no rows.
-fn usage_limits(body: &Value) -> Option<(Option<String>, Vec<LimitWindow>)> {
+pub(crate) fn usage_limits(body: &Value) -> Option<(Option<String>, Vec<LimitWindow>)> {
     let rows = body["rate_limits"]["limits"].as_array()?;
     let windows = rows.iter().filter_map(|row| {
         let (kind, model) = match row["kind"].as_str()? {
