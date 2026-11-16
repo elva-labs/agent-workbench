@@ -69,6 +69,8 @@ import {
   isViewed,
   keysStillIn,
   label,
+  onClosed,
+  onGiven,
   onDirected,
   onForgotten,
   onMoved,
@@ -105,6 +107,7 @@ import {
   userWriting,
 } from "$lib/integrated.svelte";
 import { lastRun } from "$lib/thread";
+import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
@@ -356,6 +359,11 @@ export interface Started {
   /** The account it ran under, by name; null for the agents' own. A record
       from before there were accounts has none, which reads as null. */
   account?: string | null;
+  /** Why its row went, when it went in this window: the user closed it
+      while it ran or waited to start, or it had ended. None for a session
+      whose row is open, or that has had none since the app last started. A
+      version that does not know it reads the record without it. */
+  left?: "closed" | "ended";
 }
 
 /** Where a started session stands in its caller's workflow. */
@@ -443,7 +451,7 @@ export const conductor = $state({
     row's key, with the name the row had then and how it was at rest, and
     when. */
 export interface Woken {
-  by: { key: string; name: string; rest: "quiet" | "permission" | "ended" }[];
+  by: { key: string; name: string; rest: "quiet" | "cut" | "permission" | "ended" }[];
   at: number;
 }
 
@@ -1276,20 +1284,37 @@ function projectOf(cwd: string): string | null {
   );
 }
 
-/** How a session is at rest: gone, waiting on the user, or gone quiet. */
-type Rest = "ended" | "permission" | "quiet";
+/** How a session is at rest: gone, waiting on the user, gone quiet, or
+    gone quiet after the user's key as far as the window can tell. That
+    last is the window's guess, since stopping a turn fires no hook: a stop
+    the agent's hooks report after it, in the same turn, is news. */
+type Rest = "ended" | "permission" | "quiet" | "cut";
 
 /**
  * What each session a caller started is doing about stopping, by the row's
  * key: whether it has worked, how it is at rest now, if it is, and how it
- * was at rest when the caller was last told. A stop is untold while the two
- * differ, so a session that goes from one kind of rest to another is
- * reported again, and one that works again starts over. Whether it has
- * been seen not at rest in this window's run, too: a rest that began
- * before the window first saw the session, as after a reload, wakes no
- * one.
+ * was at rest when the caller was last told, with the turn it was in then.
+ * A stop is untold while the two differ, so a session that goes from one
+ * kind of rest to another is reported again. One that works again starts
+ * over once it is in another turn than the one the caller was told of: a
+ * session whose hooks report its turns can be seen at work again within
+ * the same one, as when a permission it asked for is granted, and coming
+ * to the same rest again in it is nothing new. A session read off its
+ * output has no turns but its spells of work, and each starts over.
+ * Whether it has been seen not at rest in this window's run, too: a rest
+ * that began before the window first saw the session, as after a reload,
+ * wakes no one.
  */
-type Mark = { worked: boolean; rest: Rest | null; told: Rest | null; seen: boolean };
+type Mark = {
+  worked: boolean;
+  rest: Rest | null;
+  told: Rest | null;
+  /** The turn the session was in when the caller was told, if it was. */
+  toldTurn: number | null;
+  /** The turn the session is in, as last seen. */
+  turn: number;
+  seen: boolean;
+};
 
 const stops = new Map<string, Mark>();
 
@@ -1313,16 +1338,29 @@ function observe(session: Session) {
   // Reopened the other way, it is the same session going on: how it is
   // stays as last seen until its next run is up.
   if (reopeningRow(key) && stops.has(key)) return;
-  const mark = stops.get(key) ?? { worked: false, rest: null, told: null, seen: false };
+  const mark =
+    stops.get(key) ?? { worked: false, rest: null, told: null, toldTurn: null, turn: 0, seen: false };
   const before = unheardMark(stops.get(key));
   stops.set(key, mark);
+  mark.turn = session.turns;
+  // A session whose hooks report its turns has worked once it has begun
+  // one, though the turn began and ended between two looks, and what the
+  // caller was told of it was of the turn it was in then.
+  if (session.exact) {
+    if (session.turns > 0) mark.worked = true;
+    if (mark.toldTurn !== session.turns) mark.told = null;
+  }
   if (!isLive(session)) mark.rest = "ended";
   else if (session.needs === "permission") mark.rest = "permission";
   else if (session.working) {
     mark.worked = true;
     mark.rest = null;
-    mark.told = null;
-  } else mark.rest = mark.worked ? "quiet" : null;
+    // At work again after a permission it was told of, the ask is over and
+    // the next one is news. Only the same quiet rest within one turn is
+    // not news twice.
+    if (!session.exact || mark.told !== "quiet") mark.told = null;
+  } else if (!mark.worked) mark.rest = null;
+  else mark.rest = session.turnEnd === "cut" ? "cut" : "quiet";
   if (mark.rest === null) mark.seen = true;
   if (unheardMark(mark) !== before) moved();
   // Kept with the run as well: a session that ends keeps what was last
@@ -1330,9 +1368,28 @@ function observe(session: Session) {
   const { id } = session;
   const caller = startedFor(key);
   if (id !== null && caller !== null && mark.rest !== "ended") {
-    const rested = mark.rest === "quiet";
+    const rested = mark.rest === "quiet" || mark.rest === "cut";
     untrack(() => keepRested(caller, id, rested));
   }
+  // Up again in a row of its own, however it came back, why its last row
+  // went is past.
+  if (id !== null && caller !== null && isLive(session)) untrack(() => cameBack(caller, id));
+}
+
+/** The live row a caller's session has under the same id, when the one a
+    wait watched has gone and another took its place. */
+function rowAgain(owner: string, id: string | null): Session | null {
+  if (id === null) return null;
+  return sessions.all.find((row) => row.id === id && isLive(row) && startedFor(row.key) === owner) ?? null;
+}
+
+/** A session a caller started has a live row again: the reason its last
+    row went is no longer what the tools say of it. */
+function cameBack(caller: string, id: string) {
+  const entry = remembered(caller, id);
+  if (entry?.left === undefined) return;
+  delete entry.left;
+  saveStarted();
 }
 
 function observeAll() {
@@ -1355,6 +1412,7 @@ function tell(key: string) {
   const mark = stops.get(key);
   if (mark === undefined || mark.told === mark.rest) return;
   mark.told = mark.rest;
+  mark.toldTurn = mark.turn;
   moved();
 }
 
@@ -1455,6 +1513,7 @@ function tellAs(key: string, rest: Rest | null) {
   const mark = stops.get(key);
   if (mark === undefined || mark.rest !== rest || mark.told === rest) return;
   mark.told = rest;
+  mark.toldTurn = mark.turn;
   moved();
 }
 
@@ -1621,11 +1680,11 @@ async function wake(starter: Session, news: Session[]) {
   if (out.length > 0) lines.push(atWorkLine(either(out.map(namedAs), "and")));
   const told = news.map((kid) => {
     const mark = stops.get(kid.key)!;
-    return { key: kid.key, rest: mark.rest, before: mark.told };
+    return { key: kid.key, rest: mark.rest, before: mark.told, beforeTurn: mark.toldTurn };
   });
   for (const { key: kid, rest } of told) tellAs(kid, rest);
   const lost = () => {
-    for (const { key: kid, rest, before } of told) untell(kid, rest, before);
+    for (const { key: kid, rest, before, beforeTurn } of told) untell(kid, rest, before, beforeTurn);
     gaveUp(key);
   };
   conductor.woken[key] = {
@@ -1654,10 +1713,11 @@ async function wake(starter: Session, news: Session[]) {
 
 /** Takes back a stop counted told by a wake that never reached the
     starter, unless it has been told or come to rest another way since. */
-function untell(key: string, rest: Rest | null, before: Rest | null) {
+function untell(key: string, rest: Rest | null, before: Rest | null, beforeTurn: number | null) {
   const mark = stops.get(key);
   if (mark === undefined || mark.rest !== rest || mark.told !== rest) return;
   mark.told = before;
+  mark.toldTurn = beforeTurn;
   moved();
 }
 
@@ -1752,7 +1812,9 @@ function describe(session: Session): string {
   parts.push(session.agent);
   const place = placeOf(session.key);
   if (place !== null) parts.push(placeText(place));
-  parts.push(stateOf(session));
+  parts.push(stateWords(session));
+  // A row with nothing running behind it is resumed in place.
+  if (!isLive(session)) parts.push(`resume it with start, naming session ${idText(session.id!)}`);
   if (untold(session)) parts.push("not reported to you yet");
   const line = quotedLine(session.note);
   if (line !== null) parts.push(`last line: ${line}`);
@@ -1770,8 +1832,15 @@ function describeGone(owner: string, entry: Started): string {
   parts.push(entry.agent);
   const at = placed(owner, entry.id);
   if (at !== null) parts.push(placeText(at));
-  parts.push("stopped", `resume it with start, naming session ${idText(entry.id)}`);
+  parts.push(goneState(entry), `resume it with start, naming session ${idText(entry.id)}`);
   return parts.join("  ");
+}
+
+/** Why a remembered session has no row, in a listing's words. */
+function goneState(entry: Started): string {
+  if (entry.left === "closed") return "closed by the user";
+  if (entry.left === "ended") return "ended";
+  return "not running since the workbench was restarted";
 }
 
 /** Where a session stands in the workflow, in the words the tools answer
@@ -2461,6 +2530,12 @@ async function resumeSession(
       null,
     );
     conductor.startedBy[session.key] = caller;
+    // It has a row again, so why the last one went is past.
+    const kept = remembered(caller, id);
+    if (kept?.left !== undefined) {
+      delete kept.left;
+      saveStarted();
+    }
     if (goesOn !== null) {
       conductor.places[session.key] = goesOn;
       hold();
@@ -2524,7 +2599,10 @@ async function sendText(request: Placed): Promise<Answered> {
   if (id === null) return refused("Sending needs a session to send to.");
   if (line === null) return refused("Sending needs the text to send.");
   const session = byId(id);
-  if (session === null) return refused(`The workbench has no session ${id}.`);
+  if (session === null) {
+    const entry = remembered(callerOf(request), id);
+    return refused(entry === null ? `The workbench has no session ${id}.` : notRunning(entry));
+  }
   if (!mine(request, session)) return notMine(id);
   // An integrated session takes the message whole, as the user's own; one
   // sent while it works waits for its turn. A terminal one takes a line.
@@ -2649,14 +2727,23 @@ const owed = new Set<string>();
 function finished(session: Session): boolean {
   observe(session);
   const mark = stops.get(session.key);
-  return mark !== undefined && mark.worked && mark.rest === "quiet";
+  return mark !== undefined && mark.worked && (mark.rest === "quiet" || mark.rest === "cut");
 }
 
 function stopSession(request: Placed): Answered {
   const id = text(request, "session");
   if (id === null) return refused("Stopping needs a session to stop.");
   const session = byId(id);
-  if (session === null) return refused(`The workbench has no session ${id}.`);
+  if (session === null) {
+    // One the caller started that is not running has nothing to stop; the
+    // stop still says the caller is done with it, so it is not offered back.
+    const entry = remembered(callerOf(request), id);
+    if (entry === null) return refused(`The workbench has no session ${id}.`);
+    forget(callerOf(request), id);
+    return said(
+      `Session ${idText(id)} was not running: ${goneWhy(entry)}. It is off your list now, and not offered to resume.`,
+    );
+  }
   if (!mine(request, session)) return notMine(id);
   stopStarted(session.key);
   return said(`Stopped session ${id}.`);
@@ -2673,13 +2760,20 @@ async function waitFor(request: Placed): Promise<Answered> {
   let watched: Session[];
   if (id === null) {
     watched = startedBy(callerOf(request));
+    if (watched.length === 0 && (conductor.started[callerOf(request)] ?? []).length > 0)
+      return said(
+        "None of the sessions you started is running. The sessions tool lists them with why each is not; resume one with start, naming its session, to wait on it.",
+      );
     if (watched.length === 0)
       return refused(
         "You have started no sessions to wait for. Name one to wait for it, or start one first.",
       );
   } else {
     const session = byId(id);
-    if (session === null) return refused(`The workbench has no session ${id}.`);
+    if (session === null) {
+      const entry = remembered(callerOf(request), id);
+      return entry === null ? refused(`The workbench has no session ${id}.`) : said(notRunning(entry));
+    }
     if (!mine(request, session)) return notMine(id);
     watched = [session];
   }
@@ -2709,15 +2803,16 @@ async function holdWait(
   watched: Session[],
   seconds: number,
 ): Promise<Answered> {
-  // What each one was doing when the wait began: what is worth answering
-  // is a change from here, so a session at work is waited out rather than
-  // answered for at once. One that stopped without the caller being told
-  // counts as having been at work, so its stop is answered now.
-  const worked = new Map<string, boolean>();
+  // What is worth answering is a rest the caller has not been told of: one
+  // that came before the wait is answered now, and a session at work is
+  // waited out. A rest told already, by an earlier wait, a listing, a note
+  // or a wake, is not answered again until the session has been at work in
+  // another turn and come to rest after it.
   const names = new Map<string, string>();
+  const ids = new Map<string, string | null>();
   for (const session of watched) {
-    worked.set(session.key, session.working || untold(session));
     names.set(session.key, namedAs(session));
+    ids.set(session.key, session.id);
   }
 
   // The calling session's row: a wait held for a session that is no longer
@@ -2760,12 +2855,15 @@ async function holdWait(
       // has not been told of comes first, whatever order they are in.
       let busy = false;
       let again: { key: string; text: string } | null = null;
-      for (const key of worked.keys()) {
-        const session = byKey(key);
+      for (const watchedKey of names.keys()) {
+        // A row that went while another row of the same session came up,
+        // as when it was resumed in place, is that session going on.
+        const session = byKey(watchedKey) ?? rowAgain(owner, ids.get(watchedKey) ?? null);
         if (session === null) {
-          settle(`Session ${names.get(key) ?? key} was closed.`);
+          settle(closedText(owner, ids.get(watchedKey) ?? null, names.get(watchedKey) ?? watchedKey));
           return;
         }
+        const key = session.key;
         // Reopened the other way, it is the same session going on, at
         // work as far as the wait goes until its next run is up.
         if (reopeningRow(key)) {
@@ -2786,8 +2884,7 @@ async function holdWait(
           continue;
         }
         busy = true;
-        if (session.working) worked.set(key, true);
-        else if (worked.get(key) === true || untold(session)) {
+        if (!session.working && untold(session)) {
           reported = key;
           settle(restText(session));
           return;
@@ -2827,7 +2924,10 @@ function readSession(request: Placed): Answered {
   const id = text(request, "session");
   if (id === null) return refused("Reading needs a session to read.");
   const session = byId(id);
-  if (session === null) return refused(`The workbench has no session ${id}.`);
+  if (session === null) {
+    const entry = remembered(callerOf(request), id);
+    return entry === null ? refused(`The workbench has no session ${id}.`) : said(notRunning(entry));
+  }
   if (!mine(request, session)) return notMine(id);
   const lines = number(request, "lines", LINES, LINES_MAX);
   // An integrated session has no screen: what its agent last said and did
@@ -2856,14 +2956,99 @@ export function oneLine(text: string): string {
 }
 
 /** What a session at rest is doing, in the words a wait answers with: it
-    ended, it is asking for permission, or it stopped working. */
+    ended, it is asking for permission, it stopped at a usage limit or on
+    an error, the user interrupted it, it ended its turn with commands
+    still running that start its next one, or it stopped working. */
 function restText(session: Session): string {
   const name = namedAs(session);
-  if (!isLive(session))
-    return `Session ${name} ${stateOf(session)}. ${lastLine(session)}`;
-  if (session.needs === "permission")
-    return `Session ${name} is asking for permission. ${lastLine(session)}`;
-  return `Session ${name} stopped working. ${lastLine(session)}`;
+  const last = lastLine(session);
+  if (!isLive(session)) return `Session ${name} ${stateOf(session)}. ${last}`;
+  if (session.needs === "permission") return `Session ${name} is asking for permission. ${last}`;
+  const failure = failureFor(session);
+  if (failure !== null) {
+    const shown = failure.line === null || failure.line === session.note ? null : quotedLine(failure.line);
+    return `Session ${name} ${failureWords(failure)}. ${shown === null ? "" : `Its error: ${shown}. `}${last}`;
+  }
+  if (session.turnEnd === "cut") return `Session ${name} stopped: the user interrupted its turn. ${last}`;
+  const running = backgroundWords(session);
+  if (running !== null) return `Session ${name} ended its turn with ${running}. ${last}`;
+  return `Session ${name} stopped working. ${last}`;
+}
+
+/** How many of the last lines on a session's screen are read for what
+    ended its turn. */
+const SCREEN_TAIL = 16;
+
+/**
+ * What ended a session's last turn when it did not finish it itself: what
+ * its hooks or its events said for a failed turn, or, for a turn this
+ * window saw begin that ended with no word of how, what its screen says in
+ * Claude Code's own lines, a usage limit or an error. Null for a turn the
+ * agent ended or the user cut short, for a session seen to begin no turn,
+ * whose screen may be a conversation drawn again from long ago, and for a
+ * screen that says neither.
+ */
+function failureFor(session: Session): Failure | null {
+  if (session.turnEnd === "failed") return session.failure ?? { limit: false, until: null, line: null };
+  if (session.turnEnd !== null || session.kind === "integrated" || session.turns === 0) return null;
+  const drawn = screen(session.key, SCREEN_TAIL);
+  return drawn === null ? null : failureOnScreen(drawn.split("\n"));
+}
+
+/** A failed turn in a few words: at its usage limit, until when where it
+    said, or stopped on an error. */
+function failureWords(failure: Failure): string {
+  if (!failure.limit) return "stopped on an error";
+  return failure.until === null
+    ? "stopped at a usage limit"
+    : `is at its usage limit until ${failure.until}`;
+}
+
+/** The work a session left running in the background as it ended its
+    turn, its tasks quoted as its own words, with what their end does. A
+    task such as a dev server may never end, so nothing is promised of
+    when. Null for none. */
+function backgroundWords(session: Session): string | null {
+  const quoted = session.background.map(quotedLine).filter((line) => line !== null);
+  if (quoted.length === 0) return null;
+  return quoted.length === 1
+    ? `work still running in the background, ${quoted[0]}; when it finishes, the session takes it up in a turn of its own`
+    : `work still running in the background, ${quoted.join(", ")}; as each finishes, the session takes it up in a turn of its own`;
+}
+
+/** A session's state as a listing gives it: what `stateOf` says, and for
+    one waiting, what ended its turn when it did not end it itself. */
+function stateWords(session: Session): string {
+  const state = stateOf(session);
+  if (state !== "waiting") return state;
+  const failure = failureFor(session);
+  if (failure !== null) return failure.limit ? failureWords(failure).replace(/^is /, "") : "stopped on an error";
+  if (session.turnEnd === "cut") return "waiting, its turn interrupted by the user";
+  if (session.background.length > 0) return "waiting on work in the background";
+  return state;
+}
+
+/** Why a session a caller started has no row: the user closed it, it
+    ended, or it has not run since the workbench was restarted. */
+function goneWhy(entry: Started): string {
+  if (entry.left === "closed") return "the user closed it";
+  if (entry.left === "ended") return "it ended";
+  return "it has not run since the workbench was restarted";
+}
+
+/** What a call naming a session the caller started, which has no row, is
+    answered: it is not running, why, and how to bring it back. */
+function notRunning(entry: Started): string {
+  const id = idText(entry.id);
+  return `Session ${id} is not running: ${goneWhy(entry)}. Resume it with start, naming session ${id}.`;
+}
+
+/** What a wait says of a session it watched whose row went: closed, by the
+    user where the caller's list says so, and how to bring it back. */
+function closedText(owner: string, id: string | null, name: string): string {
+  const entry = id === null ? null : remembered(owner, id);
+  if (entry?.left !== "closed") return `Session ${name} was closed.`;
+  return `Session ${name} was closed by the user. Resume it with start, naming session ${idText(entry.id)}.`;
 }
 
 /** An id of the shape the agents' own ids have, uuids and the like: the
@@ -2944,6 +3129,27 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+
+// The name a start gave a session is kept on its caller's list, and is the
+// session's row's name while its agent's own title names nothing.
+onGiven((session) => {
+  if (session.id === null) return null;
+  const caller = startedFor(session.key);
+  return caller === null ? null : (remembered(caller, session.id)?.name ?? null);
+});
+
+// A row of a session a caller started that goes is remembered on the
+// caller's list as closed or ended, so the tools say why it is not running.
+// One the caller stops is taken off the list as it goes.
+onClosed((session) => {
+  const caller = startedFor(session.key);
+  if (caller === null || session.id === null) return;
+  const entry = remembered(caller, session.id);
+  if (entry === null) return;
+  const ended = session.status === "exited" || session.status === "crashed" || session.status === "failed";
+  entry.left = ended ? "ended" : "closed";
+  saveStarted();
+});
 // The prompt a session is started with is its starter's.
 startersFrom(startedFor);
 

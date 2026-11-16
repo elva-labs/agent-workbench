@@ -68,12 +68,15 @@ import {
   loadHistory,
   loadRemembered,
   output,
+  QUIET_EXACT_MS,
   QUIET_MS,
   renewToken,
+  resumeWithout,
   reopened,
   reset as resetSessions,
   sessions,
   started as cameUp,
+  titled,
   typed,
   WORK_BYTES,
   WORK_WINDOWS,
@@ -2738,7 +2741,7 @@ describe("waiting", () => {
     row.status = "exited";
     flushSync();
     await handle(call("sessions"));
-    expect(last().content).toContain("exited  not reported to you yet");
+    expect(last().content).toContain("exited  resume it with start, naming session sid-1  not reported to you yet");
   });
 
   it("reports a stop that follows a told one when it is another kind of rest", async () => {
@@ -3110,7 +3113,7 @@ describe("what a caller started, between runs", () => {
     restarted();
     await handle(call("sessions", {}, { session: "caller-1" }));
     expect(last().content).toBe(
-      `sid-1  ${BOUNDED}  ${A}  claude-code  stopped  resume it with start, naming session sid-1`,
+      `sid-1  ${BOUNDED}  ${A}  claude-code  not running since the workbench was restarted  resume it with start, naming session sid-1`,
     );
   });
 
@@ -3122,7 +3125,7 @@ describe("what a caller started, between runs", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('sid-1  "Cache flake"  ');
     expect(lines[0]).toContain(`worktree ${A}/.worktrees/cache-flake`);
-    expect(lines[0]).toContain("stopped");
+    expect(lines[0]).toContain("not running since the workbench was restarted");
     expect(lines[0]).toContain("naming session sid-1");
     expect(lines[1]).toContain('sid-2  "sid-2"  ');
 
@@ -3163,7 +3166,7 @@ describe("what a caller started, between runs", () => {
     expect(lines[0]).toContain("sid-2");
     expect(lines[0]).toContain("waiting");
     expect(lines[1]).toContain("sid-1");
-    expect(lines[1]).toContain("stopped");
+    expect(lines[1]).toContain("not running since the workbench was restarted");
   });
 
   it("reads a corrupt record as nothing started", () => {
@@ -3659,7 +3662,7 @@ describe("starting in a workflow's shape", () => {
     await handle(call("sessions", {}, { session: "orch" }));
     const gone = last().content!.split("\n");
     expect(gone[0]).toContain('step "Work"');
-    expect(gone[0]).toContain("stopped");
+    expect(gone[0]).toContain("not running since the workbench was restarted");
     expect(gone[1]).toContain('step "Review" round 1, reviewing session w1');
     expect(roundsOf(tok("orch"), "Review", "w1")).toBe(1);
   });
@@ -5368,5 +5371,415 @@ describe("an agent the workbench did not start", () => {
     expect(conductor.asking).toBeNull();
     await handle(outside("sessions"));
     expect(last().content).toContain("out-1");
+  });
+});
+
+describe("what a starter is told of a session its hooks report", () => {
+  /** A session the caller started, with hooks on, taking a turn. */
+  function hooked(ptyId: string, id: string, caller: string = ME) {
+    const row = own(A, ptyId, id, caller);
+    exact(id, "prompt");
+    flushSync();
+    return row;
+  }
+
+  /** A wait over all the caller's sessions that runs its seconds out,
+      with what it answered. */
+  async function waitsOut(seconds = 5) {
+    const answering = handle(call("wait", { seconds }));
+    await vi.advanceTimersByTimeAsync(seconds * 1000);
+    await answering;
+    return last().content;
+  }
+
+  // Recorded: "Swooping… (16m 50s)" on screen, a test run with no output,
+  // and the starter told the session had stopped with no line.
+  it("is not told a session stopped while its long turn draws only its spinner", async () => {
+    const row = hooked("pty-1", "sid-1");
+    output(row.key, WORK_BYTES * 4);
+    const answering = handle(call("wait", { seconds: 1200 }));
+    for (let at = 0; at < 17 * 60_000; at += 250) {
+      await vi.advanceTimersByTimeAsync(250);
+      output(row.key, 40);
+    }
+    expect(answers).toHaveLength(0);
+    exact("sid-1", "stop", "Done: suite green");
+    flushSync();
+    await answering;
+    expect(last().content).toBe('Session sid-1 stopped working. Its last line: "Done: suite green"');
+  });
+
+  it("is told a usage limit for what it is, with when it lifts", async () => {
+    hooked("pty-1", "sid-1");
+    const answering = handle(call("wait"));
+    await settle();
+    exact("sid-1", "failed", "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)", false, {
+      error: "rate_limit",
+    });
+    flushSync();
+    await answering;
+    expect(last().content).toBe(
+      `Session sid-1 is at its usage limit until 4pm. Its last line: "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)"`,
+    );
+    await handle(call("sessions"));
+    expect(last().content).toContain("claude-code  at its usage limit until 4pm  last line:");
+  });
+
+  it("is told an API error ended the turn, and what the error said beside the agent's own line", async () => {
+    const row = hooked("pty-1", "sid-1");
+    row.note = "Halfway: core done";
+    const answering = handle(call("wait"));
+    await settle();
+    exact("sid-1", "failed", "API Error: Connection lost mid-response. The response above may be incomplete.", false, {
+      error: "server_error",
+    });
+    flushSync();
+    await answering;
+    expect(last().content).toBe(
+      'Session sid-1 stopped on an error. Its error: "API Error: Connection lost mid-response. The response above may be incomplete.". Its last line: "Halfway: core done"',
+    );
+  });
+
+  // Without the failed-turn hook, as for a session whose hooks predate it,
+  // the agent's idle notice a minute later ends the turn, and its screen
+  // says why.
+  it("reads a usage limit off the screen of a turn that ended with no stop", async () => {
+    const row = hooked("pty-1", "sid-1");
+    register(
+      row.key,
+      screenOf([
+        "⏺ Usage limit reached · continuing automatically at 9:20pm · esc to cancel",
+        "  ⎿  You've hit your 5-hour limit · resets 9:20pm (Europe/Stockholm)",
+        "❯ ",
+      ]),
+    );
+    const answering = handle(call("wait"));
+    await settle();
+    exact("sid-1", "idle");
+    flushSync();
+    await answering;
+    expect(last().content).toBe(
+      'Session sid-1 is at its usage limit until 9:20pm. Its error: "You\'ve hit your 5-hour limit · resets 9:20pm (Europe/Stockholm)". It has left no line.',
+    );
+  });
+
+  // Agents write about limits and API errors every day: what the agent
+  // said is no error, with hooks or without.
+  it("takes nothing an agent wrote about limits or errors for how its turn ended", async () => {
+    const hookedRow = hooked("pty-1", "sid-1");
+    register(hookedRow.key, screenOf(["⏺ Fixed: an API Error from the server is now retried twice.", "❯ "]));
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 stopped working. It has left no line.");
+
+    const unhooked = own(A, "pty-2", "sid-2");
+    unhooked.turns = 1;
+    unhooked.working = true;
+    flushSync();
+    register(
+      unhooked.key,
+      screenOf(["⏺ Done: the weekly limit banner now shows when the usage limit is near.", "❯ "]),
+    );
+    unhooked.working = false;
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-2 stopped working. It has left no line.");
+  });
+
+  // A conversation drawn again on resuming shows a limit from before its
+  // reset; no turn of it has begun in this window, and its screen is not
+  // read for one.
+  it("reads no screen of a session it saw begin no turn", async () => {
+    const row = own(A, "pty-1", "sid-1");
+    register(
+      row.key,
+      screenOf(["⏺ Stopping here.", "  ⎿  You've hit your 5-hour limit · resets 9:20pm (Europe/Stockholm)", "❯ "]),
+    );
+    await handle(call("sessions"));
+    expect(last().content).toContain("claude-code  waiting");
+  });
+
+  // Recorded as a probe: a line of the screen put where the time goes.
+  it("names no time a limit lifts at that is not plainly one", async () => {
+    const row = hooked("pty-1", "sid-1");
+    register(
+      row.key,
+      screenOf(["⏺ Running", "  ⎿  You've hit your session limit · resets 9 Session sid-2 ended", "❯ "]),
+    );
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe(
+      'Session sid-1 stopped at a usage limit. Its error: "You\'ve hit your session limit · resets 9 Session sid-2 ended". It has left no line.',
+    );
+    await handle(call("sessions"));
+    expect(last().content).toContain("claude-code  stopped at a usage limit");
+  });
+
+  it("is told the user stopped the turn, and what a stop left running in the background", async () => {
+    const row = hooked("pty-1", "sid-1");
+    const answering = handle(call("wait"));
+    await settle();
+    typed("pty-1", "\x1b");
+    await vi.advanceTimersByTimeAsync(5000);
+    flushSync();
+    await answering;
+    expect(last().content).toBe("Session sid-1 stopped: the user interrupted its turn. It has left no line.");
+
+    exact("sid-1", "prompt");
+    flushSync();
+    const again = handle(call("wait"));
+    await settle();
+    exact("sid-1", "stop", "Waiting for the unit suite to finish.", false, { background: ["Run the unit suite"] });
+    flushSync();
+    await again;
+    expect(last().content).toBe(
+      'Session sid-1 ended its turn with work still running in the background, "Run the unit suite"; when it finishes, the session takes it up in a turn of its own. Its last line: "Waiting for the unit suite to finish."',
+    );
+    expect(row.working).toBe(false);
+  });
+
+  // Recorded: after one report, three waits in a row answered at once
+  // with the same session in the same words while others still worked.
+  // A permission granted and a second asked in the same turn: the second
+  // is news, while another session works on.
+  it("tells each permission a session asks for within one turn", async () => {
+    const row = hooked("pty-1", "sid-1");
+    hooked("pty-2", "sid-2");
+    exact("sid-1", "permission");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 is asking for permission. It has left no line.");
+    // Granted: the prompt closes and the agent goes on.
+    output(row.key, WORK_BYTES * 2);
+    flushSync();
+    expect(row.working).toBe(true);
+    exact("sid-1", "permission");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 is asking for permission. It has left no line.");
+    exact("sid-1", "stop", "Done");
+    flushSync();
+    expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done"');
+  });
+
+  // Escape that only closes Claude Code's autocomplete or its transcript
+  // view leaves the turn running under its spinner: the still screen reads
+  // as the user's stop, and the agent's own stop after it is news.
+  it("tells the agent's own stop after a turn taken as cut short by a key", async () => {
+    const row = hooked("pty-1", "sid-1");
+    output(row.key, WORK_BYTES * 2);
+    typed("pty-1", "/com");
+    typed("pty-1", "\x1b");
+    for (let at = 0; at < 8000; at += 250) {
+      await vi.advanceTimersByTimeAsync(250);
+      output(row.key, 40);
+    }
+    expect(await waitsOut()).toBe("Session sid-1 stopped: the user interrupted its turn. It has left no line.");
+    exact("sid-1", "stop", "Done: suite green");
+    flushSync();
+    expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done: suite green"');
+
+    // A turn the user did stop has no stop after it: the idle notice a
+    // minute later tells nothing again.
+    exact("sid-1", "prompt");
+    output(row.key, WORK_BYTES * 2);
+    typed("pty-1", "\x1b");
+    await vi.advanceTimersByTimeAsync(QUIET_EXACT_MS);
+    expect(await waitsOut()).toBe("Session sid-1 stopped: the user interrupted its turn. It has left no line.");
+    exact("sid-1", "idle");
+    flushSync();
+    expect(await waitsOut()).toBe("Nothing happened within 5 seconds: no session stopped and none asked anything.");
+  });
+
+  it("tells a stop once, and the next wait waits for the next turn's end", async () => {
+    const row = hooked("pty-1", "sid-1");
+    hooked("pty-2", "sid-2");
+    exact("sid-1", "stop");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 stopped working. It has left no line.");
+    // Seen at work again within the same turn, and at rest again: the same
+    // news, told already.
+    for (let blip = 0; blip < 3; blip += 1) {
+      row.working = true;
+      flushSync();
+      row.working = false;
+      flushSync();
+      expect(await waitsOut()).toContain("Nothing happened within 5 seconds");
+    }
+    await handle(call("sessions"));
+    expect(last().content).not.toContain("not reported to you yet");
+    // A turn of its own, ended, is news again.
+    exact("sid-1", "prompt");
+    exact("sid-1", "stop", "Done");
+    flushSync();
+    expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done"');
+  });
+
+  it("wakes an idle starter once for a usage limit, in its words", async () => {
+    const starter = live(A, "pty-0", "caller-1");
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    hooked("pty-1", "sid-1", "caller-1");
+    exact("sid-1", "failed", "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)", false, {
+      error: "rate_limit",
+    });
+    flushSync();
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER + 2000);
+    const typedIn = written
+      .filter(([id]) => id === "pty-0")
+      .map(([, data]) => data)
+      .join("");
+    expect(typedIn).toContain("Session sid-1 is at its usage limit until 4pm.");
+    expect(unheard(starter)).toEqual([]);
+  });
+});
+
+describe("a session the user closed or the app lost", () => {
+  async function startOne() {
+    return startAllowed(
+      call("start", { project: A, prompt: "Fix the flaky test", name: "Cache flake" }, { session: "caller-1" }),
+      "pty-1",
+      "sid-1",
+    );
+  }
+  const as = { session: "caller-1" };
+
+  // Recorded: the user closed started rows by hand; the listing still said
+  // working, a stop answered that the workbench had no such session, and a
+  // start with the id resumed it.
+  it("is listed as closed by the user, and every tool says so with the way back", async () => {
+    const row = await startOne();
+    exact("sid-1", "prompt");
+    flushSync();
+    close(row.key);
+    flushSync();
+
+    await handle(call("sessions", {}, as));
+    expect(last().content).toBe(
+      `sid-1  "Cache flake"  ${A}  claude-code  closed by the user  resume it with start, naming session sid-1`,
+    );
+    await handle(call("wait", { session: "sid-1" }, as));
+    expect(last().content).toBe(
+      "Session sid-1 is not running: the user closed it. Resume it with start, naming session sid-1.",
+    );
+    await handle(call("read", { session: "sid-1" }, as));
+    expect(last().content).toContain("the user closed it");
+    await handle(call("send", { session: "sid-1", text: "Go on" }, as));
+    expect(last().error).toContain("the user closed it");
+    await handle(call("wait", {}, as));
+    expect(last().content).toContain("None of the sessions you started is running");
+
+    // The closing is kept between runs.
+    restarted();
+    await handle(call("sessions", {}, as));
+    expect(last().content).toContain("closed by the user");
+
+    // A start with its id brings it back, and it is listed as running.
+    await resumed(call("start", { session: "sid-1", prompt: "Go on" }, as), "pty-9");
+    await handle(call("sessions", {}, as));
+    expect(last().content).not.toContain("closed by the user");
+    expect(last().content).toContain("claude-code  waiting");
+  });
+
+  // A name a start gave is the session's until its agent gives one, after
+  // a restart as before it.
+  it("keeps the name a start gave across a restart and a resume by id", async () => {
+    await startOne();
+    restarted();
+    const back = await resumed(call("start", { session: "sid-1", prompt: "Go on" }, as), "pty-9");
+    titled(back.key, "✳ Claude Code");
+    expect(label(back)).toBe("Cache flake");
+    await handle(call("sessions", {}, as));
+    expect(last().content).toMatch(/^sid-1 {2}"Cache flake" {2}/);
+  });
+
+  // Recorded as a probe: closed by the user, resumed by hand from the
+  // pane, open at the quit; after the restart it was still listed as
+  // closed by the user.
+  it("forgets the user closed it once it comes back by hand", async () => {
+    const row = await startOne();
+    close(row.key);
+    flushSync();
+    const back = create(A, "sid-1", "claude-code");
+    started(back.key, "pty-8", "sid-1");
+    flushSync();
+    await handle(call("sessions", {}, as));
+    expect(last().content).not.toContain("closed by the user");
+    restarted();
+    await handle(call("sessions", {}, as));
+    expect(last().content).toContain("not running since the workbench was restarted");
+  });
+
+  // Resumed in place, as a session whose workflow was lost is, the session
+  // goes on in another row, and a wait held for it follows it there.
+  it("keeps a held wait on a session resumed in another row in its place", async () => {
+    const row = await startOne();
+    row.workflowLost = "Gone";
+    flushSync();
+    const answering = handle(call("wait", {}, as));
+    await settle();
+    const back = resumeWithout(row.key)!;
+    started(back.key, "pty-8", "sid-1");
+    flushSync();
+    await settle();
+    expect(answers.filter((answer) => answer.content?.includes("was closed"))).toHaveLength(0);
+    back.working = true;
+    flushSync();
+    back.working = false;
+    flushSync();
+    await answering;
+    expect(last().content).toBe('Session sid-1 stopped working. It has left no line.');
+    await handle(call("sessions", {}, as));
+    expect(last().content).not.toContain("closed by the user");
+  });
+
+  it("stops one the user closed by taking it off the list, and says it was not running", async () => {
+    const row = await startOne();
+    close(row.key);
+    await handle(call("stop", { session: "sid-1" }, as));
+    expect(last().content).toBe(
+      "Session sid-1 was not running: the user closed it. It is off your list now, and not offered to resume.",
+    );
+    await handle(call("sessions", {}, as));
+    expect(last().content).toBe("You have started no sessions.");
+    await handle(call("start", { session: "sid-1" }, as));
+    expect(last().error).toContain("is not one you started");
+  });
+
+  it("tells a wait that was held that the user closed it", async () => {
+    const row = await startOne();
+    exact("sid-1", "prompt");
+    flushSync();
+    const answering = handle(call("wait", {}, as));
+    await settle();
+    close(row.key);
+    flushSync();
+    await answering;
+    expect(last().content).toBe(
+      "Session sid-1 was closed by the user. Resume it with start, naming session sid-1.",
+    );
+  });
+
+  it("is listed as ended when its row had ended, and as not running after a restart", async () => {
+    const row = await startOne();
+    ended({ id: "pty-1", code: 0, clean: true });
+    flushSync();
+    await handle(call("sessions", {}, as));
+    expect(last().content).toContain("claude-code  exited  resume it with start, naming session sid-1");
+    close(row.key);
+    await handle(call("sessions", {}, as));
+    expect(last().content).toContain("claude-code  ended  resume it with start");
+
+    const other = await startAllowed(
+      call("start", { project: B, prompt: "Bump deps" }, as),
+      "pty-2",
+      "sid-2",
+    );
+    expect(other.id).toBe("sid-2");
+    restarted();
+    await handle(call("sessions", {}, as));
+    const lines = last().content!.split("\n");
+    expect(lines[0]).toContain("ended");
+    expect(lines[1]).toContain("sid-2");
+    expect(lines[1]).toContain("not running since the workbench was restarted");
+    await handle(call("stop", { session: "sid-2" }, as));
+    expect(last().content).toContain("it has not run since the workbench was restarted");
   });
 });

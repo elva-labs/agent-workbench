@@ -29,19 +29,35 @@ pub struct SessionEvent {
     pub session_id: String,
     /// `prompt`: the user sent one, the agent is at work. `stop`: the agent
     /// finished its turn. `delegated`: it ended its turn with subagents of
-    /// its own still running, whose report starts the next one. `permission`:
-    /// it is asking. `idle`: it has been waiting a while and said so.
+    /// its own still running, whose report starts the next one. `failed`:
+    /// an error from the model's service ended the turn, a usage limit
+    /// among them, and the agent did not finish it. `permission`: it is
+    /// asking. `idle`: it has been waiting a while and said so.
     pub kind: String,
     /// With a stop, the first line of what the agent last said, for the
     /// row: how the turn ended, in the agent's own words, when the agent
-    /// left no line of its own.
+    /// left no line of its own. With a failed turn, the first line of the
+    /// error as the agent showed it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     /// With a stop, that the user cut the turn short rather than the agent
     /// ending it, where the agent says so.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub cut: bool,
+    /// With a failed turn, the agent's word for the error: `rate_limit`,
+    /// `server_error` and the like.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// With a stop, the tasks the agent left running in the background
+    /// that are not subagents, by its own description of each: commands,
+    /// and calls of its tools it put in the background. When one finishes
+    /// the agent takes it up in a turn of its own.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub background: Vec<String>,
 }
+
+/// The most background tasks a stop names.
+const BACKGROUND_MOST: usize = 3;
 
 /// One line of the log, as an event, if it is one the rows care about.
 pub fn classify(line: &str) -> Option<SessionEvent> {
@@ -52,6 +68,7 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         "UserPromptSubmit" => "prompt",
         "Stop" if subagents_running(&value) => "delegated",
         "Stop" => "stop",
+        "StopFailure" => "failed",
         "PermissionRequest" => "permission",
         "Notification" => match value.get("notification_type").and_then(|v| v.as_str()) {
             Some("permission_prompt") => "permission",
@@ -60,7 +77,7 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         },
         _ => return None,
     };
-    let note = if kind == "stop" || kind == "delegated" {
+    let note = if matches!(kind, "stop" | "delegated" | "failed") {
         value
             .get("last_assistant_message")
             .and_then(|v| v.as_str())
@@ -68,12 +85,65 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
     } else {
         None
     };
+    let error = if kind == "failed" {
+        value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(|word| {
+                word.chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .take(40)
+                    .collect::<String>()
+            })
+            .filter(|word| !word.is_empty())
+            .or_else(|| Some("unknown".to_string()))
+    } else {
+        None
+    };
+    let background = if kind == "stop" {
+        work_running(&value)
+    } else {
+        Vec::new()
+    };
     Some(SessionEvent {
         session_id,
         kind: kind.to_string(),
         note,
         cut: false,
+        error,
+        background,
     })
+}
+
+/// The background tasks a stop lists as running that are not subagents,
+/// each by its description, or its command where it has none.
+fn work_running(value: &serde_json::Value) -> Vec<String> {
+    value
+        .get("background_tasks")
+        .and_then(|tasks| tasks.as_array())
+        .map(|tasks| {
+            tasks
+                .iter()
+                .filter(|task| {
+                    task.get("type").and_then(|v| v.as_str()) != Some("subagent")
+                        && task
+                            .get("status")
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|status| status == "running")
+                })
+                .filter_map(|task| {
+                    let said = |key: &str| {
+                        task.get(key)
+                            .and_then(|v| v.as_str())
+                            .map(crate::show::one_line)
+                            .filter(|line| !line.is_empty())
+                    };
+                    said("description").or_else(|| said("command"))
+                })
+                .take(BACKGROUND_MOST)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Whether a stop lists a subagent still running among the session's
@@ -387,6 +457,88 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// Shaped as Claude Code sends them: a turn that a usage limit ended,
+    /// and one a dropped connection ended, each in place of a stop.
+    #[test]
+    fn a_turn_an_error_ended_is_heard_as_failed_with_what_it_said() {
+        let limit = classify(
+            r#"{"session_id":"s1","transcript_path":"/t/s1.jsonl","cwd":"/p","hook_event_name":"StopFailure","error":"rate_limit","error_details":"429","last_assistant_message":"You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)"}"#,
+        )
+        .unwrap();
+        assert_eq!(limit.kind, "failed");
+        assert_eq!(limit.error.as_deref(), Some("rate_limit"));
+        assert_eq!(
+            limit.note.as_deref(),
+            Some("You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)")
+        );
+        let lost = classify(
+            r#"{"session_id":"s1","hook_event_name":"StopFailure","error":"server_error","last_assistant_message":"API Error: Connection lost mid-response. The response above may be incomplete."}"#,
+        )
+        .unwrap();
+        assert_eq!(lost.error.as_deref(), Some("server_error"));
+        assert_eq!(
+            lost.note.as_deref(),
+            Some("API Error: Connection lost mid-response. The response above may be incomplete.")
+        );
+        // An error word of another shape is kept to its letters, and one
+        // missing is unknown.
+        let odd = classify(
+            r#"{"session_id":"s1","hook_event_name":"StopFailure","error":"bad\nword <x>"}"#,
+        )
+        .unwrap();
+        assert_eq!(odd.error.as_deref(), Some("badwordx"));
+        assert_eq!(odd.note, None);
+        let bare = classify(r#"{"session_id":"s1","hook_event_name":"StopFailure"}"#).unwrap();
+        assert_eq!(bare.error.as_deref(), Some("unknown"));
+        // A stop names no error.
+        let stop = classify(r#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();
+        assert_eq!(stop.error, None);
+        assert!(serde_json::to_value(&stop).unwrap().get("error").is_none());
+    }
+
+    #[test]
+    fn a_stop_names_the_work_it_left_running_and_no_subagent() {
+        let stop = classify(
+            r#"{"session_id":"s1","hook_event_name":"Stop","last_assistant_message":"Waiting for the unit suite to finish.","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"Run the  unit\nsuite","command":"npm run test:unit"},{"id":"b2","type":"shell","status":"completed","description":"Build"},{"id":"b3","type":"shell","status":"running","command":"npm run dev"},{"id":"a1","type":"subagent","status":"completed","description":"Review"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(stop.kind, "stop");
+        assert_eq!(stop.background, ["Run the unit suite", "npm run dev"]);
+        let sent = serde_json::to_value(&stop).unwrap();
+        assert_eq!(sent["background"][1], "npm run dev");
+        // A call of the agent's tools it put in the background is work of
+        // its own as well, as a wait on the sessions it started is.
+        let waiting = classify(
+            r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"k1","type":"MCP task","status":"running","description":"agent-workbench/wait","server":"agent-workbench","tool":"wait"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(waiting.background, ["agent-workbench/wait"]);
+        // Nothing left running says nothing.
+        let done = classify(
+            r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"completed","description":"Build"}]}"#,
+        )
+        .unwrap();
+        assert!(done.background.is_empty());
+        assert!(serde_json::to_value(&done)
+            .unwrap()
+            .get("background")
+            .is_none());
+        // Many are named up to a few.
+        let tasks: Vec<String> = (0..6)
+            .map(|n| {
+                format!(
+                    r#"{{"id":"b{n}","type":"shell","status":"running","description":"task {n}"}}"#
+                )
+            })
+            .collect();
+        let many = classify(&format!(
+            r#"{{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{}]}}"#,
+            tasks.join(",")
+        ))
+        .unwrap();
+        assert_eq!(many.background.len(), BACKGROUND_MOST);
     }
 
     #[test]

@@ -78,8 +78,13 @@ fn streams_a_shell_s_output_and_its_end() {
 
     let spawn = json!({"id": 1, "method": "pty_shell", "params": {"project": "/tmp", "cols": 80, "rows": 24}});
     writeln!(stdin, "{spawn}").unwrap();
-    let mut pty = None;
+    let mut pty: Option<String> = None;
+    // The daemon answers each request on a thread of its own, and the shell
+    // is up and drawing by the time the answer names it: a shell that
+    // starts fast, as dash does, sends its prompt ahead of that answer.
+    let mut outputs: Vec<Value> = Vec::new();
     let mut seen = String::new();
+    let mut typed = false;
     let mut ended = None;
     for line in lines.by_ref() {
         let value: Value = serde_json::from_str(&line.unwrap()).unwrap();
@@ -89,22 +94,28 @@ fn streams_a_shell_s_output_and_its_end() {
                 .unwrap_or_else(|| panic!("pty_shell answered {value}"));
             pty = Some(id.to_string());
         } else if value["event"] == "pty_output" {
-            let id = pty.as_deref().unwrap();
-            assert_eq!(value["payload"]["id"], id);
-            // The shell's first bytes mean it is up and reading; typed at it
-            // any earlier, the lines would be for the tty the shell has not
-            // yet set up, as they would be in any terminal.
-            if seen.is_empty() {
-                let write = json!({"id": 2, "method": "pty_write", "params": {"id": id, "data": "echo marker-$((40+2))\nexit 4\n"}});
-                writeln!(stdin, "{write}").unwrap();
-            }
-            let bytes = workbench_core::protocol::output_bytes("pty_output", &value["payload"])
-                .unwrap()
-                .1;
-            seen.push_str(&String::from_utf8_lossy(&bytes));
+            outputs.push(value);
         } else if value["event"] == "session_ended" {
             ended = Some(value["payload"].clone());
             break;
+        }
+        let Some(id) = pty.as_deref() else {
+            continue;
+        };
+        for output in outputs.drain(..) {
+            assert_eq!(output["payload"]["id"], id);
+            let bytes = workbench_core::protocol::output_bytes("pty_output", &output["payload"])
+                .unwrap()
+                .1;
+            seen.push_str(&String::from_utf8_lossy(&bytes));
+        }
+        // The shell's first bytes mean it is up and reading; typed at it any
+        // earlier, the lines would be for the tty the shell has not yet set
+        // up, as they would be in any terminal.
+        if !typed && !seen.is_empty() {
+            let write = json!({"id": 2, "method": "pty_write", "params": {"id": id, "data": "echo marker-$((40+2))\nexit 4\n"}});
+            writeln!(stdin, "{write}").unwrap();
+            typed = true;
         }
     }
     assert!(seen.contains("marker-42"), "{seen}");

@@ -285,16 +285,30 @@ with a hollow ring on the dot, waiting for you from the stop. A stop that
 leaves the agent's own subagents running in the background is not one: the
 agent has ended its turn to wait for their report, which starts the next,
 and the row stays working through it, with the agent's parting line under
-the name. The pty
+the name. A stop that leaves other work of its own running in the
+background, a command or a call of its tools, is one, and the row keeps
+their descriptions: when one finishes, the agent takes it up in a turn of
+its own, though a dev server may never finish. Claude Code reports a turn that an error
+from the model's service ended, a usage limit or a connection lost
+mid-response, with a hook of its own in place of the stop: the row is
+waiting from it, keeps the error's first line as its line where the agent
+left none, and knows when a usage limit lifts where the line says. The pty
 heuristic stands down for that session, except for two things the hooks
 cannot say: output after a permission prompt means it was granted and the
-agent went on, and, for Claude Code, a screen that goes still, give or take a
-redraw, for five seconds while the hooks still say working means the turn ended
-without them, which is what an Escape at the keyboard does. A session
-waiting on its subagents is still by nature, and that silence is not read
-that way; an idle notice from the agent, which it sends only once nothing
-of its own is running, ends the working either way, and is news only when
-it does. A transition heard before the row knows its session's id waits
+agent went on, and, for Claude Code, after Escape or Ctrl+C at the keyboard
+while the hooks say working, a screen that goes still, give or take a
+redraw, for five seconds means the turn was stopped, which fires no hook,
+and the row says it was cut short. Ctrl+C with words typed on the line only
+empties the line, and stops nothing. At Claude Code's permission prompt,
+Escape is its No, which stops the turn the same way; a digit or Enter may
+be a yes or a no, and the turn is taken as stopped only when the screen,
+once still, shows Claude Code's interrupted line under the turn's last
+bullet. Without such a key a still screen ends
+nothing: an agent running a long command, or thinking, draws only its
+spinner's clock for minutes on end. An idle notice from the agent, which
+it sends only once nothing of its own is running, ends the working either
+way, and is news only when it does; it is what ends a turn that stopped
+with no hook at all. A transition heard before the row knows its session's id waits
 half a minute for it; one older than that is from a session run elsewhere,
 which a resume of it here does not take for news. A turn Codex reports as
 aborted, which is what an Escape does there, is a stop that says the user

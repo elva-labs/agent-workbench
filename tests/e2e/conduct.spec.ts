@@ -394,7 +394,7 @@ test.describe("the conductor", () => {
     await expect.poll(() => answerTo(page, "c-8")).not.toBeNull();
     const listed = (await answerTo(page, "c-8"))!.content ?? "";
     expect(listed).toContain('session-2  "Cache flake"  ');
-    expect(listed).toContain("stopped");
+    expect(listed).toContain("not running since the workbench was restarted");
     expect(listed).toContain("naming session session-2");
 
     await push(page, {
@@ -431,6 +431,192 @@ test.describe("the conductor", () => {
     await expect(rows(page)).toHaveCount(1);
     await expect.poll(() => answerTo(page, "c-3")).not.toBeNull();
     expect((await answerTo(page, "c-3"))!.error).toContain("did not allow");
+  });
+});
+
+test.describe("what a starter is told", () => {
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page, { settings: NO_WORKFLOW });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+  });
+
+  /** A session the caller starts, allowed from then on, answered with its
+      id. */
+  async function started(page: Page, call: string, prompt: string, id: string) {
+    await push(page, {
+      id: call,
+      tool: "start",
+      arguments: { project: PROJECT, prompt },
+      session: "session-1",
+    });
+    const allow = page.getByTestId("conduct-allow");
+    if (call === "s-1") await allow.click();
+    await expect.poll(() => answerTo(page, call)).not.toBeNull();
+    expect((await answerTo(page, call))!.content).toContain(`Started session ${id}`);
+  }
+
+  /** What a session's hooks report, as the core hands it on. */
+  const hook = (page: Page, event: Record<string, unknown>) =>
+    page.evaluate(
+      (event) =>
+        (
+          window as unknown as { __sessionEvent: (event: unknown) => void }
+        ).__sessionEvent(event),
+      event,
+    );
+
+  /** What the agent draws in its terminal. */
+  const say = (page: Page, pty: string, text: string) =>
+    page.evaluate(
+      ({ pty, text }) =>
+        (window as unknown as { __say: (id: string, text: string) => void }).__say(pty, text),
+      { pty, text },
+    );
+
+  /** The answer to a call, once there is one. */
+  async function answered(page: Page, id: string) {
+    await expect.poll(() => answerTo(page, id)).not.toBeNull();
+    return (await answerTo(page, id))!;
+  }
+
+  // Recorded: a started session in a long turn, its screen showing only the
+  // spinner's clock while tests ran, was reported stopped; and one at its
+  // usage limit was reported as having stopped working with no line.
+  test("keeps a started session at work through a long quiet command, and names a usage limit", async ({
+    page,
+  }) => {
+    await started(page, "s-1", "Run the suite", "session-2");
+    await page.clock.install();
+    await hook(page, { sessionId: "session-2", kind: "prompt" });
+    await say(page, "pty-2", "\r\n⏺ Running the unit suite\r\n" + "  ".repeat(200));
+    await push(page, { id: "w-1", tool: "wait", arguments: { seconds: 1200 }, session: "session-1" });
+    const dot = page.getByTestId("started-session").locator(".dot");
+    for (let second = 0; second < 40; second += 1) {
+      await say(page, "pty-2", `\r✽ Swooping… (16m ${second}s)`);
+      await page.clock.runFor(1000);
+    }
+    await expect(dot).toHaveCSS("animation-name", /breathe/);
+    expect(await answerTo(page, "w-1")).toBeNull();
+
+    await hook(page, {
+      sessionId: "session-2",
+      kind: "failed",
+      note: "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)",
+      error: "rate_limit",
+    });
+    expect((await answered(page, "w-1")).content).toBe(
+      `Session session-2 is at its usage limit until 4pm. Its last line: "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)"`,
+    );
+    await expect(dot).toHaveCSS("animation-name", "none");
+  });
+
+  // Recorded: after one report, the next waits answered at once with the
+  // same session in the same words while another still worked.
+  test("tells a stop once, and the next wait waits for the next session to rest", async ({ page }) => {
+    await started(page, "s-1", "Fix the cache", "session-2");
+    await started(page, "s-2", "Bump the deps", "session-3");
+    await page.clock.install();
+    await hook(page, { sessionId: "session-2", kind: "prompt" });
+    await hook(page, { sessionId: "session-3", kind: "prompt" });
+    // Session 3 sets a command going, which prints nothing for a while.
+    await say(page, "pty-3", "\r\n⏺ Running npm ci\r\n" + "  ".repeat(200));
+    await hook(page, { sessionId: "session-2", kind: "stop", note: "Done: cache fixed" });
+    await push(page, { id: "w-1", tool: "wait", session: "session-1" });
+    expect((await answered(page, "w-1")).content).toBe(
+      'Session session-2 stopped working. Its last line: "Done: cache fixed"',
+    );
+    for (const id of ["w-2", "w-3", "w-4"]) {
+      await push(page, { id, tool: "wait", arguments: { seconds: 5 }, session: "session-1" });
+      for (let second = 0; second < 5; second += 1) {
+        await say(page, "pty-3", `\r✽ Baking… (2m ${second}s)`);
+        await page.clock.runFor(1000);
+      }
+      expect((await answered(page, id)).content).toContain("Nothing happened within 5 seconds");
+    }
+    await hook(page, { sessionId: "session-3", kind: "stop", note: "Done: deps bumped" });
+    await push(page, { id: "w-5", tool: "wait", session: "session-1" });
+    expect((await answered(page, "w-5")).content).toBe(
+      'Session session-3 stopped working. Its last line: "Done: deps bumped"',
+    );
+  });
+
+  // Recorded: the user closed started rows by hand; the listing still said
+  // working, a stop answered that the workbench had no such session, and a
+  // start naming it resumed it.
+  test("says a started session the user closed is closed, and brings it back by start", async ({
+    page,
+  }) => {
+    await started(page, "s-1", "Fix the cache", "session-2");
+    await hook(page, { sessionId: "session-2", kind: "prompt" });
+    const kid = page.getByTestId("started-session");
+    await expect(kid).toHaveCount(1);
+    await kid.hover();
+    await kid.locator("..").getByTestId("close-session").click();
+    await expect(kid).toHaveCount(0);
+
+    await push(page, { id: "l-1", tool: "sessions", session: "session-1" });
+    expect((await answered(page, "l-1")).content).toMatch(
+      /^session-2 .* closed by the user {2}resume it with start, naming session session-2$/,
+    );
+    await push(page, { id: "w-1", tool: "wait", arguments: { session: "session-2" }, session: "session-1" });
+    expect((await answered(page, "w-1")).content).toBe(
+      "Session session-2 is not running: the user closed it. Resume it with start, naming session session-2.",
+    );
+
+    await push(page, {
+      id: "s-9",
+      tool: "start",
+      arguments: { session: "session-2", prompt: "Go on" },
+      session: "session-1",
+    });
+    expect((await answered(page, "s-9")).content).toContain("Resumed session session-2");
+    await expect(kid).toHaveCount(1);
+    await push(page, { id: "l-2", tool: "sessions", session: "session-1" });
+    expect((await answered(page, "l-2")).content).not.toContain("closed by the user");
+  });
+
+  // Recorded: sessions started with a name, closed by the user and resumed
+  // by id were named by the first eight characters of their ids, on their
+  // rows and by the sessions tool, once Claude Code titled the terminal with
+  // its own name alone.
+  test("keeps the name a start gave on the row after a close and a resume by id", async ({ page }) => {
+    await push(page, {
+      id: "s-1",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Review it", name: "Confirm review of send now" },
+      session: "session-1",
+    });
+    await page.getByTestId("conduct-allow").click();
+    await answered(page, "s-1");
+    const kid = page.getByTestId("started-session");
+    await expect(kid).toContainText("Confirm review of send now");
+    await kid.hover();
+    await kid.locator("..").getByTestId("close-session").click();
+    await expect(kid).toHaveCount(0);
+
+    await push(page, {
+      id: "s-2",
+      tool: "start",
+      arguments: { session: "session-2", prompt: "Go on" },
+      session: "session-1",
+    });
+    expect((await answered(page, "s-2")).content).toContain("Resumed session session-2");
+    await expect(kid).toHaveCount(1);
+    const pty = await page.evaluate(
+      () => (window as unknown as { __spawns: { ptyId: string }[] }).__spawns.at(-1)!.ptyId,
+    );
+    // The agent names the session first, then titles the terminal with its
+    // own name alone, as a resumed Claude Code does before it has a title.
+    await say(page, pty, "\x1b]0;✳ review-pass\x07");
+    await expect(kid).toContainText("review-pass");
+    await say(page, pty, "\x1b]0;✳ Claude Code\x07");
+    await expect(kid).toContainText("Confirm review of send now");
+    await expect(kid).not.toContainText("session-");
+    await push(page, { id: "l-1", tool: "sessions", session: "session-1" });
+    expect((await answered(page, "l-1")).content).toContain('session-2  "Confirm review of send now"');
   });
 });
 
