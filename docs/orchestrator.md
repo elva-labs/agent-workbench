@@ -681,6 +681,26 @@ whose trees are clean; the rest say why they stay.
 
 ![An orchestrator on screen with the sessions it started, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
 
+Any other session that started sessions has the same controls in a
+section at the foot of its changes pane, under the tree and beside
+Processes and Browser, headed Sessions it started with how many (see
+[layout](layout.md#under-the-tree)). It is there while the session on
+screen has sessions it started, or may start more in a project without
+being asked, so that can still be taken back once they are gone. Each row
+is a session's name, drawn as the agent gave it with anything unseen
+written out, cut to what the row holds, and under it its step and round
+where it runs for one, in the words of the run's chip and the rail, the
+project when it is not its starter's, its worktree, what it is doing and
+how long since that changed. The row's own buttons send it a line, typed
+into its terminal or sent as your message to an integrated session, or
+stop it, and a click or Enter goes to it. Under the rows, each project it
+may start in has a × to take that back, and the worktrees left behind in
+the projects its sessions run in and the ones it may start in are counted,
+with Clean up. Stop all and Clean up ask first, the one saying how many of
+them wait on you or are at work, the other naming each worktree that goes
+with its branch. The section is open until you fold it, the fold is
+remembered, and it opens by itself when one of them asks for a permission.
+
 The sessions it started keep out of the keyboard's way too: Delete on one
 of them does nothing. Its own × stops it, and Stop all on the board stops
 every one.

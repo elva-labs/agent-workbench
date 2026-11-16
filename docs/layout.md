@@ -411,7 +411,13 @@ a divider to drag above them when one is open; the share and the folds are
 remembered, and the open ones share the height.
 
 **Media** is what the agent has presented for the session on screen, one
-row per set of files under its caption, opening in the viewer. **Processes** is
+row per set of files under its caption, opening in the viewer. **Sessions
+it started** follows it while the session on screen has started sessions
+of its own, or may start more without being asked: a row for each, with
+what the orchestrator's board offers; the
+[orchestrator](orchestrator.md#in-the-panes) says what they are. It stands
+open until folded, and opens by itself when one of them asks for a
+permission. **Processes** is
 what runs under the session on screen, its shells and the project's own
 shells listed beside them, named after the project, or with no session on
 screen under the project's own shells: the dev server the agent typed for
@@ -423,16 +429,19 @@ process, and nothing outside a session's or a shell's own tree can be
 reached from there. **Browser** is the embedded browser's
 tabs for the session on screen, one row per tab, standing even with none
 open since it is where a tab is opened from; see [browser](browser.md). A
-plugin that sends sections adds a fold of its own under those three;
+plugin that sends sections adds a fold of its own under those;
 [plugins](plugins.md) says what it holds.
 
 The tree's cursor walks on into the sections: <kbd>Down</kbd> past the
 last file lands on the first header, <kbd>Enter</kbd> opens a media call
-in the viewer or folds and unfolds a header, <kbd>Left</kbd> and
-<kbd>Right</kbd> fold and unfold the section the cursor is in as they close
-and open a folder, and <kbd>End</kbd> is the last row of the column. The
-rows are not tab stops, and a click on one keeps the keyboard on the
-tree.
+in the viewer, goes to a started session, or folds and unfolds a header,
+<kbd>Left</kbd> and <kbd>Right</kbd> fold and unfold the section the cursor
+is in as they close and open a folder, and <kbd>End</kbd> is the last row of
+the column. Under the started sessions, <kbd>Enter</kbd> on a project they
+may be started in takes that back, and on the worktrees left behind asks to
+clean them up; a question or a line to send opened there takes the
+keyboard, and gives it back to the tree when it goes. The rows are not tab
+stops, and a click on one keeps the keyboard on the tree.
 
 ## Inside the viewer
 
