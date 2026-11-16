@@ -30,8 +30,8 @@ use std::time::Instant;
 use serde_json::{json, Map, Value};
 
 use crate::adapter::{
-    prepare_process, process, CODEX_HOME_VAR, CODEX_NO_SUBAGENTS, ORCHESTRATOR_ROLE, ROLE_VAR,
-    SESSION_VAR,
+    prepare_process, process, CODEX_APPROVE, CODEX_HOME_VAR, CODEX_NO_SUBAGENTS, CODEX_TOOLS,
+    CODEX_TOOL_APPROVAL, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR,
 };
 use crate::env::find_on_path;
 use crate::hook;
@@ -1451,6 +1451,20 @@ impl AppServer {
             if self.orchestrator {
                 env.insert(ROLE_VAR.into(), json!(ORCHESTRATOR_ROLE));
             }
+            // The server's own tools that read, and those the window asks
+            // the user about every time, run without asking, each by an
+            // approval of its own. Its other tools, and the servers the
+            // user configured, ask as the approval policy says, and the
+            // question docks in the conversation as a permission.
+            let tools: Map<String, Value> = crate::mcp::RUN_UNASKED
+                .iter()
+                .map(|tool| {
+                    (
+                        tool.to_string(),
+                        json!({ CODEX_TOOL_APPROVAL: CODEX_APPROVE }),
+                    )
+                })
+                .collect();
             config.insert(
                 "mcp_servers".into(),
                 json!({
@@ -1458,9 +1472,7 @@ impl AppServer {
                         "command": server.to_string_lossy(),
                         "args": ["mcp"],
                         "env": env,
-                        // The workbench's own tools run without asking; the
-                        // servers the user configured ask as they would.
-                        crate::adapter::CODEX_APPROVAL_SETTING: crate::adapter::CODEX_APPROVE,
+                        CODEX_TOOLS: tools,
                     }
                 }),
             );

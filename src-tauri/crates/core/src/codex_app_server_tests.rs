@@ -259,7 +259,21 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     let tool = &start["config"]["mcp_servers"]["agent_workbench"];
     assert_eq!(tool["command"], server.to_string_lossy().as_ref());
     assert_eq!(tool["args"], json!(["mcp"]));
-    assert_eq!(tool["default_tools_approval_mode"], "approve");
+    // Only the listed tools run without asking, each by its own approval;
+    // nothing is said for the whole server, so the rest ask.
+    assert!(tool.get("default_tools_approval_mode").is_none(), "{tool}");
+    let approved = tool["tools"].as_object().unwrap();
+    assert_eq!(approved.len(), crate::mcp::RUN_UNASKED.len());
+    for name in crate::mcp::RUN_UNASKED {
+        assert_eq!(
+            tool["tools"][name],
+            json!({"approval_mode": "approve"}),
+            "{name}"
+        );
+    }
+    for name in crate::mcp::ASK_AS_POLICY_SAYS {
+        assert!(tool["tools"].get(name).is_none(), "{name}");
+    }
     assert_eq!(tool["env"], json!({"WORKBENCH_ROLE": "orchestrator"}));
     assert!(start.get("threadId").is_none());
 
