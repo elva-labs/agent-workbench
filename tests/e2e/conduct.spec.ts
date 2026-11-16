@@ -393,7 +393,7 @@ test.describe("the conductor", () => {
     await push(page, { id: "c-8", tool: "sessions", session: "session-1" });
     await expect.poll(() => answerTo(page, "c-8")).not.toBeNull();
     const listed = (await answerTo(page, "c-8"))!.content ?? "";
-    expect(listed).toContain("session-2  Cache flake  ");
+    expect(listed).toContain('session-2  "Cache flake"  ');
     expect(listed).toContain("stopped");
     expect(listed).toContain("naming session session-2");
 
