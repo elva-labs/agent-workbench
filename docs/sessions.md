@@ -728,9 +728,29 @@ is shown in plain words and comes back only in a new session once another
 is chosen. It shows how much of the context window the conversation takes. While
 the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
-takes it. While the dock holds a request the user answers there, the
-composer says Up reaches it, and a lone digit sent then goes only on a
-second Enter, so it is not sent as a message by surprise. A message that was not delivered, refused
+takes it. The line under the last of them offers Send now, which sends
+every waiting message at once, in the order sent: Claude Code takes them
+into its running turn, or stops the turn for them, which is then drawn as
+interrupted, and they start the next turn straight away; Codex is given
+them in the turn it runs, which goes on. Its tooltip says which. The line
+says Sending now until the agent has taken them. Each of the user's own
+waiting messages offers Take back, which takes it from the agent and puts
+its words and images back in the composer as soon as the agent lets go of
+it, unless the agent has taken it first, which the composer then says
+until the waiting messages or the turn move on. While a request waits for
+an answer the line says the message waits for the turn and that
+answering the request lets it be sent now, and while the conversation is
+being compacted it says it waits for that; Send now is not offered then.
+A message another session sent can be sent now but not taken back. From
+the composer, Cmd+Enter sends them now, with what is written when the
+agent is at work, and Cmd+Shift+Enter takes the newest of the user's own
+back (Ctrl off macOS), as its hint says; a chord the user has given to an
+action of the keymap is not named. Both are on the thread's arrow walk
+too. The thread at its foot keeps the waiting messages and their line in
+view above the composer and the dock as they come and change. While the
+dock holds a request the user answers there, the composer says Up
+reaches it, and a lone digit
+sent then goes only on a second Enter, so it is not sent as a message by surprise. A message that was not delivered, refused
 by the agent or never sent, can be put back in the composer. What is being
 written stays with its session while another is on screen. The keys are in
 [focus](focus-model.md#an-integrated-session).
