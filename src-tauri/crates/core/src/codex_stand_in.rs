@@ -754,9 +754,10 @@ fn each_answer_to_an_approval_reaches_the_agent_as_its_decision() {
 /// A tool of the workbench's server that is off the list asks as Codex's
 /// other MCP requests do. The thread approves only the listed tools, so
 /// Codex asks before `browser_open` runs; the question docks in the
-/// conversation as a permission for that call, with Codex's choices to
-/// remember it, and the answer goes back to Codex, which then runs it. A
-/// listed tool, `notify`, runs with no question.
+/// conversation as a permission for that call, with Codex's choice to
+/// allow it for the rest of the session but not from now on, which has no
+/// entry to be kept in, and the answer goes back to Codex, which then runs
+/// it. A listed tool, `notify`, runs with no question.
 #[test]
 fn a_workbench_tool_off_the_list_asks_in_the_conversation() {
     let ask = |id: u32, method: &str, params: &str| {
@@ -803,7 +804,7 @@ fn a_workbench_tool_off_the_list_asks_in_the_conversation() {
         .map(|offer| offer["choice"].as_str().unwrap())
         .collect();
     assert!(
-        offered.contains(&"allowSession") && offered.contains(&"allowAlways"),
+        offered.contains(&"allowSession") && !offered.contains(&"allowAlways"),
         "{offered:?}"
     );
     h.until_state("asking");
@@ -1885,6 +1886,44 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         "the tool server had the session's token: {}",
         env.lines().any(|l| l == "WORKBENCH_SESSION=token-real")
     );
+    // The resumed thread has the same approvals: a listed tool runs with
+    // no question, and one off the list asks again, docked. Refused, it
+    // does not run, and the turn still ends.
+    let events = turn(&h, "NOTE");
+    assert!(
+        events
+            .iter()
+            .any(|e| e["type"] == "toolFinished" && e["output"] == "echoed"),
+        "{events:#?}"
+    );
+    assert!(!events.iter().any(|e| e["type"] == "permissionAsked"));
+    h.send("MCP");
+    let asked = h.until(|e| e["type"] == "permissionAsked");
+    let asked = asked.last().unwrap().clone();
+    assert!(
+        asked["tool"].as_str().unwrap().contains("echo"),
+        "{asked:#?}"
+    );
+    answer(
+        &sessions,
+        &h.id,
+        asked["request"].as_str().unwrap(),
+        Choice::Deny,
+        None,
+    )
+    .unwrap();
+    let events = h.until_type("turnEnded");
+    let at = events
+        .iter()
+        .rposition(|e| e["type"] == "turnStarted")
+        .unwrap();
+    let refused = events[at..]
+        .iter()
+        .find(|e| e["type"] == "toolFinished" && e["call"] == asked["call"])
+        .unwrap_or_else(|| panic!("{events:#?}"));
+    assert_eq!(refused["error"], true, "{refused:#?}");
+    assert_ne!(refused["output"], "echoed", "{refused:#?}");
+    assert_eq!(events.last().unwrap()["outcome"], "done", "{events:#?}");
     assert_eq!(h.stop()["clean"], true);
 }
 

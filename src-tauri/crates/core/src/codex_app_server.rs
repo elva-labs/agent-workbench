@@ -2337,11 +2337,18 @@ impl AppServer {
                         }
                     }
                 };
+                // The workbench's server, attached through the thread's own
+                // configuration, has no entry Codex can keep an approval
+                // from now on in, so one for its tools lasts only as long as
+                // the thread and is not offered.
+                let attached =
+                    self.tool_server.is_some() && server == crate::adapter::CODEX_SERVER_KEY;
                 let persist = params["_meta"]["persist"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .filter_map(|p| p.as_str().map(str::to_string))
+                    .filter(|p| !(attached && p == "always"))
                     .collect();
                 let asked = Asked {
                     id: id.clone(),
