@@ -20,7 +20,9 @@
    *
    * It opens above what holds it, from its left edge or with `end` from
    * its right, or at a place the owner gives, where what holds it cuts off
-   * what overflows it.
+   * what overflows it. Opened from the right edge it moves as far as it
+   * takes to stay inside the box the owner names, as when what holds it
+   * has wrapped to the left of a narrow row.
    */
   interface Props {
     label: string;
@@ -35,6 +37,8 @@
     /** It opens from the right edge of what holds it, for a holder near
         the right of a row. */
     end?: boolean;
+    /** What it stays inside when it opens from the right edge. */
+    within?: HTMLElement | null;
     /** Opened with the pointer: the choice the keyboard is on is marked
         only while the pointer is on it or once a key is pressed, so a
         menu opened by a press marks nothing until the pointer or a key
@@ -52,6 +56,7 @@
     onclose,
     at = null,
     end = false,
+    within = null,
     pointer = false,
     testid,
     optionTestid,
@@ -64,8 +69,31 @@
     return [...(menu?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']") ?? [])];
   }
 
+  /** Opened from the right edge, where its left edge stands from what
+      holds it, once measured. */
+  let shift = $state<number | null>(null);
+
+  /** Puts it at the right edge of what holds it, or as near as it can be
+      while inside `within`. */
+  function place() {
+    if (!end || menu === null) return;
+    const holder = menu.parentElement?.getBoundingClientRect();
+    if (holder === undefined) return;
+    const width = menu.offsetWidth;
+    const room = (within ?? document.documentElement).getBoundingClientRect();
+    const left = Math.max(room.left, Math.min(holder.right - width, room.right - width));
+    shift = left - holder.left;
+  }
+
   onMount(() => {
+    place();
     (menu?.querySelector<HTMLButtonElement>("[aria-checked='true']") ?? items()[0])?.focus();
+  });
+
+  $effect(() => {
+    if (!end) return;
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   });
 
   function onkeydown(e: KeyboardEvent) {
@@ -114,7 +142,8 @@
   class:pointing
   {onpointermove}
   {onfocusout}
-  style:left={at === null ? undefined : `${at.left}px`}
+  style:left={at !== null ? `${at.left}px` : shift !== null ? `${shift}px` : undefined}
+  style:right={shift !== null ? "auto" : undefined}
   style:bottom={at === null ? undefined : `${at.bottom}px`}
   role="menu"
   aria-label={label}

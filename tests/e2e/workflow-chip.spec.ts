@@ -70,16 +70,14 @@ test("a new conversation offers the workflows beside the model, each saying what
   ]);
   await expect(options(page).first()).toHaveAttribute("aria-checked", "true");
   await expect(menu).toContainText("Chosen before the first message, then kept.");
-  // It opens over the composer, its right edge at the chip's, inside the
-  // pane, each line on one line.
+  // With room to the chip's left, it opens over the composer from the
+  // chip's right edge.
   const box = (await menu.boundingBox())!;
   const chipBox = (await chip(page).boundingBox())!;
-  const pane = (await page.locator(AGENT).boundingBox())!;
+  const composer = (await page.getByTestId("composer").boundingBox())!;
   expect(Math.abs(box.x + box.width - (chipBox.x + chipBox.width))).toBeLessThan(1);
   expect(box.y + box.height).toBeLessThan(chipBox.y);
-  expect(box.x).toBeGreaterThan(pane.x);
-  const about = (await options(page).nth(1).locator(".about").boundingBox())!;
-  expect(about.height).toBeLessThan(20);
+  expect(box.x).toBeGreaterThanOrEqual(composer.x - 0.5);
   await page.keyboard.press("Escape");
   await expect(menu).toHaveCount(0);
   await expect(chip(page)).toBeFocused();
@@ -225,6 +223,31 @@ test("is picked by keyboard alone", async ({ page }) => {
   await page.getByTestId("attach").focus();
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("mode-chip")).toBeFocused();
+});
+
+test("opens its menu inside the conversation where the chip has wrapped to the bar's second line", async ({ page }) => {
+  // The window's three panes leave the conversation narrow, and before a
+  // workflow is picked the model chip is wide enough to push the workflow
+  // chip onto a line of its own, at the left.
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await open(page);
+  const chipBox = (await chip(page).boundingBox())!;
+  const modelBox = (await page.getByTestId("model-chip").boundingBox())!;
+  expect(chipBox.y).toBeGreaterThan(modelBox.y + modelBox.height);
+  await chip(page).click();
+  const box = (await page.getByTestId("workflow-menu").boundingBox())!;
+  const conversation = (await page.getByTestId("conversation").boundingBox())!;
+  const composer = (await page.getByTestId("composer").boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(conversation.x);
+  expect(box.x + box.width).toBeLessThanOrEqual(conversation.x + conversation.width);
+  expect(box.x).toBeGreaterThanOrEqual(composer.x - 0.5);
+  expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
+  expect(box.y + box.height).toBeLessThan(chipBox.y);
+  // Every workflow's name is there to read.
+  for (const name of await options(page).locator(".name").all()) {
+    const at = (await name.boundingBox())!;
+    expect(at.x).toBeGreaterThanOrEqual(conversation.x);
+  }
 });
 
 test("lists a workflow directed by an agent that is not here, saying why, and does not take it", async ({ page }) => {

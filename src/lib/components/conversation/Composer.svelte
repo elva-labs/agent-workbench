@@ -1095,6 +1095,7 @@
             onclose={closeMenu}
             pointer={byPointer}
             end
+            within={box}
             testid="workflow-menu"
             optionTestid="workflow-option"
           />
