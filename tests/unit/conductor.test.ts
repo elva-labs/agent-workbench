@@ -2108,6 +2108,48 @@ describe("waking an idle starter", () => {
     expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
   });
 
+  it("wakes a starter whose terminal answered the agent's queries, which are no keys of the user's", async () => {
+    idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    // Codex asks for the cursor on every resize, and the terminal answers.
+    typed("pty-0", "\x1b[?1;2c");
+    typed("pty-0", "\x1b[24;80R");
+    stops(kid);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+  });
+
+  it("wakes a starter whose permission prompt the user answered with keys, but not one they then typed on", async () => {
+    const starter = idleStarter();
+    const kid = atWork("pty-1", "sid-1");
+    // The turn that started the session asks for a permission, which the
+    // user grants in the terminal, and ends.
+    exact("caller-1", "prompt");
+    exact("caller-1", "permission");
+    flushSync();
+    typed("pty-0", "\r");
+    output(starter.key, WORK_BYTES);
+    exact("caller-1", "stop");
+    flushSync();
+    stops(kid);
+    await vi.advanceTimersByTimeAsync(WAKE_QUIET + 2000);
+    expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+    // Next time the user answers, then starts a line while the agent works.
+    exact("caller-1", "prompt");
+    exact("caller-1", "permission");
+    flushSync();
+    typed("pty-0", "1");
+    output(starter.key, WORK_BYTES);
+    typed("pty-0", "and th");
+    exact("caller-1", "stop");
+    kid.working = true;
+    flushSync();
+    stops(kid);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(1);
+    expect(unheard(starter)).toEqual([kid]);
+  });
+
   it("keeps holding a wake when the user typed again after the line the agent took in", async () => {
     idleStarter();
     const kid = atWork("pty-1", "sid-1");

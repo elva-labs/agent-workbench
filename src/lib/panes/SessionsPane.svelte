@@ -20,6 +20,7 @@
     close as closeSession,
     create,
     defaultAgent,
+    drafting,
     forProject,
     otherWay,
     historyFor,
@@ -538,7 +539,9 @@
     const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
     const woken = wakesSpent(starter)
       ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
-      : "";
+      : starter.kind === "terminal" && drafting(starter.key)
+        ? " The workbench does not wake it while keys of yours are on its line: it waits until you send a line or clear it with Ctrl+C."
+        : "";
     return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. ${hears}${woken}`;
   }
 

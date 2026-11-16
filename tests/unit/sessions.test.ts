@@ -1335,6 +1335,54 @@ describe("working, and waiting for you", () => {
     }
   });
 
+  it("takes none of the terminal's replies to the agent's queries for a key", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "codex");
+      started(session.key, "pty-replies", "replies-id");
+      vi.advanceTimersByTime(10_000);
+      // Its attributes, status, cursor position, window size, keyboard
+      // flags, a mode, a setting and a colour, alone and run together.
+      for (const reply of [
+        "\x1b[?1;2c",
+        "\x1b[>0;276;0c",
+        "\x1b[0n",
+        "\x1b[24;80R",
+        "\x1b[8;24;80t",
+        "\x1b[?0u",
+        "\x1b[?2004;1$y",
+        "\x1bP1$r0m\x1b\\",
+        "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\",
+        "\x1b]10;rgb:ffff/ffff/ffff\x07",
+        "\x1b[?1;2c\x1b[1;1R",
+      ])
+        typed("pty-replies", reply);
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
+      // A key that looks a little like one is still a key.
+      typed("pty-replies", "\x1b[1;5A");
+      expect(drafting(session.key)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes the keys that answer a permission prompt for the prompt's, not the line's", () => {
+    const session = create(A, null, "claude-code");
+    started(session.key, "pty-asks", "asks-id");
+    exact("asks-id", "prompt");
+    exact("asks-id", "permission");
+    typed("pty-asks", "2");
+    typed("pty-asks", "\r");
+    expect(drafting(session.key)).toBe(false);
+    // The agent goes on, as its screen says, and a key after that is the
+    // line's again.
+    output(session.key, WORK_BYTES);
+    expect(session.needs).toBeNull();
+    typed("pty-asks", "and th");
+    expect(drafting(session.key)).toBe(true);
+  });
+
   it("keeps the latest transition received before identification", () => {
     const session = create(A, null, "codex");
     started(session.key, "codex-pty", null);

@@ -1820,17 +1820,32 @@ const drafts = $state<Record<string, true>>({});
     going in or out, and the mouse. */
 // eslint-disable-next-line no-control-regex
 const REPORT = /^\x1b\[(?:I|O|M|<)/;
+/** The terminal's replies to what the agent asks of it, each sent whole:
+    its attributes (`ESC[?1;2c`), status (`ESC[0n`), cursor position
+    (`ESC[1;1R`), window size (`ESC[8;24;80t`), keyboard flags
+    (`ESC[?0u`), a mode (`ESC[?2004;1$y`), and a setting, its version or a
+    colour (DCS and OSC). Claude Code asks for its attributes as it starts,
+    and Codex for its cursor as it starts and on every resize. No key sends
+    any of these but Ctrl+F3, in the shape of a cursor report, which is
+    taken for one and so holds no wake. */
+const REPLY =
+  // eslint-disable-next-line no-control-regex
+  /^(?:\x1b\[[?>=]?[\d;]*[cnRt]|\x1b\[\?[\d;]*u|\x1b\[\??[\d;]*\$y|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
 /** Ctrl+C, which empties the agent's input or closes what it has open. */
 const EMPTIES = "\x03";
 
 /** The user typed into a pty. A line sent is the agent spoken to: from
-    then on what it writes back can be work. */
+    then on what it writes back can be work. A key while the agent asks
+    for a permission answers that prompt, and leaves nothing on the line:
+    the window hears no hook when the prompt closes, so the keys after it,
+    once the agent is seen at work again, are the line's as ever. */
 export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
+  if (REPORT.test(data) || REPLY.test(data)) return;
   if (data.includes("\r") || data.includes("\n")) session.engaged = true;
-  if (REPORT.test(data)) return;
   pressed.set(session.key, Date.now());
+  if (session.needs !== null) return;
   lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
   if (data.endsWith(EMPTIES)) delete drafts[session.key];
   else drafts[session.key] = true;
