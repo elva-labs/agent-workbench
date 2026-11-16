@@ -20,7 +20,7 @@ import {
 } from "$lib/workflows.svelte";
 import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
-import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
+import { AGENTS, agentLabel, agentProfile, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
@@ -28,7 +28,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
-import { bareName, mixesScripts, readsAsYou, shown } from "$lib/unseen";
+import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 
 /**
  * Every session this window has, live or finished.
@@ -55,7 +55,9 @@ export interface Session {
   /** What the session's tools name it by: chosen by the window, given to
       the agent's environment when it starts, and the same for a session
       resumed. Every call its tools make carries it, so the window knows
-      which session called. Not a secret: an identifier. */
+      which session called. Not a secret: an identifier. Never the agent's
+      id, but for a run from before there were tokens that the window took
+      up after a reload, until it stops. */
   token: string;
   /** The project this session belongs to, as an absolute path. */
   project: string;
@@ -140,6 +142,11 @@ export interface Session {
   /** The agent ended its turn with subagents of its own still running,
       whose report starts its next one: working, with a still screen. */
   delegated: boolean;
+  /** How the agent's last turn ended, where its hooks or its events say:
+      done, as the agent itself ended it, or cut short by the user. Null
+      while a turn runs, before the first, and where nothing says, as for
+      a terminal session without hooks. */
+  turnEnd: "done" | "cut" | null;
   /** When the row last changed what it says: started working, went quiet,
       asked, was looked at, ended. The palette and the chord to the next
       session that needs you order by it. */
@@ -210,7 +217,7 @@ export const sessions = $state({
   /** The token each session's tools name it by, with the project it runs
       in, by the agent's id for the session, kept between runs, so a session
       resumed is named as it was and still owns what was kept under its
-      token. */
+      token. Never the id itself. */
   tokens: {} as Record<string, KeptToken>,
   /** What is kept of the workflow each session follows, by session id. A
       session that follows none is not here. */
@@ -582,7 +589,7 @@ export function loadRemembered() {
       }
     }
   } catch {
-    // No token is kept, then: a session resumed is named by its id.
+    // No token is kept, then: a session resumed is given a new one.
   }
   try {
     const raw = localStorage.getItem(WORKFLOWS_KEY);
@@ -736,11 +743,12 @@ function pruneKept(project: string) {
     .filter(([id, kept]) => gone(id, kept.project))
     .map(([id]) => id);
   if (workflows.length === 0 && tokens.length === 0) return;
-  // What else is kept for them is kept under their tokens, which for a
-  // session from before there were tokens is its id.
-  const callers = [...new Set([...workflows, ...tokens])].map(
-    (id) => sessions.tokens[id]?.token ?? id,
-  );
+  // What else is kept for them is kept under their tokens, and for a
+  // session from before there were tokens under its id as well.
+  const ids = [...new Set([...workflows, ...tokens])];
+  const callers = [
+    ...new Set(ids.flatMap((id) => [sessions.tokens[id]?.token ?? id, id])),
+  ];
   for (const id of workflows) delete sessions.workflows[id];
   for (const id of tokens) delete sessions.tokens[id];
   if (workflows.length > 0) saveKept();
@@ -751,9 +759,18 @@ function pruneKept(project: string) {
 let forgotten: (tokens: string[]) => void = () => {};
 
 /** Hears the tokens of sessions gone from their project's history, whose
-    kept workflow or token went with them. */
+    kept workflow or token went with them, and their ids, under which a
+    session from before there were tokens kept what it ran. */
 export function onForgotten(handler: ((tokens: string[]) => void) | null) {
   forgotten = handler ?? (() => {});
+}
+
+let moving: (id: string, token: string) => void = () => {};
+
+/** Hears a session given its token, to move what is kept under its id
+    there. */
+export function onMoved(handler: ((id: string, token: string) => void) | null) {
+  moving = handler ?? (() => {});
 }
 
 /** The model a workflow's orchestrator runs on, as the agent's command
@@ -766,17 +783,60 @@ function orchestratorModel(workflow: Workflow): string | null {
 /**
  * The token a new row's tools name it by. A session resumed has the one it
  * had, kept by its id, so it is the same session to everything kept under
- * that token; one from before there were tokens has its id, which is what
- * was kept under it then. A fresh session has a new one, and so does a
- * session whose token a live row holds already: two rows never answer to
- * one token at once.
+ * that token. One with none kept, as a session from before there were
+ * tokens has, is given a new one, kept by its id at once. Either way what
+ * an earlier version kept under the id moves to the token, joined to what
+ * is there so that a move made again adds nothing. A fresh session has a
+ * new one, and so does a session whose token a live row holds already:
+ * two rows never answer to one token at once.
+ *
+ * An agent's id is never a token: the tools answer with ids and the
+ * sessions pane shows them, so a session named by its id could be called
+ * as by any agent that learned it.
  */
-function tokenFor(resumedFrom: string | null): string {
-  const kept =
-    resumedFrom === null ? null : (sessions.tokens[resumedFrom]?.token ?? resumedFrom);
-  if (kept !== null && !sessions.all.some((row) => row.token === kept && isLive(row)))
+function tokenFor(resumedFrom: string | null, project: string): string {
+  if (resumedFrom === null) return crypto.randomUUID();
+  // A run named by the id still runs: what is kept under the id is that
+  // run's until it stops, and moves at its own next start.
+  if (heldLive(resumedFrom)) return crypto.randomUUID();
+  const kept = keptToken(resumedFrom);
+  if (kept !== null) {
+    if (heldLive(kept)) return crypto.randomUUID();
+    moving(resumedFrom, kept);
     return kept;
-  return crypto.randomUUID();
+  }
+  // Kept before anything moves to it, so a move cut short is made again
+  // at the next start, to the same token.
+  const token = crypto.randomUUID();
+  sessions.tokens[resumedFrom] = { token, project };
+  saveTokens();
+  moving(resumedFrom, token);
+  return token;
+}
+
+/** The token kept for a session's id, when one is: never the id. */
+function keptToken(id: string): string | null {
+  const kept = sessions.tokens[id]?.token;
+  return kept === undefined || kept === id ? null : kept;
+}
+
+/** Whether a live row other than this one answers to this token. */
+function heldLive(token: string, except: string | null = null): boolean {
+  return sessions.all.some((row) => row.key !== except && row.token === token && isLive(row));
+}
+
+/**
+ * Gives a row that is about to start a process of its own a token no
+ * running process holds. A row taken up after the window was reloaded has
+ * the token of the run it took up, which for a session from before there
+ * were tokens is its id: that run keeps it, since its environment holds
+ * it, and the next start is given a token of its own, with what was kept
+ * under the id moved to it.
+ */
+export function renewToken(session: Session) {
+  if (session.id !== null && session.token === session.id)
+    session.token = tokenFor(session.id, session.project);
+  if (heldLive(session.token, session.key)) session.token = crypto.randomUUID();
 }
 
 /**
@@ -801,9 +861,14 @@ export function keepToken(session: Session) {
     return;
   }
   if (sessions.tokens[id]?.token === session.token) return;
-  // A session from before there were tokens is named by its id, which
-  // needs nothing kept.
-  if (session.token === id && sessions.tokens[id] === undefined) return;
+  // A run taken up after a reload that was named by its id goes on so
+  // until it stops; an id is never kept as a token, nor the one the row
+  // was resumed from.
+  if (session.token === id || session.token === session.resumedFrom) return;
+  // Nor is another row's while a run named by the id still has its row:
+  // what is kept under the id is that run's, and goes to the token its
+  // next start gives it.
+  if (sessions.all.some((row) => row.key !== session.key && row.token === id)) return;
   sessions.tokens[id] = { token: session.token, project: session.project };
   saveTokens();
 }
@@ -812,7 +877,7 @@ function saveTokens() {
   try {
     localStorage.setItem(TOKENS_KEY, JSON.stringify(sessions.tokens));
   } catch {
-    // Non-fatal: the session resumed after a restart is named by its id.
+    // Non-fatal: the session resumed after a restart is given a new token.
   }
 }
 
@@ -892,8 +957,8 @@ export function outsideFor(
  */
 export function historyLabel(transcript: Transcript): string {
   const known = sessions.names[transcript.id];
-  if (known !== undefined && !readsAsYou(known)) return shown(known);
-  if (transcript.title !== null && transcript.title !== "" && !readsAsYou(transcript.title))
+  if (known !== undefined && !reservedName(known)) return shown(known);
+  if (transcript.title !== null && transcript.title !== "" && !reservedName(transcript.title))
     return shown(transcript.title);
   return `session from ${ago(transcript.modified)}`;
 }
@@ -1017,20 +1082,33 @@ export function liveCount(project: string): number {
 
 /** A short label for the row: its name, the resumed id, or its number in
     the project. A name is the agent's or a caller's text, so what it holds
-    that cannot be seen is written out; and a name that reads as "You",
-    which is the user's alone, is not taken. */
+    that cannot be seen is written out; and a name that reads as "You" or
+    "Workbench", which are the user's and the workbench's alone, is not
+    taken. */
 export function label(session: Session): string {
-  if (session.title !== null && !readsAsYou(session.title)) return shown(session.title);
+  if (session.title !== null && !reservedName(session.title)) return shown(session.title);
   if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
   return `session ${session.ordinal}`;
 }
 
+/** Whether a name reads as an agent's own, as the window names an agent
+    that speaks or asks: Claude, Claude Code or Codex. A session never
+    takes one, so no request of a session another started can read as the
+    request of the agent on screen. */
+export function readsAsAgent(name: string): boolean {
+  // Its letters and digits alone, so no mark between the words gets past.
+  const letters = (text: string) => bareName(text).replace(/[^\p{L}\p{N}]/gu, "");
+  const bare = letters(name);
+  return AGENTS.some((id) => letters(agentProfile(id).name) === bare || letters(agentLabel(id)) === bare);
+}
+
 /** Whether a name reads as the name of another live session, `except`
-    aside, or mixes scripts, as a name made to pass for another's often
-    does: a session never takes one, so no message or row can pass for
-    another session's. */
+    aside, as the workbench's own or an agent's, or mixes scripts, as a
+    name made to pass for another's often does: a session never takes one,
+    so no message, row or request can pass for another session's, the
+    workbench's or an agent's. */
 export function nameTaken(name: string, except: string | null = null): boolean {
-  if (mixesScripts(name)) return true;
+  if (mixesScripts(name) || readsAsWorkbench(name) || readsAsAgent(name)) return true;
   const bare = bareName(name);
   return sessions.all.some(
     (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,
@@ -1420,9 +1498,12 @@ export function reopened(
   kind: SessionKind = "terminal",
   workflow: Workflow | null = null,
   resolve = true,
+  /** The token of a run the core may still be running from before the
+      window was reloaded, which the row takes up with it. */
+  running: string | null = null,
 ): Session {
   const live = added(
-    row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind),
+    row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind, running),
   );
   if (resolve) pending.add(live.key);
   return live;
@@ -1433,6 +1514,7 @@ export function reopened(
 export function wake(key: string) {
   const session = byKey(key);
   if (session?.status !== "dormant") return;
+  renewToken(session);
   session.status = "starting";
   changed(session);
 }
@@ -1448,11 +1530,12 @@ function row(
   status: SessionStatus,
   workflow: Workflow | null = null,
   kind: SessionKind = "terminal",
+  running: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
     key: `s${++counter}`,
-    token: tokenFor(resumedFrom),
+    token: running ?? tokenFor(resumedFrom, project),
     project,
     agent,
     kind,
@@ -1482,6 +1565,7 @@ function row(
     exact: false,
     needs: null,
     delegated: false,
+    turnEnd: null,
     changedAt: Date.now(),
     exitCode: null,
     error: null,
@@ -1794,12 +1878,89 @@ export function isViewed(session: Session): boolean {
   return attention.focused && sessions.active === session.key;
 }
 
+/** When the user last pressed a key in each session's terminal, by the
+    row's key. */
+const pressed = new Map<string, number>();
+/** The last two characters of the user's keys in each session's terminal,
+    by the row's key: whether the last was an Enter that sends the line. */
+const lastKeys = new Map<string, string>();
+/** The sessions whose terminal the user's keys may have left words in, by
+    the row's key: typed into since the agent last took a line in, as its
+    prompt hook says, or since Ctrl+C emptied the line. Enter is no sign the
+    line went: Ctrl+J, a backslash before Enter and Alt+Enter each add a
+    newline to the agent's input, Ctrl+U empties only the current line of
+    several, and a command such as /config opens a panel the next keys
+    would answer, with no prompt hook for any of them. */
+const drafts = $state<Record<string, true>>({});
+
+/** What a terminal sends on its own, which is no key of the user's: focus
+    going in or out, and the mouse. */
+// eslint-disable-next-line no-control-regex
+const REPORT = /^\x1b\[(?:I|O|M|<)/;
+/** The terminal's replies to what the agent asks of it, each sent whole:
+    its attributes (`ESC[?1;2c`), status (`ESC[0n`), cursor position
+    (`ESC[1;1R`), window size (`ESC[8;24;80t`), keyboard flags
+    (`ESC[?0u`), a mode (`ESC[?2004;1$y`), and a setting, its version or a
+    colour (DCS and OSC). Claude Code asks for its attributes as it starts,
+    and Codex for its cursor as it starts and on every resize. No key sends
+    any of these but Ctrl+F3, in the shape of a cursor report, which is
+    taken for one and so holds no wake. */
+const REPLY =
+  // eslint-disable-next-line no-control-regex
+  /^(?:\x1b\[[?>=]?[\d;]*[cnRt]|\x1b\[\?[\d;]*u|\x1b\[\??[\d;]*\$y|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
+/** Ctrl+C, which empties the agent's input or closes what it has open. */
+const EMPTIES = "\x03";
+
 /** The user typed into a pty. A line sent is the agent spoken to: from
-    then on what it writes back can be work. */
+    then on what it writes back can be work. A key while the agent asks
+    for a permission answers that prompt, and leaves nothing on the line:
+    the window hears no hook when the prompt closes, so the keys after it,
+    once the agent is seen at work again, are the line's as ever. */
 export function typed(ptyId: string, data: string) {
-  if (!data.includes("\r") && !data.includes("\n")) return;
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
-  if (session !== undefined) session.engaged = true;
+  if (session === undefined) return;
+  if (REPORT.test(data) || REPLY.test(data)) return;
+  if (data.includes("\r") || data.includes("\n")) session.engaged = true;
+  pressed.set(session.key, Date.now());
+  if (session.needs !== null) return;
+  lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
+  if (data.endsWith(EMPTIES)) delete drafts[session.key];
+  else drafts[session.key] = true;
+}
+
+/** The workbench typed a line into a pty and sent it, as `send` does: the
+    agent has been spoken to, by no key of the user's, and how its last
+    turn ended no longer says it is idle. A line that sets off no prompt
+    hook, a command such as /config, leaves that unknown until a turn of
+    the agent's ends. */
+export function spokenTo(ptyId: string) {
+  const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
+  if (session === undefined) return;
+  session.engaged = true;
+  session.turnEnd = null;
+}
+
+/** The agent in a terminal took a line in, as its prompt hook says. The
+    user's keys have left nothing on its line when the last of them was an
+    Enter that sends, not one after a backslash or Escape, which adds a
+    newline. */
+function tookLine(key: string) {
+  const last = lastKeys.get(key);
+  // eslint-disable-next-line no-control-regex
+  if (last === undefined || (last.endsWith("\r") && !/[\\\x1b]\r$/.test(last))) delete drafts[key];
+}
+
+/** Whether the user's keys may have left words on a session's terminal
+    line that they have not sent. */
+export function drafting(key: string): boolean {
+  return drafts[key] === true;
+}
+
+/** How long until the user's keys in a session's terminal have been still
+    for `quiet` milliseconds: nothing once they have. */
+export function keysStillIn(key: string, quiet: number, now = Date.now()): number {
+  const at = pressed.get(key);
+  return at === undefined ? 0 : Math.max(0, at + quiet - now);
 }
 
 /** Bytes arrived for a session. */
@@ -1910,6 +2071,19 @@ export function onWaiting(handler: ((session: Session) => void) | null) {
   waiting = handler;
 }
 
+let turning: (session: Session) => void = () => {};
+
+/** Who is told when a session's agent begins a turn, as its hooks or its
+    events say. */
+export function onTurn(handler: ((session: Session) => void) | null) {
+  turning = handler ?? (() => {});
+}
+
+/** A session's agent began a turn. */
+export function beganTurn(session: Session) {
+  turning(session);
+}
+
 let directed: (session: Session) => boolean = () => false;
 
 /** Who says whether another session answers for a session: one an
@@ -1966,22 +2140,24 @@ export function noted(key: string, text: string) {
 // bound also covers hooks from sessions outside this window.
 const pendingActivity = new Map<
   string,
-  { kind: SessionEvent["kind"]; note: string | null }
+  { kind: SessionEvent["kind"]; note: string | null; cut: boolean }
 >();
 
 function replayActivity(sessionId: string) {
   const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
-  if (pending !== undefined) exact(sessionId, pending.kind, pending.note);
+  if (pending !== undefined) exact(sessionId, pending.kind, pending.note, pending.cut);
 }
 
 /** A hook or rollout reports a turn transition. With a stop comes the
     first line of what the agent said, which the row takes when the agent
-    left no line of its own through its notify tool. */
+    left no line of its own through its notify tool, and whether the user
+    cut the turn short. */
 export function exact(
   sessionId: string,
   kind: SessionEvent["kind"],
   note: string | null = null,
+  cut = false,
 ) {
   // An integrated session's state comes from its own events, and the
   // hooks that fire for it are left alone.
@@ -1995,7 +2171,7 @@ export function exact(
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, { kind, note });
+    pendingActivity.set(sessionId, { kind, note, cut });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -2012,15 +2188,21 @@ export function exact(
       session.working = true;
       session.needs = null;
       session.delegated = false;
+      session.turnEnd = null;
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
       session.note = null;
+      tookLine(session.key);
       changed(session);
+      beganTurn(session);
       break;
     case "stop":
       session.working = false;
       session.needs = null;
       session.delegated = false;
+      // A turn the user cut short stays so, though a hook of the agent's
+      // own may call its end a stop as well.
+      session.turnEnd = cut || session.turnEnd === "cut" ? "cut" : "done";
       changed(session);
       if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
@@ -2128,6 +2310,9 @@ export function nextNeedingYou(): Session | null {
 /** Test seam: the counter is module state and rows outlive a component. */
 export function reset() {
   pendingActivity.clear();
+  pressed.clear();
+  lastKeys.clear();
+  for (const key of Object.keys(drafts)) delete drafts[key];
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
   for (const pulse of pulses.values()) {

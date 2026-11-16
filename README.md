@@ -36,7 +36,8 @@ state at a glance, and projects on other machines over ssh.
   See [hooks](docs/hooks.md).
 - **Orchestrator.** A session that starts and steers other sessions: it
   opens one per piece of work, in any open project and on a worktree of its
-  own, waits on them and answers for them. The sessions it starts fold away
+  own, waits on them and answers for them, and is woken when one of them
+  stops while it is idle. The sessions it starts fold away
   under their projects until one needs you. A workflow, turned on in the
   settings or picked when starting, holds it to steps, models and rounds of
   review. See [orchestrator](docs/orchestrator.md).

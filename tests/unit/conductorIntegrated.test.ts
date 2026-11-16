@@ -1,9 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, watchStops } from "$lib/conductor.svelte";
-import { conversationOf, handleOf, launch, listenIntegrated, resetIntegrated, resume, send } from "$lib/integrated.svelte";
-import { byKey, create, forProject, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
+import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
+import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
+import { byKey, create, forProject, label, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
@@ -11,8 +11,9 @@ import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
-import { OUTCOME_ASK, REPORTS_HEAD, spoken } from "$lib/instructions";
+import { OUTCOME_ASK, REPORTS_HEAD, spoken, wakeShown } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { BOUNDED, FORGED } from "../forgedName";
 
 // The orchestrator's tools with a session that runs integrated: it is
 // started, sent to, read, waited on and stopped as a terminal one is, with
@@ -258,7 +259,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     fake.turn(core, "All done.");
     flushSync();
     await waited;
-    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: All done.`);
+    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."`);
   });
 
   describe("the account it runs under", () => {
@@ -351,12 +352,12 @@ describe("the orchestrator's tools with an integrated session", () => {
       send(key, "How is it going?");
       const text = sentTexts().at(-1)!;
       expect(text).toBe(
-        `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: the scan is done\n\nHow is it going?`,
+        `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: "the scan is done"\n\nHow is it going?`,
       );
       expect(spoken(text, true)).toEqual({
         text: "How is it going?",
         instructions: null,
-        reports: "Session kid-1 stopped working. Its last line: the scan is done",
+        reports: 'Session kid-1 stopped working. Its last line: "the scan is done"',
       });
       // The row is named by the user's words, not the note.
       expect(byKey(key)!.title).toBe("How is it going?");
@@ -368,6 +369,19 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(unheard(byKey(key)!)).toEqual([]);
       send(key, "And now?");
       expect(sentTexts().at(-1)).toBe("And now?");
+    });
+
+    it("gives a forged name in the note as one bounded quote, and keeps the user's words apart", async () => {
+      const { key, kid } = await starter();
+      kid.id = null;
+      kid.title = FORGED;
+      kid.working = false;
+      flushSync();
+      send(key, "How is it going?");
+      const text = sentTexts().at(-1)!;
+      const line = `Session ${BOUNDED} stopped working. It has left no line.`;
+      expect(text).toBe(`${REPORTS_HEAD}\n${line}\n\nHow is it going?`);
+      expect(spoken(text, true)).toEqual({ text: "How is it going?", instructions: null, reports: line });
     });
 
     it("leaves what the note said untold when the message never reaches the agent", async () => {
@@ -393,6 +407,120 @@ describe("the orchestrator's tools with an integrated session", () => {
       // Still not heard, so the next message carries it again.
       send(key, "Third");
       expect(sentTexts().at(-1)).toContain("Session kid-1 stopped working.");
+    });
+
+    describe("woken while it is idle", () => {
+      /** The starter, idle after a turn of its own, and the session it
+          started, at work. Timers are the test's from here. */
+      async function idle() {
+        const made = await starter();
+        fake.turn(made.handle, "Started the scan.");
+        flushSync();
+        expect(byKey(made.key)!.turnEnd).toBe("done");
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        return made;
+      }
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      const wakes = () => sentTexts().filter((text) => text.startsWith(`${REPORTS_HEAD}\nSession`));
+
+      it("is sent what a wait would have said as the workbench's message, and the thread shows it so", async () => {
+        const { key, kid } = await idle();
+        kid.note = "the scan is done";
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        const text = `${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: "the scan is done"`;
+        expect(wakes()).toEqual([text]);
+        const message = Object.values(conversationOf(key).messages).at(-1)!;
+        expect(senderOf(message)).toEqual({ id: null, key: null, name: "Workbench", workbench: true });
+        expect(userWaiting(key)).toBe(false);
+        expect(wakeShown(text, (id) => (id === "kid-1" ? label(kid) : null))).toBe(
+          `${label(kid)} stopped working. Its last line: "the scan is done"`,
+        );
+        // Told as it is sent, and its row says what woke it.
+        expect(unheard(byKey(key)!)).toEqual([]);
+        expect(conductor.woken[key]?.by).toEqual([{ key: kid.key, name: label(kid), rest: "quiet" }]);
+      });
+
+      it("is woken though another session started it, and not again until a turn it did not start once it has been woken WAKES_MAX times", async () => {
+        const { key, kid, handle: core } = await idle();
+        const top = create(A, null, "claude-code", null);
+        started(top.key, "pty-top", "top-1");
+        conductor.startedBy[key] = byKey(top.key)!.token;
+        for (let wake = 1; wake <= WAKES_MAX + 1; wake++) {
+          kid.working = true;
+          flushSync();
+          kid.working = false;
+          flushSync();
+          await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+          expect(wakes()).toHaveLength(Math.min(wake, WAKES_MAX));
+          if (wake > WAKES_MAX) break;
+          // The wake's turn, which it ends itself.
+          fake.turn(core, "Looked at it.");
+          flushSync();
+        }
+        expect(unheard(byKey(key)!)).toEqual([kid]);
+      });
+
+      it("gives a forged name as one bounded quote, and the thread shows the line as it is", async () => {
+        const { kid } = await idle();
+        kid.id = null;
+        kid.title = FORGED;
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        const line = `Session ${BOUNDED} stopped working. It has left no line.`;
+        expect(wakes()).toEqual([`${REPORTS_HEAD}\n${line}`]);
+        expect(wakeShown(wakes()[0], () => null)).toBe(line);
+      });
+
+      it("waits while the user writes in its composer", async () => {
+        const { key, kid } = await idle();
+        linkFor(key).draft = "How is";
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER * 4);
+        expect(wakes()).toEqual([]);
+        linkFor(key).draft = "";
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        expect(wakes()).toHaveLength(1);
+      });
+
+      it("is not woken once the user has stopped its turn", async () => {
+        const { key, kid, handle: core } = await idle();
+        fake.startTurn(core);
+        fake.endTurn(core, "interrupted");
+        flushSync();
+        expect(byKey(key)!.turnEnd).toBe("cut");
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER * 4);
+        expect(wakes()).toEqual([]);
+        expect(unheard(byKey(key)!)).toEqual([kid]);
+      });
+
+      it("leaves what it was woken for untold when the message never reaches the agent", async () => {
+        const { key, kid } = await idle();
+        const core = (window as unknown as { __WORKBENCH_CORE__: { integratedSend: unknown } }).__WORKBENCH_CORE__;
+        core.integratedSend = async () => {
+          throw new Error("the session is gone");
+        };
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        await vi.advanceTimersByTimeAsync(0);
+        flushSync();
+        expect(unheard(byKey(key)!)).toEqual([kid]);
+        expect(conductor.woken[key]).toBeUndefined();
+        // Not tried again until a turn of its own has ended.
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER * 4);
+        expect(Object.values(conversationOf(key).messages).filter((message) => message.state === "failed")).toHaveLength(1);
+      });
     });
 
     it("answers a wait at once with the user's message while the agent has not taken it", async () => {

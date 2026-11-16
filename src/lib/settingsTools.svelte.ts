@@ -60,7 +60,7 @@ import {
   type Keymap,
   type PresetName,
 } from "$lib/keys.svelte";
-import { byToken, label } from "$lib/sessions.svelte";
+import { label, runningByToken } from "$lib/sessions.svelte";
 import { AGENT_ORDER, CODEX_DEFAULT, modelsOf } from "$lib/models";
 import {
   changed,
@@ -651,8 +651,10 @@ function changesOf(next: Next): Change[] {
   return changes;
 }
 
+/** What the user is told is asking: the running session the call's token
+    names, or an agent, for a call that names none the window runs. */
 function callerOf(request: SettingsRequest): string {
-  const session = byToken(request.session);
+  const session = runningByToken(request.session);
   return session === null ? "An agent" : label(session);
 }
 

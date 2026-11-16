@@ -205,7 +205,9 @@ describe("a change", () => {
   });
 
   it("waits for the user, and is made when they allow it", async () => {
-    sessions.all = [{ id: "s-1", key: "k1", token: "t-1", title: "Tidy the docs" } as never];
+    sessions.all = [
+      { id: "s-1", key: "k1", token: "t-1", title: "Tidy the docs", status: "running" } as never,
+    ];
     // The session's tools name it by its token.
     const done = handle(request("settings_change", { palette: "amber", reason: "warmer" }, "t-1"));
     await settle();
@@ -223,6 +225,21 @@ describe("a change", () => {
     expect(sets).toContainEqual({ palette: "amber" });
     expect(answers[0].content).toMatch(/allowed the change\. Palette is now Amber/);
     expect(settingsAsk.undo?.caller).toBe("Tidy the docs");
+    sessions.all = [];
+  });
+
+  it("names no session for a call naming its agent's id, or the token of one that has stopped", async () => {
+    sessions.all = [
+      { id: "s-1", key: "k1", token: "t-1", title: "Tidy the docs", status: "running" } as never,
+      { id: "s-2", key: "k2", token: "t-2", title: "Old work", status: "exited" } as never,
+    ];
+    for (const named of ["s-1", "t-2"]) {
+      const done = handle(request("settings_change", { palette: "amber" }, named));
+      await settle();
+      expect(settingsAsk.asking?.caller).toBe("An agent");
+      declineChange();
+      await done;
+    }
     sessions.all = [];
   });
 

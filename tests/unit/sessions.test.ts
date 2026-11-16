@@ -31,6 +31,8 @@ import {
   onWaiting,
   unreadCount,
   typed,
+  drafting,
+  keysStillIn,
   GRACE_MS,
   WORK_WINDOWS,
   viewed,
@@ -71,6 +73,8 @@ import {
   launch,
   workflowFor,
   byToken,
+  runningByToken,
+  wake,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import {
@@ -1033,11 +1037,47 @@ describe("the token a session's tools name it by", () => {
     expect(spawned.at(-1)).toMatchObject({ session: "cx-1", token });
   });
 
-  it("is the agent's id for a session from before there were tokens, which needs nothing kept", () => {
+  it("is a new one for a session from before there were tokens, kept by its id at once", async () => {
     const back = create(A, "old-1");
-    expect(back.token).toBe("old-1");
-    started(back.key, "pty-1", "old-1");
-    expect(sessions.tokens["old-1"]).toBeUndefined();
+    expect(back.token).not.toBe("old-1");
+    expect(sessions.tokens["old-1"]).toEqual({ token: back.token, project: A });
+    expect(JSON.parse(localStorage.getItem("workbench.tokens")!)["old-1"].token).toBe(back.token);
+    await launch(back.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "old-1", token: back.token });
+    expect(sessions.tokens["old-1"]?.token).toBe(back.token);
+    // Resumed again, after a restart too, it has the same one.
+    close(back.key);
+    reset();
+    loadRemembered();
+    expect(create(A, "old-1").token).toBe(back.token);
+  });
+
+  it("is never an agent's id, even one kept as a token by mistake", () => {
+    localStorage.setItem("workbench.tokens", JSON.stringify({ "old-2": { token: "old-2", project: A } }));
+    loadRemembered();
+    const back = create(A, "old-2");
+    expect(back.token).not.toBe("old-2");
+    expect(sessions.tokens["old-2"]?.token).toBe(back.token);
+    expect(byToken("old-2")).toBeNull();
+  });
+
+  it("is kept for a run taken up after a reload until it stops, and the next start has a new one", () => {
+    // The core still runs the session, started with its id as its token by
+    // the version before.
+    const row = reopened(A, "old-3", "claude-code", null, null, null, "integrated", null, true, "old-3");
+    row.status = "running";
+    expect(row.token).toBe("old-3");
+    expect(runningByToken("old-3")?.key).toBe(row.key);
+    // The id is never kept as a token.
+    expect(sessions.tokens["old-3"]).toBeUndefined();
+    row.status = "exited";
+    expect(runningByToken("old-3")).toBeNull();
+    // Woken, or started again in place, it is given a token of its own.
+    row.status = "dormant";
+    wake(row.key);
+    expect(row.token).not.toBe("old-3");
+    expect(sessions.tokens["old-3"]?.token).toBe(row.token);
+    expect(byToken("old-3")).toBeNull();
   });
 
   it("is kept for neither of two live sessions found to have one id, and the session resumed by it is neither", () => {
@@ -1262,6 +1302,123 @@ describe("working, and waiting for you", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("says how the last turn ended: done, cut short where the agent says so, and nothing while one runs", () => {
+    const session = create(A, null, "codex");
+    started(session.key, "codex-pty", "codex-id");
+    expect(session.turnEnd).toBeNull();
+    exact("codex-id", "prompt");
+    expect(session.turnEnd).toBeNull();
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("done");
+    exact("codex-id", "prompt");
+    expect(session.turnEnd).toBeNull();
+    // Cut short, and a hook that calls the same end a stop leaves it so,
+    // until the next turn.
+    exact("codex-id", "stop", null, true);
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("cut");
+    expect(session.working).toBe(false);
+    exact("codex-id", "prompt");
+    exact("codex-id", "stop");
+    expect(session.turnEnd).toBe("done");
+  });
+
+  it("knows when the user's keys may have left words on a terminal's line, and when they last pressed one", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "claude-code");
+      started(session.key, "pty-keys", "keys-id");
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
+      typed("pty-keys", "fix the");
+      expect(drafting(session.key)).toBe(true);
+      expect(keysStillIn(session.key, 5000)).toBe(5000);
+      vi.advanceTimersByTime(2000);
+      expect(keysStillIn(session.key, 5000)).toBe(3000);
+      // Enter alone is no sign the line went: the agent's prompt hook is.
+      typed("pty-keys", "\r");
+      expect(drafting(session.key)).toBe(true);
+      exact("keys-id", "prompt");
+      expect(drafting(session.key)).toBe(false);
+      // A newline, by Ctrl+J, a backslash before Enter or Alt+Enter, is
+      // still the line, and the prompt hook of a turn something else began
+      // leaves it.
+      for (const keys of [["more", "\n"], ["more", "\\", "\r"], ["more", "\x1b\r"]]) {
+        for (const key of keys) typed("pty-keys", key);
+        exact("keys-id", "prompt");
+        expect(drafting(session.key)).toBe(true);
+        typed("pty-keys", "\x03");
+        expect(drafting(session.key)).toBe(false);
+      }
+      // Ctrl+U empties one line of several, and leaves the rest.
+      typed("pty-keys", "a\nb\x15");
+      expect(drafting(session.key)).toBe(true);
+      // Ctrl+C empties the line; Backspace and the arrows may leave words;
+      // what the terminal sends on its own, focus and the mouse, is no key
+      // of the user's.
+      typed("pty-keys", "\x03");
+      expect(drafting(session.key)).toBe(false);
+      typed("pty-keys", "\x1b[A");
+      expect(drafting(session.key)).toBe(true);
+      typed("pty-keys", "\x03");
+      vi.advanceTimersByTime(10_000);
+      typed("pty-keys", "\x1b[I");
+      typed("pty-keys", "\x1b[<0;10;5M");
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes none of the terminal's replies to the agent's queries for a key", () => {
+    vi.useFakeTimers();
+    try {
+      const session = create(A, null, "codex");
+      started(session.key, "pty-replies", "replies-id");
+      vi.advanceTimersByTime(10_000);
+      // Its attributes, status, cursor position, window size, keyboard
+      // flags, a mode, a setting and a colour, alone and run together.
+      for (const reply of [
+        "\x1b[?1;2c",
+        "\x1b[>0;276;0c",
+        "\x1b[0n",
+        "\x1b[24;80R",
+        "\x1b[8;24;80t",
+        "\x1b[?0u",
+        "\x1b[?2004;1$y",
+        "\x1bP1$r0m\x1b\\",
+        "\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\",
+        "\x1b]10;rgb:ffff/ffff/ffff\x07",
+        "\x1b[?1;2c\x1b[1;1R",
+      ])
+        typed("pty-replies", reply);
+      expect(drafting(session.key)).toBe(false);
+      expect(keysStillIn(session.key, 5000)).toBe(0);
+      // A key that looks a little like one is still a key.
+      typed("pty-replies", "\x1b[1;5A");
+      expect(drafting(session.key)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("takes the keys that answer a permission prompt for the prompt's, not the line's", () => {
+    const session = create(A, null, "claude-code");
+    started(session.key, "pty-asks", "asks-id");
+    exact("asks-id", "prompt");
+    exact("asks-id", "permission");
+    typed("pty-asks", "2");
+    typed("pty-asks", "\r");
+    expect(drafting(session.key)).toBe(false);
+    // The agent goes on, as its screen says, and a key after that is the
+    // line's again.
+    output(session.key, WORK_BYTES);
+    expect(session.needs).toBeNull();
+    typed("pty-asks", "and th");
+    expect(drafting(session.key)).toBe(true);
   });
 
   it("keeps the latest transition received before identification", () => {
@@ -1976,16 +2133,22 @@ describe("a name the agent or a caller gave", () => {
     expect(byKey(row.key)!.note).toBe("done ⟨U+200B⟩⟨U+2066⟩now");
   });
 
-  it("is never You, which the thread keeps for the user", () => {
+  it("is never You or Workbench, which the thread keeps for the user and the workbench", () => {
     const row = create("/p");
-    for (const title of ["You", "you", " YOU ", "\u200byou\u200b", "“You”"]) {
+    for (const title of ["You", "you", " YOU ", "\u200byou\u200b", "“You”", "Workbench", " workbench ", "\u200bWORKBENCH"]) {
       row.title = title;
       expect(label(row)).toBe(`session ${row.ordinal}`);
     }
     row.title = "Young";
     expect(label(row)).toBe("Young");
+    row.title = "Workbench docs";
+    expect(label(row)).toBe("Workbench docs");
     const past = { id: "abc12345-0000", title: "you", modified: 0 } as Transcript;
     expect(historyLabel(past)).toBe("session from " + ago(0));
+    expect(historyLabel({ ...past, title: "Workbench" })).toBe("session from " + ago(0));
+    // Nor is it a name a session can take.
+    expect(nameTaken("Workbench")).toBe(true);
+    expect(nameTaken("Workbench docs", row.key)).toBe(false);
   });
 });
 
@@ -2217,7 +2380,10 @@ describe("following a workflow", () => {
     expect(Object.keys(sessions.tokens).sort()).toEqual(["elsewhere", "here"]);
     // What their workflows ran, kept under their tokens, is let go of with
     // them.
-    expect(heard.map((tokens) => [...tokens].sort())).toEqual([["old", "token-gone", "token-plain"]]);
+    // So is what a session from before there were tokens kept under its id.
+    expect(heard.map((tokens) => [...tokens].sort())).toEqual([
+      ["gone", "old", "plain", "token-gone", "token-plain"],
+    ]);
     expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
     expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
   });

@@ -2,9 +2,13 @@
   import { coversBrowser } from "$lib/browser.svelte";
   import { accountWords, allow, conductor, once, refuse, roundQuestion } from "$lib/conductor.svelte";
   import { returnFocus } from "$lib/layout.svelte";
+  import { roundDockedIn } from "$lib/docked.svelte";
   import Plain from "$lib/components/conversation/Plain.svelte";
 
   let ask = $derived(conductor.asking);
+  /** A round past the limit docks in its integrated session while that is
+      on screen, and is asked here otherwise. */
+  let docked = $derived(roundDockedIn() !== null);
 
   /** The buttons go with the question, and with them the keyboard the click
       gave them: the pane that has the focus state takes it back. */
@@ -17,6 +21,7 @@
 {#if ask !== null && ask.round !== null}
   <!-- A round of review past what the workflow gives a piece: the user's
        yes lets this one through. -->
+  {#if !docked}
   <div class="ask" role="alertdialog" aria-label="Another round of review" use:coversBrowser data-testid="conduct-ask">
     <p class="title">{ask.caller} wants another round of {ask.round.step}</p>
     <p class="where">
@@ -32,6 +37,7 @@
       <button class="later" onclick={() => answer(refuse)} data-testid="conduct-no">Stop at the limit</button>
     </div>
   </div>
+  {/if}
 {:else if ask !== null}
   <div
     class="ask"

@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
-  import { reportsShown, spoken } from "$lib/instructions";
+  import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
@@ -533,6 +533,11 @@
    */
   function look() {
     if (scroller === null || box === null || !windowed) return;
+    // What moved under the reader since the thread last looked is put back
+    // before the place is taken again. A browser tells of a scroll at the
+    // frame after it, and rows can move in between: a type size, a font or
+    // a width coming in.
+    if (!atFoot()) keep();
     const view = scroller.getBoundingClientRect();
     const nodes = rowNodes();
     anchor = null;
@@ -633,19 +638,20 @@
     win = next;
   }
 
-  /** Puts the row at the top of the view back where it stood, unless the
-      user scrolled since the thread was looked at, which is where they
-      want to be. While the user scrolls, the space above the rows drawn
-      takes the change where it can: a scroll set then would stop theirs
-      in WebKit. */
+  /** Puts what stood at the top of the view back where it stood when the
+      rows moved under it since the thread was looked at. A scroll since
+      then, heard yet or not, is where the view is meant to be, and stays.
+      While the user scrolls, the space above the rows drawn takes the
+      change where it can: a scroll set then would stop theirs in WebKit. */
   function keep() {
-    if (scroller === null || anchor === null || scroller.scrollTop !== lookedTop) return;
+    if (scroller === null || anchor === null) return;
     const node = box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(anchor.key)}"]`);
     if (node === null || node === undefined) return;
     // The block that stood there, or the row it was in when that block has
     // been drawn again since.
     const [kept, offset] = node.contains(anchor.block) ? [anchor.block, anchor.blockOffset] : [node, anchor.offset];
-    const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+    const scrolled = scroller.scrollTop - lookedTop;
+    const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset + scrolled;
     if (Math.abs(moved) < 0.5) return;
     const scrolling = dragging || performance.now() - scrolledBy < 1000;
     if (scrolling && range().from > 0 && space.above - moved >= 0) {
@@ -653,9 +659,10 @@
       paint();
       return;
     }
+    const was = scroller.scrollTop;
     scroller.scrollTop += moved;
     ownTop = scroller.scrollTop;
-    lookedTop = scroller.scrollTop;
+    lookedTop += scroller.scrollTop - was;
   }
 
   // Once the rows drawn or the entries change: the foot while the thread
@@ -962,10 +969,16 @@
   {/if}
 {/snippet}
 
+<!-- A message to the agent: the user's, another session's under its name,
+     or the workbench's own, sent to a session that was idle, which says
+     what the sessions it started did, each by the name its row has. -->
 {#snippet userMessage(said: Message)}
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
-  {@const words = spoken(said.text, from === null)}
+  {@const words = from?.workbench
+    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null }
+    : spoken(said.text, from === null)}
+  {@const putBack = from?.workbench ? undefined : onPutBack}
   <article
     class="msg you"
     class:from={from !== null}
@@ -973,7 +986,7 @@
     class:dropped={said.state === "dropped" || said.state === "failed"}
     data-testid="user-message"
     data-state={said.state}
-    data-from={from?.id}
+    data-from={from?.workbench ? "workbench" : from?.id}
     data-copy-host="message"
   >
     <header class="who">
@@ -1044,15 +1057,15 @@
     {:else if said.state === "dropped"}
       <p class="state bad">
         Not answered{#if said.error}: <Plain text={said.error} />{/if}
-        {#if onPutBack}
-          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+        {#if putBack}
+          <button class="link" tabindex="-1" data-thread-item onclick={() => putBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {:else if said.state === "failed"}
       <p class="state bad">
         Not sent{#if said.error}: <Plain text={said.error} />{/if}
-        {#if onPutBack}
-          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+        {#if putBack}
+          <button class="link" tabindex="-1" data-thread-item onclick={() => putBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {/if}

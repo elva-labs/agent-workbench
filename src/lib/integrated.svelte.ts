@@ -2,8 +2,8 @@ import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { unsent, type Sent } from "$lib/mention";
 import { mentionedIn } from "$lib/mentioned.svelte";
-import { readsAsYou } from "$lib/unseen";
-import { senderOf, sentAt, sentBy, starterOf } from "$lib/senders.svelte";
+import { reservedName } from "$lib/unseen";
+import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { agentProfile } from "$lib/agent.svelte";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
@@ -21,10 +21,12 @@ import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import {
   nameTaken,
   adopt,
+  beganTurn,
   byKey,
   failed,
   followsAgain,
   keepToken,
+  renewToken,
   loadHistory,
   named,
   noted,
@@ -133,6 +135,11 @@ export function conversationOf(key: string): Conversation {
   return linkFor(key).conversation;
 }
 
+/** The row's link, when one was made for it; never makes one. */
+export function linkOf(key: string): Link | null {
+  return links.get(key) ?? null;
+}
+
 /** The core's id for a row's session, while it runs. */
 export function handleOf(key: string): string | null {
   return links.get(key)?.handle ?? null;
@@ -215,6 +222,15 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       break;
     case "state":
       settle(session, body.state, before, link);
+      break;
+    case "turnStarted":
+      session.turnEnd = null;
+      beganTurn(session);
+      break;
+    case "turnEnded":
+      // Interrupted is the user's stop; a turn that failed ended neither
+      // way.
+      session.turnEnd = body.outcome === "done" ? "done" : body.outcome === "interrupted" ? "cut" : null;
       break;
     case "ended":
       ended(session, link, body.code, body.clean);
@@ -421,6 +437,7 @@ export async function resume(key: string): Promise<void> {
 }
 
 function again(session: Session) {
+  renewToken(session);
   session.status = "starting";
   session.error = null;
   session.exitCode = null;
@@ -452,7 +469,12 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const session = byKey(key);
       if (
         session === null ||
-        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id)
+        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id) ||
+        // A row named by its id takes up only a run that has said that id:
+        // one that has not may be a newer session the core numbered the
+        // same, and the row would be a running session named by an id no
+        // process of it holds.
+        (snapshot.ready === null && session.id !== null && session.token === session.id)
       )
         throw new Error("another session");
       await earlier;
@@ -503,21 +525,25 @@ export function notesFrom(how: (key: string) => Note | null) {
   noteFor = how;
 }
 
-/** The notes in messages the agent has not taken yet, by the message's id,
-    with the row each went to. */
-const notes = new Map<string, { key: string; note: Note }>();
+/** What follows a message the agent has not taken yet, by the message's
+    id, with the row it went to: what happens once the agent takes it into
+    a turn, and what happens when it never reaches the agent. */
+const notes = new Map<string, { key: string; taken: () => void; lost: () => void }>();
 
-/** Counts a note told once the agent has taken its message into a turn,
-    and lets it go untold when the message never reaches the agent: it
-    failed, was dropped, or the session went first. */
+/** Settles what follows each message the agent has taken into a turn, or
+    that never reaches it: it failed, was dropped, or the session went
+    first. */
 function settleNotes(key: string, link: Link | undefined) {
   for (const [id, held] of [...notes]) {
     if (held.key !== key) continue;
     const state = link?.conversation.messages[id]?.state;
     if (state === "taken") {
       notes.delete(id);
-      held.note.deliver();
-    } else if (state === undefined || state === "dropped" || state === "failed") notes.delete(id);
+      held.taken();
+    } else if (state === undefined || state === "dropped" || state === "failed") {
+      notes.delete(id);
+      held.lost();
+    }
   }
 }
 
@@ -531,6 +557,23 @@ export function userWaiting(key: string): boolean {
       (message.state === "sending" || message.state === "queued" || message.state === "sent") &&
       senderOf(message) === null,
   );
+}
+
+/** Whether the user is writing to this session: words or images in its
+    composer, or a message of theirs that waits for the agent. */
+export function userWriting(key: string): boolean {
+  const link = links.get(key);
+  if (link === undefined) return false;
+  return link.draft.trim() !== "" || link.images.length > 0 || userWaiting(key);
+}
+
+/** Sends the workbench's own message to an idle session, which the thread
+    shows as the workbench's. `lost` runs when it never reaches the agent.
+    Null when there is no agent to send it to. */
+export function sendAsWorkbench(key: string, text: string, lost: () => void): string | null {
+  const id = send(key, text, [], WORKBENCH);
+  if (id !== null) notes.set(id, { key, taken: () => {}, lost });
+  return id;
 }
 
 /** Sends the user's message under an id of the window's own. A row with no
@@ -555,7 +598,7 @@ export function send(
   const id = crypto.randomUUID();
   mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
-  if (note !== null) notes.set(id, { key, note });
+  if (note !== null) notes.set(id, { key, taken: note.deliver, lost: () => {} });
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
@@ -563,8 +606,8 @@ export function send(
   if (from !== null) sentBy(id, from);
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a
-  // started session's prompt.
-  if (session.title === null) {
+  // started session's prompt. The workbench's own message names nothing.
+  if (session.title === null && from !== WORKBENCH) {
     const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
       .find((candidate) => candidate.trim() !== "")
@@ -572,7 +615,7 @@ export function send(
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
     const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
-    if (title !== null && !nameTaken(title, key) && !readsAsYou(title)) named(key, title);
+    if (title !== null && !nameTaken(title, key) && !reservedName(title)) named(key, title);
   }
   core()
     .integratedSend(link.handle, id, text, images)

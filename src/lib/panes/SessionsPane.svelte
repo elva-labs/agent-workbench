@@ -20,6 +20,7 @@
     close as closeSession,
     create,
     defaultAgent,
+    drafting,
     forProject,
     otherWay,
     historyFor,
@@ -60,7 +61,15 @@
     ownFor,
     parentOf,
   } from "$lib/orchestrator.svelte";
-  import { placeTextOf, startedFor, unheard } from "$lib/conductor.svelte";
+  import {
+    placeTextOf,
+    startedFor,
+    unheard,
+    WAKES_MAX,
+    wakesSpent,
+    wokenBy,
+    type Woken,
+  } from "$lib/conductor.svelte";
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
@@ -529,7 +538,35 @@
       starter.kind === "integrated" ||
       isInstalled(starter.project) ||
       starter.project === orchestrator.dir;
-    return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. It hears on its next wait${told ? ", or with your next message" : ""}.`;
+    const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
+    const woken = wakesSpent(starter)
+      ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
+      : starter.kind === "terminal" && drafting(starter.key)
+        ? " The workbench does not wake it while keys of yours are on its line: it waits until you send a line or clear it with Ctrl+C."
+        : "";
+    return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. ${hears}${woken}`;
+  }
+
+  /** What a woken starter's row says woke it: the session, by the name its
+      row has now, or had then, or how many sessions when there were more.
+      Short of room the name is cut; the count never is. */
+  function wokenWords(woken: Woken): { name: string | null; count: string | null } {
+    return woken.by.length === 1
+      ? { name: wokenName(woken.by[0]), count: null }
+      : { name: null, count: `${woken.by.length} sessions` };
+  }
+
+  function wokenName(by: Woken["by"][number]): string {
+    const row = byKey(by.key);
+    return row === null ? by.name : label(row);
+  }
+
+  function wokenTitle(starter: Session, woken: Woken): string {
+    const what = (by: Woken["by"][number]) =>
+      `${wokenName(by)} ${by.rest === "ended" ? "ended" : by.rest === "permission" ? "asked for permission" : "stopped"}`;
+    const list = woken.by.map(what);
+    const said = list.length === 1 ? list[0] : `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
+    return `${label(starter)} was idle, so the workbench sent it what happened: ${said}.`;
   }
 
   function toggleKids(key: string) {
@@ -1188,6 +1225,7 @@
 {#snippet sessionRow(session: Session)}
   {@const kids = childrenOf(session)}
   {@const news = unheard(session)}
+  {@const woken = wokenBy(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
   {@const line = folded
     ? startedWords(kids)
@@ -1231,6 +1269,7 @@
             class="note"
             class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
             class:first-say={news.length > 0}
+            class:shares={!folded && news.length === 0 && woken !== null}
             title={line}
             data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
           >
@@ -1255,6 +1294,20 @@
                   class:permission={kid.needs === "permission"}
                 ></span>{/each}
             </span>
+          {:else if news.length === 0 && woken !== null}
+            <!-- The workbench woke it, idle, with what the sessions it
+                 started did: which, quietly where the model stands, until
+                 the user looks at it with the wake's turn over, or a turn of
+                 theirs begins. -->
+            {@const words = wokenWords(woken)}
+            <span
+              class="meta woken"
+              class:counted={words.count !== null}
+              title={wokenTitle(session, woken)}
+              data-testid="starter-woken"
+              ><span class="woken-by">{"woken by "}</span
+              >{#if words.name !== null}<span class="woken-name">{words.name}</span>{:else}{words.count}{/if}</span
+            >
           {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
           {/if}
@@ -1263,7 +1316,9 @@
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
       <span class="state told"
-        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}</span
+        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
+            woken,
+          ).name ?? wokenWords(woken).count}{/if}</span
       >
     </button>
     {#if kids.length > 0}
@@ -2627,6 +2682,38 @@
     padding-left: 10px;
     white-space: nowrap;
     color: var(--ink-3);
+  }
+
+  /* What woke a starter gives way before the line beside it, down to
+     "woken by" and the first letters of the name; how many sessions woke
+     it is never cut. Its shrink so outweighs the line's that the line
+     gives not a fraction of a pixel, which would cut its last letter,
+     until the mark is down to its least. */
+  .second .note.shares {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .meta.woken {
+    flex: 0 1000 auto;
+    min-width: calc(13ch + 10px);
+    overflow: hidden;
+    gap: 0;
+  }
+
+  .meta.woken.counted {
+    flex: none;
+  }
+
+  .woken-by {
+    flex: none;
+    white-space: pre;
+  }
+
+  .woken-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* A starter keeps the end of its second line for its chevron. */
