@@ -378,6 +378,7 @@ const MAC_KEYS: Record<string, string> = {
   ArrowDown: "↓",
   ArrowLeft: "←",
   ArrowRight: "→",
+  Enter: "↩",
   " ": "Space",
 };
 

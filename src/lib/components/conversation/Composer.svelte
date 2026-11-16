@@ -31,6 +31,8 @@
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
   import { shown } from "$lib/unseen";
+  import { actionOf, chordFromEvent } from "$lib/keys.svelte";
+  import { isMac } from "$lib/platform";
 
   /**
    * Where the user writes to the agent. It takes several lines, files and
@@ -99,6 +101,14 @@
     /** Whether the workflow can still be chosen: nothing has been said in
         the session yet. */
     choosable?: boolean;
+    /** Sends the messages that wait now, or with `written` makes what is
+        about to be sent go now with them; false when they cannot go now. */
+    onSendNow?: (written: boolean) => boolean;
+    /** Takes the newest of the user's waiting messages back into the
+        composer; false when there is none to take. */
+    onTakeBack?: () => boolean;
+    /** What the composer says of the messages that wait, or null. */
+    nowHint?: string | null;
   }
 
   let {
@@ -118,6 +128,9 @@
     alone = agent,
     workflow = null,
     choosable = false,
+    onSendNow,
+    onTakeBack,
+    nowHint = null,
   }: Props = $props();
 
   let link = $derived(linkFor(sessionKey));
@@ -494,16 +507,19 @@
     if (digit !== null && link.draft.trim() !== digit) digit = null;
   });
 
-  function submit() {
-    if (!ready || !hasWords || unlisted) return;
+  /** Sends what is written, or holds it to send once the session can take
+      it; says whether a message goes. A command, such as compact, is no
+      message. */
+  function submit(): boolean {
+    if (!ready || !hasWords || unlisted) return false;
     if (reading > 0 || link.restarting) {
       held = true;
-      return;
+      return true;
     }
     const lone = link.draft.trim();
     if (answers && link.images.length === 0 && /^[0-9]$/.test(lone) && digit !== lone) {
       digit = lone;
-      return;
+      return false;
     }
     digit = null;
     const asked =
@@ -517,7 +533,7 @@
       void compact(sessionKey, asked.rest).then((done) => {
         if (!done && held.draft === "") held.draft = typed;
       });
-      return;
+      return false;
     }
     const sent = outgoing(
       link.draft,
@@ -525,22 +541,44 @@
       link.files.map((file) => file.path),
     );
     const id = send(sessionKey, sent.text, link.images, null, sent.mentions);
-    if (id === null) return;
+    if (id === null) return false;
     notice = null;
     link.draft = "";
     link.images = [];
     link.mentions = [];
     link.files = [];
     void tick().then(grow);
+    return true;
   }
 
   function stop() {
     interrupt(sessionKey);
   }
 
+  /** Cmd+Enter sends now: what is written, with the messages that wait,
+      or those alone. Cmd+Shift+Enter takes the newest of the user's own
+      back. Ctrl off macOS. Taken only while no action holds the chord. */
+  function nowKey(e: KeyboardEvent): boolean {
+    if (e.key !== "Enter" || e.altKey || e.isComposing) return false;
+    const mac = isMac();
+    if (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) return false;
+    const chord = chordFromEvent(e, mac);
+    if (chord === null || actionOf(chord) !== null) return false;
+    e.preventDefault();
+    if (e.shiftKey) onTakeBack?.();
+    else if (hasWords) {
+      // Sent as Enter sends it, to go now as soon as it waits. What sends
+      // no message, such as a command, leaves nothing to go now.
+      const now = onSendNow?.(true) ?? false;
+      if (!submit() && now) link.nowOnQueue = false;
+    } else onSendNow?.(false);
+    return true;
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (menuKey(e)) return;
     if (takeOut(e)) return;
+    if (nowKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -1015,7 +1053,11 @@
     <p class="hint" data-testid="composer-notice"><Plain text={notice} /></p>
   {:else if link.compactAsked && running && !conversation.compacting}
     <p class="hint" data-testid="composer-compact">Compacts once {agent} is done with this turn.</p>
+  {:else if nowHint !== null}
+    <p class="hint" class:bad={link.nowError !== null} data-testid="composer-now"><Plain text={nowHint} /></p>
   {/if}
+  <!-- Why a message could not be sent now, or taken back, said aloud. -->
+  <p class="sr" aria-live="polite" data-testid="composer-now-said">{link.nowError ?? ""}</p>
   <div class="bar">
     <button class="chip bare" tabindex="0" onclick={() => void pickFiles()} aria-label="Attach files" title="Attach files" data-testid="attach"
       ><Icon name="clip" /></button
@@ -1373,6 +1415,10 @@
     padding: 0 2px;
     font-size: var(--conv-meta);
     color: var(--ink-2);
+  }
+
+  .hint.bad {
+    color: var(--del);
   }
 
   .attached {

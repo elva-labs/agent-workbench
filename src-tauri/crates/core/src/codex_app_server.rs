@@ -70,6 +70,34 @@ const OLDEST: (u64, u64, u64) = (0, 168, 0);
 /// The media types the agent takes an image in.
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/gif", "image/webp"];
 
+/// A message of the user's as the input of a turn: its text, then its
+/// images as data URLs.
+fn user_input(text: &str, images: &[Image]) -> Result<Vec<Value>, String> {
+    if text.trim().is_empty() && images.is_empty() {
+        return Err("there is nothing to send".into());
+    }
+    let mut input = Vec::new();
+    if !text.trim().is_empty() {
+        input.push(json!({ "type": "text", "text": text, "text_elements": [] }));
+    }
+    for image in images {
+        if !IMAGE_TYPES.contains(&image.media_type.as_str()) {
+            return Err(format!(
+                "{} is not an image the agent takes",
+                image.media_type
+            ));
+        }
+        if image.data.is_empty() {
+            return Err("an attached image is empty".into());
+        }
+        input.push(json!({
+            "type": "image",
+            "url": format!("data:{};base64,{}", image.media_type, image.data),
+        }));
+    }
+    Ok(input)
+}
+
 /// A mode the session runs in: how much the agent may do without asking,
 /// as Codex's approval policy and sandbox together.
 struct Mode {
@@ -269,6 +297,8 @@ enum Sent {
     Thread,
     /// The turn a message starts, with the changes of settings it carries.
     Turn(String, Next),
+    /// A message steered into the running turn.
+    Steer(String),
     /// An interrupt whose answer the window waits for.
     Interrupt,
     /// An interrupt asked for before the turn had an id, sent once it did.
@@ -1675,6 +1705,12 @@ impl AppServer {
                     }
                 }
             }
+            Sent::Steer(message) => match reply {
+                Ok(_) => out
+                    .events
+                    .push(Event::message(&message, MessageState::Taken, None)),
+                Err(error) => out.unsteered.push((message, error)),
+            },
             Sent::Interrupt => out.replies.push((id.to_string(), reply)),
             Sent::LateInterrupt => {}
             Sent::RateLimits => {
@@ -2435,28 +2471,7 @@ impl Driver for AppServer {
             .thread
             .clone()
             .ok_or("Codex has no thread to take the message yet")?;
-        if text.trim().is_empty() && images.is_empty() {
-            return Err("there is nothing to send".into());
-        }
-        let mut input = Vec::new();
-        if !text.trim().is_empty() {
-            input.push(json!({ "type": "text", "text": text, "text_elements": [] }));
-        }
-        for image in images {
-            if !IMAGE_TYPES.contains(&image.media_type.as_str()) {
-                return Err(format!(
-                    "{} is not an image the agent takes",
-                    image.media_type
-                ));
-            }
-            if image.data.is_empty() {
-                return Err("an attached image is empty".into());
-            }
-            input.push(json!({
-                "type": "image",
-                "url": format!("data:{};base64,{}", image.media_type, image.data),
-            }));
-        }
+        let input = user_input(text, images)?;
         let mut params = json!({
             "threadId": thread,
             "input": input,
@@ -2483,6 +2498,23 @@ impl Driver for AppServer {
         // The core hands a message over only once the one before it has its
         // turn or is dropped, so an interrupt still waiting was for neither.
         self.interrupt_wanted = false;
+        Ok(line)
+    }
+
+    /// Codex takes input into the turn it runs as one more message of the
+    /// user's, read at its next step; the settings wait for the next turn.
+    fn steer(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String> {
+        let (Some(thread), Some(turn)) = (self.thread.clone(), self.turn.clone()) else {
+            return Err("no turn runs to send the message into".into());
+        };
+        let input = user_input(text, images)?;
+        let params = json!({
+            "threadId": thread,
+            "input": input,
+            "clientUserMessageId": message,
+            "expectedTurnId": turn,
+        });
+        let (line, _) = self.request(Sent::Steer(message.to_string()), "turn/steer", params);
         Ok(line)
     }
 
@@ -2628,6 +2660,9 @@ impl Driver for AppServer {
                 self.changes.mode = Some(found.value.to_string());
                 local(json!({ "mode": found.value }), vec![self.configured()])
             }
+            // The core holds every message Codex has not been handed, and
+            // steers and takes them back itself.
+            Control::SendNow | Control::Withdraw(_) => Err("Codex has the message already".into()),
         }
     }
 

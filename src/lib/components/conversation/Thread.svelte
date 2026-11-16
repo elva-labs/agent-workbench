@@ -59,9 +59,43 @@
     /** Room kept at the top for what stands over it, such as the find
         bar, in pixels. */
     room?: number;
+    /** What the messages that wait can do: be sent now, all of them, or
+        each of the user's own be taken back. Absent where a thread offers
+        neither. */
+    waiting?: {
+      sendNow: () => void;
+      takeBack: (message: Message) => void;
+      /** The line under each, which says what it waits for. */
+      line: string;
+      /** Whether they can be sent now. */
+      canSend: boolean;
+      /** Whether a message can be taken back: not while they are on
+          their way. */
+      canTake: boolean;
+      /** What sending now does, for its tooltip. */
+      title: string;
+      /** What taking one back does, and the chord for the newest. */
+      takeTitle: string;
+      takeChord: string;
+    };
   }
 
-  let { conversation, root, intro, agent, models = true, onPutBack, sender, opener, room = 0 }: Props = $props();
+  let { conversation, root, intro, agent, models = true, onPutBack, sender, opener, room = 0, waiting }: Props = $props();
+
+  /** A message's first words, to tell its buttons from another's. */
+  function shortly(text: string): string {
+    const line = text.trim().split("\n")[0] ?? "";
+    return line.length > 40 ? `${line.slice(0, 39)}…` : line;
+  }
+
+  /** The last message that waits for a turn, under which sending them
+      all now is offered. */
+  let lastQueued = $derived(conversation.waiting.findLast((said) => said.state === "queued")?.id ?? null);
+  /** The newest of the user's own messages that wait, which the chord
+      takes back. */
+  let newestOwn = $derived(
+    conversation.waiting.findLast((said) => said.state === "queued" && (sender?.(said) ?? null) === null)?.id ?? null,
+  );
 
   shareFolds(() => conversation.opened);
 
@@ -198,6 +232,27 @@
     });
   });
 
+  /** What waited under the thread when it was last followed. */
+  let waitingThen = "";
+  // What waits under the thread stands at its foot, under the newest of
+  // what was said: while the thread follows its foot, a message that comes
+  // to wait, or whose line under it changes, is brought wholly into view
+  // once it is laid out, even just after a press in the thread, such as on
+  // its own Send now.
+  $effect(() => {
+    const now = `${conversation.waiting.map((said) => `${said.id}:${said.state}`).join(",")}|${waiting?.line}|${waiting?.canSend}|${waiting?.canTake}`;
+    untrack(() => {
+      if (now === waitingThen) return;
+      waitingThen = now;
+      if (!pinned || scroller === null) return;
+      void tick().then(() =>
+        requestAnimationFrame(() => {
+          if (pinned && scroller !== null) toEnd(scroller);
+        }),
+      );
+    });
+  });
+
   /** Where the thread last scrolled itself to, or the browser left it to
       keep the reader's place across a change of width: a scroll that lands
       there says nothing of where the user wants to be. */
@@ -207,6 +262,9 @@
     if (!shown()) return;
     node.scrollTop = node.scrollHeight;
     ownTop = node.scrollTop;
+    // The thread has the view now: a scroll that comes after this is the
+    // user's only once they scroll again.
+    scrolledBy = Number.NEGATIVE_INFINITY;
   }
 
   /** The width the thread was last seen at. */
@@ -280,7 +338,9 @@
     // Only the user decides whether the thread follows. The thread's own
     // scroll to its foot can be heard after more has come, and the browser
     // moves the view itself to keep its place while text is drawn again;
-    // neither is the user leaving the foot.
+    // neither is the user leaving the foot. A move nobody here made, such
+    // as a screen reader bringing what it reads into view, stays where it
+    // was put.
     if (performance.now() - scrolledBy > 1000) return;
     if (Math.abs(top - ownTop) < 2) return;
     if (scroller.scrollHeight - top - scroller.clientHeight < 32) {
@@ -360,7 +420,8 @@
       const row = rows.length === 0 ? null : await reveal(rows[home ? 0 : rows.length - 1].key, home ? "start" : "end");
       all = items();
       const inside = row === null ? [] : all.filter((item) => row.contains(item));
-      next = home ? (inside[0] ?? all[0]) : (inside[inside.length - 1] ?? all[all.length - 1]);
+      // The last is what waits under the thread, where something does.
+      next = home ? (inside[0] ?? all[0]) : all[all.length - 1];
       // At the last, the thread is at its foot, and follows it.
       if (!home) {
         pinned = true;
@@ -991,8 +1052,10 @@
   }}
   onpointerdown={(e) => {
     touched = performance.now();
-    // A press on the scrollbar itself scrolls, until it is let go.
-    if (e.target === scroller) {
+    // A press on the scrollbar itself scrolls, until it is let go. The
+    // scrollbar is at the thread's right edge, over it where it overlays;
+    // a press on the thread's own margin elsewhere scrolls nothing.
+    if (scroller !== null && e.target === scroller && e.offsetX >= scroller.clientWidth - 16) {
       userScrolls();
       dragging = true;
       const up = () => {
@@ -1198,7 +1261,31 @@
       {#if unfolded[said.id]}<p class="state" data-testid="workbench-instructions-text">{words.instructions}</p>{/if}
     {/if}
     {#if said.state === "queued"}
-      <p class="state" data-testid="message-waiting">Waiting for the agent to finish what it is doing</p>
+      {@const last = waiting !== undefined && said.id === lastQueued}
+      {@const send = waiting !== undefined && last && waiting.canSend}
+      {@const take = waiting !== undefined && from === null && waiting.canTake}
+      <p class="state" data-testid="message-waiting">
+        {waiting?.line ?? "Waiting for the agent to finish what it is doing"}{#if waiting !== undefined && (send || take)}<span
+            class="acts"
+            >{#if send}<button
+                class="link"
+                tabindex="-1"
+                data-thread-item
+                onclick={waiting.sendNow}
+                title={waiting.title}
+                aria-label="Send the waiting messages now"
+                data-testid="send-now">Send now</button
+              >{/if}{#if take}<button
+                class="link"
+                tabindex="-1"
+                data-thread-item
+                onclick={() => waiting.takeBack(said)}
+                title={said.id === newestOwn && waiting.takeChord !== "" ? `${waiting.takeTitle} (${waiting.takeChord})` : waiting.takeTitle}
+                aria-label="Take back “{shortly(words.text)}”"
+                data-testid="take-back">Take back</button
+              >{/if}</span
+          >{/if}
+      </p>
     {:else if said.state === "sending"}
       <p class="state">Sending</p>
     {:else if said.state === "dropped"}
@@ -1453,6 +1540,22 @@
     font: inherit;
     color: var(--accent);
     cursor: pointer;
+  }
+
+  /* The actions on a waiting line wrap as one, never apart. Each has room
+     inside it for the focus ring, which is drawn inside it, as everywhere,
+     so the ring keeps off its words and off the row above; the last one's
+     words end where the line's own would. */
+  .acts {
+    display: inline-block;
+    margin: 0 -4px 0 2px;
+    white-space: nowrap;
+  }
+
+  .acts .link {
+    margin-left: 0;
+    padding: 0 4px;
+    border-radius: var(--radius-sm);
   }
 
   .agent {
