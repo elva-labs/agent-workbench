@@ -1527,14 +1527,19 @@
     cursor: pointer;
   }
 
-  /* The actions on a waiting line wrap as one, never apart. */
+  /* The actions on a waiting line wrap as one, never apart. Each has room
+     inside it for the focus ring, which is drawn inside it, as everywhere,
+     so the ring keeps off its words and off the row above; the last one's
+     words end where the line's own would. */
   .acts {
     display: inline-block;
+    margin: 0 -4px 0 2px;
     white-space: nowrap;
   }
 
-  .acts .link:focus-visible {
-    outline-offset: 2px;
+  .acts .link {
+    margin-left: 0;
+    padding: 0 4px;
     border-radius: var(--radius-sm);
   }
 

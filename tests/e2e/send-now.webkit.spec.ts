@@ -454,6 +454,24 @@ for (const look of ["modern", "terminal"] as const) {
     const send = (await lastLine.getByTestId("send-now").boundingBox())!;
     const take = (await lastLine.getByTestId("take-back").boundingBox())!;
     expect(Math.abs(send.y - take.y)).toBeLessThan(2);
+    // The focus ring is drawn inside Send now, whose box keeps off the
+    // words on the row above.
+    await page.getByTestId("thread").focus();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
+    await expect(lastLine.getByTestId("send-now")).toBeFocused();
+    const ring = await lastLine.evaluate((line) => {
+      const send = line.querySelector<HTMLElement>("[data-testid='send-now']")!;
+      const words = document.createRange();
+      words.selectNodeContents([...line.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== "")!);
+      return {
+        offset: parseFloat(getComputedStyle(send).outlineOffset),
+        top: send.getBoundingClientRect().top,
+        above: words.getBoundingClientRect().bottom,
+      };
+    });
+    expect(ring.offset).toBeLessThanOrEqual(0);
+    expect(ring.top).toBeGreaterThanOrEqual(ring.above - 0.5);
   });
 }
 
