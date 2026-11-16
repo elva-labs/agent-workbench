@@ -9,7 +9,6 @@ import {
   foldKey,
   held,
   locate,
-  matches,
   stamps,
   choiceLabel,
   choiceMeans,
@@ -689,10 +688,13 @@ describe("what the thread holds, drawn or not", () => {
     const run = c.entries.find((entry) => entry.kind === "agent")!.key;
     const user = c.entries.find((entry) => entry.kind === "user")!.key;
     const work = foldKey("work", c.call("c-1")!);
-    expect(held(c).map((one) => one.id)).toEqual(["m-1", "c-1", "c-2", "c-3", "b-1"]);
+    // A call is held by its row, then by what its step shows; a
+    // subagent's run comes before the output of the call that started it.
+    expect(held(c).map((one) => one.key)).toEqual(["m-1", "c-1", "c-1:shows", "c-2", "c-3", "c-3:shows", "c-2:shows", "b-1"]);
     expect(locate(c, "m-1")).toMatchObject({ entry: user, folds: [] });
     expect(locate(c, "b-1")).toMatchObject({ entry: run, folds: [] });
     expect(locate(c, "c-1")).toMatchObject({ entry: run, folds: [work] });
+    expect(held(c).find((one) => one.key === "c-1:shows")).toMatchObject({ folds: [work, foldKey("step", c.call("c-1")!)] });
     // A subagent's call is behind the work's fold, the step of the call
     // that started it, and its own run's fold of work.
     expect(locate(c, "c-3")).toMatchObject({
@@ -702,11 +704,16 @@ describe("what the thread holds, drawn or not", () => {
     expect(locate(c, "nothing")).toBeNull();
   });
 
-  it("matches words wherever they are, folded or not, case aside, in the order drawn", () => {
+  it("holds what each shows: a row's object, the output under it, and what the agent wrote as Markdown", () => {
     const c = conversation();
-    expect(matches(c, "COUNTER").map((one) => one.id)).toEqual(["m-1", "c-1", "c-3", "b-1"]);
-    expect(matches(c, "count.ts").map((one) => one.id)).toEqual(["c-1", "b-1"]);
-    expect(matches(c, "")).toEqual([]);
+    const shows = (key: string) => held(c).find((one) => one.key === key)!;
+    expect(shows("m-1")).toMatchObject({ text: "Where is the Counter?", markdown: null });
+    expect(shows("c-1")).toMatchObject({ text: "grep -rn counter src" });
+    // A short command is the row's whole; under it is the output.
+    expect(shows("c-1:shows")).toMatchObject({ text: "src/count.ts:1" });
+    expect(shows("c-3:shows")).toMatchObject({ text: "let counter = 0;" });
+    expect(shows("c-2:shows")).toMatchObject({ text: "done" });
+    expect(shows("b-1")).toMatchObject({ text: "", markdown: "The counter is in `src/count.ts`." });
   });
 
   it("holds an input as its step shows it, a change's lines and a message still waiting, and not the error said where it resumes", () => {
@@ -724,17 +731,37 @@ describe("what the thread holds, drawn or not", () => {
         changes: [{ path: "C:\\repo\\src\\count.ts", kind: "update", to: null, content: null, truncated: false,
           hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-say("hi")', '+say("farewell")'] }] }],
       },
+      { type: "toolStarted", call: "c-5", parent: null, name: "Grep", kind: "search" },
+      { type: "toolInput", call: "c-5", parent: null, delta: null, truncated: false, input: { pattern: "say", glob: "*.ts" } },
+      { type: "toolFinished", call: "c-5", parent: null, output: "", error: false, truncated: false, changes: [] },
       { type: "message", message: "m-3", state: "queued", error: null, text: "And the tests", images: [] },
     ];
     for (const event of events) c.apply(event);
-    expect(matches(c, "C:\\repo\\src").map((one) => one.id)).toEqual(["c-4"]);
-    expect(matches(c, 'say("bye")').map((one) => one.id)).toEqual(["c-4"]);
-    expect(matches(c, 'say("farewell")').map((one) => one.id)).toEqual(["c-4"]);
+    const shows = (key: string) => held(c).find((one) => one.key === key)!;
+    // An edit with its changes shows them, not its input: the path and the
+    // lines without their marks.
+    expect(shows("c-4:shows").text).toBe('C:\\repo\\src\\count.ts\nsay("hi")\nsay("farewell")');
+    // Other input shows as its fields' values, but what the row says.
+    expect(shows("c-5")).toMatchObject({ text: "say" });
+    expect(shows("c-5:shows")).toMatchObject({ text: "*.ts" });
     expect(locate(c, "m-3")).toMatchObject({ entry: null, folds: [] });
+    // What the user told the agent when refusing a call, without its label.
+    c.apply({ type: "toolStarted", call: "c-6", parent: null, name: "Bash", kind: "command" });
+    c.apply({ type: "toolInput", call: "c-6", parent: null, delta: null, truncated: false, input: { command: "rm -rf build" } });
+    c.apply({ type: "permissionAsked", request: "r-6", call: "c-6", parent: null, tool: "Bash", input: { command: "rm -rf build" }, truncated: false, description: null, path: null, choices: [] });
+    c.apply({ type: "answered", request: "r-6", choice: "deny", answers: null, message: "Keep the build folder" });
+    c.apply({ type: "toolFinished", call: "c-6", parent: null, output: "denied", error: true, truncated: false, changes: [] });
+    expect(shows("c-6:shows").text).toBe("denied\nKeep the build folder");
     const over = conversation();
     over.apply({ type: "error", kind: "process", message: "the agent crashed" });
     over.apply({ type: "ended", code: 1, clean: false });
-    expect(matches(over, "crashed")).toEqual([]);
+    expect(held(over).some((one) => one.text.includes("crashed"))).toBe(false);
+  });
+
+  it("shows a character that changes how text reads as its marker, as the thread draws it", () => {
+    const c = new Conversation(() => 0);
+    c.apply({ type: "message", message: "m-1", state: "sent", error: null, text: "a\u202eb", images: [] });
+    expect(held(c)[0].text).toBe("a⟨U+202E⟩b");
   });
 });
 

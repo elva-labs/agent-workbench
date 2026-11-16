@@ -44,8 +44,8 @@ export { isMac };
  * An integrated session has no terminal: its composer stops a running turn
  * on Escape and lets the key through when none runs, and then it closes the
  * viewer while reviewing, goes back to the editor in editor mode, and does
- * nothing else. Save and close are the app's from it, and find is left
- * free there.
+ * nothing else. Save and close are the app's from it, and find there is
+ * find in the conversation.
  */
 
 export type Action =
@@ -72,6 +72,8 @@ export type Action =
   | { type: "focusStatus" }
   /** Find in the file in the editor. */
   | { type: "findInFile" }
+  /** Find in the conversation of an integrated session. */
+  | { type: "findInThread" }
   /** The keyboard to the editor, from elsewhere in editor mode. */
   | { type: "toEditor" }
   | { type: "exitReview" }
@@ -206,8 +208,9 @@ export function resolveAction(e: KeyState, ctx: KeyContext = DEFAULT_CONTEXT): A
   }
   // Filtering the tree is the changes pane's own: in a terminal the same
   // chord is the process's, Ctrl+F most of all. In the editor it finds in
-  // the file.
+  // the file, and in an integrated session's pane in its conversation.
   if (action === "find" && ctx.inEditor) return { type: "findInFile" };
+  if (action === "find" && ctx.focus === "agent" && ctx.integrated) return { type: "findInThread" };
   if (action === "find" && isTerminal(ctx.focus)) return null;
   // The viewer's chord has no viewer to open in editor mode; in the editor
   // it is the editor's own.

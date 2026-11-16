@@ -273,6 +273,10 @@ export class Conversation {
   opened = new SvelteSet<string>();
   /** A model chosen while a turn ran, which the turn after it runs on. */
   nextModel = $state<{ model: string | null; turn: number } | null>(null);
+  /** Goes up whenever what the thread holds may change, so what follows
+      it, find among them, knows when to read it again without reading all
+      of it to tell. */
+  revision = $state(0);
 
   #clock: () => number;
   #blocks = new Map<string, TextPart>();
@@ -284,9 +288,17 @@ export class Conversation {
       a turn before it knew one ran. */
   #loose = new Set<number>();
   #entryCount = 0;
+  #revisions = 0;
 
   constructor(clock: () => number = Date.now) {
     this.#clock = clock;
+  }
+
+  /** Marks what the thread holds as changing. Written, never read, here,
+      so a change made while something reads the conversation does not
+      make that read again for its own sake. */
+  #changed() {
+    this.revision = ++this.#revisions;
   }
 
   /** The model the session goes on to once the running turn ends, when it
@@ -325,6 +337,7 @@ export class Conversation {
 
   /** The window is sending a message under an id it chose. */
   sending(id: string, text: string, images: IntegratedImage[] = []) {
+    this.#changed();
     if (this.messages[id] !== undefined) return;
     this.messages[id] = {
       id,
@@ -341,6 +354,7 @@ export class Conversation {
 
   /** The core refused the message: it never reached the agent. */
   sendFailed(id: string, error: string) {
+    this.#changed();
     const message = this.messages[id];
     if (message === undefined || message.state !== "sending") return;
     message.state = "failed";
@@ -349,6 +363,7 @@ export class Conversation {
 
   /** A failed message is taken back, its words to be sent again. */
   forget(id: string) {
+    this.#changed();
     const message = this.messages[id];
     if (message === undefined || message.placed) return;
     delete this.messages[id];
@@ -366,6 +381,7 @@ export class Conversation {
   /** The session starts again after it ended: what ended it is over, and
       the thread goes on under it. */
   resumed() {
+    this.#changed();
     this.ended = null;
     this.notLoggedIn = false;
     this.state = null;
@@ -404,6 +420,7 @@ export class Conversation {
    * over, and with all of it from before its calls with no finish failed.
    */
   lay(history: IntegratedHistory, run: Run | null) {
+    this.#changed();
     const later = this.entries;
     const running = this.current;
     this.entries = [];
@@ -463,6 +480,7 @@ export class Conversation {
   /** Every event of the session, in the order it came, at the time it
       happened: now, unless it says. */
   apply(event: IntegratedEventBody, at?: number) {
+    this.#changed();
     const now = at ?? this.#clock();
     switch (event.type) {
       case "ready":
@@ -756,6 +774,7 @@ export class Conversation {
    * whatever was heard before it, and the events after it follow as usual.
    */
   restore(snapshot: IntegratedSnapshot) {
+    this.#changed();
     const now = this.#clock();
     this.late = true;
     if (snapshot.ready !== null) {

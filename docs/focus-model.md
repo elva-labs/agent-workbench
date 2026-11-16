@@ -32,7 +32,7 @@ default preset:
 | <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer, in agent mode                |
 | <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered; in the editor, Edit, Diff or Preview |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
-| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it |
+| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it; find in the conversation, in an integrated session's pane |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
 | <kbd>Cmd</kbd><kbd>N</kbd>                                              | A new untitled file in the editor, from either mode         |
 | <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
@@ -246,7 +246,9 @@ a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
   is open, Esc puts it away wherever the keyboard is and reaches nothing
   else, since a click does not move the keyboard on every platform and the
   key that closes a popover must never also stop the agent's turn. With no popover open, Esc is the
-  terminal's or the composer's again.
+  terminal's or the composer's again. Find in an integrated session's
+  conversation is put away the same way from its thread and its composer,
+  before the composer would stop a turn with it.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
   goes to the agent pane; when editing hides the agent, it goes to the files
@@ -333,7 +335,7 @@ reached.
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
-| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover is open it puts that away instead, and stops nothing |
+| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover or find is open it puts that away instead, and stops nothing |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started; <kbd>Esc</kbd> there comes back |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
@@ -343,7 +345,12 @@ reached.
 | <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer, once find is closed |
+| <kbd>Cmd</kbd><kbd>F</kbd> | Opens find over the thread with the keyboard in its field; with find open, selects the words in it |
+| <kbd>Enter</kbd> / <kbd>Shift</kbd><kbd>Enter</kbd> in find | The next match, or the one before, coming round at the ends |
+| <kbd>Cmd</kbd><kbd>G</kbd> / <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>G</kbd> | The same, from anywhere in the session's pane while find is open, unless an action holds the chord |
+| <kbd>Esc</kbd> in find | Closes it and gives the keyboard back where it was; it stops nothing |
+| <kbd>Esc</kbd> while find is open | In the thread, or in the composer with no menu open, closes find and stops nothing; the next <kbd>Esc</kbd> does what it does there |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
@@ -397,7 +404,20 @@ starting, <kbd>Enter</kbd> sends nothing, so a command is not sent as text
 before the agent can take it.
 
 Every chord the app claims works from the composer as from anywhere else.
-<kbd>Cmd</kbd><kbd>F</kbd> stays the page's, as it is a terminal's.
+Find goes to the pane that holds the keyboard: from an integrated
+session's composer, thread or dock it finds in the conversation, from the
+editor in the file, and from a list pane it filters the files, in editor
+mode as in agent mode, where the editor and the conversation stand side
+by side. In a terminal session's pane it stays the terminal's.
+
+Find's bar comes before the thread for <kbd>Tab</kbd>: its field, then
+the previous and the next match, which are passed over while nothing
+matches, then its close, each a stop of its own. Its arrows and close
+leave the keyboard in the field when clicked. While the bar is open the
+keyboard can go anywhere in the pane and the bar stays; closing it gives
+the keyboard back where it was before it came to the bar, or to the
+composer, but only when the bar had it. A screen reader hears the count
+once it settles, once for each change, and the field names it.
 
 ## A page in the browser
 
@@ -471,7 +491,9 @@ its too, moving or selecting, so <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd>
 selects to the end of the file there rather than stepping sessions, and
 <kbd>Cmd</kbd><kbd>D</kbd> selects the next occurrence of what is selected.
 <kbd>Tab</kbd> indents. The other chords are the app's as anywhere, and
-<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
+<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there, and in the
+conversation from an integrated session beside it, as
+[an integrated session](#an-integrated-session) says.
 
 Save works from anywhere in editor mode but a terminal: from the tree as
 well as the editor, and from an integrated session's composer, which is a

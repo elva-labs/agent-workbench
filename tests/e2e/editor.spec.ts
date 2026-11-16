@@ -1988,15 +1988,33 @@ test.describe("an integrated session beside the editor", () => {
     await expect(page.locator(".cm-content")).toBeFocused();
   });
 
-  test("saves and closes the tab from the composer, flips from it, and leaves find to it", async ({ page }) => {
+  test("saves and closes the tab from the composer, flips from it, and finds where the keyboard is", async ({ page }) => {
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.getByTestId("composer-input").click();
     await page.keyboard.press(`${MOD}+s`);
     await expect.poll(async () => (await writes(page)).at(-1)?.text ?? "").toContain("mine");
     await expect(page.getByTestId("composer-input")).toBeFocused();
+    // Find goes to the pane that holds the keyboard: from the composer, the
+    // conversation's; from the editor, the editor's.
     await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("conversation-find-input")).toBeFocused();
+    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
     await expect(page.getByTestId("composer-input")).toBeFocused();
+    await page.locator(".cm-content").click();
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("find-field")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    // Saving and closing from the composer are the editor's still, with the
+    // conversation's find open.
+    await page.getByTestId("composer-input").click();
+    await page.keyboard.press(`${MOD}+f`);
+    await expect(page.getByTestId("conversation-find-input")).toBeFocused();
+    await page.getByTestId("composer-input").click();
     await page.keyboard.press(`${MOD}+w`);
     await expect(tab(page, "README.md")).toHaveCount(0);
     await expect(page.getByTestId("composer-input")).toBeFocused();

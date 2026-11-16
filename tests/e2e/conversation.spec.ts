@@ -1312,7 +1312,8 @@ test.describe("the conversation's text", () => {
         if (!own) continue;
         const style = getComputedStyle(element);
         if (style.visibility !== "visible" || (element as HTMLElement).offsetParent === null) continue;
-        if (element.closest("button:disabled")) continue;
+        // An inactive control, disabled or marked so, is not held to it.
+        if (element.closest("button:disabled, [aria-disabled='true']")) continue;
         let opacity = 1;
         for (let node: Element | null = element; node !== null && node !== root; node = node.parentElement)
           opacity *= Number(getComputedStyle(node).opacity);
@@ -1326,6 +1327,62 @@ test.describe("the conversation's text", () => {
         const [a, b] = [luminance(seen), luminance(ground)].sort((x, y) => y - x);
         const ratio = (a + 0.05) / (b + 0.05);
         if (ratio < 4.5) out.push(`${element.className || element.tagName} "${element.textContent!.trim().slice(0, 24)}" ${ratio.toFixed(2)}`);
+      }
+      return out;
+    });
+  }
+
+  /** Every match find tints whose text falls short of 4.5 to 1 against
+      the tint over what is behind it, with the ratio. The colours are the
+      highlight rule's own, read in the place of each match. */
+  function tintShortfalls(page: Page) {
+    return page.evaluate(() => {
+      const parse = (text: string): number[] => {
+        const nums = text.match(/-?[\d.]+(e-?\d+)?/g)?.map(Number) ?? [0, 0, 0, 0];
+        const [r, g, b, a = 1] = nums;
+        return text.startsWith("color(") ? [r * 255, g * 255, b * 255, a] : [r, g, b, a];
+      };
+      const over = (top: number[], bottom: number[]) => [0, 1, 2].map((i) => top[i] * top[3] + bottom[i] * (1 - top[3])).concat(1);
+      const luminance = (c: number[]) => {
+        const [r, g, b] = c.map((v) => {
+          const x = v / 255;
+          return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const behind = (element: Element): number[] => {
+        const layers: number[][] = [];
+        for (let node: Element | null = element; node !== null; node = node.parentElement) {
+          const colour = parse(getComputedStyle(node).backgroundColor);
+          if (colour[3] > 0) layers.push(colour);
+          if (colour[3] >= 1) break;
+        }
+        let colour = [255, 255, 255, 1];
+        for (const layer of layers.reverse()) colour = over(layer, colour);
+        return colour;
+      };
+      let rule: CSSStyleRule | null = null;
+      for (const sheet of document.styleSheets)
+        for (const one of sheet.cssRules)
+          if (one instanceof CSSStyleRule && one.selectorText.includes("::highlight(find-hit)")) rule = one;
+      if (rule === null) return ["no rule for the tint"];
+      const out: string[] = [];
+      const ranges = [...(CSS.highlights.get("find-hit") ?? [])] as Range[];
+      if (ranges.length === 0) return ["nothing tinted"];
+      for (const range of ranges) {
+        const element = range.startContainer.parentElement!;
+        // The rule's colours, as they resolve where the match is.
+        const probe = document.createElement("span");
+        probe.style.color = rule.style.color || getComputedStyle(element).color;
+        probe.style.backgroundColor = rule.style.backgroundColor;
+        element.append(probe);
+        const text = parse(getComputedStyle(probe).color);
+        const tint = parse(getComputedStyle(probe).backgroundColor);
+        probe.remove();
+        const ground = over(tint, behind(element));
+        const [a, b] = [luminance(over(text, ground)), luminance(ground)].sort((x, y) => y - x);
+        const ratio = (a + 0.05) / (b + 0.05);
+        if (ratio < 4.5) out.push(`${element.className || element.tagName} "${range.toString()}" ${ratio.toFixed(2)}`);
       }
       return out;
     });
@@ -1347,7 +1404,7 @@ test.describe("the conversation's text", () => {
           await agent(
             page,
             `f.send("${H}", crypto.randomUUID(), "Fix the scan"); f.startTurn("${H}");
-             f.tool("${H}", "Read", { file_path: "${PROJECT}/src/a.ts" }, "x", { kind: "read" });
+             f.tool("${H}", "Read", { file_path: "${PROJECT}/src/a.ts" }, "x, see the link", { kind: "read" });
              f.emit("${H}", { type: "text", block: "t", parent: null, text: "Done, with \`code\` and a [link](https://example.com).", done: true });
              f.notice("${H}", "Fell back to Sonnet", "warning");
              f.startTool("${H}", "Bash", { command: "ls" }, { kind: "command" });
@@ -1360,6 +1417,22 @@ test.describe("the conversation's text", () => {
           await page.getByTestId("agent-run").first().locator("header").hover();
           await expect(page.getByTestId("copy-reply")).toHaveCSS("opacity", "1");
           for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}: ${found}`);
+          // A match find tints on a link, then in the output, each while the
+          // other is the current one.
+          await page.getByTestId("composer-input").focus();
+          await page.keyboard.press("ControlOrMeta+f");
+          await page.getByTestId("conversation-find-input").fill("link");
+          await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 2");
+          await expect.poll(async () => (await tintShortfalls(page)).filter((one) => one === "nothing tinted")).toEqual([]);
+          for (const found of await tintShortfalls(page)) failures.push(`${look} ${appearance} ${palette}, a match: ${found}`);
+          for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}, find: ${found}`);
+          await page.keyboard.press("Enter");
+          await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 2");
+          await expect
+            .poll(() => page.evaluate(() => [...(CSS.highlights.get("find-hit") ?? [])].map((range) => (range as Range).startContainer.parentElement!.closest("pre") !== null)))
+            .toEqual([true]);
+          for (const found of await tintShortfalls(page)) failures.push(`${look} ${appearance} ${palette}, a match: ${found}`);
+          await page.keyboard.press("Escape");
           // The change a request makes, opened in the dock, with its signs.
           await page.getByTestId("choice-allow").click();
           await agent(

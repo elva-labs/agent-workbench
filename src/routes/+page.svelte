@@ -36,6 +36,7 @@
   import { watchViewed } from "$lib/viewed.svelte";
   import { sessionShown, unfoldSessions } from "$lib/viewers.svelte";
   import { newFile, newUntitled } from "$lib/fileOps.svelte";
+  import { askFind } from "$lib/find.svelte";
   import {
     activeTab,
     canSaveInFront,
@@ -806,6 +807,9 @@
         break;
       case "findInFile":
         findInFile();
+        break;
+      case "findInThread":
+        askFind();
         break;
       case "toEditor":
         // Escape from the panes around the editor: what took its place is
