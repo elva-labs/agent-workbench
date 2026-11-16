@@ -18,6 +18,7 @@ import {
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells } from "$lib/terminals.svelte";
 import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
+import { closeFolder, isOrchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
 
 /**
  * The projects this window has open.
@@ -209,7 +210,8 @@ export function goTo(key: string): boolean {
     workflow, starts alone; with neither, the session runs the way a plain
     new session does. The account is the one the project runs under unless
     named. It runs the way the agent's setting says, unless started the other
-    way. Starting one is the user using the project, so it counts as used. */
+    way. Starting one is the user using the project, so it counts as used.
+    Nothing new starts in the orchestrator folder. */
 export function startSession(
   path: string,
   agent?: AgentId,
@@ -217,6 +219,7 @@ export function startSession(
   workflow?: Workflow | null,
   kind?: SessionKind,
 ) {
+  if (!startsIn(path)) return;
   if (workspace.active !== path) activate(path);
   touch(path);
   create(
@@ -277,6 +280,8 @@ async function openRequested() {
 
 /** Removes a project from the window, stopping everything running in it. */
 export function close(path: string) {
+  // The orchestrator folder is closed for good: it leaves the pane.
+  if (isOrchestratorFolder(path)) closeFolder();
   // The sessions go first, then every shell of the project at once: a
   // session's busy shells are stopped here before the read its closing
   // starts can hand them on to the project.

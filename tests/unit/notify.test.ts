@@ -26,7 +26,6 @@ import {
   setChime,
   titleFor,
 } from "$lib/notify.svelte";
-import { orchestrator } from "$lib/orchestrator.svelte";
 import { create, exact, onWaiting, reset, started, type Session } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
@@ -44,7 +43,6 @@ beforeEach(() => {
   resetConductor();
   resetWorkspace();
   resetNotify();
-  orchestrator.dir = null;
   told.notified = [];
   told.chimes = 0;
   workspace.open = [{ path: A, name: "one", repository: A, isGit: true }];
@@ -89,7 +87,7 @@ describe("a session that starts waiting while the window is in the background", 
     expect(told.chimes).toBe(0);
   });
 
-  it("from an orchestrator's session, says only that it needs a permission", () => {
+  it("from a session another started, says only that it needs a permission", () => {
     const caller = live(A, "pty-1");
     const child = live(A, "pty-2");
     conductor.startedBy[child.key] = caller.id!;
@@ -114,9 +112,8 @@ describe("the words", () => {
     expect(bodyFor(session)).toBe("Ended");
   });
 
-  it("name the orchestrator's own project the way the pane does", () => {
-    orchestrator.dir = "/home/ada/.agent-workbench/orchestrator";
-    const session = live(orchestrator.dir, "pty-1");
+  it("name the orchestrator folder by its name, as the pane does", () => {
+    const session = live("/home/ada/.agent-workbench/orchestrator", "pty-1");
     session.title = "release";
     expect(titleFor(session)).toBe("orchestrator · release");
   });

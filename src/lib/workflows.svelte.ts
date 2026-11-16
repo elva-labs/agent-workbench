@@ -25,9 +25,18 @@ import { startsOnly } from "$lib/workflowInstructions";
  * from another window, is taken as it comes.
  */
 
-/** The workflow a fresh install has: the orchestrator on Claude's most
-    capable model, work on Sonnet, and a review on Opus that sends the work
-    back up to three times and then asks. */
+/** What the core holds the settings to. */
+export const MOST_WORKFLOWS = 16;
+export const MOST_STEPS = 12;
+export const MOST_MODELS = 16;
+export const LONGEST_NAME = 40;
+export const MOST_PARALLEL = 8;
+export const MOST_ROUNDS = 10;
+
+/** The workflow a fresh install has first, and the shape a new one takes:
+    the orchestrator on Claude's most capable model, work on Sonnet, and a
+    review on Opus that sends the work back up to three times and then
+    asks. */
 export function defaultWorkflow(): Workflow {
   return {
     name: "Build and review",
@@ -52,10 +61,29 @@ export function defaultWorkflow(): Workflow {
   };
 }
 
+/** The name of the workflow for directing work with no review. */
+export const DIRECT = "Direct";
+
+/** The workflow a fresh install has for directing work with no review:
+    the orchestrator on the same model, handing each piece to a session of
+    its own on any model, as many at once as a session may run. */
+export function directWorkflow(): Workflow {
+  return {
+    name: DIRECT,
+    orchestrator: { agent: "claude-code", model: mostCapable().model },
+    steps: [{ kind: "work", name: "Work", models: [], parallel: MOST_PARALLEL }],
+  };
+}
+
+/** The workflows a fresh install has, in their order. */
+export function shippedWorkflows(): Workflow[] {
+  return [defaultWorkflow(), directWorkflow()];
+}
+
 export const workflows = $state({
   /** The workflows in the order they are shown. A window that has heard
-      nothing yet has the one a fresh install has. */
-  list: [defaultWorkflow()] as Workflow[],
+      nothing yet has the ones a fresh install has. */
+  list: shippedWorkflows() as Workflow[],
   /** The one new sessions start with; null is none, which is what a
       fresh install has. */
   default: null as string | null,
@@ -88,14 +116,6 @@ export function unknowWorkflows() {
   knowing = new Promise<void>((settle) => (known = settle));
 }
 
-/** What the core holds the settings to. */
-export const MOST_WORKFLOWS = 16;
-export const MOST_STEPS = 12;
-export const MOST_MODELS = 16;
-export const LONGEST_NAME = 40;
-export const MOST_PARALLEL = 8;
-export const MOST_ROUNDS = 10;
-
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /** The workflows' part of the settings. */
@@ -110,14 +130,13 @@ export function workflowsSettings(): Settings["workflows"] {
 }
 
 /** Takes the core's word for the workflows, which is the machine's. A
-    settings object from before workflows existed gets the default one,
-    with new sessions following none. A choice naming a workflow the list
-    does not hold is dropped. */
+    settings object from before workflows existed gets the ones a fresh
+    install has, with new sessions following none. A choice naming a
+    workflow the list does not hold is dropped. */
 export function adoptWorkflows(settings: Settings["workflows"] | undefined) {
   knowWorkflows();
   if (settings === undefined || !Array.isArray(settings.list)) {
-    const fresh = defaultWorkflow();
-    workflows.list = [fresh];
+    workflows.list = shippedWorkflows();
     workflows.default = null;
     workflows.overrides = {};
     workflows.unread = [];

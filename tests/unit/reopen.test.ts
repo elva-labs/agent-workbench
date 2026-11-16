@@ -233,13 +233,13 @@ describe("coming back", () => {
     expect(forProject(A)[0].title).toBe("the refactor");
   });
 
-  it("brings back the orchestrator's sessions once its directory is known, though it is not an open project", async () => {
+  it("brings back the orchestrator folder's sessions once it is known, though it is not an open project", async () => {
     const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
     onRecord([entry(ORCHESTRATOR, "conductor"), entry("/gone", "one"), entry(A, "two")], null);
     let know: (dir: string | null) => void = () => {};
     stop = reopen(new Map(), new Promise((resolve) => (know = resolve)));
     expect(sessions.all.map((session) => session.id)).toEqual(["two"]);
-    // Kept on record while the directory is not known yet.
+    // Kept on record while the folder is not known yet.
     flushSync();
     expect(record().open.map((kept) => kept.id).sort()).toEqual(["conductor", "one", "two"]);
     know(ORCHESTRATOR);

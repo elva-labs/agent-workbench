@@ -387,7 +387,7 @@ impl Core {
         let opened = project.to_string_lossy().to_string();
         let instructions = instructions.filter(|text| !text.trim().is_empty());
         let token = token.filter(|token| !token.trim().is_empty());
-        let orchestrator = instructions.is_some() || self.is_orchestrator(project);
+        let orchestrator = instructions.is_some();
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
 
@@ -544,7 +544,7 @@ impl Core {
         let environment = env::environment();
         let opened = project.to_string_lossy().to_string();
         let instructions = instructions.filter(|text| !text.trim().is_empty());
-        let orchestrator = instructions.is_some() || self.is_orchestrator(project);
+        let orchestrator = instructions.is_some();
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
         let resume = session.is_some();
@@ -1011,31 +1011,17 @@ impl Core {
         crate::show::write_answer(home, id, &crate::show::Answer { content, error })
     }
 
-    /// Where an orchestrator session runs: a directory of its own under the
-    /// workbench's home, made the first time it is asked for. A session
-    /// there is a session like any other; what it has is a place to keep
-    /// the notes of the work it is directing.
+    /// The folder named `orchestrator` under the workbench's home. Nothing
+    /// makes it or starts a session in it: the window lists it while it
+    /// holds past sessions, and one resumed there is a session like any
+    /// other.
     pub fn orchestrator_dir(&self) -> Result<String, String> {
         let dir = self
             .home
             .as_deref()
             .map(orchestrator_path)
             .ok_or("no home directory")?;
-        std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
         Ok(dir.to_string_lossy().to_string())
-    }
-
-    /// Whether a session spawned in this project is the one that directs
-    /// the others. The comparison is between canonical paths, so a link on
-    /// the way to the home directory is the same place either way round.
-    fn is_orchestrator(&self, project: &Path) -> bool {
-        let Some(dir) = self.home.as_deref().map(orchestrator_path) else {
-            return false;
-        };
-        match (dunce::canonicalize(project), dunce::canonicalize(&dir)) {
-            (Ok(project), Ok(dir)) => project == dir,
-            _ => false,
-        }
     }
 
     /// A worktree of the project, on a branch of the same name, for a
@@ -1203,7 +1189,7 @@ impl Core {
     }
 }
 
-/// Where the orchestrator's own project sits under a home directory.
+/// Where the `orchestrator` folder sits under a home directory.
 fn orchestrator_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("orchestrator")
 }
@@ -1459,6 +1445,17 @@ mod tests {
             settings: None,
             deadlines: Arc::default(),
         }
+    }
+
+    #[test]
+    fn the_orchestrator_folder_is_named_and_never_made() {
+        let home = Scratch::new("api-orchestrator-folder");
+        let dir = core_at(&home).orchestrator_dir().unwrap();
+        assert_eq!(
+            PathBuf::from(&dir),
+            home.join(".agent-workbench").join("orchestrator")
+        );
+        assert!(!PathBuf::from(&dir).exists());
     }
 
     #[test]

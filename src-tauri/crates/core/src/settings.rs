@@ -1999,7 +1999,8 @@ mod tests {
         let loaded = store.load();
         assert!(!loaded.stored);
         let workflows = &loaded.settings.workflows;
-        assert_eq!(workflows.list.len(), 1);
+        let names: Vec<&str> = workflows.list.iter().map(|w| w.name.as_str()).collect();
+        assert_eq!(names, [workflow::DEFAULT_NAME, workflow::DIRECT_NAME]);
         assert_eq!(workflows.default, None);
         assert!(workflows.overrides.is_empty());
     }
@@ -2026,6 +2027,11 @@ mod tests {
             workflow::DEFAULT_NAME
         );
         assert_eq!(value["workflows"]["list"][0]["steps"][1]["kind"], "review");
+        assert_eq!(value["workflows"]["list"][1]["name"], workflow::DIRECT_NAME);
+        assert_eq!(
+            value["workflows"]["list"][1]["steps"][0]["models"],
+            json!([])
+        );
     }
 
     #[test]

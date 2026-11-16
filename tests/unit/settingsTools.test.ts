@@ -588,9 +588,9 @@ describe("the user's stylesheet", () => {
 });
 
 describe("workflows", () => {
-  // The shipped workflow, turned on for new sessions.
+  // Build and review alone, turned on for new sessions.
   beforeEach(() => {
-    workflows.default = "Build and review";
+    adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
   });
 
   const quick = {

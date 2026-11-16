@@ -148,6 +148,10 @@ pub struct Unread {
 
 pub const DEFAULT_NAME: &str = "Build and review";
 
+/// The workflow for directing work with no steps of review: one step that
+/// does it, on any model, as many sessions at once as a session may run.
+pub const DIRECT_NAME: &str = "Direct";
+
 fn claude(model: &str) -> Model {
     Model {
         agent: "claude-code".into(),
@@ -156,32 +160,46 @@ fn claude(model: &str) -> Model {
 }
 
 impl Default for Workflows {
-    /// A workflow on a fresh install: the orchestrator on Claude's most
-    /// capable model, work on Sonnet, and a review on Opus that sends the
-    /// work back up to three times and then asks the user. New sessions
-    /// follow none until the user turns one on.
+    /// The workflows on a fresh install. Build and review: the orchestrator
+    /// on Claude's most capable model, work on Sonnet, and a review on Opus
+    /// that sends the work back up to three times and then asks the user.
+    /// Direct: the orchestrator on the same model, handing each piece to a
+    /// session of its own on any model. New sessions follow none until the
+    /// user turns one on.
     fn default() -> Self {
         Self {
-            list: vec![Workflow {
-                name: DEFAULT_NAME.into(),
-                orchestrator: claude("fable"),
-                steps: vec![
-                    Step::Work {
+            list: vec![
+                Workflow {
+                    name: DEFAULT_NAME.into(),
+                    orchestrator: claude("fable"),
+                    steps: vec![
+                        Step::Work {
+                            name: "Work".into(),
+                            models: vec![claude("sonnet")],
+                            parallel: 1,
+                        },
+                        Step::Review {
+                            name: "Review".into(),
+                            models: vec![claude("opus")],
+                            reviewer_approves: true,
+                            orchestrator_agrees: true,
+                            back_to: "Work".into(),
+                            limit: 3,
+                        },
+                    ],
+                    start_only: true,
+                },
+                Workflow {
+                    name: DIRECT_NAME.into(),
+                    orchestrator: claude("fable"),
+                    steps: vec![Step::Work {
                         name: "Work".into(),
-                        models: vec![claude("sonnet")],
-                        parallel: 1,
-                    },
-                    Step::Review {
-                        name: "Review".into(),
-                        models: vec![claude("opus")],
-                        reviewer_approves: true,
-                        orchestrator_agrees: true,
-                        back_to: "Work".into(),
-                        limit: 3,
-                    },
-                ],
-                start_only: true,
-            }],
+                        models: Vec::new(),
+                        parallel: MOST_PARALLEL,
+                    }],
+                    start_only: true,
+                },
+            ],
             default: None,
             overrides: BTreeMap::new(),
             unread: Vec::new(),
@@ -541,6 +559,17 @@ mod tests {
             &workflow.steps[1],
             Step::Review { models, limit: 3, back_to, .. }
                 if models == &[claude("opus")] && back_to == "Work"
+        ));
+        // Direct hands each piece to a session of its own, on any model,
+        // and as many at once as a session may run, which is the cap.
+        let direct = &defaults.list[1];
+        assert_eq!(direct.name, DIRECT_NAME);
+        assert_eq!(direct.orchestrator, claude("fable"));
+        assert!(direct.start_only);
+        assert_eq!(direct.steps.len(), 1);
+        assert!(matches!(
+            &direct.steps[0],
+            Step::Work { name, models, parallel: MOST_PARALLEL } if name == "Work" && models.is_empty()
         ));
     }
 

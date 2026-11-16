@@ -200,9 +200,9 @@ function callerKey(id: string): string {
   return (byToken(id) ?? rowById(id) ?? calling(id)).token;
 }
 
-/** The orchestrator's own directory, where a caller the test does not
-    place elsewhere runs. */
-const C = "/home/ada/.agent-workbench/orchestrator";
+/** The project a caller runs in where the test does not place it
+    elsewhere. */
+const C = "/home/ada/dev/lead";
 /** The session that makes a call when the test names none. */
 const ME = "caller-0";
 

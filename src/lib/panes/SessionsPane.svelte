@@ -51,16 +51,8 @@
     startSession,
     workspace,
   } from "$lib/workspace.svelte";
-  import {
-    LABEL,
-    childrenOf,
-    conducting,
-    conductors,
-    isAsking,
-    orchestrator,
-    ownFor,
-    parentOf,
-  } from "$lib/orchestrator.svelte";
+  import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
+  import { folderShown, orchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
     placeTextOf,
     startedFor,
@@ -121,6 +113,7 @@
       opens under the project's name, the cursor on the agent the project
       used last and the account the project runs under. */
   function offer(path: string) {
+    if (!startsIn(path)) return;
     if (!choosable) {
       startSession(path);
       return;
@@ -229,16 +222,22 @@
       is not drawn as on screen while its starter's is. */
   let screenProject = $derived(onScreen());
 
-  /** The projects under the orchestrator's own: opening the directory it
-      runs in is opening the project already pinned above them, and it is
-      drawn once. They are split into the ones in use and the ones folded
-      under Inactive, each in the order the sort menu says. The project on
-      screen is in use, and while the session on screen hangs under its
-      starter in another project, that is the starter's. */
+  /** The orchestrator folder, while it is listed: a project like the ones
+      you opened, though nothing new starts in it. */
+  let folder = $derived.by((): ProjectInfo | null => {
+    const dir = folderShown(screenProject);
+    if (dir === null) return null;
+    return { path: dir, name: lastSegment(dir), repository: null, isGit: true };
+  });
+
+  /** The projects, the orchestrator folder among them while it is listed,
+      split into the ones in use and the ones folded under Inactive, each
+      in the order the sort menu says. The project on screen is in use, and
+      while the session on screen hangs under its starter in another
+      project, that is the starter's. */
   let split = $derived.by(() => {
-    const byPath = new Map(
-      workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
-    );
+    const byPath = new Map(workspace.open.map((project) => [project.path, project]));
+    if (folder !== null && !byPath.has(folder.path)) byPath.set(folder.path, folder);
     const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
@@ -336,8 +335,8 @@
   }
 
   /** The menu beside the sort on the title's row: the ways to open a
-      project, to start an orchestrator, and the settings. Its keyboard
-      cursor walks the items while it is open. */
+      project, and the settings. Its keyboard cursor walks the items while
+      it is open. */
   let menuOpen = $state(false);
   let menuAt = $state(0);
 
@@ -364,12 +363,6 @@
       run: openRemote,
     },
     {
-      id: "menu-orchestrator",
-      label: "New orchestrator session",
-      disabled: orchestrator.dir === null || !isReady(),
-      run: startOrchestrator,
-    },
-    {
       id: "menu-settings",
       label: "Settings…",
       chord: describe(chordFor("settings")),
@@ -389,9 +382,11 @@
     if (projectMenu === null) return [];
     const path = projectMenu.path;
     const agent = defaultAgent(path);
-    const other = otherWay(path);
+    const other = startsIn(path) ? otherWay(path) : null;
     return [
-      { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
+      ...(startsIn(path)
+        ? [{ id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) }]
+        : []),
       // One session the other way from New session, alone.
       ...(other === null
         ? []
@@ -485,28 +480,6 @@
     hasAccounts() && activeSession() !== null ? accountLabel(activeSession()?.account ?? null) : null,
   );
 
-  /** A session in the orchestrator's own project, from the menu: the project
-      comes forward, and a session starts there as its header's + would. */
-  function startOrchestrator() {
-    const dir = orchestrator.dir;
-    if (dir === null) return;
-    bringForward(dir);
-    offer(dir);
-  }
-
-  /** The orchestrator's own project, while it has something to show: a
-      session of its own, or one to resume there. With neither it is not
-      drawn, and the menu is the way to the first one. */
-  let pinned = $derived.by(() => {
-    const dir = orchestrator.dir;
-    if (dir === null) return null;
-    // Active counts too: choosing the agent for the first one happens
-    // under the project's own row, which has to be there to hold it.
-    const shows =
-      conductors().length > 0 || historyFor(dir).length > 0 || screenProject === dir;
-    return shows ? dir : null;
-  });
-
   /** The sessions whose started sessions are folded into dots on their
       own row rather than hanging under it. Open is how a parent starts,
       and nothing about it is remembered. */
@@ -539,10 +512,7 @@
   function newsTitle(starter: Session, news: Session[]): string {
     const what = (kid: Session) =>
       !isLive(kid) ? "ended" : kid.needs === "permission" ? "is asking" : "stopped";
-    const told =
-      starter.kind === "integrated" ||
-      isInstalled(starter.project) ||
-      starter.project === orchestrator.dir;
+    const told = starter.kind === "integrated" || isInstalled(starter.project);
     const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
     const woken = wakesSpent(starter)
       ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
@@ -659,7 +629,6 @@
           : { entries, hidden },
       );
     };
-    if (pinned !== null) keep(pinned);
     for (const project of split.active) keep(project.path);
     shownBodies = out;
     return out;
@@ -715,11 +684,6 @@
       { id: "new", run: newFromHead },
     ];
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
-    const dir = pinned;
-    if (dir !== null) {
-      out.push({ id: `project:${dir}`, run: () => bringForward(dir) });
-      out.push(...body(dir));
-    }
     for (const project of split.active) {
       const path = project.path;
       out.push({ id: `project:${path}`, run: () => bringForward(path) });
@@ -916,7 +880,7 @@
     const more = `more:${path}`;
     if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
     if (screenProject !== path) return out;
-    if (path !== orchestrator.dir && outsideFor(path).length > 0) {
+    if (outsideFor(path).length > 0) {
       out.push({ id: `earlier:${path}`, run: () => openResume(path) });
     }
     return out;
@@ -958,10 +922,7 @@
     if (id.startsWith("idle:")) {
       void closeProjectAsking(id.slice("idle:".length));
     } else if (id.startsWith("project:")) {
-      // The orchestrator's own project has no close button, and nothing
-      // here closes it either.
-      const path = id.slice("project:".length);
-      if (path !== orchestrator.dir) void closeProjectAsking(path);
+      void closeProjectAsking(id.slice("project:".length));
     } else if (id.startsWith("session:")) {
       // A session another started hangs quietly on its rail: the cursor
       // walks through those rows, and a key pressed on the way past is no
@@ -1269,8 +1230,8 @@
   // when this window does.
   $effect(() => {
     const wanted = workspace.open.map((project) => project.path);
-    const dir = orchestrator.dir;
-    if (dir !== null) wanted.push(dir);
+    const dir = orchestratorFolder.dir;
+    if (dir !== null && !orchestratorFolder.closed) wanted.push(dir);
     void loadMissingHistories(wanted);
   });
 
@@ -1771,7 +1732,7 @@
     aria-haspopup="menu"
     aria-expanded={projectMenu?.path === path}
     aria-label="More for {projectLabel(path)}"
-    title="New session, close"
+    title={startsIn(path) ? "New session, close" : "Close"}
     data-testid="project-more"
     ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
       ><circle cx="3.5" cy="8" r=".9" /><circle cx="8" cy="8" r=".9" /><circle cx="12.5" cy="8" r=".9" /></svg
@@ -1808,41 +1769,18 @@
       {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
     </button>
     {@render moreButton(project.path)}
-    <button
-      class="add-here"
-      tabindex="-1"
-      onclick={() => newIn(project.path)}
-      disabled={!isReady()}
-      aria-label="New session in {projectLabel(project.path)}"
-      title="New session"
-      data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
-    >
+    {#if startsIn(project.path)}
+      <button
+        class="add-here"
+        tabindex="-1"
+        onclick={() => newIn(project.path)}
+        disabled={!isReady()}
+        aria-label="New session in {projectLabel(project.path)}"
+        title="New session"
+        data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
+      >
+    {/if}
     {@render projectMenuFor(project.path)}
-  </div>
-{/snippet}
-
-<!-- The orchestrator's own project: nothing closes it, and its button
-     starts an orchestrator. -->
-{#snippet pinnedRow(dir: string)}
-  <div
-    class="project"
-    class:on={screenProject === dir}
-    class:cursor={current === `project:${dir}`}
-    data-row="project:{dir}"
-    data-testid="project-head"
-  >
-    <button class="row project-row" tabindex="-1" onclick={() => bringForward(dir)} title={dir} data-testid="orchestrator-project">
-      <span class="name">{LABEL}</span>
-    </button>
-    <button
-      class="add-here"
-      tabindex="-1"
-      onclick={() => newIn(dir)}
-      disabled={!isReady()}
-      aria-label="New orchestrator session"
-      title="New orchestrator session"
-      data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
-    >
   </div>
 {/snippet}
 
@@ -1884,23 +1822,21 @@
          opens the dialog to resume from. It opens something else rather
          than opening here, so it has a glyph of its own, not the chevron,
          and ends in an ellipsis. -->
-    {#if path !== orchestrator.dir}
+    {#if outsideFor(path).length > 0}
       {@const earlier = outsideFor(path).length}
-      {#if earlier > 0}
-        <button
-          class="fold tail"
-          class:cursor={current === `earlier:${path}`}
-          tabindex="-1"
-          onclick={() => openResume(path)}
-          data-row="earlier:{path}"
-          data-testid="earlier-sessions"
+      <button
+        class="fold tail"
+        class:cursor={current === `earlier:${path}`}
+        tabindex="-1"
+        onclick={() => openResume(path)}
+        data-row="earlier:{path}"
+        data-testid="earlier-sessions"
+      >
+        <svg class="chev history" viewBox="0 0 16 16" aria-hidden="true"
+          ><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7" /><path d="M2.6 2.6v2.6h2.6" /><path d="M8 5.2V8l1.9 1.2" /></svg
         >
-          <svg class="chev history" viewBox="0 0 16 16" aria-hidden="true"
-            ><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7" /><path d="M2.6 2.6v2.6h2.6" /><path d="M8 5.2V8l1.9 1.2" /></svg
-          >
-          <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
-        </button>
-      {/if}
+        <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
+      </button>
     {/if}
   {/if}
 {/snippet}
@@ -2018,7 +1954,7 @@
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       aria-label="More"
-      title="Open a project, start an orchestrator, or the settings"
+      title="Open a project, or the settings"
       data-row="menu"
       data-testid="sessions-menu"
       ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
@@ -2160,16 +2096,6 @@
         >
       </div>
     {/if}
-      <!-- The orchestrator's own project, above the ones you opened: a session
-           that directs others runs here, and starts here like any other. -->
-      {#if pinned !== null}
-        {@const dir = pinned}
-        <section class="proj" data-testid="project-section">
-          {@render pinnedRow(dir)}
-          {@render projectBody(dir)}
-        </section>
-      {/if}
-
       {#each split.active as project (project.path)}
         <section class="proj" data-testid="project-section">
           {@render projectRow(project)}
