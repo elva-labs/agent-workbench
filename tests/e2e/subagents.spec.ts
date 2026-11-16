@@ -42,11 +42,11 @@ async function settled(locator: Locator) {
 const heard = (page: Page, about: string) => shown(page).getByTestId("now").filter({ hasText: about });
 
 /** A session on screen that was sent a message and is at work on it. */
-async function working(page: Page, platform = "Linux x86_64") {
+async function working(page: Page, platform = "Linux x86_64", keep = false) {
   await page.addInitScript((reported) => {
     Object.defineProperty(Navigator.prototype, "platform", { get: () => reported });
   }, platform);
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] }, keepIntegrated: keep });
   await page.goto("/");
   await page.getByTestId("start-agent").click();
   await expect(input(page)).toBeEnabled();
@@ -69,6 +69,31 @@ function startSubagent(page: Page, about: string, options: { handle?: string; ki
      const task = f.task("${handle}", call, { background: ${background} });
      return { call, task };`,
   ) as Promise<{ call: string; task: string }>;
+}
+
+/** Two frames on, once whatever a resize sets off has run. */
+function frames(page: Page) {
+  return page.evaluate(
+    () => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))),
+  );
+}
+
+/** Whether the row of the step for a call stands inside the thread's
+    view, in the conversation on screen. */
+async function stepInView(page: Page, call: string) {
+  const head = await shown(page).locator(`[data-call="${call}"] > [data-testid='step-head']`).boundingBox();
+  const view = await shown(page).getByTestId("thread").boundingBox();
+  if (head === null || view === null) return false;
+  return head.y >= view.y - 1 && head.y + head.height <= view.y + view.height + 1;
+}
+
+/** Steps after a call in the same run, enough that the run's work, open,
+    is taller than the view. */
+function stepsAfter(page: Page, handle: string, count = 30) {
+  return agent(
+    page,
+    `for (let at = 0; at < ${count}; at++) f.tool("${handle}", "Bash", { command: "ls part-" + at }, "a\\nb", { kind: "command" });`,
+  );
 }
 
 /** The started session for the cache, under the first session. */
@@ -256,7 +281,7 @@ test.describe("subagents on the rail", () => {
     }
   });
 
-  test("tell a screen reader of each as it starts, once, politely", async ({ page }) => {
+  test("tell a screen reader of them as they start, a session's together in one line, politely", async ({ page }) => {
     await working(page);
     const said = page.getByTestId("subagent-said");
     await expect(said).toHaveAttribute("aria-live", "polite");
@@ -264,9 +289,99 @@ test.describe("subagents on the rail", () => {
     await subagent(page, "Read the scan");
     await expect(said).toHaveText("Compare the two ways of reading started a subagent for Read the scan.");
     await agent(page, `f.emit("int-1", { type: "taskProgress", task: "task-1", call: null, tool: "Grep", description: null });`);
-    await subagent(page, "Read the index");
-    await expect(said).toHaveText("Compare the two ways of reading started a subagent for Read the index.");
+    // Several at once are one line with a count, however they come.
+    for (const about of ["Part one", "Part two", "Part three"]) await subagent(page, about);
+    await expect(said).toHaveText("Compare the two ways of reading started 3 subagents.");
     // A subagent's row is no stop for Tab: the pane is one.
     await expect(rows(page).first()).toHaveAttribute("tabindex", "-1");
+  });
+
+  test("open at the call in the running turn and stay there, by the row and by the dock's Open", async ({ page }) => {
+    await working(page);
+    const call = await subagent(page, "Find where the scan starts");
+    await stepsAfter(page, "int-1");
+    await row(page, "Find where the scan starts").click();
+    await expect.poll(() => stepInView(page, call)).toBe(true);
+    await expect(shown(page).locator(`[data-call="${call}"]`)).toHaveClass(/marked/);
+    await frames(page);
+    expect(await stepInView(page, call)).toBe(true);
+    // More comes, in the subagent and in the main thread: it stays put.
+    await agent(
+      page,
+      `f.startTool("int-1", "Grep", { pattern: "scan" }, { kind: "search", parent: "${call}" });
+       f.tool("int-1", "Bash", { command: "ls more" }, "c", { kind: "command" });`,
+    );
+    await frames(page);
+    expect(await stepInView(page, call)).toBe(true);
+
+    // The dock's Open on a request from a started session's subagent.
+    await started(page);
+    const theirs = await subagent(page, "Run the cache tests", { handle: "int-2" });
+    await stepsAfter(page, "int-2");
+    await agent(
+      page,
+      `f.startTurn("int-2");
+       const r = f.startTool("int-2", "Bash", { command: "cargo test" }, { kind: "command", parent: "${theirs}" });
+       f.emit("int-2", { type: "permissionAsked", request: "sub-open", call: r, parent: "${theirs}", tool: "Bash", input: { command: "cargo test" }, truncated: false, description: null, path: null, choices: [{ choice: "allow", remembers: null, message: false }] });`,
+    );
+    await shown(page).getByTestId("permission-dock").getByTestId("dock-open").click();
+    await expect.poll(() => stepInView(page, theirs)).toBe(true);
+    await expect(shown(page).locator(`[data-call="${theirs}"] [data-testid='step-status']`).first()).toHaveText("asking");
+    await frames(page);
+    expect(await stepInView(page, theirs)).toBe(true);
+    await agent(page, `f.tool("int-2", "Bash", { command: "ls after" }, "d", { kind: "command" });`);
+    await frames(page);
+    expect(await stepInView(page, theirs)).toBe(true);
+  });
+
+  test("after a reload, keep those still at work and say nothing of them as new", async ({ page }) => {
+    await working(page, "Linux x86_64", true);
+    const fore = await subagent(page, "Foreground one");
+    const back = await subagent(page, "Background one", { background: true });
+    await agent(page, `f.finishTool("int-1", "${back}", "launched");`);
+    // What the agent wrote down of them, as its transcript holds it.
+    const then = Date.now() - 1000;
+    const started = (call: string, about: string) => [
+      { at: then, event: { type: "toolStarted", call, parent: null, name: "Agent", kind: "agent" } },
+      { at: then, event: { type: "toolInput", call, parent: null, delta: null, input: { description: about, subagent_type: "Explore" }, truncated: false } },
+    ];
+    const items = [
+      { at: then, event: { type: "turnStarted", messages: [] } },
+      ...started(fore, "Foreground one"),
+      ...started(back, "Background one"),
+      { at: then, event: { type: "toolFinished", call: back, parent: null, output: "launched", error: false, truncated: false, changes: [] } },
+    ];
+    await agent(page, `f.transcript("integrated-session-1", ${JSON.stringify(items)});`);
+    await expect(rows(page)).toHaveCount(2);
+
+    await page.reload();
+    await expect(rows(page)).toHaveCount(2);
+    await expect(row(page, "Background one")).toHaveAttribute("data-state", "running");
+    await expect(row(page, "Foreground one")).toHaveAttribute("data-state", "running");
+    // A new one is said alone: those from before the reload are not news.
+    await page.mouse.move(900, 500);
+    await subagent(page, "Fresh one");
+    await expect(page.getByTestId("subagent-said")).toHaveText(/started a subagent for Fresh one\.$/);
+  });
+
+  test("folded, say done and failed by shape as well as colour", async ({ page }) => {
+    await working(page);
+    await page.mouse.move(900, 500);
+    const done = await startSubagent(page, "Finished");
+    const failed = await startSubagent(page, "Broke");
+    await subagent(page, "Still going");
+    await agent(
+      page,
+      `f.finishTask("int-1", "${done.task}", "completed"); f.finishTool("int-1", "${done.call}", "ok");
+       f.finishTask("int-1", "${failed.task}", "failed"); f.finishTool("int-1", "${failed.call}", "no", { error: true });`,
+    );
+    await page.keyboard.press("Control+b");
+    const dots = page.locator(`${SESSIONS} [data-testid='subagent-dots'] .dot`);
+    await expect(dots).toHaveCount(3);
+    const fill = (at: number) => dots.nth(at).evaluate((dot) => getComputedStyle(dot).backgroundColor);
+    const cross = (at: number) => dots.nth(at).evaluate((dot) => getComputedStyle(dot, "::before").content);
+    expect(await fill(0)).toBe("rgba(0, 0, 0, 0)");
+    expect(await cross(1)).toBe('""');
+    expect(await fill(2)).not.toBe("rgba(0, 0, 0, 0)");
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Conversation } from "$lib/conversation.svelte";
-import type { IntegratedEventBody } from "$lib/core";
+import type { IntegratedEventBody, IntegratedHistory, IntegratedSnapshot } from "$lib/core";
 import { ABOUT_MOST, subagentNote, subagentSaid, subagentWords, subagentsOf } from "$lib/subagents";
 
 /** A conversation driven event by event, on a clock the test moves. */
@@ -70,7 +70,7 @@ describe("subagentsOf", () => {
     at(2000);
     play(...agentCall("c1", { description: "Read the per-project scan", subagent_type: "Explore", prompt: "Read it" }));
     expect(subagentsOf(conversation)).toEqual([
-      { call: "c1", about: "Read the per-project scan", kind: "Explore", state: "running", at: 2000 },
+      { call: "c1", about: "Read the per-project scan", kind: "Explore", state: "running", at: 2000, began: 2000 },
     ]);
   });
 
@@ -125,7 +125,7 @@ describe("subagentsOf", () => {
     expect(subagentsOf(conversation).map((one) => one.state)).toEqual(["running"]);
     at(3000);
     play(taskEnded("t1", "c1"));
-    expect(subagentsOf(conversation)).toEqual([{ call: "c1", about: "slow", kind: "Explore", state: "done", at: 3000 }]);
+    expect(subagentsOf(conversation)).toEqual([{ call: "c1", about: "slow", kind: "Explore", state: "done", at: 3000, began: 1000 }]);
     at(4000);
     play(turn());
     expect(subagentsOf(conversation).map((one) => one.state)).toEqual(["done"]);
@@ -213,6 +213,100 @@ describe("subagentsOf", () => {
     play({ type: "ended", code: 1, clean: false });
     expect(subagentsOf(conversation)).toEqual([]);
   });
+
+  it("keeps done rows through a compaction, which ends no turn", () => {
+    const { conversation, at, play } = driven();
+    play(state("working"), turn(), ...agentCall("c1", { description: "a" }), task("t1", "c1"));
+    at(2000);
+    play(taskEnded("t1", "c1"), finished("c1"));
+    play({ type: "compacting" }, { type: "compacted", reason: "full", tokensBefore: 900, tokensAfter: 100 });
+    expect(subagentsOf(conversation).map((one) => one.state)).toEqual(["done"]);
+    at(3000);
+    play(ended(), state("idle"));
+    expect(subagentsOf(conversation)).toEqual([]);
+  });
+
+  it("lets a subagent its interrupted turn waited on go with the turn", () => {
+    const { conversation, at, play } = driven();
+    play(state("working"), turn(), ...agentCall("c1", { description: "a" }), task("t1", "c1"));
+    at(2000);
+    // The core says the task is lost and the call failed as the turn ends.
+    play(taskEnded("t1", "c1", "lost"), finished("c1", true), { ...ended(), outcome: "interrupted" } as IntegratedEventBody);
+    expect(subagentsOf(conversation)).toEqual([]);
+    play(state("idle"));
+    expect(subagentsOf(conversation)).toEqual([]);
+  });
+
+  it("shows nothing stale from what was said before, laid under a live turn", () => {
+    const { conversation, at, play } = driven();
+    const history: IntegratedHistory = {
+      cut: false,
+      items: [
+        { at: 100, event: turn() },
+        ...agentCall("old", { description: "finished long ago" }).map((event) => ({ at: 110, event })),
+        { at: 120, event: finished("old") },
+        { at: 130, event: ended() },
+        { at: 200, event: turn() },
+        // A turn read with no end, its subagent never finished.
+        ...agentCall("open", { description: "left open" }).map((event) => ({ at: 210, event })),
+      ],
+    };
+    at(5000);
+    play(state("working"), turn(), ...agentCall("live", { description: "now" }));
+    conversation.lay(history, { at: 4000, since: null });
+    expect(subagentsOf(conversation).map((one) => [one.call, one.state])).toEqual([["live", "running"]]);
+  });
+
+  it("restores a subagent that asks, and those at work that no transcript holds", () => {
+    const { conversation, at, play } = driven();
+    play(...agentCall("c1", { description: "asks" }));
+    play({ type: "toolStarted", call: "inner", parent: "c1", name: "Bash", kind: "command" });
+    at(3000);
+    const snapshot: IntegratedSnapshot = {
+      state: "asking",
+      turn: true,
+      settings: { model: null, mode: null, effort: null },
+      efforts: [],
+      ready: null,
+      requests: [
+        {
+          type: "permissionAsked",
+          request: "r1",
+          call: "inner",
+          parent: "c1",
+          tool: "Bash",
+          input: { command: "cargo test" },
+          truncated: false,
+          description: null,
+          path: null,
+          choices: [],
+        },
+      ],
+      messages: [],
+      limits: null,
+      tasks: [task("t-bg", "c-bg", true) as Extract<IntegratedEventBody, { type: "taskStarted" }>],
+    };
+    conversation.restore(snapshot);
+    expect(subagentsOf(conversation).map((one) => [one.call, one.state])).toEqual([["c1", "asking"]]);
+    // The background one's call comes with what was said before, already
+    // returned, and its task, from the snapshot, says it is still at work.
+    conversation.lay(
+      {
+        cut: false,
+        items: [
+          { at: 100, event: turn() },
+          ...agentCall("c-bg", { description: "in the background" }).map((event) => ({ at: 110, event })),
+          { at: 111, event: finished("c-bg") },
+          { at: 120, event: ended() },
+        ],
+      },
+      { at: 2000, since: 2000 },
+    );
+    expect(subagentsOf(conversation).map((one) => [one.call, one.state])).toEqual([
+      ["c-bg", "running"],
+      ["c1", "asking"],
+    ]);
+  });
 });
 
 describe("the words for subagents", () => {
@@ -222,6 +316,7 @@ describe("the words for subagents", () => {
     kind,
     state,
     at: 0,
+    began: 0,
   });
 
   it("counts them for the session's own row", () => {
