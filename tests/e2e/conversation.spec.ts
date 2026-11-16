@@ -1312,7 +1312,8 @@ test.describe("the conversation's text", () => {
         if (!own) continue;
         const style = getComputedStyle(element);
         if (style.visibility !== "visible" || (element as HTMLElement).offsetParent === null) continue;
-        if (element.closest("button:disabled")) continue;
+        // An inactive control, disabled or marked so, is not held to it.
+        if (element.closest("button:disabled, [aria-disabled='true']")) continue;
         let opacity = 1;
         for (let node: Element | null = element; node !== null && node !== root; node = node.parentElement)
           opacity *= Number(getComputedStyle(node).opacity);
