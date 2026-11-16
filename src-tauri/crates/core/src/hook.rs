@@ -1254,7 +1254,9 @@ fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
 }
 
 /// Takes the server out of the folder's Codex config, and a config that
-/// held nothing but it goes too.
+/// held nothing but it goes too. A `[mcp_servers]` header the user wrote
+/// stays, with whatever is said above it, though no server is left under
+/// it.
 fn unpoint_codex(folder: &Path) -> Result<(), String> {
     let codex = codex_config_path(folder);
     if !codex.exists() {
@@ -1264,13 +1266,15 @@ fn unpoint_codex(folder: &Path) -> Result<(), String> {
     let mut document =
         parse_codex(&file).map_err(|e| format!("could not read {}: {e}", codex.display()))?;
     let mut changed = false;
-    if let Some(servers) = document
-        .get_mut("mcp_servers")
-        .and_then(|item| item.as_table_like_mut())
-    {
-        changed = servers.remove(CODEX_SERVER_KEY).is_some();
-        if servers.is_empty() {
-            document.remove("mcp_servers");
+    if let Some(item) = document.get_mut("mcp_servers") {
+        let written = item
+            .as_table()
+            .is_some_and(|table| !table.is_implicit() && !table.is_dotted());
+        if let Some(servers) = item.as_table_like_mut() {
+            changed = servers.remove(CODEX_SERVER_KEY).is_some();
+            if servers.is_empty() && !written {
+                document.remove("mcp_servers");
+            }
         }
     }
     if changed {
@@ -2339,6 +2343,35 @@ mod tests {
         let was = checked();
         assert!(was.installed && !was.outdated);
         assert!(install(&home, &project, &[], &HashMap::new()).is_err());
+    }
+
+    // Taking the hooks away takes their entry out of a servers table the
+    // user wrote and leaves the table's header and the comment above it,
+    // so the file is as it was before the install.
+    #[test]
+    fn removing_the_codex_entry_keeps_the_user_s_servers_header() {
+        let (home, project) = fixture("codex-header");
+        with_daemon(&home);
+        let config = project.join(".codex/config.toml");
+        std::fs::create_dir_all(config.parent().unwrap()).unwrap();
+        for theirs in [
+            "model = \"o3\"\n\n# My MCP servers, keep this comment\n[mcp_servers]\n",
+            "# My MCP servers, keep this comment\r\n[mcp_servers]\r\n",
+        ] {
+            std::fs::write(&config, theirs).unwrap();
+            install(&home, &project, &[], &HashMap::new()).unwrap();
+            assert!(std::fs::read_to_string(&config)
+                .unwrap()
+                .contains("[mcp_servers.agent_workbench]"));
+            uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+            assert_eq!(std::fs::read_to_string(&config).unwrap(), theirs);
+        }
+        // A table the hooks made goes with their entry, and the file too
+        // when nothing else is in it.
+        std::fs::remove_file(&config).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(!config.exists());
     }
 
     #[test]
