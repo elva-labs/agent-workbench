@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { BUILD_AND_REVIEW, PROJECT, installFakeCore } from "./fake";
 
 /**
  * Cards that let the background through: with a background of the user's
@@ -311,6 +311,24 @@ for (const look of LOOKS)
       // The question before stopping them all.
       await page.getByTestId("board-stop-all").click();
       await expect(page.getByTestId("board-stop-all-ask")).toBeVisible();
+      await walk(page);
+    });
+
+for (const look of LOOKS)
+  for (const appearance of APPEARANCES)
+    test(`nothing solid in a card: the workflow chip and its menu, ${look}, ${appearance}`, async ({ page }) => {
+      await open(page, look, appearance, {
+        integrated: ["claude-code"],
+        workflows: { list: [BUILD_AND_REVIEW], default: null, overrides: {} },
+      });
+      await page.getByTestId("start-agent").click();
+      await expect(page.getByTestId("model-chip")).toBeEnabled();
+      const chip = page.getByTestId("workflow-chip");
+      await chip.hover();
+      await walk(page);
+      await chip.click();
+      await expect(page.getByTestId("workflow-menu")).toBeVisible();
+      expect(await inCard(page, "workflow-menu")).toBe(true);
       await walk(page);
     });
 

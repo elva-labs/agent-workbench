@@ -480,6 +480,10 @@
      terminal: its ground is cleared so the card or the well shows through,
      and a selection is the accent let through over it rather than a blend
      over the solid tone. */
+  :global(:root[data-cards]) .term :global(.xterm-scrollable-element) {
+    background-color: transparent !important;
+  }
+
   :global(:root[data-cards]) .term :global(.xterm-selection div) {
     background-color: var(--term-selection) !important;
   }
