@@ -253,7 +253,7 @@
         <span class="own-label">Hand out work only as sessions you can see</span>
         <small>
           {startsOnly(current)
-            ? "The orchestrator's own ways to hand work to agents you cannot see are taken away, so every piece it hands out is a session you can see."
+            ? "The orchestrator's own ways to hand work to agents you cannot see are taken away, so every piece it hands out is a session you can see. Workers and reviewers keep their subagents; an integrated Claude Code session's show under it on the rail."
             : "The orchestrator keeps its own subagents, whose work does not show as sessions."}
         </small>
       </span>

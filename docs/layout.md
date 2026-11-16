@@ -225,8 +225,11 @@ keeps every row where it stands when open: each project's name, cut at the
 column's edge and without the part of the path that tells two projects of
 one name apart, and under it the dots of its sessions, each in its own row,
 on macOS with the start of the session's name beside its dot, fading out
-at the column's edge. The rest of the rows keep their height and show
-nothing, so the dots stay with their heading and nothing moves when the
+at the column's edge. A session's subagents are not rows there but a small
+dot each, packed beside its rail where their rows stand, the first always
+clear of the fading edge; see
+[subagents on the rail](sessions.md#subagents-on-the-rail). The rest of
+the rows keep their height and show nothing, so the dots stay with their heading and nothing moves when the
 pane opens again. Its header row is part of the band of ground the headers
 lie on, with no rule under it in the modern look, and on Windows and Linux
 the menu button stands in it. Between the column and the pane beside it is
