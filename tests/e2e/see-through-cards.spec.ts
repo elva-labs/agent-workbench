@@ -284,3 +284,114 @@ test("with no share on the cards stamps nothing and leaves the agent's card soli
   expect(card.colour).toBe("rgb(255, 255, 255)");
   expect(card.wrap).toBe("rgb(255, 255, 255)");
 });
+
+/** The lowest contrast a text's colour has against the ground it is drawn
+    on, as the window paints it: the text and what else is drawn in the
+    element are hidden, the element's box is read pixel by pixel, and every
+    pixel is held against the colour. */
+async function lowestContrast(page: Page, selector: string, colour: string, hide: string): Promise<number> {
+  const element = page.locator(selector).first();
+  await element.evaluate((node, hide) => {
+    const style = document.createElement("style");
+    style.id = "hide-text";
+    style.textContent = `${hide} { color: transparent !important; text-shadow: none !important; visibility: hidden; }`;
+    document.head.append(style);
+    void node;
+  }, hide);
+  const box = (await element.boundingBox())!;
+  const shot = await page.screenshot({
+    // Clear of the focused card's mark along its top and its corners.
+    clip: { x: box.x + 2, y: box.y + 12, width: Math.max(1, box.width - 4), height: Math.max(1, box.height - 14) },
+  });
+  await page.evaluate(() => document.getElementById("hide-text")?.remove());
+  return page.evaluate(
+    async ({ data, colour }) => {
+      const channel = (value: number) => {
+        const c = value / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      };
+      const luminance = (r: number, g: number, b: number) => 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+      const probe = document.createElement("span");
+      probe.style.color = colour;
+      document.body.append(probe);
+      const [r, g, b] = getComputedStyle(probe).color.match(/[\d.]+/g)!.map(Number);
+      probe.remove();
+      const text = luminance(r, g, b);
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, image.width, image.height).data;
+      let lowest = Infinity;
+      for (let at = 0; at < pixels.length; at += 4) {
+        const ground = luminance(pixels[at], pixels[at + 1], pixels[at + 2]);
+        lowest = Math.min(lowest, (Math.max(text, ground) + 0.05) / (Math.min(text, ground) + 0.05));
+      }
+      return lowest;
+    },
+    { data: shot.toString("base64"), colour },
+  );
+}
+
+/** A text's colour as the page draws it. */
+const colourOf = (page: Page, selector: string) =>
+  page.locator(selector).first().evaluate((node) => getComputedStyle(node).color);
+
+/** The strongest background the pad allows over this palette: its colours
+    at the rim and all of its strength. */
+const STRONG = { ...LAGOON, strength: 1 };
+
+for (const look of LOOKS)
+  for (const appearance of APPEARANCES)
+    test.describe(`text on a see-through card holds 4.5:1, ${look}, ${appearance}`, () => {
+      // Rounding to whole steps of colour can cost a hair at the worst pixel.
+      const LEAST = 4.45;
+
+      test("in the conversation", async ({ page }) => {
+        await open(page, look, appearance, { integrated: ["claude-code"], backgrounds: { teal: STRONG } });
+        await page.getByTestId("start-agent").click();
+        await expect(page.getByTestId("composer-input")).toBeVisible();
+        await script(
+          page,
+          `f.send("${H}", crypto.randomUUID(), "Keep the cache between runs.");
+           f.startTurn("${H}");
+           f.tool("${H}", "Bash", { command: "cargo test" }, "ok", { kind: "command" });
+           f.emit("${H}", { type: "text", block: "a", parent: null, text: "The cache lives in memory now.", done: true });
+           f.endTurn("${H}");`,
+        );
+        for (const selector of ["[data-testid='agent-text']", "[data-testid='work-line']", "[data-testid='user-message'] .bubble"]) {
+          await expect(page.locator(selector).first()).toBeVisible();
+          const colour = await colourOf(page, selector);
+          const low = await lowestContrast(page, selector, colour, `${selector}, ${selector} *`);
+          expect(low, `${selector} in ${colour}`).toBeGreaterThanOrEqual(LEAST);
+        }
+      });
+
+      test("in the editor", async ({ page }) => {
+        await open(page, look, appearance, { backgrounds: { teal: STRONG } });
+        await page.keyboard.press(`${MOD}+Shift+E`);
+        await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+        await page.locator(TREE).getByText("README.md", { exact: true }).click();
+        await expect.poll(() => page.locator(".cm-content").innerText()).toContain("// README.md");
+        // The line numbers in the gutter are the quiet text.
+        const numbers = ".cm-gutter.cm-lineNumbers .cm-gutterElement:not(.cm-activeLineGutter)";
+        const colour = await colourOf(page, numbers);
+        const low = await lowestContrast(page, ".cm-gutters", colour, ".cm-gutters, .cm-gutters *");
+        expect(low, `the line numbers in ${colour}`).toBeGreaterThanOrEqual(LEAST);
+        const text = await colourOf(page, ".cm-line");
+        expect(await lowestContrast(page, ".cm-content", text, ".cm-content, .cm-content *")).toBeGreaterThanOrEqual(LEAST);
+      });
+
+      test("in a terminal", async ({ page }) => {
+        await open(page, look, appearance, { backgrounds: { teal: STRONG } });
+        await page.getByTestId("start-agent").click();
+        await expect(page.locator(`${AGENT} .xterm-screen`)).toBeVisible();
+        const ink = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--ink").trim());
+        const low = await lowestContrast(page, `${AGENT} [data-testid='terminal']`, ink, `${AGENT} .xterm-screen, ${AGENT} .xterm-helpers`);
+        expect(low, `the terminal's text in ${ink}`).toBeGreaterThanOrEqual(LEAST);
+      });
+    });
