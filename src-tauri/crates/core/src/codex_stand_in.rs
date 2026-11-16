@@ -1225,6 +1225,29 @@ mod model {
         ]
     }
 
+    /// Reasoning with a summary, then a message.
+    fn thought(summary: &str, text: &str) -> Vec<Value> {
+        let id = format!("rs_{}", uuid::Uuid::new_v4().simple());
+        let mut events = vec![
+            json!({"type": "response.output_item.added", "output_index": 0,
+            "item": {"type": "reasoning", "id": id, "summary": []}}),
+            json!({"type": "response.reasoning_summary_part.added", "item_id": id,
+            "output_index": 0, "summary_index": 0, "part": {"type": "summary_text", "text": ""}}),
+            json!({"type": "response.reasoning_summary_text.delta", "item_id": id,
+            "output_index": 0, "summary_index": 0, "delta": summary}),
+            json!({"type": "response.reasoning_summary_text.done", "item_id": id,
+            "output_index": 0, "summary_index": 0, "text": summary}),
+            json!({"type": "response.output_item.done", "output_index": 0,
+            "item": {"type": "reasoning", "id": id,
+                     "summary": [{"type": "summary_text", "text": summary}]}}),
+        ];
+        for mut event in said(text) {
+            event["output_index"] = json!(1);
+            events.push(event);
+        }
+        events
+    }
+
     fn script(body: &Value) -> Vec<Value> {
         let input = body["input"].as_array().cloned().unwrap_or_default();
         let prompt = last_user_text(&input);
@@ -1261,6 +1284,10 @@ mod model {
             run("touch made.txt", true)
         } else if let Some(seconds) = prompt.split("SLEEP ").nth(1) {
             run(&format!("sleep {}", seconds.trim()), false)
+        } else if prompt.contains("THINK") {
+            thought("Weighing it.", "thought")
+        } else if let Some(command) = prompt.split("RUN ").nth(1) {
+            run(command.trim(), false)
         } else if prompt.contains("GIVEN") {
             // What the model was given: the tools by name, and whether a
             // workflow's instructions are anywhere in what it read.
@@ -1734,4 +1761,481 @@ fn the_events_a_window_replays_are_the_ones_the_driver_emits() {
         "the driver's events differ from {}",
         file.display()
     );
+}
+
+/// A history read through the stand-in, under a home of its own, within
+/// `wait`, with the folder the stand-in wrote what it read into.
+fn history_within(
+    name: &str,
+    scenario: &str,
+    wait: Duration,
+) -> (Result<crate::integrated::History, String>, Arc<Scratch>) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = Arc::new(Scratch::new(&format!("codex-history-{name}")));
+    let codex = dir.join("codex");
+    std::fs::write(&codex, STAND_IN).unwrap();
+    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(dir.join("scenario"), scenario).unwrap();
+    let vars = HashMap::from([
+        (
+            "PATH".to_string(),
+            format!("{}:/usr/bin:/bin", dir.display()),
+        ),
+        (
+            "FAKE_CODEX_SCENARIO".to_string(),
+            dir.join("scenario").to_string_lossy().to_string(),
+        ),
+    ]);
+    let home = dir.join("codex-home");
+    let history = crate::codex_history::read_within(&vars, Some(&home), &dir, None, THREAD, wait);
+    (history, dir)
+}
+
+fn read_stdin(dir: &Path) -> Vec<Value> {
+    std::fs::read_to_string(dir.join("stdin"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+/// The handshake a history read begins with.
+const HISTORY_OPENING: &str = concat!(
+    r#"expect "method":"initialize","#,
+    "\n",
+    r#"reply {"id":@ID@,"result":{"userAgent":"agent-workbench/0.169.0 (stand-in)"}}"#,
+    "\n",
+    r#"expect "method":"initialized""#,
+);
+
+#[test]
+fn a_history_is_read_through_an_app_server_of_its_own_under_the_account_s_home() {
+    let scenario = [
+        HISTORY_OPENING.to_string(),
+        r#"say {"method":"remoteControl/status/changed","params":{"status":"disabled"}}"#.into(),
+        // A request of Codex's own, which the read turns down.
+        r#"say {"id":90,"method":"item/tool/call","params":{"tool":"lookup","arguments":{}}}"#.into(),
+        r#"expect "method":"thread/turns/list""#.into(),
+        r#"reply {"id":@ID@,"result":{"data":[{"id":"turn-1","status":"completed","startedAt":1000,"completedAt":1001,"durationMs":900,"error":null,"itemsView":"full","items":[{"type":"userMessage","id":"u1","clientId":"m-1","content":[{"type":"text","text":"Hello","text_elements":[]}],"startedAtMs":1000000},{"type":"agentMessage","id":"msg-1","text":"Hi.","startedAtMs":1000400,"completedAtMs":1000500}]}],"nextCursor":null}}"#.into(),
+        "drain".into(),
+    ]
+    .join("\n");
+    let (history, dir) = history_within("read", &scenario, Duration::from_secs(30));
+    let history = history.unwrap();
+    let kinds: Vec<String> = history
+        .items
+        .iter()
+        .map(|said| {
+            serde_json::to_value(&said.event).unwrap()["type"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(kinds, ["message", "turnStarted", "text", "turnEnded"]);
+    assert_eq!(history.items[2].at, 1_000_500);
+    let read = read_stdin(&dir);
+    let asked: Vec<&str> = read
+        .iter()
+        .filter_map(|line| line["method"].as_str())
+        .collect();
+    assert_eq!(asked, ["initialize", "initialized", "thread/turns/list"]);
+    assert_eq!(read[0]["params"]["clientInfo"]["name"], "agent-workbench");
+    assert_eq!(read[2]["params"]["threadId"], THREAD);
+    // The stand-in reads the rest of what it is sent after its answer.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let refused = loop {
+        if let Some(line) = read_stdin(&dir).into_iter().find(|line| line["id"] == 90) {
+            break line;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the request was never turned down"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(refused["error"]["code"], -32601);
+    let args = std::fs::read_to_string(dir.join("args")).unwrap();
+    assert_eq!(args.trim(), "app-server");
+    let env = std::fs::read_to_string(dir.join("env")).unwrap();
+    assert!(
+        env.lines()
+            .any(|line| line == format!("CODEX_HOME={}", dir.join("codex-home").display())),
+        "{env}"
+    );
+}
+
+#[test]
+fn an_answer_too_long_to_read_is_asked_again_a_turn_at_a_time() {
+    let long = "x".repeat(70 * 1024);
+    let scenario = [
+        HISTORY_OPENING.to_string(),
+        r#"expect "itemsView":"full""#.into(),
+        format!(
+            r#"reply {{"id":@ID@,"result":{{"data":[{{"id":"turn-1","status":"completed","itemsView":"full","items":[{{"type":"agentMessage","id":"long","text":"{long}"}}]}}],"nextCursor":null}}}}"#
+        ),
+        r#"expect "itemsView":"notLoaded""#.into(),
+        r#"reply {"id":@ID@,"result":{"data":[{"id":"turn-1","status":"completed","startedAt":1000,"itemsView":"notLoaded","items":[]}],"nextCursor":null}}"#.into(),
+        r#"expect "method":"thread/items/list""#.into(),
+        r#"reply {"id":@ID@,"result":{"data":[{"turnId":"turn-1","item":{"type":"agentMessage","id":"short","text":"Short."},"startedAtMs":1000100,"completedAtMs":1000200}],"nextCursor":null}}"#.into(),
+        "drain".into(),
+    ]
+    .join("\n");
+    let (history, dir) = history_within("long", &scenario, Duration::from_secs(30));
+    let history = history.unwrap();
+    let text = history
+        .items
+        .iter()
+        .find_map(|said| match &said.event {
+            Event::Text { block, text, .. } => Some((block.clone(), text.clone(), said.at)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(text, ("short".to_string(), "Short.".to_string(), 1_000_200));
+    let read = read_stdin(&dir);
+    let items = read
+        .iter()
+        .find(|line| line["method"] == "thread/items/list")
+        .unwrap();
+    assert_eq!(items["params"]["turnId"], "turn-1");
+}
+
+#[test]
+fn a_codex_that_does_not_answer_or_ends_is_an_error_in_time() {
+    let scenario = [
+        HISTORY_OPENING.to_string(),
+        r#"expect "method":"thread/turns/list""#.into(),
+        "drain".into(),
+    ]
+    .join("\n");
+    let began = Instant::now();
+    let (history, _) = history_within("silent", &scenario, Duration::from_millis(500));
+    let error = history.unwrap_err();
+    assert!(error.contains("did not answer in time"), "{error}");
+    assert!(began.elapsed() < Duration::from_secs(20));
+
+    let scenario = [
+        HISTORY_OPENING.to_string(),
+        r#"expect "method":"thread/turns/list""#.into(),
+        "exit 1".into(),
+    ]
+    .join("\n");
+    let (history, _) = history_within("ends", &scenario, Duration::from_secs(30));
+    let error = history.unwrap_err();
+    assert!(error.contains("ended before it answered"), "{error}");
+
+    let scenario = [
+        HISTORY_OPENING.to_string(),
+        r#"expect "method":"thread/turns/list""#.into(),
+        format!(r#"reply {{"id":@ID@,"error":{{"code":-32600,"message":"thread not loaded: {THREAD}"}}}}"#),
+        "drain".into(),
+    ]
+    .join("\n");
+    let (history, _) = history_within("unknown", &scenario, Duration::from_secs(30));
+    let error = history.unwrap_err();
+    assert!(error.contains("thread not loaded"), "{error}");
+}
+
+/// The real `codex app-server` on PATH reads back the thread a session of
+/// it wrote, against the stand-in for the model, with no login and no
+/// network: what was heard live comes back from Codex's record as the same
+/// events under the same ids, while the session still runs and once it
+/// has ended, read under a home that names no model provider it could
+/// sign in to. Run by hand:
+/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+#[test]
+#[ignore = "runs the real codex app-server on PATH"]
+fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
+    use std::os::unix::fs::PermissionsExt;
+    let port = model::serve();
+    let base = Arc::new(Scratch::new("real-codex-history"));
+    let home = base.join("home");
+    let work = base.join("work");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    let config = format!(
+        "model = \"mock-1\"\nmodel_provider = \"mock\"\n\n[model_providers.mock]\nname = \"mock\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\n"
+    );
+    std::fs::write(home.join("config.toml"), &config).unwrap();
+    let server = base.join("echo-server");
+    std::fs::write(&server, ECHO_SERVER).unwrap();
+    std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let environment = crate::env::environment();
+    let sessions = Arc::new(Sessions::default());
+    let recorder = Arc::new(Recorder::default());
+    let launch = Launch {
+        project: &work,
+        env: &environment.vars,
+        session: None,
+        token: Some("token-real"),
+        resume: false,
+        model: None,
+        mode: Some("full-access"),
+        effort: None,
+        config_dir: Some(&home),
+        tool_server: Some(&server),
+        orchestrator: false,
+        instructions: None,
+        start_only: false,
+        afresh: false,
+    };
+    let started = super::start(
+        recorder.clone(),
+        Arc::clone(&sessions),
+        &CODEX_APP_SERVER,
+        &launch,
+        Box::new(|_| {}),
+        Box::new(|_| {}),
+    )
+    .unwrap();
+    let h = Harness {
+        dir: Arc::clone(&base),
+        sessions: Arc::clone(&sessions),
+        recorder,
+        id: started.id,
+        waits: Waits::default(),
+    };
+    let ready = h.until(|e| e["type"] == "ready" || e["type"] == "ended");
+    let ready = ready.last().unwrap();
+    assert_eq!(ready["type"], "ready", "{:#?}", h.events());
+    let thread = ready["sessionId"].as_str().unwrap().to_string();
+    println!("codex {} thread {thread}", ready["version"]);
+    for text in ["THINK", "RUN printf 'hi\\n'", "PATCH", "MCP"] {
+        h.send(text);
+        h.until_type("turnEnded");
+    }
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    let image = Image {
+        media_type: "image/png".into(),
+        data: png.into(),
+    };
+    let looked = uuid::Uuid::new_v4().to_string();
+    send(&sessions, &h.id, &looked, "LOOK", &[image]).unwrap();
+    h.until_type("turnEnded");
+    control(&sessions, &h.id, &Control::Compact { instructions: None }).unwrap();
+    h.until_type("turnEnded");
+    h.send("PONG");
+    h.until_type("turnEnded");
+    let heard = h.events();
+
+    let read = || {
+        crate::codex_history::read_within(
+            &environment.vars,
+            Some(&home),
+            &work,
+            None,
+            &thread,
+            Duration::from_secs(60),
+        )
+        .unwrap()
+    };
+    let check = |history: &crate::integrated::History| {
+        let read: Vec<Value> = history
+            .items
+            .iter()
+            .map(|said| {
+                let mut event = serde_json::to_value(&said.event).unwrap();
+                event["at"] = json!(said.at);
+                event
+            })
+            .collect();
+        for (kind, key) in [
+            ("message", "message"),
+            ("text", "block"),
+            ("thinking", "block"),
+            ("toolStarted", "call"),
+            ("toolFinished", "call"),
+        ] {
+            let ids = |events: &[Value]| -> Vec<String> {
+                events
+                    .iter()
+                    .filter(|e| {
+                        e["type"] == kind
+                            && e["done"] != false
+                            && (kind != "message" || e["state"] == "sent")
+                    })
+                    .map(|e| e[key].as_str().unwrap().to_string())
+                    .collect()
+            };
+            assert_eq!(ids(&read), ids(&heard), "{kind} by {key}: {read:#?}");
+        }
+        // Each comes back as it was last heard.
+        for (kind, key, fields) in [
+            ("message", "message", &["text", "images"][..]),
+            ("text", "block", &["text"]),
+            ("thinking", "block", &["text"]),
+            ("toolStarted", "call", &["name", "kind"]),
+            ("toolInput", "call", &["input"]),
+            ("toolFinished", "call", &["output", "error", "changes"]),
+        ] {
+            let whole = |e: &&Value| {
+                e["type"] == kind
+                    && e["done"] != false
+                    && e["delta"].is_null()
+                    && (kind != "message" || e["state"] == "sent")
+            };
+            for back in read.iter().filter(whole) {
+                let live = heard
+                    .iter()
+                    .rev()
+                    .filter(whole)
+                    .find(|e| e[key] == back[key])
+                    .unwrap_or_else(|| panic!("{kind} {} was not heard", back[key]));
+                for field in fields {
+                    assert_eq!(back[*field], live[*field], "{kind} {field}");
+                }
+            }
+        }
+        let outcomes = |events: &[Value]| -> Vec<Value> {
+            events
+                .iter()
+                .filter(|e| e["type"] == "turnEnded")
+                .map(|e| e["outcome"].clone())
+                .collect()
+        };
+        assert_eq!(outcomes(&read), outcomes(&heard));
+        let compacted: Vec<&Value> = read.iter().filter(|e| e["type"] == "compacted").collect();
+        assert_eq!(compacted.len(), 1);
+        assert_eq!(compacted[0]["reason"], "asked");
+        let times: Vec<u64> = read.iter().map(|e| e["at"].as_u64().unwrap()).collect();
+        assert!(times.iter().all(|at| *at > 1_700_000_000_000), "{times:?}");
+        assert!(!history.cut);
+    };
+
+    // While the session still runs, from a process of its own.
+    check(&read());
+    assert_eq!(h.stop()["clean"], true);
+    check(&read());
+    // Reading needs no login: under a home whose provider is the default
+    // one, signed in to nothing.
+    std::fs::write(home.join("config.toml"), "").unwrap();
+    check(&read());
+    println!("read back {} events", read().items.len());
+}
+
+/// A thread kept the older way, as a Codex from before paged histories
+/// kept every thread, read back by the real `codex app-server` on PATH
+/// against the stand-in for the model: its messages under the ids the
+/// window gave them, its turns and what the agent said, though Codex gives
+/// that under ids of its own and keeps no commands for it. Run by hand:
+/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+#[test]
+#[ignore = "runs the real codex app-server on PATH"]
+fn real_codex_reads_back_a_thread_kept_the_older_way() {
+    use std::io::{BufRead, BufReader, Write};
+    let port = model::serve();
+    let base = Arc::new(Scratch::new("real-codex-legacy"));
+    let home = base.join("home");
+    let work = base.join("work");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&work).unwrap();
+    std::fs::write(
+        home.join("config.toml"),
+        format!(
+            "model = \"mock-1\"\nmodel_provider = \"mock\"\n\n[model_providers.mock]\nname = \"mock\"\nbase_url = \"http://127.0.0.1:{port}/v1\"\nwire_api = \"responses\"\n"
+        ),
+    )
+    .unwrap();
+    let environment = crate::env::environment();
+    let codex = crate::env::find_on_path(&environment.vars, "codex").expect("codex on PATH");
+    // Only the experimental protocol starts a thread the older way.
+    let mut child = crate::adapter::process(&codex, &environment.vars)
+        .arg("app-server")
+        .env("CODEX_HOME", &home)
+        .current_dir(&work)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut ask = |id: i64, method: &str, params: Value, until: Option<&str>| -> Value {
+        writeln!(
+            stdin,
+            "{}",
+            json!({ "id": id, "method": method, "params": params })
+        )
+        .unwrap();
+        let mut answer = Value::Null;
+        loop {
+            let mut line = String::new();
+            assert!(stdout.read_line(&mut line).unwrap() > 0, "codex ended");
+            let value: Value = serde_json::from_str(&line).unwrap_or_default();
+            if value["id"] == id && value.get("method").is_none() {
+                answer = value;
+                if until.is_none() {
+                    return answer;
+                }
+            } else if until.is_some_and(|method| value["method"] == method) {
+                return answer;
+            }
+        }
+    };
+    ask(
+        1,
+        "initialize",
+        json!({ "clientInfo": { "name": "legacy", "title": "legacy", "version": "0" }, "capabilities": { "experimentalApi": true } }),
+        None,
+    );
+    let started = ask(
+        2,
+        "thread/start",
+        json!({ "cwd": work.to_string_lossy(), "historyMode": "legacy", "approvalPolicy": "never", "sandbox": "danger-full-access" }),
+        None,
+    );
+    let thread = started["result"]["thread"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (id, message, text) in [(3, "m-1", "PONG"), (4, "m-2", "RUN printf 'hi\\n'")] {
+        ask(
+            id,
+            "turn/start",
+            json!({ "threadId": thread, "clientUserMessageId": message, "input": [{ "type": "text", "text": text, "text_elements": [] }] }),
+            Some("turn/completed"),
+        );
+    }
+    drop(ask);
+    drop(stdin);
+    let _ = child.wait();
+
+    let history = crate::codex_history::read_within(
+        &environment.vars,
+        Some(&home),
+        &work,
+        None,
+        &thread,
+        Duration::from_secs(60),
+    )
+    .unwrap();
+    let read: Vec<Value> = history
+        .items
+        .iter()
+        .map(|said| serde_json::to_value(&said.event).unwrap())
+        .collect();
+    println!("{read:#?}");
+    let messages: Vec<(&str, &str)> = read
+        .iter()
+        .filter(|e| e["type"] == "message")
+        .map(|e| (e["message"].as_str().unwrap(), e["text"].as_str().unwrap()))
+        .collect();
+    assert_eq!(messages, [("m-1", "PONG"), ("m-2", "RUN printf 'hi\\n'")]);
+    let texts: Vec<&str> = read
+        .iter()
+        .filter(|e| e["type"] == "text")
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, ["pong", "Done."]);
+    let outcomes: Vec<&str> = read
+        .iter()
+        .filter(|e| e["type"] == "turnEnded")
+        .map(|e| e["outcome"].as_str().unwrap())
+        .collect();
+    assert_eq!(outcomes, ["done", "done"]);
+    println!(
+        "commands kept: {}",
+        read.iter().filter(|e| e["type"] == "toolStarted").count()
+    );
+    assert!(!history.cut);
 }
