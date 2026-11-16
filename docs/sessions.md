@@ -695,9 +695,9 @@ agent is at work, and Cmd+Shift+Enter takes the newest of the user's own
 back (Ctrl off macOS), as its hint says; a chord the user has given to an
 action of the keymap is not named. Both are on the thread's arrow walk
 too. The thread at its foot keeps the waiting messages and their line in
-view above the composer and the dock as they come and change, whatever
-moves the view a little on the way. While the dock holds a request the
-user answers there, the composer says Up reaches it, and a lone digit
+view above the composer and the dock as they come and change. While the
+dock holds a request the user answers there, the composer says Up
+reaches it, and a lone digit
 sent then goes only on a second Enter, so it is not sent as a message by surprise. A message that was not delivered, refused
 by the agent or never sent, can be put back in the composer. What is being
 written stays with its session while another is on screen. The keys are in
