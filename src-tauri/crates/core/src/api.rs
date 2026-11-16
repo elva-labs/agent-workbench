@@ -868,6 +868,7 @@ impl Core {
                 agent,
                 &environment.vars,
                 config_dir.as_deref(),
+                &self.limits.folder()?,
                 crate::limits::READ_WAIT,
             )
         })

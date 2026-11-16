@@ -517,12 +517,17 @@ fails holds back the next for a minute, then for twice as long after each
 failure since, up to an hour. An account whose directory is not there is
 not read.
 
-A read starts the agent's own binary under the account's directory, in
-the system's temporary folder. Claude Code runs as a stream that answers
-control requests, with no
-conversation saved, none of the user's servers started, and in its safe
-mode, which leaves the user's hooks, plugins and instructions unloaded. It
-is asked the usage control request above and nothing else, which reaches
+A read starts the agent's own binary under the account's directory, in a
+folder of the workbench's own beside its file that only the user can
+write, so no settings anyone else left in a shared folder are found.
+Claude Code runs as a stream that answers control requests, with no
+conversation saved, none of the user's servers started, in its safe mode,
+which leaves the user's hooks, plugins and instructions unloaded, and with
+the user's own settings alone, never a project's or a folder's. Safe mode
+and the settings are asked for by flags, so a version without them
+refuses to start and the read fails quietly, rather than starting with
+everything loaded. It is asked the usage control request above and
+nothing else, which reaches
 no model: the answer itself says the process spent nothing. Codex runs its
 app-server with its plugins off and is asked for its rate limits after its
 handshake, with no thread started. A read has twenty seconds from the

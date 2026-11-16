@@ -187,7 +187,8 @@ fn codex_signed_out_or_answering_otherwise_gives_no_figures() {
 #[test]
 fn an_agent_with_no_limits_is_not_read() {
     let none = HashMap::new();
-    assert!(read("nobody", &none, None, Duration::from_secs(1)).is_err());
+    let folder = Scratch::new("limits-nobody");
+    assert!(read("nobody", &none, None, &folder, Duration::from_secs(1)).is_err());
 }
 
 // ---- the readers, against stand-ins for the agents' binaries ----
@@ -251,6 +252,7 @@ fn stand_in(
     if let Some(answer) = answer {
         std::fs::write(dir.join("answer"), answer.to_string()).unwrap();
     }
+    std::fs::create_dir(dir.join("work")).unwrap();
     let vars = HashMap::from([
         (
             "PATH".to_string(),
@@ -262,6 +264,18 @@ fn stand_in(
         ),
     ]);
     (dir, vars)
+}
+
+/// The folder a stand-in is started in.
+#[cfg(unix)]
+fn work(dir: &Path) -> PathBuf {
+    dir.join("work")
+}
+
+/// Whether the stand-in ran in its folder.
+#[cfg(unix)]
+fn ran_in_work(dir: &Path) -> bool {
+    Path::new(&written(dir, "cwd")).canonicalize().unwrap() == work(dir).canonicalize().unwrap()
 }
 
 #[cfg(unix)]
@@ -277,18 +291,22 @@ fn written(dir: &Path, file: &str) -> String {
 fn claude_code_is_started_as_a_quiet_stream_under_the_account_and_asked_once() {
     let (dir, vars) = stand_in("claude", CLAUDE_STAND_IN, Some(&claude_usage()));
     let account = dir.join("account");
-    let event = read("claude-code", &vars, Some(&account), READ_WAIT).unwrap();
+    let event = read("claude-code", &vars, Some(&account), &work(&dir), READ_WAIT).unwrap();
     assert_eq!(told(&event).2.len(), 3);
-    assert_eq!(
-        written(&dir, "args").lines().collect::<Vec<_>>(),
-        CLAUDE_ARGS
+    let args = written(&dir, "args");
+    let args: Vec<_> = args.lines().collect();
+    assert_eq!(args, CLAUDE_ARGS);
+    // Safe mode and the user's settings alone, as flags a version without
+    // them refuses.
+    assert!(args.contains(&"--safe-mode"), "{args:?}");
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["--setting-sources", "user"]),
+        "{args:?}"
     );
     assert_eq!(written(&dir, "config"), account.to_string_lossy());
     assert_eq!(written(&dir, "safe"), "1");
-    assert_eq!(
-        Path::new(&written(&dir, "cwd")).canonicalize().unwrap(),
-        std::env::temp_dir().canonicalize().unwrap()
-    );
+    assert!(ran_in_work(&dir), "ran in {}", written(&dir, "cwd"));
     let asked: Value = serde_json::from_str(&written(&dir, "asked")).unwrap();
     assert_eq!(asked["type"], "control_request");
     assert_eq!(
@@ -301,7 +319,7 @@ fn claude_code_is_started_as_a_quiet_stream_under_the_account_and_asked_once() {
 #[test]
 fn claude_code_under_its_own_directory_is_left_to_find_it() {
     let (dir, vars) = stand_in("claude", CLAUDE_STAND_IN, Some(&claude_usage()));
-    read("claude-code", &vars, None, READ_WAIT).unwrap();
+    read("claude-code", &vars, None, &work(&dir), READ_WAIT).unwrap();
     assert_eq!(written(&dir, "config"), "");
 }
 
@@ -310,7 +328,14 @@ fn claude_code_under_its_own_directory_is_left_to_find_it() {
 fn a_read_that_is_not_answered_ends_at_its_deadline_and_the_process_with_it() {
     let (dir, vars) = stand_in("claude", CLAUDE_STAND_IN, None);
     let started = Instant::now();
-    let error = read("claude-code", &vars, None, Duration::from_millis(1500)).unwrap_err();
+    let error = read(
+        "claude-code",
+        &vars,
+        None,
+        &work(&dir),
+        Duration::from_millis(1500),
+    )
+    .unwrap_err();
     assert!(error.contains("did not answer in time"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(10));
     let pid: i32 = written(&dir, "pid").parse().unwrap();
@@ -326,10 +351,29 @@ fn a_read_that_is_not_answered_ends_at_its_deadline_and_the_process_with_it() {
 #[test]
 fn a_missing_binary_is_an_error() {
     let vars = HashMap::from([("PATH".to_string(), "/nowhere".to_string())]);
+    let folder = Scratch::new("limits-missing");
     for agent in ["claude-code", "codex"] {
-        let error = read(agent, &vars, None, READ_WAIT).unwrap_err();
+        let error = read(agent, &vars, None, &folder, READ_WAIT).unwrap_err();
         assert!(error.contains("not on your PATH"), "{error}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_agents_are_read_in_a_folder_of_the_workbenchs_own_kept_to_the_user() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |folder: &Path| std::fs::metadata(folder).unwrap().permissions().mode() & 0o777;
+    let home = Scratch::new("limits-folder");
+    let limits = Limits::new(Some(&home));
+    let folder = limits.folder().unwrap();
+    assert_eq!(folder, home.join(".agent-workbench").join("limits"));
+    assert_eq!(mode(&folder), 0o700);
+    // One that is there already is kept to the user again.
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert_eq!(limits.folder().unwrap(), folder);
+    assert_eq!(mode(&folder), 0o700);
+    // With no home there is nowhere to read.
+    assert!(Limits::new(None).folder().is_err());
 }
 
 #[cfg(unix)]
@@ -337,13 +381,14 @@ fn a_missing_binary_is_an_error() {
 fn codex_is_started_with_its_plugins_off_under_the_account_and_asked_after_the_handshake() {
     let (dir, vars) = stand_in("codex", CODEX_STAND_IN, Some(&codex_rate_limits()));
     let account = dir.join("account");
-    let event = read("codex", &vars, Some(&account), READ_WAIT).unwrap();
+    let event = read("codex", &vars, Some(&account), &work(&dir), READ_WAIT).unwrap();
     assert_eq!(told(&event).1, Some("team"));
     assert_eq!(
         written(&dir, "args").lines().collect::<Vec<_>>(),
         ["app-server", "-c", "features.plugins=false"]
     );
     assert_eq!(written(&dir, "config"), account.to_string_lossy());
+    assert!(ran_in_work(&dir), "ran in {}", written(&dir, "cwd"));
     let asked: Vec<Value> = written(&dir, "asked")
         .lines()
         .map(|line| serde_json::from_str(line).unwrap())
@@ -365,9 +410,11 @@ fn codex_is_started_with_its_plugins_off_under_the_account_and_asked_after_the_h
 #[ignore = "runs the real claude and codex on PATH under your own accounts"]
 fn the_real_agents_answer_with_no_turn() {
     let vars: HashMap<String, String> = std::env::vars().collect();
+    let folder = Scratch::new("limits-real");
     for agent in ["claude-code", "codex"] {
         let started = Instant::now();
-        let event = read(agent, &vars, None, READ_WAIT).unwrap_or_else(|e| panic!("{agent}: {e}"));
+        let event =
+            read(agent, &vars, None, &folder, READ_WAIT).unwrap_or_else(|e| panic!("{agent}: {e}"));
         let (_, _, windows, read_at, _) = told(&event);
         eprintln!(
             "{agent}: {} windows in {:?}",

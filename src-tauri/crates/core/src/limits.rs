@@ -4,11 +4,12 @@
 //! An integrated session asks its agent for the account's limits as it
 //! goes. An account whose sessions run in terminals, or whose integrated
 //! session sits between turns, has nobody asking, so its figures are read
-//! here: the agent's own binary is started for the one question, in the
-//! system's temporary folder and under the account's directory, asked for
-//! the limits with no turn, and ended. Claude Code is asked through its
-//! stream's usage control request and Codex through its app-server's rate
-//! limits request. Neither question reaches a model.
+//! here: the agent's own binary is started for the one question, in a
+//! folder of the workbench's own that only the user can write and under the
+//! account's directory, asked for the limits with no turn, and ended.
+//! Claude Code is asked through its stream's usage control request and
+//! Codex through its app-server's rate limits request. Neither question
+//! reaches a model.
 //!
 //! A read is asked for by the window, for an account it has a session of,
 //! and is made only when it is due: when the newest full read of the
@@ -58,10 +59,16 @@ const RETRY_MOST: u64 = 60 * 60;
 const KEEP_ACCOUNTS: usize = 32;
 /// The file, in the workbench's own directory in the home.
 const LIMITS_FILE: &str = "limits.json";
+/// The folder the agents are started in, beside the file.
+const READ_FOLDER: &str = "limits";
 
 /// What makes `claude` a stream that answers control requests. No
 /// conversation is kept of it, and it starts none of the servers the
-/// user's configuration names.
+/// user's configuration names. Safe mode leaves the user's hooks, plugins
+/// and instructions unloaded, and only the user's own settings are read,
+/// never a project's or a folder's, whose helpers would run. Both are
+/// flags, so a version without them refuses to start rather than start
+/// with everything loaded.
 const CLAUDE_ARGS: &[&str] = &[
     "-p",
     "--input-format",
@@ -71,30 +78,34 @@ const CLAUDE_ARGS: &[&str] = &[
     "--verbose",
     "--no-session-persistence",
     "--strict-mcp-config",
+    "--safe-mode",
+    "--setting-sources",
+    "user",
 ];
-/// Claude Code's safe mode leaves the user's hooks, plugins and
-/// instructions unloaded, which a read of the limits has no use for. A
-/// version without it ignores the variable.
+/// Safe mode as Claude Code's environment has it, set to agree with the
+/// flag whatever the shell set it to.
 const CLAUDE_SAFE_MODE_VAR: &str = "CLAUDE_CODE_SAFE_MODE";
 
 /// The account's limits, read by the agent's binary on the PATH of `env`
-/// under the account's directory where one is given, or the agent's own.
-/// An error for an agent whose limits are not read, one that cannot be
-/// started, and one that answers with no limits or none in time.
+/// under the account's directory where one is given, or the agent's own,
+/// started in `folder`. An error for an agent whose limits are not read,
+/// one that cannot be started, and one that answers with no limits or none
+/// in time.
 pub fn read(
     agent: &str,
     env: &HashMap<String, String>,
     config_dir: Option<&Path>,
+    folder: &Path,
     wait: Duration,
 ) -> Result<Event, String> {
     let deadline = Instant::now() + wait;
     match agent {
         crate::claude_stream::AGENT => {
-            let mut control = ClaudeControl::start(env, config_dir, deadline)?;
+            let mut control = ClaudeControl::start(env, config_dir, folder, deadline)?;
             claude_limits(&mut control)
         }
         crate::codex_app_server::AGENT => {
-            let mut server = AppServer::start(env, config_dir, &std::env::temp_dir(), deadline)?;
+            let mut server = AppServer::start(env, config_dir, folder, deadline)?;
             server.introduce()?;
             codex_limits(&mut server)
         }
@@ -160,13 +171,14 @@ impl ClaudeControl {
     fn start(
         env: &HashMap<String, String>,
         config_dir: Option<&Path>,
+        folder: &Path,
         deadline: Instant,
     ) -> Result<Self, String> {
         let binary =
             find_on_path(env, "claude").ok_or_else(|| "claude is not on your PATH".to_string())?;
         let mut command = process(&binary, env);
         command.args(CLAUDE_ARGS);
-        prepare_process(&mut command, &std::env::temp_dir(), env);
+        prepare_process(&mut command, folder, env);
         command.env(CLAUDE_SAFE_MODE_VAR, "1");
         if let Some(dir) = config_dir {
             command.env(CLAUDE_CONFIG_VAR, dir);
@@ -408,6 +420,21 @@ impl Limits {
         state
     }
 
+    /// The folder the agents are started in to read, beside the file: the
+    /// workbench's own, made where it is not there, and kept to the user
+    /// alone, so no settings of anyone else's are found in it. An error
+    /// with nowhere to keep it.
+    pub fn folder(&self) -> Result<PathBuf, String> {
+        let folder = self
+            .file
+            .as_deref()
+            .and_then(Path::parent)
+            .ok_or("there is no folder to read in")?
+            .join(READ_FOLDER);
+        own_folder(&folder).map_err(|e| format!("{} could not be made: {e}", folder.display()))?;
+        Ok(folder)
+    }
+
     /// The figures held for the agent's account in `dir`, without reading.
     pub fn held(&self, agent: &str, dir: &Path) -> Option<Event> {
         let state = self.state();
@@ -527,6 +554,27 @@ impl Limits {
 
 fn key(agent: &str, dir: &Path) -> Key {
     (agent.to_string(), dir.to_path_buf())
+}
+
+/// Makes `folder` where it is not there, and leaves it to the user alone.
+#[cfg(unix)]
+fn own_folder(folder: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    if let Some(parent) = folder.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match std::fs::DirBuilder::new().mode(0o700).create(folder) {
+        Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+        _ => {}
+    }
+    std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o700))
+}
+
+/// Makes `folder` where it is not there. A folder in the user's profile is
+/// the user's alone.
+#[cfg(not(unix))]
+fn own_folder(folder: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder)
 }
 
 /// The file's contents: every account with a full read, the most recently
