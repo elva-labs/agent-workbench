@@ -252,7 +252,7 @@ export function describeSettings(): string {
     `look: ${theme.look} (one of ${names(LOOKS)})`,
     `palette: ${theme.palette} (one of ${names(palettes())})`,
     `background: ${backgroundOf(theme.palette)} (kept with the palette in use; settings_change's background argument sets it, null takes it away)`,
-    `cards: ${Math.round((Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0) * 100)}% (how much of the background shows through the panes as well, as a share of its strength from 0 to 25%; the user's to change, in the settings)`,
+    describeCards(),
     `terminalFont: ${theme.mono} (one of ${names(TERMINAL_FONTS)})`,
     `interfaceFont: ${theme.sans} (one of ${names(INTERFACE_FONTS)})`,
     `keyPreset: ${keys.preset} (one of ${Object.keys(PRESETS).join(", ")}; custom once a chord differs from both)`,
@@ -285,6 +285,18 @@ export function describeSettings(): string {
     "Change them with settings_change, naming only what should change. The agent hooks, the plugins, the accounts, how long past sessions stay listed, how sessions run, the notifications and the chime are the user's to change, in the settings.",
   ];
   return lines.join("\n");
+}
+
+/** The cards' share as the agent reads it: as it is kept, and what shows
+    through now where the guard holds it back. */
+function describeCards(): string {
+  const asked = Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
+  const percent = (share: number) => `${Math.round(share * 100)}%`;
+  const now =
+    asked > 0 && theme.cardsHeld < asked
+      ? `; ${percent(theme.cardsHeld)} shows through now, where the window keeps text readable`
+      : "";
+  return `cards: ${percent(asked)} (how much of the background shows through the panes as well, as a share of its strength from 0 to 25%; the user's to change, in the settings${now})`;
 }
 
 /** A palette's background as the agent reads it: as it is kept, or none. */
