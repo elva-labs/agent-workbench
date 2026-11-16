@@ -4,6 +4,7 @@ import {
   compact,
   configure,
   conversationOf,
+  follow,
   handleOf,
   interrupt,
   lastWords,
@@ -17,6 +18,7 @@ import {
   resume,
   send,
   trust,
+  unspoken,
 } from "$lib/integrated.svelte";
 import {
   byKey,
@@ -766,5 +768,224 @@ describe("an interrupt with no turn running", () => {
     await settled();
     expect(fake.calls.some((call) => call.method === "interrupt")).toBe(true);
     expect(conversationOf(session.key).interrupting).toBe(false);
+  });
+});
+
+describe("a new conversation put under a workflow", () => {
+  // Both agents are here and can run as conversations, so a workflow's
+  // orchestrator can be either.
+  beforeEach(() => {
+    for (const id of ["claude-code", "codex"])
+      applyDetect(
+        { id, path: `/usr/local/bin/${id}`, caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+        true,
+      );
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+  });
+  afterEach(() => {
+    resetAgent();
+    localStorage.removeItem("workbench.workflows");
+    localStorage.removeItem("workbench.tokens");
+  });
+
+  const starts = () => fake.calls.filter((call) => call.method === "start");
+
+  /** Holds every start the core is asked for until the test lets it go. */
+  function holdStarts() {
+    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedStart: (options: never) => unknown } })
+      .__WORKBENCH_CORE__;
+    const plain = core.integratedStart;
+    const waiting: (() => void)[] = [];
+    core.integratedStart = (options: never) =>
+      new Promise((resolve, reject) =>
+        waiting.push(() => {
+          try {
+            resolve(plain(options));
+          } catch (error) {
+            reject(error);
+          }
+        }),
+      );
+    return {
+      next: async () => {
+        await vi.waitFor(() => expect(waiting.length).toBeGreaterThan(0));
+        waiting.shift()!();
+        await settled();
+      },
+    };
+  }
+
+  it("starts it again as the workflow's orchestrator, on the same row and token, told what a session started under it is", async () => {
+    const { session, key, handle } = await started();
+    const token = session.token;
+    const first = session.id!;
+    expect(unspoken(session)).toBe(true);
+
+    follow(key, "Build and review");
+    // The run it leaves is stopped at once, so nothing can reach it.
+    expect(handleOf(key)).toBeNull();
+    expect(fake.calls.some((call) => call.method === "stop" && call.id === handle)).toBe(true);
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-2"));
+
+    const row = byKey(key)!;
+    expect(sessions.all).toHaveLength(1);
+    expect(row.token).toBe(token);
+    expect(row.status).toBe("running");
+    expect(row.workflow?.name).toBe("Build and review");
+    expect(row.model).toBe("fable");
+    expect(starts().at(-1)).toMatchObject({
+      options: {
+        agent: "claude-code",
+        model: "fable",
+        token,
+        instructions: orchestratorPrompt(defaultWorkflow()),
+        startOnly: true,
+      },
+    });
+    expect((starts().at(-1)!.options as { session?: string }).session).toBeUndefined();
+    // A new conversation, kept under its own id alone.
+    expect(row.id).toBe("integrated-session-2");
+    expect(sessions.tokens[first]).toBeUndefined();
+    expect(sessions.workflows[first]).toBeUndefined();
+    expect(sessions.workflows[row.id!].workflow).toMatchObject({ name: "Build and review" });
+    // Nothing the run it left said stands; the ended run is not the row's.
+    expect(row.status).toBe("running");
+    expect(conversationOf(key).sessionId).toBe("integrated-session-2");
+  });
+
+  it("is told what a new session under the workflow is told", async () => {
+    const plain = create(PROJECT, null, undefined, null, null, null, null, defaultWorkflow(), "integrated");
+    await launch(plain.key);
+    const direct = starts().at(-1)!.options;
+    const { key } = await started();
+    follow(key, "Build and review");
+    await vi.waitFor(() => expect(starts()).toHaveLength(3));
+    const picked = starts().at(-1)!.options;
+    const without = ({ token: _token, ...rest }: Record<string, unknown>) => rest;
+    expect(without(picked as never)).toEqual(without(direct as never));
+  });
+
+  it("goes back to the agent alone, on its own default model", async () => {
+    const { key } = await started();
+    follow(key, "Build and review");
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-2"));
+    follow(key, null);
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
+    const { options } = starts().at(-1) as Extract<(typeof fake.calls)[number], { method: "start" }>;
+    expect(options.instructions).toBeUndefined();
+    expect(options.startOnly).toBeUndefined();
+    expect(options.model).toBeUndefined();
+    expect(byKey(key)!.workflow).toBeNull();
+    expect(byKey(key)!.model).toBeNull();
+  });
+
+  it("does nothing for the workflow it follows already", async () => {
+    const { key } = await started();
+    follow(key, null);
+    await settled();
+    expect(starts()).toHaveLength(1);
+    expect(handleOf(key)).toBe("int-1");
+  });
+
+  it("is never started again once a message was sent", async () => {
+    const { key, handle } = await started();
+    send(key, "Fix the scan");
+    expect(unspoken(byKey(key)!)).toBe(false);
+    follow(key, "Build and review");
+    await settled();
+    expect(byKey(key)!.workflow).toBeNull();
+    expect(starts()).toHaveLength(1);
+    expect(handleOf(key)).toBe(handle);
+  });
+
+  it("is not offered for a resumed session, or one another session started", async () => {
+    const resumed = await started({ resumedFrom: "past-1" });
+    expect(unspoken(resumed.session)).toBe(false);
+    const prompted = await started({ prompt: "Fix the scan" });
+    expect(unspoken(prompted.session)).toBe(false);
+  });
+
+  it("waits for a start on its way, then starts it again once, under the last pick", async () => {
+    const gate = holdStarts();
+    const row = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    const launching = launch(row.key);
+    follow(row.key, "Build and review");
+    follow(row.key, null);
+    follow(row.key, "Build and review");
+    // The start on its way was asked for before the pick.
+    await gate.next();
+    await launching;
+    expect(starts()).toHaveLength(1);
+    expect(starts()[0].options).not.toHaveProperty("instructions");
+    // Once it is up it is started again, under what was picked last.
+    await gate.next();
+    await vi.waitFor(() => expect(handleOf(row.key)).toBe("int-2"));
+    expect(starts()).toHaveLength(2);
+    expect(starts()[1].options).toMatchObject({ instructions: orchestratorPrompt(defaultWorkflow()) });
+    expect(fake.calls.filter((call) => call.method === "stop")).toEqual([{ method: "stop", id: "int-1" }]);
+  });
+
+  it("counts as ready while it starts again, and makes a change of mode asked for meanwhile on the new run", async () => {
+    const gate = holdStarts();
+    const row = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    const launching = launch(row.key);
+    await gate.next();
+    await launching;
+    follow(row.key, "Build and review");
+    const link = linkFor(row.key);
+    expect(link.restarting).toBe(true);
+    expect(handleOf(row.key)).toBeNull();
+    // Nothing reaches the run being left, or the one not up yet.
+    expect(send(row.key, "too soon")).toBeNull();
+    await configure(row.key, { mode: "plan" });
+    await gate.next();
+    await vi.waitFor(() => expect(link.restarting).toBe(false));
+    await vi.waitFor(() => expect(conversationOf(row.key).settings.mode).toBe("plan"));
+    expect(fake.calls.filter((call) => call.method === "configure")).toEqual([
+      { method: "configure", id: "int-2", settings: { mode: "plan" } },
+    ]);
+  });
+
+  it("keeps the mode chosen with the same agent, and starts another agent in its own safe mode", async () => {
+    const codexFlow = { ...defaultWorkflow(), name: "Codex directs", orchestrator: { agent: "codex" as const, model: "default" } };
+    adoptWorkflows({ list: [defaultWorkflow(), codexFlow], default: null, overrides: {} });
+    const { key } = await started();
+    await configure(key, { mode: "plan" });
+    follow(key, "Build and review");
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-2"));
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
+    follow(key, "Codex directs");
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "codex", mode: "read-only", startOnly: true } });
+    expect(byKey(key)!.agent).toBe("codex");
+    expect(byKey(key)!.model).toBeNull();
+    expect(conversationOf(key).ready?.models.map((model) => model.value)).toEqual(["gpt-5-codex"]);
+  });
+
+  it("refuses a workflow whose orchestrator's agent is not here", async () => {
+    resetAgent();
+    applyDetect(
+      { id: "claude-code", path: "/usr/local/bin/claude", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+      true,
+    );
+    const codexFlow = { ...defaultWorkflow(), name: "Codex directs", orchestrator: { agent: "codex" as const, model: "default" } };
+    adoptWorkflows({ list: [codexFlow], default: null, overrides: {} });
+    const { key } = await started();
+    follow(key, "Codex directs");
+    await settled();
+    expect(byKey(key)!.workflow).toBeNull();
+    expect(starts()).toHaveLength(1);
+  });
+
+  it("fails on its row with the core's reason when the new run will not start", async () => {
+    const { key } = await started();
+    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedStart: () => unknown } }).__WORKBENCH_CORE__;
+    core.integratedStart = async () => {
+      throw new Error("no tool server to give the orchestrator its start tool");
+    };
+    follow(key, "Build and review");
+    await vi.waitFor(() => expect(byKey(key)!.status).toBe("failed"));
+    expect(byKey(key)!.error).toBe("no tool server to give the orchestrator its start tool");
+    expect(linkFor(key).restarting).toBe(false);
   });
 });

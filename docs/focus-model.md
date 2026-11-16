@@ -351,9 +351,15 @@ and Copy buttons from what is in view, drawing what is not drawn yet as
 they come to it, each Copy after what it belongs to and shown while the
 keyboard is on it, and <kbd>Enter</kbd> opens or presses one, and the
 dock's choices. The composer's
-controls, attach, the model and the mode, Send and Stop, the dock's folds,
+controls, attach, the model and the mode, the workflow before the first
+message, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
-of their own in reading order. Focus is always drawn where the keyboard
+of their own in reading order. A model a workflow holds is no stop. The
+model's, the mode's and the workflow's menus open with
+<kbd>Enter</kbd> on the choice in use, are walked with the arrows,
+<kbd>Home</kbd> and <kbd>End</kbd>, pick with <kbd>Enter</kbd>, and give the
+keyboard back to the composer's field once a choice is picked, or to their
+chip on <kbd>Esc</kbd>. Focus is always drawn where the keyboard
 is.
 
 The dock's choices are one stop for the keyboard. The arrow keys move

@@ -218,7 +218,10 @@ an agent, in the agent pane, in a project's new-session row or in the
 palette, starts that agent alone. Picking a workflow, in the palette or in
 the choice a project's new-session row opens, starts its orchestrator, on the workflow's agent and model, and a plain new
 session where there was nothing to pick follows the project's workflow, as
-[settings](settings.md#workflows) describes. A workflow whose
+[settings](settings.md#workflows) describes. A new integrated session can
+also be given a workflow, or none, in its composer until its first message,
+which starts it again as that workflow's orchestrator or as the agent alone;
+[sessions](sessions.md#integrated-sessions) says how. A workflow whose
 orchestrator runs on an agent that is not installed is refused on the row,
 and so is a session under a workflow on a machine with no tool server to
 give it the `start` tool.
@@ -389,7 +392,9 @@ in a terminal and an integrated one.
 For the session that follows the workflow it is a chip: a pip for each step
 in order, grey once the run has passed it, in the accent where the run
 stands and empty for a step to come, and the words for where it stands.
-The chip says what the workbench knows and no more.
+The chip says what the workbench knows and no more. An integrated session
+shows it from its first message on; before that its composer names the
+workflow, which can still be changed there.
 
 Before anything is started the words are the workflow's name, marked
 deleted where it follows the copy it kept. Then they name the step where

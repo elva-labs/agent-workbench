@@ -27,14 +27,21 @@ import {
   keepToken,
   loadHistory,
   named,
+  leaveRun,
   noted,
   onIntegratedClose,
+  putUnder,
   rang,
   rejoined,
   rememberWorkflow,
   toldAtStart,
+  toldFor,
   type Session,
+  type Told,
 } from "$lib/sessions.svelte";
+import { orchestratorPrompt, startsOnly } from "$lib/workflowInstructions";
+import { workflowNamed } from "$lib/workflows.svelte";
+import type { AgentId } from "$lib/core";
 
 /**
  * The integrated sessions behind their rows.
@@ -97,6 +104,14 @@ export class Link {
   attaching: Promise<boolean> | null = null;
   /** The first prompt was sent, for a session started with one. */
   prompted = false;
+  /** The run behind the row is being started again under the workflow
+      just picked. The session counts as ready meanwhile: a message sent
+      waits for the new run, and a change of model or mode is made on it. */
+  restarting = $state(false);
+  /** A change of model or mode asked for while the run starts again. */
+  after: { model?: string; mode?: string; effort?: string } | null = null;
+  /** What the run behind the row was started on. */
+  ranOn: Run | null = null;
 
   constructor(clock: () => number) {
     this.conversation = new Conversation(clock);
@@ -321,52 +336,160 @@ export async function launch(key: string): Promise<void> {
       link.busy = false;
       return;
     }
-    const started = await core().integratedStart({
-      agent: starting.agent,
-      project: starting.project,
-      cwd: starting.startIn ?? undefined,
-      session: starting.resumedFrom ?? undefined,
-      token: starting.token,
-      model: starting.model ?? undefined,
-      mode: startMode(starting, link),
-      configDir: dirFor(starting.account, starting.agent),
-      ...told,
-    });
-    link.busy = false;
-    const row = byKey(key);
-    if (row === null) {
-      // The row was closed while the agent came up: nothing owns it now.
-      stopped.add(started.id);
-      claim(started.id);
-      core()
-        .integratedStop(started.id)
-        .catch(() => {});
-      return;
-    }
-    link.handle = started.id;
-    byHandle.set(started.id, key);
-    row.status = "running";
-    row.error = null;
-    row.exitCode = null;
-    row.changedAt = Date.now();
-    for (const body of claim(started.id)) deliver(key, link, body);
-    if (started.sessionId !== null) identify(row, started.sessionId);
-    // Every start and resume keeps the copy of the workflow this run was
-    // started on, which a reload goes on with; an agent that makes its own
-    // id is kept once ready names it.
-    rememberWorkflow(row);
-    if (row.prompt !== null && !link.prompted && link.handle !== null) {
-      link.prompted = true;
-      send(key, row.prompt, [], starterOf(key));
-    }
+    await begin(key, link, starting, told);
   } catch (error) {
-    link.busy = false;
-    if (byKey(key) === null) return;
-    if (isUntrusted(error)) {
-      link.untrusted = true;
-      failed(key, "The folder is not trusted yet.");
-    } else failed(key, message(error));
+    startFailed(key, link, error);
   }
+  settleRun(key);
+}
+
+/** Asks the core to start the agent behind a row, as the row is now and
+    told what it is told, and takes the run up once it is. */
+async function begin(key: string, link: Link, starting: Session, told: Told) {
+  link.ranOn = { agent: starting.agent, told: toldText(told.instructions, told.startOnly) };
+  const started = await core().integratedStart({
+    agent: starting.agent,
+    project: starting.project,
+    cwd: starting.startIn ?? undefined,
+    session: starting.resumedFrom ?? undefined,
+    token: starting.token,
+    model: starting.model ?? undefined,
+    mode: startMode(starting, link),
+    configDir: dirFor(starting.account, starting.agent),
+    ...told,
+  });
+  link.busy = false;
+  const row = byKey(key);
+  if (row === null) {
+    // The row was closed while the agent came up: nothing owns it now.
+    stopped.add(started.id);
+    claim(started.id);
+    core()
+      .integratedStop(started.id)
+      .catch(() => {});
+    return;
+  }
+  link.handle = started.id;
+  byHandle.set(started.id, key);
+  if (row.status !== "running") {
+    row.status = "running";
+    row.changedAt = Date.now();
+  }
+  row.error = null;
+  row.exitCode = null;
+  for (const body of claim(started.id)) deliver(key, link, body);
+  if (started.sessionId !== null) identify(row, started.sessionId);
+  // Every start and resume keeps the copy of the workflow this run was
+  // started on, which a reload goes on with; an agent that makes its own
+  // id is kept once ready names it.
+  rememberWorkflow(row);
+  if (row.prompt !== null && !link.prompted && link.handle !== null) {
+    link.prompted = true;
+    send(key, row.prompt, [], starterOf(key));
+  }
+}
+
+function startFailed(key: string, link: Link, error: unknown) {
+  link.busy = false;
+  if (byKey(key) === null) return;
+  if (isUntrusted(error)) {
+    link.untrusted = true;
+    failed(key, "The folder is not trusted yet.");
+  } else failed(key, message(error));
+}
+
+/** What a run is started on, to tell whether the run behind a row is the
+    one the row says: the agent, and the workflow's instructions and
+    whether they take the agent's own subagents away. */
+interface Run {
+  agent: AgentId;
+  told: string | null;
+}
+
+function runOf(session: Session): Run {
+  const workflow = session.workflow;
+  return {
+    agent: session.agent,
+    told: workflow === null ? null : toldText(orchestratorPrompt(workflow), startsOnly(workflow)),
+  };
+}
+
+function toldText(instructions: string | undefined, startOnly: boolean | undefined): string | null {
+  return instructions === undefined ? null : `${startOnly === true}\n${instructions}`;
+}
+
+function sameRun(a: Run | null, b: Run): boolean {
+  return a !== null && a.agent === b.agent && a.told === b.told;
+}
+
+/**
+ * Whether a row is a new conversation nothing has been said in yet: one
+ * the user started, not resumed and not started by another session, its
+ * run starting or running, with no message sent and no turn run. Such a
+ * row can still be put under another workflow.
+ */
+export function unspoken(session: Session): boolean {
+  if (session.kind !== "integrated" || session.resumedFrom !== null || session.prompt !== null) return false;
+  if (session.status !== "starting" && session.status !== "running") return false;
+  if (starterOf(session.key) !== null) return false;
+  const link = links.get(session.key);
+  return link === undefined || (!link.untrusted && link.conversation.untouched);
+}
+
+/**
+ * Puts a new conversation nothing has been said in under a workflow, or
+ * under none, by its name: the row is the workflow's orchestrator from
+ * now, as a session started under it is, and the run behind it starts
+ * again under it, keeping the row and its token. The restart waits for a
+ * start that is on its way, and never comes after a message: the run is
+ * stopped before a message could be sent to it. The words being written
+ * stay where they are, and a message sent meanwhile waits for the new run.
+ */
+export function follow(key: string, name: string | null) {
+  const session = byKey(key);
+  if (session === null || !unspoken(session) || (session.workflow?.name ?? null) === name) return;
+  const workflow = name === null ? null : (workflowNamed(name) ?? null);
+  if (name !== null && workflow === null) return;
+  if (!putUnder(key, workflow)) return;
+  settleRun(key);
+}
+
+/** Starts the run behind a new conversation again when it is not the one
+    its row now says: once no start is on its way, and only while nothing
+    has been said in it. */
+function settleRun(key: string) {
+  const session = byKey(key);
+  const link = links.get(key);
+  if (session === null || link === undefined || link.busy || link.handle === null) return;
+  if (!unspoken(session) || sameRun(link.ranOn, runOf(session))) return;
+  void restart(key, session, link);
+}
+
+async function restart(key: string, session: Session, link: Link) {
+  const handle = link.handle;
+  if (handle === null) return;
+  link.busy = true;
+  link.restarting = true;
+  // Stopped at once, so nothing is sent to the run being left, and what it
+  // says from here is let go.
+  link.handle = null;
+  byHandle.delete(handle);
+  stopped.add(handle);
+  core()
+    .integratedStop(handle)
+    .catch(() => {});
+  link.conversation.restarted(session.model, link.ranOn?.agent === session.agent);
+  leaveRun(session);
+  try {
+    await begin(key, link, session, toldFor(session));
+  } catch (error) {
+    startFailed(key, link, error);
+  }
+  link.restarting = false;
+  const change = link.after;
+  link.after = null;
+  if (change !== null && link.handle !== null) void configure(key, change);
+  settleRun(key);
 }
 
 /** The mode a session starts in: the one it ran in, when the user chose
@@ -639,7 +762,12 @@ export function reply(key: string, request: string, answers: string[][] | null) 
 /** Switches the model the session runs on. */
 export async function configure(key: string, change: { model?: string; mode?: string; effort?: string }) {
   const link = links.get(key);
-  if (link === undefined || link.handle === null) return;
+  if (link === undefined) return;
+  if (link.handle === null) {
+    // Made on the new run once it is up.
+    if (link.restarting) link.after = { ...link.after, ...change };
+    return;
+  }
   link.configureError = null;
   try {
     const settings = await core().integratedConfigure(link.handle, change);

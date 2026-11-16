@@ -36,7 +36,8 @@
    * elsewhere by a chord puts it away too and stays where it went. What is
    * open stays above its control as the window changes size. A terminal
    * session's model is what it was started on, as plain text, since the
-   * agent owns any change there.
+   * agent owns any change there, and so is the model of a session that
+   * follows a workflow, which the workflow sets.
    *
    * Short of room, the bar lets its parts go in order: the focus and the
    * mode, then the word "account:", then every figure but the one nearest
@@ -66,9 +67,12 @@
   let session = $derived(activeSession());
   let integrated = $derived(session?.kind === "integrated" ? session : null);
   let conversation = $derived(integrated === null ? null : conversationOf(integrated.key));
-  /** The session takes a change of its settings now. */
+  /** The session takes a change of its settings now, or once the run it
+      is starting again under a workflow just picked is up. */
   let live = $derived(
-    integrated !== null && integrated.status === "running" && linkFor(integrated.key).handle !== null,
+    integrated !== null &&
+      integrated.status === "running" &&
+      (linkFor(integrated.key).handle !== null || linkFor(integrated.key).restarting),
   );
 
   let model = $derived.by(() => {
@@ -77,7 +81,10 @@
     return named ?? (session.model === null ? null : modelLabel(session.model));
   });
   let effort = $derived(conversation === null ? null : effortInUse(conversation));
-  let modelMenu = $derived(live && conversation !== null && (conversation.ready?.models.length ?? 0) > 0);
+  /** A workflow holds its orchestrator's model, so it is not a choice. */
+  let modelMenu = $derived(
+    live && conversation !== null && integrated?.workflow === null && (conversation.ready?.models.length ?? 0) > 0,
+  );
   let effortMenu = $derived(live && conversation !== null && conversation.efforts.length > 0);
 
   let account = $derived(session !== null && hasAccounts() ? accountLabel(session.account) : null);
@@ -305,7 +312,11 @@
         {:else}
           <span
             class="plain"
-            title={integrated === null ? "The model the session was started on" : "The model the session runs on"}
+            title={integrated?.workflow != null
+              ? `Set by ${integrated.workflow.name}`
+              : integrated === null
+                ? "The model the session was started on"
+                : "The model the session runs on"}
             data-testid="model-readout">{model}</span
           >
         {/if}

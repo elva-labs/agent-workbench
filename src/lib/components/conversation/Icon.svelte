@@ -35,6 +35,7 @@
     plan: "M3 4h1M6 4h7M3 8h1M6 8h7M3 12h1M6 12h7",
     compact: "M3 5h10M5 8h6M7 11h2",
     open: "M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5",
+    flow: "M2 2.5h4v3H2zM10 10.5h4v3h-4zM6 4h3a2 2 0 0 1 2 2v4.5",
   };
 </script>
 
