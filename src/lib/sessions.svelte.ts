@@ -29,6 +29,7 @@ import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
+import { failureOf, type Failure } from "$lib/turnFailure";
 
 /**
  * Every session this window has, live or finished.
@@ -143,10 +144,20 @@ export interface Session {
       whose report starts its next one: working, with a still screen. */
   delegated: boolean;
   /** How the agent's last turn ended, where its hooks or its events say:
-      done, as the agent itself ended it, or cut short by the user. Null
-      while a turn runs, before the first, and where nothing says, as for
-      a terminal session without hooks. */
-  turnEnd: "done" | "cut" | null;
+      done, as the agent itself ended it, cut short by the user, or failed
+      on an error, a usage limit among them. Null while a turn runs, before
+      the first, and where nothing says, as for a terminal session without
+      hooks. */
+  turnEnd: "done" | "cut" | "failed" | null;
+  /** What ended the last turn when it failed. Null otherwise. */
+  failure: Failure | null;
+  /** The commands the agent left running in the background when it ended
+      its last turn, by its own description of each: each one's end starts
+      its next turn by itself. */
+  background: string[];
+  /** How many turns the agent has begun in this run, as its hooks or its
+      events say, or, without them, as its output does. */
+  turns: number;
   /** When the row last changed what it says: started working, went quiet,
       asked, was looked at, ended. The palette and the chord to the next
       session that needs you order by it. */
@@ -1625,6 +1636,9 @@ function row(
     needs: null,
     delegated: false,
     turnEnd: null,
+    failure: null,
+    background: [],
+    turns: 0,
     changedAt: Date.now(),
     exitCode: null,
     error: null,
@@ -1793,6 +1807,15 @@ export function onIntegratedClose(handler: (session: Session) => void) {
   stopIntegrated = handler;
 }
 
+let closing: (session: Session) => void = () => {};
+
+/** Who hears that a row is about to close, while it still says how it
+    stood: the conductor, which remembers why a session it started is no
+    longer open. */
+export function onClosed(handler: ((session: Session) => void) | null) {
+  closing = handler ?? (() => {});
+}
+
 /** Closes a row. Its shells go with it, unless they are kept for the row
     that takes its place: see `handOver`. */
 export function close(key: string, keepShells = false) {
@@ -1820,6 +1843,8 @@ export function close(key: string, keepShells = false) {
   const still = stills.get(key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
+  interrupts.delete(key);
+  closing(session);
 
   // The browser tabs opened for the session go with the row.
   void closeOwner({ kind: "session", key });
@@ -1958,9 +1983,11 @@ export function bulletWatch(): (bytes: Uint8Array) => boolean {
 
 /** Quiet this long after output is the agent waiting. */
 export const QUIET_MS = 2000;
-/** With the hooks saying, quiet this long while they say working is the
-    turn having ended without them: a user's Escape ends a turn and fires
-    no hook, and an agent at work keeps its screen moving. */
+/** With the hooks saying, quiet this long after the user's Escape or
+    Ctrl+C while they say working is the turn having ended without them:
+    stopping a turn fires no hook. Without such a key a still screen ends
+    nothing: an agent at work on a long command, or thinking, draws only
+    its spinner's clock for minutes on end. */
 export const QUIET_EXACT_MS = 5000;
 /** Output within a second below this is a redraw, not work. */
 export const WORK_BYTES = 256;
@@ -2043,12 +2070,17 @@ const REPLY =
   /^(?:\x1b\[[?>=]?[\d;]*[cnRt]|\x1b\[\?[\d;]*u|\x1b\[\??[\d;]*\$y|\x1bP[^\x1b]*\x1b\\|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
 /** Ctrl+C, which empties the agent's input or closes what it has open. */
 const EMPTIES = "\x03";
+/** The keys that stop the turn an agent in a terminal is taking, sent
+    alone: Escape and Ctrl+C. */
+const INTERRUPTS = new Set(["\x1b", "\x03"]);
 
 /** The user typed into a pty. A line sent is the agent spoken to: from
     then on what it writes back can be work. A key while the agent asks
     for a permission answers that prompt, and leaves nothing on the line:
     the window hears no hook when the prompt closes, so the keys after it,
-    once the agent is seen at work again, are the line's as ever. */
+    once the agent is seen at work again, are the line's as ever. Escape or
+    Ctrl+C while the hooks say a turn runs may stop it, which no hook
+    reports: from that key on, the screen going still ends the turn. */
 export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
@@ -2058,6 +2090,17 @@ export function typed(ptyId: string, data: string) {
     stirred(session);
   }
   pressed.set(session.key, Date.now());
+  if (
+    INTERRUPTS.has(data) &&
+    session.exact &&
+    session.agent !== "codex" &&
+    session.working &&
+    session.needs === null &&
+    !session.delegated
+  ) {
+    interrupts.add(session.key);
+    stillLater(session);
+  }
   if (session.needs !== null) return;
   lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
   if (data.endsWith(EMPTIES)) delete drafts[session.key];
@@ -2119,23 +2162,18 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
   const work = pulse.bytes >= WORK_BYTES;
   if (session.exact) {
     // The hooks say when it starts and stops. Output still says two things
-    // they do not: a permission was granted and the agent went on, and a
-    // turn the user cut short is over, which is the screen going still
-    // while the hooks still say working. A session waiting on its
-    // subagents has a still screen by nature, and is working all the same.
+    // they do not: a permission was granted and the agent went on, and,
+    // after the user's Escape or Ctrl+C, a turn they cut short is over,
+    // which is the screen going still while the hooks still say working.
+    // Without that key a still screen is the agent at work on something
+    // that draws nothing but its spinner's clock.
     if (session.needs !== null && work) {
       session.needs = null;
       session.working = true;
       stirred(session);
       changed(session);
     }
-    if (
-      session.agent !== "codex" &&
-      session.working &&
-      work &&
-      !session.delegated
-    )
-      stillLater(session);
+    if (interrupts.has(key) && session.working && work) stillLater(session);
     return;
   }
   if (said) {
@@ -2148,6 +2186,7 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
   const turn = pulse.said || !rested.has(key) || !bulleted.has(key);
   if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working && turn) {
     session.working = true;
+    session.turns += 1;
     stirred(session);
     changed(session);
   }
@@ -2181,8 +2220,9 @@ function counted(key: string, bytes: number, now: number): Pulse {
   return pulse;
 }
 
-/** Starts, or starts over, the clock that ends a hooked session's working
-    when its screen has gone still. */
+/** Starts, or starts over, the clock that ends a hooked session's turn
+    as cut short once its screen has gone still after the user's Escape or
+    Ctrl+C. */
 function stillLater(session: Session) {
   const held = stills.get(session.key);
   if (held !== undefined) clearTimeout(held);
@@ -2191,8 +2231,10 @@ function stillLater(session: Session) {
     setTimeout(() => {
       stills.delete(session.key);
       const now = byKey(session.key);
-      if (now === null || !now.exact || !now.working) return;
+      if (now === null || !now.exact || !now.working || !interrupts.has(now.key)) return;
+      interrupts.delete(now.key);
       now.working = false;
+      now.turnEnd = "cut";
       changed(now);
       unseen(now);
     }, QUIET_EXACT_MS),
@@ -2200,6 +2242,10 @@ function stillLater(session: Session) {
 }
 
 const stills = new Map<string, ReturnType<typeof setTimeout>>();
+/** The hooked sessions the user pressed Escape or Ctrl+C in while their
+    hooks said a turn ran, by the row's key, until the next hook says what
+    happened or the screen going still says the turn was stopped. */
+const interrupts = new Set<string>();
 
 /** The agent went quiet: it is waiting, and unread unless watched stop. */
 function settle(key: string) {
@@ -2234,8 +2280,11 @@ export function onTurn(handler: ((session: Session) => void) | null) {
   turning = handler ?? (() => {});
 }
 
-/** A session's agent began a turn. */
+/** A session's agent began a turn: what ended the last one is past. */
 export function beganTurn(session: Session) {
+  session.turns += 1;
+  session.failure = null;
+  session.background = [];
   turning(session);
 }
 
@@ -2318,8 +2367,21 @@ export function noted(key: string, text: string) {
 // it here must not take for news.
 const pendingActivity = new Map<
   string,
-  { kind: SessionEvent["kind"]; note: string | null; cut: boolean; at: number }
+  {
+    kind: SessionEvent["kind"];
+    note: string | null;
+    cut: boolean;
+    more: TurnEnding;
+    at: number;
+  }
 >();
+
+/** What a hook says beside a turn's end: the kind of error a failed turn
+    ended on, and the commands a stop left running in the background. */
+export interface TurnEnding {
+  error?: string | null;
+  background?: string[];
+}
 
 /** How long a transition waits for its row to learn the session's id. */
 export const PENDING_FOR = 30_000;
@@ -2328,18 +2390,20 @@ function replayActivity(sessionId: string) {
   const pending = pendingActivity.get(sessionId);
   pendingActivity.delete(sessionId);
   if (pending !== undefined && Date.now() - pending.at < PENDING_FOR)
-    exact(sessionId, pending.kind, pending.note, pending.cut);
+    exact(sessionId, pending.kind, pending.note, pending.cut, pending.more);
 }
 
 /** A hook or rollout reports a turn transition. With a stop comes the
     first line of what the agent said, which the row takes when the agent
-    left no line of its own through its notify tool, and whether the user
-    cut the turn short. */
+    left no line of its own through its notify tool, whether the user cut
+    the turn short, and the commands it left running. With a failed turn
+    come the error's kind and the line the agent showed for it. */
 export function exact(
   sessionId: string,
   kind: SessionEvent["kind"],
   note: string | null = null,
   cut = false,
+  more: TurnEnding = {},
 ) {
   // An integrated session's state comes from its own events, and the
   // hooks that fire for it are left alone.
@@ -2353,7 +2417,7 @@ export function exact(
   if (session === undefined) {
     if (sessions.all.some((candidate) => candidate.id === sessionId)) return;
     pendingActivity.delete(sessionId);
-    pendingActivity.set(sessionId, { kind, note, cut, at: Date.now() });
+    pendingActivity.set(sessionId, { kind, note, cut, more, at: Date.now() });
     if (pendingActivity.size > 256)
       pendingActivity.delete(pendingActivity.keys().next().value!);
     return;
@@ -2365,6 +2429,9 @@ export function exact(
   const still = stills.get(session.key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(session.key);
+  // The hooks have spoken since the user's Escape or Ctrl+C: what it did
+  // is theirs to say.
+  interrupts.delete(session.key);
   switch (kind) {
     case "prompt":
       session.working = true;
@@ -2383,9 +2450,26 @@ export function exact(
       session.working = false;
       session.needs = null;
       session.delegated = false;
-      // A turn the user cut short stays so, though a hook of the agent's
-      // own may call its end a stop as well.
-      session.turnEnd = cut || session.turnEnd === "cut" ? "cut" : "done";
+      // A turn Codex said the user cut short stays so, though its stop hook
+      // calls the end a stop as well. Claude Code's stop after the screen
+      // went still on an Escape is the agent's own end of the turn.
+      session.turnEnd =
+        cut || (session.turnEnd === "cut" && session.agent === "codex") ? "cut" : "done";
+      session.failure = null;
+      session.background = (more.background ?? []).map(shown);
+      changed(session);
+      if (session.note === null && note !== null) session.note = shown(note);
+      unseen(session);
+      break;
+    case "failed":
+      // An error ended the turn, a usage limit among them, and the agent did
+      // not: it is waiting, and how it stopped is said for what it is.
+      session.working = false;
+      session.needs = null;
+      session.delegated = false;
+      session.turnEnd = "failed";
+      session.failure = failureOf(more.error ?? null, note === null ? null : shown(note));
+      session.background = [];
       changed(session);
       if (session.note === null && note !== null) session.note = shown(note);
       unseen(session);
@@ -2505,6 +2589,7 @@ export function reset() {
   for (const key of Object.keys(drafts)) delete drafts[key];
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
+  interrupts.clear();
   for (const pulse of pulses.values()) {
     if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   }

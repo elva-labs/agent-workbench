@@ -1728,26 +1728,217 @@ describe("working, and waiting for you", () => {
     }
   });
 
-  // A user's Escape ends the turn and fires no hook: the hooks still say
-  // working, and the only sign is the screen going still.
-  it("ends a hooked session's working when its screen goes still", () => {
+  /** Claude Code's spinner while a command runs or the model thinks, as
+      it draws it: a frame of a few dozen bytes four times a second, its
+      clock ticking over ("✽ Swooping… (16m 50s)"), well under a busy
+      second, for `ms`. */
+  const spins = (key: string, ms: number) => {
+    for (let at = 0; at < ms; at += 250) {
+      vi.advanceTimersByTime(250);
+      output(key, 40);
+    }
+  };
+
+  // Recorded in a real orchestration: a hooked session in the middle of a
+  // long turn, running a test suite that printed nothing for minutes, was
+  // reported stopped while its screen showed the spinner and its clock.
+  it("keeps a hooked session working through a long command that draws only its spinner", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      live(A, "pty-2");
+      exact("session-pty-1", "prompt");
+      // The tool call goes out with a burst of output.
+      output(session.key, WORK_BYTES * 4);
+      spins(session.key, 17 * 60_000);
+      expect(session.working).toBe(true);
+      expect(session.unread).toBe(false);
+      // A pause between two tool calls draws nothing at all.
+      output(session.key, WORK_BYTES * 2);
+      vi.advanceTimersByTime(90_000);
+      expect(session.working).toBe(true);
+      // The stop hook ends it, and only that.
+      exact("session-pty-1", "stop", "Done: tests green");
+      expect(session.working).toBe(false);
+      expect(session.turnEnd).toBe("done");
+      expect(session.note).toBe("Done: tests green");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Stopping a turn with Escape or Ctrl+C fires no hook: the hooks still
+  // say working, and the screen going still after that key is the sign.
+  it("ends a turn as cut short once the screen goes still after the user's Escape", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      live(A, "pty-2");
+      exact("session-pty-1", "prompt");
+      output(session.key, WORK_BYTES * 2);
+      typed("pty-1", "\x1b");
+      // Claude Code draws that it was interrupted, then nothing.
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS - 1);
+      expect(session.working).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(session.working).toBe(false);
+      expect(session.turnEnd).toBe("cut");
+      // The next prompt is the hooks' word again, and quiet ends nothing.
+      exact("session-pty-1", "prompt");
+      expect(session.working).toBe(true);
+      expect(session.turnEnd).toBeNull();
+      spins(session.key, QUIET_EXACT_MS * 3);
+      expect(session.working).toBe(true);
+      // Ctrl+C stops a turn the same way.
+      typed("pty-1", "\x03");
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      expect(session.working).toBe(false);
+      expect(session.turnEnd).toBe("cut");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves the turn to the hooks once one speaks after the user's Escape", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      typed("pty-1", "\x1b");
+      // Escape closed a menu, and the agent asked for a permission.
+      exact("session-pty-1", "permission");
+      output(session.key, WORK_BYTES);
+      expect(session.working).toBe(true);
+      spins(session.key, QUIET_EXACT_MS * 3);
+      expect(session.working).toBe(true);
+      expect(session.turnEnd).toBeNull();
+      // An Escape typed into a session at rest stops nothing.
+      exact("session-pty-1", "stop");
+      typed("pty-1", "\x1b");
+      vi.advanceTimersByTime(QUIET_EXACT_MS * 2);
+      expect(session.turnEnd).toBe("done");
+      // Nor does one while its subagents run in the background.
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "delegated");
+      typed("pty-1", "\x1b");
+      vi.advanceTimersByTime(QUIET_EXACT_MS * 2);
+      expect(session.working).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Recorded: a session at its usage limit, the screen saying "You've hit
+  // your 5-hour limit · resets 4pm (Europe/Stockholm)", and Claude Code's
+  // failed-turn hook in place of its stop.
+  it("takes a turn a usage limit ended as failed, with when the limit lifts", () => {
+    const session = live(A, "pty-1");
+    live(A, "pty-2");
+    exact("session-pty-1", "prompt");
+    output(session.key, WORK_BYTES);
+    exact(
+      "session-pty-1",
+      "failed",
+      "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)",
+      false,
+      { error: "rate_limit" },
+    );
+    expect(session.working).toBe(false);
+    expect(session.turnEnd).toBe("failed");
+    expect(session.failure).toEqual({
+      limit: true,
+      until: "4pm",
+      line: "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)",
+    });
+    expect(session.note).toBe("You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)");
+    expect(session.unread).toBe(true);
+    // The agent goes on by itself at the reset, and what ended the last
+    // turn is past.
+    exact("session-pty-1", "prompt");
+    expect(session.failure).toBeNull();
+    expect(session.turnEnd).toBeNull();
+  });
+
+  // Recorded: "API Error: Connection lost mid-response. The response above
+  // may be incomplete.", and the same after the laptop slept mid-response.
+  it("takes a turn an API error ended as failed, and a laptop's sleep as nothing", () => {
     vi.useFakeTimers();
     try {
       const session = live(A, "pty-1");
       exact("session-pty-1", "prompt");
       output(session.key, WORK_BYTES);
-      // A redraw's worth every so often does not keep the turn alive.
-      for (let i = 0; i < 4; i += 1) {
-        vi.advanceTimersByTime(QUIET_EXACT_MS / 4);
-        output(session.key, 12);
-      }
+      // The laptop sleeps for an hour: no output, and every timer late.
+      vi.advanceTimersByTime(60 * 60_000);
+      expect(session.working).toBe(true);
+      // It wakes, and the response it was streaming is gone.
+      exact(
+        "session-pty-1",
+        "failed",
+        "API Error: Your computer went to sleep mid-response. The response above may be incomplete.",
+        false,
+        { error: "server_error" },
+      );
       expect(session.working).toBe(false);
-      expect(session.exact).toBe(true);
-      // The next prompt is the hooks' word again.
+      expect(session.failure?.limit).toBe(false);
+      expect(session.failure?.line).toContain("went to sleep mid-response");
       exact("session-pty-1", "prompt");
-      expect(session.working).toBe(true);
-      vi.advanceTimersByTime(QUIET_EXACT_MS * 2);
-      expect(session.working).toBe(true);
+      exact(
+        "session-pty-1",
+        "failed",
+        "API Error: Connection lost mid-response. The response above may be incomplete.",
+        false,
+        { error: "server_error" },
+      );
+      expect(session.failure).toEqual({
+        limit: false,
+        until: null,
+        line: "API Error: Connection lost mid-response. The response above may be incomplete.",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Recorded: "The tests are still running in the background. I'll finish
+  // the report and notify once they complete." The turn ended; the
+  // command's end starts the next one.
+  it("keeps the commands a stop left running, until the next turn begins", () => {
+    const session = live(A, "pty-1");
+    exact("session-pty-1", "prompt");
+    exact("session-pty-1", "stop", "Waiting for the unit suite to finish.", false, {
+      background: ["Run the unit suite"],
+    });
+    expect(session.working).toBe(false);
+    expect(session.background).toEqual(["Run the unit suite"]);
+    const turns = session.turns;
+    exact("session-pty-1", "prompt");
+    expect(session.background).toEqual([]);
+    expect(session.turns).toBe(turns + 1);
+  });
+
+  it("counts the turns a session begins, by its hooks or, without them, its output", () => {
+    vi.useFakeTimers();
+    try {
+      const hooked = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      output(hooked.key, WORK_BYTES);
+      expect(hooked.working).toBe(true);
+      // A permission granted is the same turn going on.
+      expect(hooked.turns).toBe(1);
+      exact("session-pty-1", "stop");
+      exact("session-pty-1", "prompt");
+      expect(hooked.turns).toBe(2);
+
+      const unhooked = live(A, "pty-2");
+      typed("pty-2", "go\r");
+      for (let second = 0; second < WORK_WINDOWS; second += 1) {
+        output(unhooked.key, WORK_BYTES);
+        vi.advanceTimersByTime(1010);
+      }
+      expect(unhooked.working).toBe(true);
+      expect(unhooked.turns).toBe(1);
     } finally {
       vi.useRealTimers();
     }
