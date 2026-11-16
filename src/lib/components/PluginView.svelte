@@ -1,7 +1,7 @@
 <script lang="ts">
   import { typeWhole } from "$lib/conductor.svelte";
   import { type PluginPage, pluginViews, send } from "$lib/pluginView.svelte";
-  import { activeSession } from "$lib/sessions.svelte";
+  import { activeSession, typed } from "$lib/sessions.svelte";
   import { showPlace } from "$lib/show.svelte";
   import { printable } from "$lib/terminals.svelte";
 
@@ -66,6 +66,9 @@
     if (text === "") return;
     const session = activeSession();
     if (session === null || session.ptyId === null || session.status !== "running") return;
+    // Words on the agent's line that the user has not sent, as their own
+    // keys would leave.
+    typed(session.ptyId, text);
     typeWhole(session.key, session.ptyId, text).catch(() => {});
   }
 
