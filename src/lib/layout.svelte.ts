@@ -233,6 +233,10 @@ export const layout = $state({
   mediaOpen: false,
   processesOpen: false,
   browserOpen: false,
+  /** The sessions the session on screen started, open rather than folded
+      to its header: open until folded, since what they are doing is what
+      the section is for. */
+  startedOpen: true,
   /** A plugin's section, by source, plugin and section: open rather than
       folded. Absent is folded, which is how one first appears. */
   sectionsOpen: {} as Record<string, boolean>,
@@ -776,6 +780,8 @@ export function loadLayout() {
       layout.processesOpen = v.processesOpen;
     if (typeof v.browserOpen === "boolean")
       layout.browserOpen = v.browserOpen;
+    if (typeof v.startedOpen === "boolean")
+      layout.startedOpen = v.startedOpen;
     if (v.sectionsOpen !== null && typeof v.sectionsOpen === "object") {
       const open: Record<string, boolean> = {};
       for (const [key, value] of Object.entries(v.sectionsOpen)) {
@@ -824,6 +830,7 @@ export function saveLayout() {
         mediaOpen: layout.mediaOpen,
         processesOpen: layout.processesOpen,
         browserOpen: layout.browserOpen,
+        startedOpen: layout.startedOpen,
         sectionsOpen: layout.sectionsOpen,
         projectSort: layout.projectSort,
         sessionsChosen: layout.sessionsChosen,

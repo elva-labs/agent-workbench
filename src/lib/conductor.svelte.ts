@@ -395,6 +395,7 @@ export interface Run {
 const STARTED_KEY = "workbench.started";
 const RUNS_KEY = "workbench.runs";
 const CARRIED_KEY = "workbench.carried";
+const TREES_KEY = "workbench.trees";
 
 export const conductor = $state({
   asking: null as Ask | null,
@@ -410,6 +411,11 @@ export const conductor = $state({
       and is no caller's, since no caller is a bare folder. A list it kept
       under a session's id is the token's that session is given. */
   started: {} as Record<string, Started[]>,
+  /** The worktrees each caller's starts made, by the caller's token, kept
+      between runs until they are taken away. A caller's board offers to
+      clean up these and no others: a tree another caller's start made, or
+      one the user made, is not its to take. */
+  trees: {} as Record<string, MadeTree[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
   places: {} as Record<string, Place>,
@@ -439,11 +445,75 @@ export interface Woken {
   at: number;
 }
 
+/** A worktree a caller's start made: the project it is under and where
+    it is. */
+export interface MadeTree {
+  project: string;
+  path: string;
+}
+
 /** Reads what callers started in earlier runs. A corrupt entry reads as
     nothing remembered rather than a broken pane. */
 export function loadStarted() {
   loadStartedList();
   loadRuns();
+  loadTrees();
+}
+
+function loadTrees() {
+  try {
+    const raw = localStorage.getItem(TREES_KEY);
+    if (raw === null) return;
+    const stored: unknown = JSON.parse(raw);
+    if (!isRecord(stored)) return;
+    const trees: Record<string, MadeTree[]> = {};
+    for (const [caller, entries] of Object.entries(stored)) {
+      if (!Array.isArray(entries)) continue;
+      const kept = entries.filter(
+        (entry): entry is MadeTree =>
+          isRecord(entry) && typeof entry.project === "string" && typeof entry.path === "string",
+      );
+      if (kept.length > 0) trees[caller] = kept.map(({ project, path }) => ({ project, path }));
+    }
+    conductor.trees = trees;
+  } catch {
+    // No start made a worktree, then.
+  }
+}
+
+function saveTrees() {
+  try {
+    localStorage.setItem(TREES_KEY, JSON.stringify(conductor.trees));
+  } catch {
+    // Non-fatal: the trees stay where they are, and no board offers them.
+  }
+}
+
+/** A worktree one of this caller's starts made. */
+function madeTree(caller: string, project: string, path: string) {
+  const list = conductor.trees[caller] ?? [];
+  if (list.some((tree) => tree.project === project && tree.path === path)) return;
+  conductor.trees[caller] = [...list, { project, path }];
+  saveTrees();
+}
+
+/** The worktrees this caller's starts made, whether or not a session still
+    runs in them. */
+export function treesMadeBy(caller: string): MadeTree[] {
+  return conductor.trees[caller] ?? [];
+}
+
+/** A worktree that has been taken away is no caller's any more. */
+export function treeRemoved(project: string, path: string) {
+  let changed = false;
+  for (const [caller, list] of Object.entries(conductor.trees)) {
+    const kept = list.filter((tree) => !(tree.project === project && tree.path === path));
+    if (kept.length === list.length) continue;
+    if (kept.length === 0) delete conductor.trees[caller];
+    else conductor.trees[caller] = kept;
+    changed = true;
+  }
+  if (changed) saveTrees();
 }
 
 function loadStartedList() {
@@ -1833,6 +1903,7 @@ async function startFitted(
     } catch (error) {
       return refused(`The worktree could not be made: ${String(error)}`);
     }
+    madeTree(caller, project, startIn);
   }
 
   // A started session does not take the window: the user is in the session
@@ -2878,6 +2949,12 @@ onMoved((id, token) => {
   for (const [key, caller] of Object.entries(conductor.startedBy))
     if (caller === id) conductor.startedBy[key] = token;
   if (cut.delete(id)) cut.add(token);
+  const trees = conductor.trees[id];
+  if (trees !== undefined) {
+    delete conductor.trees[id];
+    for (const tree of trees) madeTree(token, tree.project, tree.path);
+    saveTrees();
+  }
   const list = conductor.started[id];
   if (list !== undefined) {
     const have = conductor.started[token] ?? [];
@@ -3181,6 +3258,7 @@ export function resetConductor() {
   for (const key of Object.keys(conductor.startedBy))
     delete conductor.startedBy[key];
   conductor.started = {};
+  conductor.trees = {};
   conductor.places = {};
   conductor.runs = {};
   conductor.refusals = {};
