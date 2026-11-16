@@ -92,8 +92,10 @@ the thread's configuration turns Codex's own subagent tools off with the
 settings a terminal session is given. None of it goes on a command line,
 so on Windows too a Codex session can follow a workflow this way. A start
 that names no mode runs in the mode the user's configuration sets, which
-can be full access. The thread's id is Codex's own, known once the thread
-has started, so the start answers with none and ready carries it.
+can be full access, and one that names no effort runs at the effort the
+configuration sets, else at the model's own default, which ready names.
+The thread's id is Codex's own, known once the thread has started, so the
+start answers with none and ready carries it.
 
 A mode is Codex's approval policy and sandbox together: read only, which
 asks before it changes anything; auto, which changes files and runs
@@ -112,18 +114,21 @@ refused goes with the next.
 The workbench's tool server is attached to each thread through the
 thread's own configuration, under the name the hooks install it by, with
 its tools allowed without asking, so it needs no entry in the account's
-configuration. Codex gives the servers it starts an environment of its own
-choosing, so the session's token and role go into the server's entry, for
-a fresh thread as for a resumed one: the token is the workbench's, chosen
-before Codex makes the thread's id, so the server knows its session from
-the first call. See [who is calling](orchestrator.md#who-is-calling).
+configuration. The servers the user's configuration names ask as it says.
+Codex gives the servers it starts an environment of its own choosing, so
+the session's token and role go into the server's entry, for a fresh
+thread as for a resumed one: the token is the workbench's, chosen before
+Codex makes the thread's id, so the server knows its session from the
+first call. See [who is calling](orchestrator.md#who-is-calling).
 
 The account is the home Codex reads from `CODEX_HOME`. An account that
 needs an OpenAI login and has none says so with the same error as for
 Claude Code, and the user signs in by running `codex login` in a terminal.
-A Codex older than the oldest version the workbench speaks to, one that
-refuses the introduction, and a thread that cannot start or resume each
-end the session with an error that says which.
+A message sent all the same starts a turn, which Codex retries for some
+seconds and then ends as failed, saying why. A Codex older than the oldest
+version the workbench speaks to, one that refuses the introduction, and a
+thread that cannot start or resume each end the session with an error that
+says which.
 
 ## Trust
 
@@ -344,7 +349,14 @@ gives. A command's output comes only when it finishes, and a command that
 was declined or ended with another code than zero finishes as an error. A
 web search and an image view finish with no output. A turn reports no
 cost. A tool call Codex makes to start another agent is a tool call of the
-agent kind, and what that agent says has no event.
+agent kind, and what that agent says has no event. A turn that fails says
+why as it ends. Codex also marks the thread as failed then, which is told
+as an error only when no turn runs.
+
+Codex's newer models call their tools from a script they write, which has
+no event: each command, edit and MCP call the script makes comes as a tool
+call of its own. A command the sandbox refuses comes as nothing at all, so
+the window shows only what the agent says of it.
 
 A subagent's text, tool calls, plans and requests name the tool call that
 started it, so the window can draw them under that call.
@@ -619,8 +631,9 @@ message is one the agent began by itself, and a compaction in such a turn
 was asked for, while one in a turn the user began was made because the
 context was full. Codex's app-server names no model for a turn, so a turn
 read from it names none. An item of a kind the workbench does not know is
-skipped. Codex keeps no record of a command an interrupt stopped, of a
-plan's steps or of a turn's diff, so none of those comes back. A thread
+skipped. Codex keeps no record of a plan's steps or of a turn's diff, so
+neither comes back. A command an interrupt left running comes back as
+failed once it has ended, and not at all while it still runs. A thread
 kept by an older Codex, which kept less, comes back with its messages and
 what the agent said, under ids of Codex's own that differ from those its
 live events had.
