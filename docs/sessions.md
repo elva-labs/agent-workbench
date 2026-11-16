@@ -371,7 +371,10 @@ user's own message reads as theirs whatever another session sent; the sentence t
 workbench adds to a started session's prompt, asking it to call notify, is
 never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
-not known, with the time, down a quiet line at the side. What the session
+not known, with the time, down a quiet line at the side. Codex's app-server
+names no model for a turn, so every run of a Codex session, live or read
+back, goes under the agent's name and keeps it over a reload; the model it
+runs on is on the composer's model chip. What the session
 shows is chosen by the kind of each call and the shape of what it carries,
 the same for every agent. What the agent wrote is drawn as
 Markdown, its code and tables included, and grows in place while it streams,
@@ -667,11 +670,10 @@ messages sits at the foot of the pane while it is shorter than the pane,
 so nothing under them moves. A turn the agent's record gives no end, as
 when the app quit during it, is over, and its unfinished steps failed.
 When nothing earlier is found, a line above says so. A conversation too
-long to hold whole leaves out its start and says so. Codex names no model
-for a turn it kept, so a Codex turn read back is drawn under the agent's
-name. Earlier messages that cannot be read, as when Codex does not know
-the thread, leave the session able to be written to, with a line saying
-they are not shown. [Integrated sessions](integrated.md#history) has what
+long to hold whole leaves out its start and says so. Earlier messages
+that cannot be read leave the session able to be written to, with a line
+saying they could not be read and why, such as that Codex does not have
+the conversation. [Integrated sessions](integrated.md#history) has what
 is read and how.
 
 The line reads `Resumed here, today 09:40`, naming the day when it is
