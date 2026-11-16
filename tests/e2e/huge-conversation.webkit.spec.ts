@@ -98,10 +98,11 @@ test.describe("a conversation as long as a real one kept for days", () => {
     await thread(page).focus();
     await page.keyboard.press("Home");
     await expect.poll(() => thread(page).evaluate((node) => node.scrollTop)).toBe(0);
-    // Held on the scroll bar and moved down to its end, a frame at a time,
-    // then held there a moment, as a hand does.
+    // Held on the scroll bar, at the thread's right edge, and moved down to
+    // its end, a frame at a time, then held there a moment, as a hand does.
     await thread(page).evaluate(async (node) => {
-      node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      const edge = node.getBoundingClientRect();
+      node.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: edge.right - 4, clientY: edge.top + 20 }));
       const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
       for (let step = 1; step <= 40; step++) {
         node.scrollTop = ((node.scrollHeight - node.clientHeight) * step) / 40;
