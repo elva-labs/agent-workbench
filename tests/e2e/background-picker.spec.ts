@@ -272,6 +272,53 @@ test.describe("cards", () => {
     expect(await cardPainted(page)).toBe(false);
   });
 
+  // Giving a terminal colours makes xterm draw every row again, and the GPU
+  // renderer every glyph; a share or a background moving changes none of
+  // the colours the terminals draw in.
+  test("gives the terminals no new colours while the share and the background move", async ({ page }) => {
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { appearance: "light", backgrounds: { teal: LAGOON }, cards: { teal: 0.1 } },
+    });
+    await page.goto("/");
+    const terminals = () =>
+      page.evaluate(() => Object.keys((window as unknown as { __WORKBENCH_TERMINALS__?: object }).__WORKBENCH_TERMINALS__ ?? {}).length);
+    for (let i = 1; i <= 3; i++) {
+      await page.getByTestId("new-session").click();
+      await expect.poll(terminals).toBe(i);
+    }
+    type Terminals = { __WORKBENCH_TERMINALS__: Record<string, { options: { theme: object } }>; __themes?: object[] };
+    const note = () =>
+      page.evaluate(() => {
+        const w = window as unknown as Terminals;
+        w.__themes = Object.values(w.__WORKBENCH_TERMINALS__).map((terminal) => terminal.options.theme);
+      });
+    const given = () =>
+      page.evaluate(() => {
+        const w = window as unknown as Terminals;
+        return Object.values(w.__WORKBENCH_TERMINALS__).filter((terminal, at) => terminal.options.theme !== w.__themes![at]).length;
+      });
+    await page.keyboard.press(`${MOD}+,`);
+    await expect(page.getByTestId("background-picker")).toBeVisible();
+    await note();
+
+    const cards = page.getByTestId("background-cards");
+    for (const value of ["14", "18", "22", "6"]) {
+      await cards.evaluate((input: HTMLInputElement, to) => {
+        input.value = to;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }, value);
+    }
+    await cards.evaluate((input: HTMLInputElement) => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await page.getByTestId("ready-dusk").click();
+    await expect.poll(() => kept(page)).toMatchObject({ harmony: "free", dots: [{ hue: 282 }, { hue: 352 }] });
+    expect(await given()).toBe(0);
+
+    // What does change their colours reaches every one of them.
+    await page.getByTestId("theme-dark").click();
+    await expect.poll(given).toBe(3);
+  });
+
   test("repaints the cards as the slider moves, and keeps the share once let go", async ({ page }) => {
     await open(page, { backgrounds: { teal: LAGOON } });
     const cards = page.getByTestId("background-cards");
