@@ -166,3 +166,88 @@ test("each palette has a background of its own", async ({ page }) => {
   await page.getByTestId("ready-ember").click();
   await expect.poll(() => file(page).then((f) => Object.keys(f.backgrounds).sort())).toEqual(["rose", "teal"]);
 });
+
+test.describe("cards", () => {
+  const AGENT_CARD = "section[data-pane='agent'] > .body";
+  const cardPainted = (page: Page) =>
+    page.evaluate((selector) => getComputedStyle(document.querySelector(selector)!).backgroundImage !== "none", AGENT_CARD);
+  const LAGOON = {
+    dots: [
+      { hue: 192, chroma: 0.9 },
+      { hue: 252, chroma: 0.8 },
+    ],
+    harmony: "free",
+    strength: 0.6,
+    grain: 0.25,
+  };
+
+  test("is none at first, greyed until there is a background, and keeps a share beside it", async ({ page }) => {
+    await open(page);
+    const cards = page.getByTestId("background-cards");
+    await expect(cards).toBeDisabled();
+    await page.getByTestId("ready-lagoon").click();
+    await expect(cards).toBeEnabled();
+    await expect(cards).toHaveValue("0");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("None");
+    expect(await cardPainted(page)).toBe(false);
+    await cards.fill("20");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("20%");
+    await expect.poll(() => file(page).then((f) => f.cards)).toEqual({ teal: 0.2 });
+    // Kept beside the background, never inside it.
+    expect(Object.keys(await kept(page)).sort()).toEqual(["dots", "grain", "harmony", "strength"]);
+    expect(await cardPainted(page)).toBe(true);
+    await expect(page.locator("html")).toHaveAttribute("data-cards", "");
+    // The small windows show the card tinted.
+    const mini = page.locator(".mini .card").first();
+    expect(await mini.evaluate((card) => getComputedStyle(card).backgroundImage)).toContain("gradient");
+    await cards.fill("0");
+    await expect.poll(() => file(page).then((f) => f.cards)).toEqual({});
+    await expect(page.locator("html")).not.toHaveAttribute("data-cards", "");
+    expect(await cardPainted(page)).toBe(false);
+  });
+
+  test("says in plain words where the guard holds it back", async ({ page }) => {
+    await open(page, {
+      palette: "mono",
+      backgrounds: { mono: { ...LAGOON, dots: [{ hue: 185, chroma: 0.85 }, { hue: 305, chroma: 0.85 }, { hue: 65, chroma: 0.85 }], harmony: "triad", strength: 1 } },
+      cards: { mono: 0.25 },
+    });
+    await expect(page.getByTestId("background-cards-value")).toHaveText("25%, held at 14% here");
+    await expect(page.getByTestId("background-note")).toContainText(
+      "Held at 14% here, since more would leave a terminal colour hard to read.",
+    );
+  });
+
+  test("says when in dark the cards would melt into the ground", async ({ page }) => {
+    await open(page, {
+      appearance: "dark",
+      backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 } },
+      cards: { teal: 0.2 },
+    });
+    await expect(page.getByTestId("background-cards-value")).toHaveText("20%, held at 0% here");
+    await expect(page.getByTestId("background-note")).toContainText("since more would melt the cards into the ground");
+  });
+
+  test("is greyed with the reason while the system asks for more contrast", async ({ page }) => {
+    await open(page, { backgrounds: { teal: LAGOON }, cards: { teal: 0.2 } });
+    await expect(page.getByTestId("background-cards")).toBeEnabled();
+    await page.emulateMedia({ contrast: "more" });
+    await expect(page.getByTestId("background-cards")).toBeDisabled();
+    await expect(page.getByTestId("background-note")).toContainText("Off while the system asks for more contrast.");
+    await expect(page.locator("html")).not.toHaveAttribute("data-cards", "");
+    expect(await cardPainted(page)).toBe(false);
+  });
+
+  test("repaints the cards as the slider moves, and keeps the share once let go", async ({ page }) => {
+    await open(page, { backgrounds: { teal: LAGOON } });
+    const cards = page.getByTestId("background-cards");
+    await cards.evaluate((input: HTMLInputElement) => {
+      input.value = "12";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await expect(page.locator("html")).toHaveAttribute("data-cards", "");
+    expect((await file(page))?.cards ?? {}).toEqual({});
+    await cards.evaluate((input: HTMLInputElement) => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await expect.poll(() => file(page).then((f) => f.cards)).toEqual({ teal: 0.12 });
+  });
+});
