@@ -92,6 +92,28 @@ test("in the terminal look tints only the ground between the boxes and the statu
   expect((await rules()).head).toBe(tinted.head);
 });
 
+/** The width and height of the image the window paints the gradient from
+    in an appearance, or null where it paints none. */
+async function gradientSize(page: Page, appearance: "light" | "dark") {
+  return page.evaluate(async (name) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(`--tint-image-${name}`);
+    const url = /url\("?([^")]+)"?\)/.exec(value)?.[1];
+    if (url === undefined) return null;
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return [image.naturalWidth, image.naturalHeight];
+  }, appearance);
+}
+
+test("paints the gradient from an image fine enough that no steps show, in either appearance", async ({ page }) => {
+  await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
+  // A 4K window stretches each of its pixels over five device pixels at
+  // most, where the dither still hides the steps between them.
+  await expect.poll(() => gradientSize(page, "light")).toEqual([768, 480]);
+  await expect.poll(() => gradientSize(page, "dark")).toEqual([768, 480]);
+});
+
 test("each palette keeps its own background, and one without has the plain chrome", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
   const plain = await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8)));

@@ -452,9 +452,18 @@ export function cardsThrough(): boolean {
   return theme.cardsHeld > 0;
 }
 
+/** How long the background goes unchanged before its gradient is drawn at
+    full size, in milliseconds: a dot held still this long has stopped. */
+export const REST = 200;
+let resting: ReturnType<typeof setTimeout> | null = null;
+
 /** The stylesheet the background is painted from, worked out from the
-    colours the palette or theme paints in each appearance. */
-function paintBackground() {
+    colours the palette or theme paints in each appearance. A gradient not
+    yet drawn at full size is drawn small, and at full size once the
+    background has rested, unless `full` says to draw it so now. */
+function paintBackground(full = false) {
+  if (resting !== null) clearTimeout(resting);
+  resting = null;
   const id = "workbench-background";
   let sheet = document.getElementById(id);
   if (sheet === null) {
@@ -480,15 +489,14 @@ function paintBackground() {
   const appearance = resolvedTheme();
   const only = theme.preview === null ? null : { appearance, look: theme.look };
   const held: Partial<Record<string, number>> = {};
-  const css = backgroundCss(
+  const images = imagesOf(
     background,
-    colours,
-    imagesOf(background, only === null ? colours : { [only.appearance]: colours[only.appearance] }),
-    only,
-    cards,
-    held,
+    only === null ? colours : { [only.appearance]: colours[only.appearance] },
+    full,
   );
+  const css = backgroundCss(background, colours, images, only, cards, held);
   if (sheet.textContent !== css) sheet.textContent = css;
+  if (images.rough) resting = setTimeout(() => paintBackground(true), REST);
   root.dataset.background = "";
   // Where the guard holds the share at none on screen, nothing changes.
   theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
