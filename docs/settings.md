@@ -156,9 +156,11 @@ the ink or the accent through rather than laying a solid fill over it. A
 menu or popover takes the card's tint from the background, never from
 what is under it. The terminal's ground is clear while any shows, so the
 card shows through it, and rows a program paints in colours of its own,
-such as a diff in Claude Code, keep them. On Windows and Linux a terminal
-with a clear ground draws its text with greyscale rather than subpixel
-smoothing, so the ground is clear only while Cards shows something. In the terminal look the rules
+such as a diff in Claude Code, keep them. The GPU draws a terminal's text
+thinner on a clear ground than the window draws its own, which leaves dark
+text on a dark colour a program paints faint, so while Cards shows
+something a terminal is drawn the way the rest of the window is, and goes
+back to the GPU when Cards is none. In the terminal look the rules
 inside a see-through box are the text colour let through, as the lines on
 the ground are. The browser pane's page and media such as images stay as
 they are.

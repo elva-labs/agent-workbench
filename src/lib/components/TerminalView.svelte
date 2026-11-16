@@ -117,6 +117,38 @@
 
   const CLEAR = "rgba(0, 0, 0, 0)";
 
+  /** Whether the GPU renderer can draw here, and the one drawing now. */
+  let gpu = false;
+  let webgl: WebglAddon | null = null;
+
+  /** The GPU renderer where there is one. A software rasteriser gives a
+      context that presents late or not at all, and a headless X server may
+      give none; the DOM renderer is the fallback for both: slower under a
+      flood of output, identical to look at. It also draws while the cards
+      let a background through: the GPU renderer draws glyphs on a clear
+      ground thinner than the page draws text, which leaves dark text on a
+      dark colour a program paints faint. */
+  function useRenderer() {
+    if (terminal === null) return;
+    const want = gpu && !cardsThrough();
+    if (want && webgl === null) {
+      try {
+        const addon = new WebglAddon();
+        addon.onContextLoss(() => {
+          addon.dispose();
+          if (webgl === addon) webgl = null;
+        });
+        terminal.loadAddon(addon);
+        webgl = addon;
+      } catch {
+        // DOM renderer it is.
+      }
+    } else if (!want && webgl !== null) {
+      webgl.dispose();
+      webgl = null;
+    }
+  }
+
   let host: HTMLDivElement;
   let terminal: Terminal | null = null;
   let fit: GridFit | null = null;
@@ -150,8 +182,7 @@
       fontSize,
       lineHeight: 1.35,
       scrollback: 10_000,
-      // A clear ground draws glyphs without subpixel smoothing, so it is on
-      // only while the cards let a background through.
+      // A clear ground is on only while the cards let a background through.
       allowTransparency: cardsThrough(),
       theme: colours(),
       // Links the program marked up itself (OSC 8), as Claude Code does.
@@ -185,19 +216,8 @@
     }
     terminal.open(host);
 
-    // The GPU renderer where there is one. A software rasteriser gives a
-    // context that presents late or not at all, and a headless X server may
-    // give none; the DOM renderer is the fallback for both: slower under a
-    // flood of output, identical to look at.
-    if (!softwareGl(glRenderer()) && !domRendererChosen()) {
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => webgl.dispose());
-        terminal.loadAddon(webgl);
-      } catch {
-        // DOM renderer it is.
-      }
-    }
+    gpu = !softwareGl(glRenderer()) && !domRendererChosen();
+    useRenderer();
 
     measure();
     queue = new WriteQueue((data) => terminal?.write(data));
@@ -372,6 +392,7 @@
     untrack(() => {
       const clear = cardsThrough();
       if (terminal!.options.allowTransparency !== clear) terminal!.options.allowTransparency = clear;
+      useRenderer();
       terminal!.options.theme = colours();
     });
   });
