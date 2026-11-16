@@ -1452,7 +1452,7 @@ describe("the window controls", () => {
     expect(screen.queryByTestId("window-controls")).not.toBeInTheDocument();
   });
 
-  it("have a menu button at the leftmost header that asks for the native menu", async () => {
+  it("have a menu button at the start of the sessions pane's header that asks for the native menu", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
     fake.controls = [];

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, foldedWidth, installFakeCore } from "./fake";
 
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
@@ -12,12 +12,10 @@ async function widthOf(page: Page, selector: string) {
   return box.width;
 }
 
-/** How wide the sessions pane's column is while the pane is folded. */
-const FOLDED = 50;
-
-/** Waits for the sessions pane to be folded to its narrow column, or open. */
+/** Waits for the sessions pane to be folded to its column, or open. */
 async function sessionsFolded(page: Page, folded = true) {
-  await expect.poll(() => widthOf(page, SESSIONS).then((width) => width <= FOLDED + 1)).toBe(folded);
+  const narrow = await foldedWidth(page);
+  await expect.poll(() => widthOf(page, SESSIONS).then((width) => width <= narrow + 1)).toBe(folded);
 }
 
 /** Waits for the columns to arrive: two frames apart, the grid reads the same. */
@@ -314,7 +312,9 @@ test("cycles the theme and keeps the choice", async ({ page }) => {
 });
 
 test("repaints the panes when the theme changes", async ({ page }) => {
-  const pane = page.locator(AGENT);
+  // What the pane holds is drawn on its own ground: the card in the modern
+  // look, which the app opens in.
+  const pane = page.locator(`${AGENT} > .body`);
   const light = await pane.evaluate(
     (el) => getComputedStyle(el).backgroundColor,
   );
@@ -1871,7 +1871,7 @@ test.describe("the file viewer", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
 
     await row(page, "mod.rs").click();
-    expect(await widthOf(page, SESSIONS)).toBeLessThanOrEqual(FOLDED + 1);
+    expect(await widthOf(page, SESSIONS)).toBeLessThanOrEqual((await foldedWidth(page)) + 1);
 
     const terminal = page.locator("section[data-pane='terminal']");
     await page.keyboard.press(`${MOD}+j`);
@@ -2239,7 +2239,7 @@ test.describe("the window's own controls", () => {
     await expect.poll(indent).toBeGreaterThan(40);
   });
 
-  test("put a menu button at the leftmost header that asks the core for the native menu", async ({
+  test("put a menu button at the start of the sessions pane's header that asks the core for the native menu", async ({
     page,
   }) => {
     await page.locator(`${SESSIONS} [data-testid='app-menu']`).click();
@@ -2250,9 +2250,17 @@ test.describe("the window's own controls", () => {
             .__windowControls,
       ),
     ).toEqual(["menu"]);
+    // Folded, the column keeps it, on the ground in its header row.
     await page.keyboard.press(`${MOD}+b`);
-    await expect(
-      page.locator(`${AGENT} [data-testid='app-menu']`),
-    ).toBeVisible();
+    const menu = page.locator(`${SESSIONS} [data-testid='app-menu']`);
+    await expect(menu).toBeVisible();
+    await expect(page.locator(`${AGENT} [data-testid='app-menu']`)).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const box = (await menu.boundingBox())!;
+        const column = (await page.locator(SESSIONS).boundingBox())!;
+        return box.x >= column.x && box.x + box.width <= column.x + column.width;
+      })
+      .toBe(true);
   });
 });

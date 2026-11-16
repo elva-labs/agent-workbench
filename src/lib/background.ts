@@ -540,9 +540,10 @@ export function grainPixels(size: number, grain: number): Uint8ClampedArray {
 /* The guard.                                                              */
 /* ---------------------------------------------------------------------- */
 
-/** The tinted parts: the sessions pane and the settings' tab column (side),
-    the pane headers and the settings' title row (surf), the status bar
-    (status), and the terminal look's ground between its boxes (frame). */
+/** The tinted parts: the modern look's ground, which the sessions pane,
+    the pane headers and the settings' tab column lie on (side), the
+    settings' title row (surf), the status bar (status), and the terminal
+    look's ground between its boxes (frame). */
 export type Part = "side" | "surf" | "status" | "frame";
 
 /** The kinds of text drawn on tinted parts, by the token each is drawn in. */
@@ -572,12 +573,21 @@ export interface Painted {
   contrast: Record<TextToken, number>;
 }
 
+/** The darkest tone a chrome goes, which the modern look's ground is: a
+    step below the background on a light chrome, the background itself on
+    a dark one, so the cards on it stand apart either way. */
+export function deepOf(colours: Record<string, string>): Rgb {
+  const bg = hexToRgb(colours.bg);
+  return toneOf(colours) === "dark" ? bg : mix(bg, hexToRgb(colours.ink), 0.04);
+}
+
 /** The plain grounds of the tinted parts in a look, as the stylesheets
-    paint them without a background. */
+    paint them without a background. In the modern look the status bar
+    lies on the window's ground. */
 export function groundsOf(colours: Record<string, string>, look: Look): Partial<Record<Part, Rgb>> {
   const tone = (name: string) => hexToRgb(colours[name]);
   return look === "modern"
-    ? { side: mix(tone("bg"), tone("ink"), 0.04), surf: tone("surface"), status: tone("surface") }
+    ? { side: deepOf(colours), surf: tone("surface"), status: deepOf(colours) }
     : { frame: tone("bg"), status: tone("surface-2") };
 }
 

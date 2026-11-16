@@ -92,6 +92,14 @@ export const SETTINGS_FILE = "fake.settings";
 /** Where the fake keeps the user's stylesheet the same way. */
 export const STYLES_FILE = "fake.userStyles";
 
+/** How wide the folded sessions column is where the page runs: wider on
+    macOS, where it holds the window's buttons, and in each look its own. */
+export async function foldedWidth(page: Page): Promise<number> {
+  return page
+    .locator(".frame")
+    .evaluate((frame) => parseFloat(getComputedStyle(frame).getPropertyValue("--folded")));
+}
+
 export async function installFakeCore(
   page: Page,
   options: {

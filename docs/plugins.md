@@ -293,7 +293,7 @@ The view declares how much room it wants. Wide is the viewer as a file
 opens it, beside the tree; full is the whole changes pane, the tree folded
 away while the view shows, which is what a graph of the branch needs. The
 layout's rules stand either way: the agent keeps its minimum, and a dragged
-splitter is remembered.
+divider is remembered.
 
 ## Projects on other machines
 

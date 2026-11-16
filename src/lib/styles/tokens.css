@@ -63,7 +63,20 @@
   --line-ui: 1.5;
   --line-term: 1.35;
   --pane-pad: 12px;
-  --splitter-w: 6px;
+
+  /* Two tones the chrome is built on beside the surface. The deep is the
+     darkest the chrome goes: a step below the window's background in
+     light, the background itself in dark. The well is a step from the
+     surface toward the ground, for a list beside what is read in the same
+     pane. */
+  --deep: color-mix(in srgb, var(--bg) 96%, var(--ink) 4%);
+  --well: var(--bg);
+  /* A pane standing on the ground lifts off it a little in light. */
+  --card-cast: 0 1px 2px rgb(0 0 0 / 0.05), 0 0 0 0.5px rgb(0 0 0 / 0.025);
+  /* Quiet text on the modern look's ground, which in light is a step
+     darker than the surface: the faint ink taken toward the second, as
+     far as holds it at 4.5:1 there. In dark the faint ink holds as it is. */
+  --ground-quiet: color-mix(in srgb, var(--ink-2) 60%, var(--ink-3));
 
   /* look: every decision a second look restates, in one place. The values
      here are the terminal look, which is what no stamp on <html> means. */
@@ -80,18 +93,54 @@
   --radius-tag: 2px;
   --radius-pane: 0px;
 
+  /* The window's ground, what the panes stand on, and the frame's padding
+     around them: the top, the left, and the right and foot. The terminal
+     panel can stand in from the left on its own. */
+  --ground: var(--bg);
+  --frame-pad: 10px;
+  --frame-pad-top: 10px;
+  --frame-pad-left: 10px;
+  --panel-inset: 0px;
+
+  /* A pane is a box: its edge, its own ground under the header and what it
+     holds, and the focus on its edge. */
   --pane-bg: var(--surface);
+  --pane-edge: 1px;
   --pane-border: var(--rule);
   --pane-border-on: var(--accent);
   --pane-margin: 0px;
   --pane-shadow: none;
   --pane-shadow-on: none;
 
-  --splitter: var(--rule);
-  --splitter-hover: var(--accent);
-  /* How far past its own width the resize bar can be grabbed. */
-  --splitter-grab: 0px;
+  /* What a pane holds can stand as a card of its own under a header that
+     lies on the ground: its ground, its corners, its lift, and how thick an
+     accent runs along its top while the pane has the focus. */
+  --card-bg: transparent;
+  --card-radius: 0px;
+  --card-shadow: none;
+  --card-mark: 0px;
+  --card-edge: transparent;
 
+  /* A divider between two panes is the gap between them: nothing is drawn
+     in it at rest. The pointer takes hold over the gap and a little into
+     the panes either side, the reach. A divider inside a pane takes no
+     room and has a reach of its own. Dragged or under the keyboard it
+     draws a line in the accent, and a grip that fades in as the pointer
+     nears it rides on that line. */
+  --splitter-w: 6px;
+  --splitter-reach: 14px;
+  --splitter-inner-w: 0px;
+  --splitter-inner-reach: 10px;
+  --splitter-line: 1px;
+  --splitter-line-on: 2px;
+  --grip-w: 2px;
+  --grip-w-on: 4px;
+  --grip-len: 28px;
+  --grip-radius: 0px;
+
+  /* Every pane header is one height in a look, the rule under it included,
+     so the header row is one band across the window. */
+  --head-height: 35px;
   --head-rule: var(--rule);
   /* What the focused pane's header wears, over what its edge wears. */
   --head-mark-on: none;
@@ -124,11 +173,23 @@
   --field-size: 11.5px;
 
   --tree-glyph: 14px;
-  --term-air: 0px;
+  /* Room around a terminal's grid inside its pane, down and across. */
+  --term-air-y: 0px;
+  --term-air-x: 0px;
+  --term-air: var(--term-air-y) var(--term-air-x);
 
   --status-rule: var(--rule);
   --status-bg: var(--surface-2);
   --status-size: 10.5px;
+}
+
+/* The system asking for more contrast brings plain lines back: a box's
+   outline in the strong rule, and a line in every divider inside a pane,
+   which the divider draws itself. */
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root {
+    --pane-border: var(--rule-strong);
+  }
 }
 
 /* System preference wins when the user has made no explicit choice. */
@@ -148,6 +209,11 @@
     --accent-soft: #15302e;
     --add: #7fbf8c;
     --del: #e08894;
+
+    --deep: var(--bg);
+    --well: color-mix(in srgb, var(--surface) 45%, var(--bg));
+    --card-cast: none;
+    --ground-quiet: var(--ink-3);
 
     --ansi-black: #3a4244;
     --ansi-red: #e08894;
@@ -183,6 +249,11 @@
   --accent-soft: #15302e;
   --add: #7fbf8c;
   --del: #e08894;
+
+  --deep: var(--bg);
+  --well: color-mix(in srgb, var(--surface) 45%, var(--bg));
+  --card-cast: none;
+  --ground-quiet: var(--ink-3);
 
   --ansi-black: #3a4244;
   --ansi-red: #e08894;
