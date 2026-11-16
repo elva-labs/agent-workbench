@@ -60,10 +60,12 @@ const markedAt = (page: Page) =>
     .evaluate((node) => node.querySelector("[data-mark]")!.getBoundingClientRect().top - node.getBoundingClientRect().top);
 
 /** Switches the look as an edit to the settings file would, and with it
-    the conversation's type size. */
-const switchLook = (page: Page, look: "modern" | "terminal") =>
+    the conversation's type size; first moves the view by `by` in the same
+    task, so the thread is told of that scroll only after the rows moved. */
+const switchLook = (page: Page, look: "modern" | "terminal", by = 0) =>
   page.evaluate(
-    ({ key, look }) => {
+    ({ key, look, by }) => {
+      document.querySelector("[data-testid='thread']")!.scrollTop += by;
       const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look };
       localStorage.setItem(key, JSON.stringify(next));
       (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
@@ -78,7 +80,7 @@ const switchLook = (page: Page, look: "modern" | "terminal") =>
         ...next,
       });
     },
-    { key: SETTINGS_FILE, look },
+    { key: SETTINGS_FILE, look, by },
   );
 
 /** Whether the rows drawn cover the whole view, top to bottom. */
@@ -333,5 +335,12 @@ test.describe("a long conversation", () => {
     await switchLook(page, "terminal");
     await expect(rows).toHaveCSS("font-size", "12.5px");
     await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
+    // The type changing in the frame the view moves, as a font or a width
+    // can come in during a fling: the block moves with the view and by
+    // nothing else.
+    const held = await markedAt(page);
+    await switchLook(page, "modern", -200);
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(2);
   });
 });
