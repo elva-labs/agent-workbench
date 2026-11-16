@@ -89,7 +89,7 @@ describe("the stylesheet a background is painted from", () => {
     );
     const none = backgroundCss(LAGOON, colours, { light: null, dark: null, grain: null });
     expect(none).not.toContain("tint-image");
-    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null, rough: false });
+    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null, rough: [] });
   });
 
   it("paints a theme that is dark in both appearances dark in both, its text lighter", () => {
@@ -118,23 +118,41 @@ describe("the gradient's image", () => {
   beforeEach(drawSizes);
   afterEach(() => drawImagesWith(null));
 
-  it("is small while the background moves and full size once asked, and stays full size", () => {
-    const full = `${FULL.width}x${FULL.height}`;
-    const moving = imagesOf(LAGOON, colours, false);
-    expect([sizeOf(moving.light), sizeOf(moving.dark), moving.rough]).toEqual(["192x120", "192x120", true]);
-    const rested = imagesOf(LAGOON, colours, true);
-    expect([sizeOf(rested.light), sizeOf(rested.dark), rested.rough]).toEqual([full, full, false]);
+  it("is small while the background moves and full size where asked, and stays full size", () => {
+    const [small, full] = ["192x120", `${FULL.width}x${FULL.height}`];
+    const moving = imagesOf(LAGOON, colours, []);
+    expect([sizeOf(moving.light), sizeOf(moving.dark), moving.rough]).toEqual([small, small, ["light", "dark"]]);
+    // One appearance at a time.
+    const one = imagesOf(LAGOON, colours, ["dark"]);
+    expect([sizeOf(one.light), sizeOf(one.dark), one.rough]).toEqual([small, full, ["light"]]);
+    const rested = imagesOf(LAGOON, colours, ["light"]);
+    expect([sizeOf(rested.light), sizeOf(rested.dark), rested.rough]).toEqual([full, full, []]);
+    expect(rested.dark).toBe(one.dark);
     // Moved back to where it was, it is not drawn again.
-    const again = imagesOf(LAGOON, colours, false);
-    expect([again.light, again.dark, again.rough]).toEqual([rested.light, rested.dark, false]);
-    // Only the appearance asked for is drawn, and a colour moved is drawn
-    // small again.
+    const again = imagesOf(LAGOON, colours, []);
+    expect([again.light, again.dark, again.rough]).toEqual([rested.light, rested.dark, []]);
+    // Only the appearance given colours for is drawn, and a colour moved is
+    // drawn small again.
     const moved = { ...LAGOON, dots: [{ hue: 40, chroma: 0.9 }, LAGOON.dots[1]] };
-    const one = imagesOf(moved, { dark: colours.dark }, false);
-    expect([one.light, sizeOf(one.dark), one.rough]).toEqual([null, "192x120", true]);
+    const shown = imagesOf(moved, { dark: colours.dark }, []);
+    expect([shown.light, sizeOf(shown.dark), shown.rough]).toEqual([null, small, ["dark"]]);
     // A single colour has no gradient to draw.
-    const single = imagesOf({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" }, colours, false);
-    expect([single.light, single.dark, single.rough]).toEqual([null, null, false]);
+    const single = imagesOf({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" }, colours, []);
+    expect([single.light, single.dark, single.rough]).toEqual([null, null, []]);
+  });
+
+  it("keeps the last four full-size gradients, whichever appearance each is for", () => {
+    const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
+    const first = imagesOf(moved(10), { light: colours.light }, ["light"]).light;
+    for (const hue of [20, 30, 40]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    // Read again, it is the latest of the four.
+    expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
+    for (const hue of [50, 60, 70]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
+    // Four more in the other appearance, and it is gone.
+    for (const hue of [80, 90, 100, 110]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    const later = imagesOf(moved(10), { light: colours.light }, []);
+    expect([sizeOf(later.light), later.rough]).toEqual(["192x120", ["light"]]);
   });
 
   it("is drawn fine enough at full size that a pixel is five device pixels across at most on a 4K window", () => {
@@ -175,9 +193,12 @@ describe("painting the background the palette keeps", () => {
     const other = shown === "light" ? "dark" : "light";
     const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
     // A background no other test paints, so no sheet is already worked
-    // out for it.
+    // out for it. Once it rests, the appearance on screen is drawn at full
+    // size, and the other after another rest, so no frame draws two.
     adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
     expect(images()).toEqual({ light: small, dark: small });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ [shown]: full, [other]: small });
     vi.advanceTimersByTime(REST);
     expect(images()).toEqual({ light: full, dark: full });
     // Painted again with nothing changed, it stays at full size.

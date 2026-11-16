@@ -48,9 +48,9 @@ export interface Images {
   dark: string | null;
   /** The grain's tile, or null for none. */
   grain: string | null;
-  /** Whether a gradient here is drawn small, to be drawn at full size
-      once the background rests. */
-  rough?: boolean;
+  /** The appearances whose gradient here is drawn small, to be drawn at
+      full size once the background rests. */
+  rough?: Appearance[];
 }
 
 const SELECTORS: Record<Look, string> = {
@@ -196,8 +196,8 @@ function toUrl(pixels: Uint8ClampedArray, width: number, height: number): string
 
 /** Drawn images, by what they were drawn from. A few small ones are kept,
     so moving a dot back and forth or sliding the grain draws nothing twice,
-    and the full-size gradients of the last two backgrounds in each
-    appearance. */
+    and the last four full-size gradients, whichever appearance each is
+    for. */
 const drawn = new Map<string, string | null>();
 const drawnFull = new Map<string, string | null>();
 
@@ -222,14 +222,16 @@ function remembered(
 /** The images a background needs: a gradient for each appearance it is
     given the palette's colours for, where it has more than one colour, and
     the grain's tile where it has grain. A gradient already drawn at full
-    size is given at full size. One that is not is drawn so when `full`
-    says to, and drawn small otherwise, which `rough` then says. */
+    size is given at full size. One that is not is drawn so in the
+    appearances `full` names, and drawn small in the others, which `rough`
+    then names. */
 export function imagesOf(
   background: Background,
   palettes: Partial<Record<Appearance, Record<string, string>>>,
-  full = true,
+  full: readonly Appearance[] = ["light", "dark"],
 ): Images {
-  const images: Images = { light: null, dark: null, grain: null, rough: false };
+  const rough: Appearance[] = [];
+  const images: Images = { light: null, dark: null, grain: null, rough };
   const draw = drawer();
   if (draw === null) return images;
   if (background.dots.length > 1) {
@@ -239,7 +241,7 @@ export function imagesOf(
       const tone = toneOf(palette);
       const colours = background.dots.map((dot) => dotColour(dot, tone));
       const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
-      if (full || drawnFull.has(key)) {
+      if (full.includes(appearance) || drawnFull.has(key)) {
         images[appearance] = remembered(drawnFull, 4, key, () =>
           draw(gradientPixels(colours, FULL.width, FULL.height), FULL.width, FULL.height),
         );
@@ -247,7 +249,7 @@ export function imagesOf(
         images[appearance] = remembered(drawn, 32, key, () =>
           draw(gradientPixels(colours, MOVING.width, MOVING.height), MOVING.width, MOVING.height),
         );
-        images.rough = true;
+        rough.push(appearance);
       }
     }
   }

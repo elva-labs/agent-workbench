@@ -1,5 +1,12 @@
 import type { Settings } from "$lib/core";
-import { rounded, roundedCards, validBackgrounds, validCards, type Background } from "$lib/background";
+import {
+  rounded,
+  roundedCards,
+  validBackgrounds,
+  validCards,
+  type Appearance,
+  type Background,
+} from "$lib/background";
 import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
 import { themeCss, validThemes, type CustomTheme } from "$lib/customThemes";
 import { coloursOf } from "$lib/paletteColours";
@@ -462,21 +469,23 @@ let resting: ReturnType<typeof setTimeout> | null = null;
 
 /** The stylesheet last worked out for a background, by what it was worked
     out from, with the share the guard lets through in each appearance and
-    look, and whether a gradient in it is drawn small: a repaint that
-    changes none of it works nothing out again, unless it is the one that
-    draws the gradient at full size. */
+    look, and the appearances whose gradient in it is drawn small: a
+    repaint that changes none of it works nothing out again, unless it is
+    the one that draws one of those at full size. */
 let worked: {
   from: string;
   css: string;
   held: Partial<Record<string, number>>;
-  rough: boolean;
+  rough: Appearance[];
 } | null = null;
 
 /** The stylesheet the background is painted from, worked out from the
     colours the palette or theme paints in each appearance. A gradient not
-    yet drawn at full size is drawn small, and at full size once the
-    background has rested, unless `full` says to draw it so now. */
-function paintBackground(full = false) {
+    yet drawn at full size is drawn small, unless `full` names its
+    appearance. Once the background has rested, it is drawn at full size
+    one appearance at a time, the one on screen first, so no frame draws
+    two. */
+function paintBackground(full: readonly Appearance[] = []) {
   if (resting !== null) clearTimeout(resting);
   resting = null;
   const id = "workbench-background";
@@ -503,7 +512,7 @@ function paintBackground(full = false) {
   const appearance = resolvedTheme();
   const only = theme.preview === null ? null : { appearance, look: theme.look };
   const from = JSON.stringify([background, colours, only, cards]);
-  if (worked?.from !== from || (full && worked.rough)) {
+  if (worked?.from !== from || worked.rough.some((rough) => full.includes(rough))) {
     const held: Partial<Record<string, number>> = {};
     const images = imagesOf(
       background,
@@ -511,11 +520,12 @@ function paintBackground(full = false) {
       full,
     );
     const css = backgroundCss(background, colours, images, only, cards, held);
-    worked = { from, css, held, rough: images.rough === true };
+    worked = { from, css, held, rough: images.rough ?? [] };
   }
-  const { css, held } = worked;
+  const { css, held, rough } = worked;
   if (sheet.textContent !== css) sheet.textContent = css;
-  if (worked.rough) resting = setTimeout(() => paintBackground(true), REST);
+  const next = rough.includes(appearance) ? appearance : rough[0];
+  if (next !== undefined) resting = setTimeout(() => paintBackground([next]), REST);
   stamp("background", "");
   // Where the guard holds the share at none on screen, nothing changes.
   theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
