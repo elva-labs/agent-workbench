@@ -729,6 +729,20 @@ describe("a call that has no owner", () => {
     expect(closed).toEqual([]);
     expect(evaluated).toEqual([]);
   });
+
+  it("naming a running session by its agent's id is refused, not credited to that session", async () => {
+    const { ownerB } = twoSessions();
+    browser.tabs = [tab(2, "https://b.example/", { owner: ownerB })];
+    // The id as the tools answer with it, not the token the session's own
+    // tools carry.
+    for (const [name, args] of tools) {
+      await handle({ ...call(name, args), session: "s2" });
+      expect(last().error, name).toBe("That session is not open in the workbench.");
+    }
+    expect(opened).toEqual([]);
+    expect(closed).toEqual([]);
+    expect(evaluated).toEqual([]);
+  });
 });
 
 describe("a call from a session that has stopped", () => {
