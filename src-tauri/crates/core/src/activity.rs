@@ -330,6 +330,65 @@ mod tests {
         assert_eq!(event("not json"), None);
     }
 
+    /// Recorded from an idle Claude Code session with every hook of the
+    /// kind installed: a turn, then a recap and a compaction it did while
+    /// idle. Each ends a subagent of its own and the compaction starts the
+    /// session again, none of which is a transition, and each is followed a
+    /// minute later by the same idle notice as the turn.
+    #[test]
+    fn an_idle_session_s_housekeeping_says_only_that_it_is_idle() {
+        let lines = [
+            r#"{"session_id":"s1","hook_event_name":"SessionStart","source":"startup"}"#,
+            r#"{"session_id":"s1","hook_event_name":"UserPromptSubmit","prompt":"Reply with the single word ok."}"#,
+            r#"{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"ok","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+            r#"{"session_id":"s1","agent_id":"a1","agent_type":"","hook_event_name":"SubagentStop","stop_hook_active":false,"last_assistant_message":"The overall goal so far is a quick check-in.","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+            r#"{"session_id":"s1","hook_event_name":"PreCompact","trigger":"manual","custom_instructions":null}"#,
+            r#"{"session_id":"s1","agent_id":"a2","agent_type":"","hook_event_name":"SubagentStop","stop_hook_active":false,"last_assistant_message":"<summary>Nothing is in progress.</summary>","background_tasks":[],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"SessionStart","source":"compact"}"#,
+            r#"{"session_id":"s1","hook_event_name":"Notification","message":"Claude is waiting for your input","notification_type":"idle_prompt"}"#,
+        ];
+        let heard: Vec<String> = lines
+            .iter()
+            .filter_map(|line| classify(line))
+            .map(|event| event.kind)
+            .collect();
+        assert_eq!(heard, ["prompt", "stop", "idle", "idle", "idle"]);
+    }
+
+    /// Recorded from an idle Claude Code session: a command the agent ran in
+    /// the background ends, and the agent starts a turn by itself to say
+    /// so. Its hooks fire as they do for any turn, the task's notice
+    /// standing for the prompt.
+    #[test]
+    fn a_turn_the_agent_starts_by_itself_is_heard_as_a_turn() {
+        let lines = [
+            r#"{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"started","background_tasks":[{"id":"b1","type":"shell","status":"running","description":"Sleep for 15 seconds in background","command":"sleep 15"}],"session_crons":[]}"#,
+            r#"{"session_id":"s1","hook_event_name":"UserPromptSubmit","permission_mode":"default","prompt":"<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>t1</tool-use-id>\n<output-file>/tmp/s1/tasks/b1.output</output-file>\n<status>completed</status>\n<summary>Background command \"Sleep for 15 seconds in background\" completed (exit code 0)</summary>\n</task-notification>"}"#,
+            r#"{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"The background `sleep 15` finished with exit code 0. No further action is needed.","background_tasks":[],"session_crons":[]}"#,
+        ];
+        let heard: Vec<(String, Option<String>)> = lines
+            .iter()
+            .filter_map(|line| classify(line))
+            .map(|event| (event.kind, event.note))
+            .collect();
+        assert_eq!(
+            heard,
+            [
+                ("stop".to_string(), Some("started".to_string())),
+                ("prompt".to_string(), None),
+                (
+                    "stop".to_string(),
+                    Some(
+                        "The background sleep 15 finished with exit code 0. No further action is needed."
+                            .to_string()
+                    )
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn a_stop_says_it_was_cut_short_only_when_it_was() {
         let stop = classify(r#"{"session_id":"s1","hook_event_name":"Stop"}"#).unwrap();
