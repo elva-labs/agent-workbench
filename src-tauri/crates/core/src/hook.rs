@@ -66,10 +66,58 @@ pub fn activity_path(home: &Path) -> PathBuf {
 }
 
 /// The session events each agent can report, by the agent's own name for
-/// them. The permission prompt is the one they spell differently. Claude
-/// Code reports a turn an error ended, a usage limit among them, in place
-/// of its stop; Codex has no such event.
-const CLAUDE_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "StopFailure", "Notification"];
+/// them. The permission prompt is the one they spell differently.
+const CLAUDE_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "Notification"];
+
+/// The event Claude Code reports a turn an error ended with, a usage limit
+/// among them, in place of its stop, and the first version that knows it.
+/// A Claude Code older than that reads an event it does not know as a
+/// broken settings file and ignores the whole file, the user's own
+/// permissions with it, so the entry goes in only where the Claude Code on
+/// the machine knows the event. Codex has no such event.
+const FAILED_TURN_EVENT: &str = "StopFailure";
+const FAILED_TURN_SINCE: (u64, u64, u64) = (2, 1, 78);
+
+/// What `claude --version` was found to say of each binary, by its path,
+/// its size and when it last changed, so it is asked once for each.
+type Known = Vec<(PathBuf, Option<(u64, std::time::SystemTime)>, bool)>;
+static KNOWN: Mutex<Known> = Mutex::new(Vec::new());
+
+/// Whether the Claude Code the environment finds knows the failed-turn
+/// event: it says a version of that one's or later. False where none is
+/// found, or it says no version, so nothing it cannot read goes in.
+fn claude_knows_failed_turns(home: &Path, env: &HashMap<String, String>) -> bool {
+    let Some(binary) = crate::env::find_on_path(env, "claude") else {
+        return false;
+    };
+    let stamp = std::fs::metadata(&binary)
+        .ok()
+        .and_then(|meta| Some((meta.len(), meta.modified().ok()?)));
+    let mut known = KNOWN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((_, _, knows)) = known
+        .iter()
+        .find(|(path, at, _)| path == &binary && at == &stamp)
+    {
+        return *knows;
+    }
+    let mut command = crate::adapter::process(&binary, env);
+    crate::adapter::prepare_process(&mut command, home, env);
+    let knows = command
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .find_map(crate::codex_app_server::numbers)
+        })
+        .is_some_and(|version| version >= FAILED_TURN_SINCE);
+    known.retain(|(path, _, _)| path != &binary);
+    known.push((binary, stamp, knows));
+    knows
+}
 const CODEX_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "PermissionRequest"];
 
 pub fn events_path(home: &Path) -> PathBuf {
@@ -384,6 +432,7 @@ pub fn status_many(
     env: &HashMap<String, String>,
 ) -> Vec<HookStatus> {
     let daemon_here = daemon_path(home).is_file();
+    let failures = claude_knows_failed_turns(home, env);
     let events = events_path(home).to_string_lossy().to_string();
     let mut servers: Option<Vec<Map<String, Value>>> = None;
     projects
@@ -391,7 +440,7 @@ pub fn status_many(
         .map(|project| {
             let settings = settings_path(project);
             let read = read_settings(&settings);
-            let hooks = has_hooks_in(&read, home);
+            let hooks = has_hooks_in(&read, home, failures);
             // With a daemon here the server and the prompt hook that asks
             // through it are part of what is installed: a project that got
             // the hooks before there was either is brought up to date by the
@@ -779,12 +828,13 @@ pub fn install(
     accounts: &[Dirs],
     env: &HashMap<String, String>,
 ) -> Result<HookStatus, String> {
-    add_hooks(home, project, &[])?;
+    let failures = claude_knows_failed_turns(home, env);
+    add_hooks(home, project, &[], failures)?;
     let listed = sharing(project);
     let mut trees = Vec::new();
     for tree in &listed {
         let leave = tracked(tree);
-        if add_hooks(home, tree, &leave).is_ok() {
+        if add_hooks(home, tree, &leave, failures).is_ok() {
             trees.push((tree.clone(), leave));
         }
     }
@@ -811,18 +861,20 @@ pub fn install(
 }
 
 /// Whether the project has the hooks in its own settings, whatever else is
-/// or is not in place.
+/// or is not in place, the failed-turn hook among them.
 fn has_hooks(home: &Path, project: &Path) -> bool {
-    has_hooks_in(&read_settings(&settings_path(project)), home)
+    has_hooks_in(&read_settings(&settings_path(project)), home, false)
 }
 
 /// Whether Claude Code's settings hold the tool hook and every session
-/// hook.
-fn has_hooks_in(settings: &Map<String, Value>, home: &Path) -> bool {
+/// hook, and the failed-turn hook where `failures` says the Claude Code on
+/// the machine knows it.
+fn has_hooks_in(settings: &Map<String, Value>, home: &Path, failures: bool) -> bool {
     has_command(settings, "PostToolUse", &command(home))
         && CLAUDE_SESSION_EVENTS
             .iter()
             .all(|event| has_command(settings, event, &activity_command(home)))
+        && (!failures || has_command(settings, FAILED_TURN_EVENT, &activity_command(home)))
 }
 
 /// Gives a worktree of the project the hooks the project has, and says
@@ -845,7 +897,7 @@ pub fn share(
         return Ok(false);
     }
     let leave = tracked(worktree);
-    add_hooks(home, worktree, &leave)?;
+    add_hooks(home, worktree, &leave, claude_knows_failed_turns(home, env))?;
     touch_events(home)?;
     if daemon_path(home).is_file() {
         claude_servers(home, accounts, env, &[worktree.to_path_buf()], |_| false)?;
@@ -966,8 +1018,9 @@ fn tracked(folder: &Path) -> Vec<&'static str> {
 
 /// Adds the hooks to the agents' settings files in a folder, all but those
 /// named in `leave`, which are not read or written. The prompt hook that
-/// asks through the daemon goes in only where there is a daemon.
-fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
+/// asks through the daemon goes in only where there is a daemon, and the
+/// failed-turn hook only where `failures` says Claude Code knows it.
+fn add_hooks(home: &Path, folder: &Path, leave: &[&str], failures: bool) -> Result<(), String> {
     let asks = daemon_path(home).is_file();
     if !leave.contains(&CLAUDE_LOCAL) {
         let path = settings_path(folder);
@@ -982,6 +1035,9 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String> {
         )?;
         for event in CLAUDE_SESSION_EVENTS {
             changed |= add_entry(&mut settings, event, session_entry(home))?;
+        }
+        if failures {
+            changed |= add_entry(&mut settings, FAILED_TURN_EVENT, session_entry(home))?;
         }
         if asks {
             changed |= add_entry(&mut settings, PROMPT_EVENT, reports_entry(home))?;
@@ -1257,7 +1313,10 @@ fn remove_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String
     let path = settings_path(folder);
     if path.exists() && !leave.contains(&CLAUDE_LOCAL) {
         let mut settings = read_for_writing(&path)?;
-        for event in ["PostToolUse"].iter().chain(CLAUDE_SESSION_EVENTS) {
+        for event in ["PostToolUse", FAILED_TURN_EVENT]
+            .iter()
+            .chain(CLAUDE_SESSION_EVENTS)
+        {
             remove_entries(&mut settings, event, home);
         }
         write_settings(&path, &settings)?;
@@ -2291,7 +2350,9 @@ mod tests {
         install(&home, &project, &[], &HashMap::new()).unwrap();
 
         let claude = settings_of(&project);
-        for event in ["UserPromptSubmit", "Stop", "StopFailure", "Notification"] {
+        // No Claude Code on the PATH says it knows the failed-turn event.
+        assert!(claude["hooks"].get("StopFailure").is_none());
+        for event in ["UserPromptSubmit", "Stop", "Notification"] {
             let command = claude["hooks"][event][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap();
@@ -2309,24 +2370,39 @@ mod tests {
         assert!(status(&home, &project, &[], &HashMap::new()).installed);
     }
 
+    /// An environment whose PATH holds a Claude Code that says this version.
+    #[cfg(unix)]
+    fn claude_saying(dir: &Path, version: &str) -> HashMap<String, String> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(dir).unwrap();
+        let bin = dir.join("claude");
+        std::fs::write(&bin, format!("#!/bin/sh\necho '{version} (Claude Code)'\n")).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())])
+    }
+
     /// A project given the hooks before Claude Code's failed turns were
-    /// heard reads as not installed, so the next install adds that one
-    /// entry and leaves the rest as they are.
+    /// heard reads as not installed where the Claude Code on the machine
+    /// knows them, so the next install adds that one entry and leaves the
+    /// rest as they are.
+    #[cfg(unix)]
     #[test]
     fn brings_a_project_without_the_failed_turn_hook_up_to_date() {
         let (home, project) = fixture("sessions-older");
-        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let env = claude_saying(&home.join("bin-new"), "2.1.325");
+        install(&home, &project, &[], &env).unwrap();
         let mut older = settings_of(&project);
+        assert!(older["hooks"].get("StopFailure").is_some());
         older["hooks"]
             .as_object_mut()
             .unwrap()
             .remove("StopFailure");
         std::fs::write(settings_path(&project), older.to_string()).unwrap();
-        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+        assert!(!status(&home, &project, &[], &env).installed);
 
-        install(&home, &project, &[], &HashMap::new()).unwrap();
+        install(&home, &project, &[], &env).unwrap();
         let claude = settings_of(&project);
-        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        assert!(status(&home, &project, &[], &env).installed);
         for event in ["UserPromptSubmit", "Stop", "StopFailure", "Notification"] {
             assert_eq!(
                 claude["hooks"][event].as_array().unwrap().len(),
@@ -2338,8 +2414,37 @@ mod tests {
                 "{event}"
             );
         }
-        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        uninstall(&home, &project, &[], &env).unwrap();
         assert!(settings_of(&project).get("hooks").is_none());
+    }
+
+    /// A Claude Code before the failed-turn event would ignore the whole
+    /// settings file for an event it does not know, the user's permissions
+    /// with it: it is not given the entry, and its project reads as
+    /// installed without it.
+    #[cfg(unix)]
+    #[test]
+    fn gives_the_failed_turn_hook_only_to_a_claude_code_that_knows_it() {
+        let (home, project) = fixture("sessions-old-claude");
+        let old = claude_saying(&home.join("bin-old"), "2.1.77");
+        install(&home, &project, &[], &old).unwrap();
+        assert!(settings_of(&project)["hooks"].get("StopFailure").is_none());
+        assert!(status(&home, &project, &[], &old).installed);
+
+        let first = claude_saying(&home.join("bin-first"), "2.1.78");
+        assert!(!status(&home, &project, &[], &first).installed);
+        install(&home, &project, &[], &first).unwrap();
+        assert!(settings_of(&project)["hooks"].get("StopFailure").is_some());
+        assert!(status(&home, &project, &[], &first).installed);
+
+        // Taken out whatever the Claude Code there says now.
+        uninstall(&home, &project, &[], &old).unwrap();
+        assert!(settings_of(&project).get("hooks").is_none());
+
+        // One that says no version is taken for one that does not know it.
+        let mute = claude_saying(&home.join("bin-mute"), "claude");
+        install(&home, &project, &[], &mute).unwrap();
+        assert!(settings_of(&project)["hooks"].get("StopFailure").is_none());
     }
 
     #[test]

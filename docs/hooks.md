@@ -25,10 +25,15 @@ as two computers connected to one machine, do not take turns.
 
 For Claude Code, entries in the project's `.claude/settings.local.json`:
 one after every tool use, which writes what the agent just did to a file
-the changes pane watches, and one each for prompt submitted, stop, a turn
-that an error ended, and notification, which append what the agent
-reported to a session log under the app's own directory in the user's
-home. A project whose settings lack one of these entries reads as not
+the changes pane watches, and one each for prompt submitted, stop and
+notification, which append what the agent reported to a session log under
+the app's own directory in the user's home. Where the Claude Code the
+machine runs says it is version 2.1.78 or later, a fourth reports a turn
+that an error ended, a usage limit among them, in place of the stop. An
+older Claude Code does not know that event and ignores a settings file
+that names one whole, the user's own permissions with it, so it is not
+given the entry; one whose version cannot be read is taken for an older
+one. A project whose settings lack one of these entries reads as not
 having the hooks, so the next install adds what is missing and leaves the
 rest as they are.
 
