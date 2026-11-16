@@ -392,10 +392,11 @@ starting, <kbd>Enter</kbd> sends nothing, so a command is not sent as text
 before the agent can take it.
 
 Every chord the app claims works from the composer as from anywhere else.
-The find chord is find in the conversation there: it is the same chord
-that filters the files from a list pane and finds in the file from the
-editor, and each takes it only while it has the keyboard, so none takes
-another's. In a terminal session's pane it stays the terminal's.
+Find goes to the pane that holds the keyboard: from an integrated
+session's composer, thread or dock it finds in the conversation, from the
+editor in the file, and from a list pane it filters the files, in editor
+mode as in agent mode, where the editor and the conversation stand side
+by side. In a terminal session's pane it stays the terminal's.
 
 Find's bar comes before the thread for <kbd>Tab</kbd>: its field, then
 the previous and the next match, which are passed over while nothing
@@ -478,7 +479,9 @@ its too, moving or selecting, so <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>↓</kbd>
 selects to the end of the file there rather than stepping sessions, and
 <kbd>Cmd</kbd><kbd>D</kbd> selects the next occurrence of what is selected.
 <kbd>Tab</kbd> indents. The other chords are the app's as anywhere, and
-<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there.
+<kbd>Cmd</kbd><kbd>F</kbd> finds in the file there, and in the
+conversation from an integrated session beside it, as
+[an integrated session](#an-integrated-session) says.
 
 Save works from anywhere in editor mode but a terminal: from the tree as
 well as the editor, and from an integrated session's composer, which is a

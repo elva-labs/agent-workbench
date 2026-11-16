@@ -311,7 +311,7 @@
 <svelte:window onkeydown={onWindowKey} />
 
 {#if open}
-  <div class="bar" role="search" aria-label="Find in the conversation" bind:this={bar} data-testid="find-bar">
+  <div class="bar" role="search" aria-label="Find in the conversation" bind:this={bar} data-testid="conversation-find-bar">
     <label class="field">
       <span class="glyph"><Icon name="search" size={13} /></span>
       <input
@@ -325,14 +325,14 @@
         aria-describedby="{id}-count"
         spellcheck="false"
         autocomplete="off"
-        data-testid="find-input"
+        data-testid="conversation-find-input"
       />
     </label>
     <span
       class="count"
       class:none
       id="{id}-count"
-      data-testid="find-count">{label}</span
+      data-testid="conversation-find-count">{label}</span
     >
     <span class="rule" aria-hidden="true"></span>
     <button
@@ -342,7 +342,7 @@
       onclick={() => step(-1)}
       aria-label="Previous match"
       title="Previous match ({KEYS.previous})"
-      data-testid="find-previous"><Icon name="chev-up" size={14} /></button
+      data-testid="conversation-find-previous"><Icon name="chev-up" size={14} /></button
     >
     <button
       class="step"
@@ -351,7 +351,7 @@
       onclick={() => step(1)}
       aria-label="Next match"
       title="Next match ({KEYS.next})"
-      data-testid="find-next"><Icon name="down" size={14} /></button
+      data-testid="conversation-find-next"><Icon name="down" size={14} /></button
     >
     <button
       class="step"
@@ -359,9 +359,9 @@
       onclick={hide}
       aria-label="Close find"
       title="Close ({KEYS.close})"
-      data-testid="find-close"><Icon name="x" size={13} /></button
+      data-testid="conversation-find-close"><Icon name="x" size={13} /></button
     >
-    <span class="heard" role="status" data-testid="find-heard">{heard}</span>
+    <span class="heard" role="status" data-testid="conversation-find-heard">{heard}</span>
   </div>
 {/if}
 

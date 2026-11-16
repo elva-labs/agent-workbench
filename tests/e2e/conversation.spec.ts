@@ -1420,13 +1420,13 @@ test.describe("the conversation's text", () => {
           // other is the current one.
           await page.getByTestId("composer-input").focus();
           await page.keyboard.press("ControlOrMeta+f");
-          await page.getByTestId("find-input").fill("link");
-          await expect(page.getByTestId("find-count")).toHaveText("1 of 2");
+          await page.getByTestId("conversation-find-input").fill("link");
+          await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 2");
           await expect.poll(async () => (await tintShortfalls(page)).filter((one) => one === "nothing tinted")).toEqual([]);
           for (const found of await tintShortfalls(page)) failures.push(`${look} ${appearance} ${palette}, a match: ${found}`);
           for (const found of await shortfalls(page)) failures.push(`${look} ${appearance} ${palette}, find: ${found}`);
           await page.keyboard.press("Enter");
-          await expect(page.getByTestId("find-count")).toHaveText("2 of 2");
+          await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 2");
           await expect
             .poll(() => page.evaluate(() => [...(CSS.highlights.get("find-hit") ?? [])].map((range) => (range as Range).startContainer.parentElement!.closest("pre") !== null)))
             .toEqual([true]);

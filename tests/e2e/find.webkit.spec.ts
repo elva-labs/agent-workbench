@@ -47,7 +47,7 @@ const painted = (page: Page) =>
 
 /** How many matches the count says there are. */
 async function counted(page: Page): Promise<number> {
-  const text = (await page.getByTestId("find-count").textContent()) ?? "";
+  const text = (await page.getByTestId("conversation-find-count").textContent()) ?? "";
   if (text === "No matches") return 0;
   const found = / of (\d+)$/.exec(text);
   if (found === null) throw new Error(`no count yet: "${text}"`);
@@ -106,8 +106,8 @@ test.describe("find in the conversation", () => {
     const composer = page.getByTestId("composer-input");
     await composer.focus();
     await findChord(page);
-    const bar = page.getByTestId("find-bar");
-    const input = page.getByTestId("find-input");
+    const bar = page.getByTestId("conversation-find-bar");
+    const input = page.getByTestId("conversation-find-input");
     await expect(bar).toBeVisible();
     await expect(input).toBeFocused();
     // Over the top of the thread, at its right.
@@ -118,26 +118,26 @@ test.describe("find in the conversation", () => {
 
     await input.pressSequentially("cache");
     // The message, the reply twice, the command's output and the last word.
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     await expect.poll(async () => (await painted(page)).current).toEqual(["cache"]);
     // Only what is drawn is painted: the output is folded away.
     expect((await painted(page)).hits).toEqual(["cache", "cache", "cache"]);
 
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 5");
     await page.keyboard.press("Shift+Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     await page.keyboard.press("Shift+Enter");
     // Back past the first is the last.
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
     await page.keyboard.press("ControlOrMeta+g");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     await page.keyboard.press("ControlOrMeta+Shift+g");
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
-    await page.getByTestId("find-next").click();
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
-    await page.getByTestId("find-previous").click();
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
+    await page.getByTestId("conversation-find-next").click();
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
+    await page.getByTestId("conversation-find-previous").click();
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
     // The arrows leave the keyboard in the field.
     await expect(input).toBeFocused();
 
@@ -159,20 +159,20 @@ test.describe("find in the conversation", () => {
     await aboutTheCache(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    const input = page.getByTestId("find-input");
+    const input = page.getByTestId("conversation-find-input");
     await input.fill("keychain");
-    await expect(page.getByTestId("find-count")).toHaveText("No matches");
-    await expect(page.getByTestId("find-previous")).toBeDisabled();
-    await expect(page.getByTestId("find-next")).toBeDisabled();
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("No matches");
+    await expect(page.getByTestId("conversation-find-previous")).toBeDisabled();
+    await expect(page.getByTestId("conversation-find-next")).toBeDisabled();
     await input.fill("CACHE");
-    await expect(page.getByTestId("find-count")).toHaveText("No matches");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("No matches");
     await input.fill("The cache");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 3");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 3");
     // Markdown is matched as it reads, not as it is written.
     await input.fill("**cache**");
-    await expect(page.getByTestId("find-count")).toHaveText("No matches");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("No matches");
     await input.fill("the cache lives");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 1");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 1");
     await expect.poll(async () => (await painted(page)).current).toEqual(["The cache lives"]);
   });
 
@@ -181,15 +181,15 @@ test.describe("find in the conversation", () => {
     await aboutTheCache(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await page.getByTestId("conversation-find-input").fill("cache");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     const line = page.getByTestId("work-line");
     await expect(line).toHaveAttribute("aria-expanded", "false");
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     await page.keyboard.press("Enter");
     // The fourth is in the command's output, inside the folded work.
-    await expect(page.getByTestId("find-count")).toHaveText("4 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("4 of 5");
     await expect(line).toHaveAttribute("aria-expanded", "true");
     const ran = page.getByTestId("step-row").filter({ hasText: "Ran" });
     await expect(ran).toHaveAttribute("aria-expanded", "true");
@@ -206,7 +206,7 @@ test.describe("find in the conversation", () => {
     await expect.poll(() => currentInView(page)).toBe(true);
     // Moving on closes what find opened.
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
     await expect(line).toHaveAttribute("aria-expanded", "false");
     // Back on it opens them again, and closing the bar closes them.
     await page.keyboard.press("Shift+Enter");
@@ -220,9 +220,9 @@ test.describe("find in the conversation", () => {
     await page.getByTestId("composer-input").focus();
     await findChord(page);
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText(/of 5/);
-    await page.getByTestId("find-close").click();
-    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(page.getByTestId("conversation-find-count")).toHaveText(/of 5/);
+    await page.getByTestId("conversation-find-close").click();
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
     await expect(line).toHaveAttribute("aria-expanded", "true");
   });
 
@@ -231,19 +231,19 @@ test.describe("find in the conversation", () => {
     await aboutTheCache(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
+    await page.getByTestId("conversation-find-input").fill("cache");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 5");
     await agent(
       page,
       `f.send("${H}", crypto.randomUUID(), "And the cache's size?");
        f.startTurn("${H}");
        f.emit("${H}", { type: "text", block: "s-1", parent: null, text: "The cache", done: false });`,
     );
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 7");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 7");
     await agent(page, `f.emit("${H}", { type: "text", block: "s-1", parent: null, text: " stays small: each cache entry is a path.", done: false });`);
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 8");
-    await expect(page.getByTestId("find-heard")).toHaveText("2 of 8");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 8");
+    await expect(page.getByTestId("conversation-find-heard")).toHaveText("2 of 8");
   });
 
   test("leaves selecting, copying and links as they are", async ({ page }) => {
@@ -253,7 +253,7 @@ test.describe("find in the conversation", () => {
     const before = await reply.innerHTML();
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
+    await page.getByTestId("conversation-find-input").fill("cache");
     await expect.poll(async () => (await painted(page)).hits.length).toBeGreaterThan(0);
     // Nothing is put in the page to mark a match.
     expect(await reply.innerHTML()).toBe(before);
@@ -274,24 +274,24 @@ test.describe("find in the conversation", () => {
     await aboutTheCache(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await page.getByTestId("conversation-find-input").fill("cache");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     await page.keyboard.press("Tab");
-    await expect(page.getByTestId("find-previous")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-previous")).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(page.getByTestId("find-next")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-next")).toBeFocused();
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 5");
     await page.keyboard.press("Tab");
-    await expect(page.getByTestId("find-close")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-close")).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByTestId("thread")).toBeFocused();
     await page.keyboard.press("Shift+Tab");
-    await expect(page.getByTestId("find-close")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-close")).toBeFocused();
     // With nothing found the arrows are passed over.
-    await page.getByTestId("find-input").fill("keychain");
+    await page.getByTestId("conversation-find-input").fill("keychain");
     await page.keyboard.press("Tab");
-    await expect(page.getByTestId("find-close")).toBeFocused();
+    await expect(page.getByTestId("conversation-find-close")).toBeFocused();
   });
 
   test("leaves the chord to a terminal session", async ({ page }) => {
@@ -301,7 +301,7 @@ test.describe("find in the conversation", () => {
     await expect(page.locator("section[data-pane='agent'] .xterm")).toBeVisible();
     await page.locator("section[data-pane='agent'] .xterm textarea").focus();
     await findChord(page);
-    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
     // Nor did it go to the files' filter.
     await expect(page.locator("section[data-pane='agent'] .xterm textarea")).toBeFocused();
   });
@@ -312,7 +312,7 @@ test.describe("find in the conversation", () => {
     await openEverything(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    const input = page.getByTestId("find-input");
+    const input = page.getByTestId("conversation-find-input");
     const all = async () => {
       const marks = await painted(page);
       return marks.hits.length + marks.current.length;
@@ -321,13 +321,13 @@ test.describe("find in the conversation", () => {
     // step's "Read", and spaces beside them, as well as words in the run.
     for (const words of ["ran", "read", "scan", "rs ", " read", "the ", "worked", "log", "keep", "once"]) {
       await input.fill(words);
-      await expect(page.getByTestId("find-count")).toHaveText(/ of \d+$|^No matches$/);
+      await expect(page.getByTestId("conversation-find-count")).toHaveText(/ of \d+$|^No matches$/);
       const total = await counted(page);
       await expect.poll(all, { message: `"${words}"` }).toBe(total);
     }
     // The words the user told the agent with the refusal are found.
     await input.fill("the log instead");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 1");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 1");
     await expect.poll(async () => (await painted(page)).current).toEqual(["the log instead"]);
   });
 
@@ -337,12 +337,12 @@ test.describe("find in the conversation", () => {
     const line = page.getByTestId("work-line");
     await line.focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await page.getByTestId("conversation-find-input").fill("cache");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     // From the thread: the bar goes and the keyboard stays.
     await line.focus();
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
     await expect(line).toBeFocused();
     expect(await painted(page)).toEqual({ hits: [], current: [] });
     // The next one does what it always does there.
@@ -353,10 +353,10 @@ test.describe("find in the conversation", () => {
     await agent(page, `f.send("${H}", crypto.randomUUID(), "And now?"); f.startTurn("${H}");`);
     await expect(page.getByTestId("stop")).toBeVisible();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
+    await page.getByTestId("conversation-find-input").fill("cache");
     await page.getByTestId("composer-input").focus();
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(page.getByTestId("conversation-find-bar")).toHaveCount(0);
     await expect(page.getByTestId("composer-input")).toBeFocused();
     const interrupts = async () =>
       (await page.evaluate(() => (window as unknown as { __integrated: { calls: { method: string }[] } }).__integrated.calls)).filter(
@@ -375,8 +375,8 @@ test.describe("find in the conversation", () => {
     await aboutTheCache(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("cache");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await page.getByTestId("conversation-find-input").fill("cache");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     const thread = page.getByTestId("thread");
     // How the thread is asked to scroll, each time.
     await thread.evaluate((node) => {
@@ -416,17 +416,17 @@ test.describe("find in the conversation", () => {
     await asked();
     // Back past the first is the last, in the last reply.
     await page.keyboard.press("Shift+Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
     await expect.poll(() => currentInView(page)).toBe(true);
     expect((await asked())[0]).toBe("smooth");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 5");
     await expect.poll(() => currentInView(page)).toBe(true);
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect(await ready()).toBeGreaterThan(0);
     await asked();
     await page.keyboard.press("Shift+Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("5 of 5");
     await expect.poll(() => currentInView(page)).toBe(true);
     expect(await asked()).toEqual(["instant"]);
   });
@@ -480,15 +480,15 @@ test.describe("find in a long conversation", () => {
     await expect(page.getByText("Reply 6, a haystack.")).toHaveCount(0);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("haystack");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 2");
+    await page.getByTestId("conversation-find-input").fill("haystack");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 2");
     await expect(page.getByText("Reply 6, a haystack.")).toBeInViewport();
     await expect.poll(() => currentInView(page)).toBe(true);
     // Only the turns near it are drawn.
     expect(await page.getByTestId("agent-run").count()).toBeLessThan(40);
 
-    await page.getByTestId("find-input").fill("needle");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 1");
+    await page.getByTestId("conversation-find-input").fill("needle");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 1");
     const output = page.getByTestId("step-output").filter({ hasText: "the needle.ts" });
     await expect(output).toBeInViewport();
     await expect.poll(async () => (await painted(page)).current).toEqual(["needle"]);
@@ -517,16 +517,16 @@ test.describe("find in a long conversation", () => {
     await expect(page.getByTestId("earlier-reading")).toBeVisible();
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("haystack");
-    await expect(page.getByTestId("find-count")).toHaveText("");
+    await page.getByTestId("conversation-find-input").fill("haystack");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("");
     await agent(page, `f.releaseHistory();`);
     // No match stands below the view, at the foot, so it comes round to
     // the first, which is brought into view and filled.
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 2");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("1 of 2");
     await expect.poll(async () => (await painted(page)).current).toEqual(["haystack"]);
     await expect(page.getByText("Reply 6, a haystack.")).toBeInViewport();
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("find-count")).toHaveText("2 of 2");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText("2 of 2");
     await expect(page.getByText("Reply 8, another haystack.")).toBeInViewport();
   });
 
@@ -534,14 +534,14 @@ test.describe("find in a long conversation", () => {
     await openLong(page);
     await page.getByTestId("composer-input").focus();
     await findChord(page);
-    await page.getByTestId("find-input").fill("question 29");
+    await page.getByTestId("conversation-find-input").fill("question 29");
     // Question 29, and 290 to 299.
-    await expect(page.getByTestId("find-count")).toHaveText(/ of 11$/);
-    await page.getByTestId("find-input").fill("reply");
-    await expect(page.getByTestId("find-count")).toHaveText(new RegExp(` of ${TURNS}$`));
+    await expect(page.getByTestId("conversation-find-count")).toHaveText(/ of 11$/);
+    await page.getByTestId("conversation-find-input").fill("reply");
+    await expect(page.getByTestId("conversation-find-count")).toHaveText(new RegExp(` of ${TURNS}$`));
     // From the foot of the view, the first match is near the last; from
     // the last, the next is the first, three hundred turns up.
-    const count = page.getByTestId("find-count");
+    const count = page.getByTestId("conversation-find-count");
     for (;;) {
       const now = await count.textContent();
       if (now === `${TURNS} of ${TURNS}`) break;
