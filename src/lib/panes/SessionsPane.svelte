@@ -513,14 +513,26 @@
 
   function reopenAsking(session: Session, to: SessionKind) {
     if (midTurn(session)) reopenAsk = { key: session.key, to };
-    else void reopenOtherWay(session.key);
+    else void reopen(session.key);
   }
 
   function reopenConfirm() {
     const ask = reopenAsk;
     reopenAsk = null;
-    if (ask !== null) void reopenOtherWay(ask.key);
+    if (ask !== null) void reopen(ask.key);
     nav?.focus();
+  }
+
+  /** Why the last reopen was given up, until it is put away. */
+  let reopenError = $state<string | null>(null);
+
+  async function reopen(key: string) {
+    reopenError = null;
+    const session = byKey(key);
+    if (session === null) return;
+    const name = closingName(session);
+    if (!(await reopenOtherWay(key)) && byKey(key) !== null)
+      reopenError = `${name} did not stop in time, so it was not reopened. It goes on as it was.`;
   }
 
   function reopenCancel() {
@@ -2210,6 +2222,20 @@
           testid="close-owner"
         />
       {/if}
+    </div>
+  {/if}
+
+  {#if reopenError !== null}
+    <div class="error-row" class:folded inert={folded}>
+      <p class="error" data-testid="reopen-error">{reopenError}</p>
+      <button
+        class="dismiss"
+        tabindex="-1"
+        onclick={() => (reopenError = null)}
+        aria-label="Dismiss"
+        title="Dismiss"
+        data-testid="reopen-error-dismiss">×</button
+      >
     </div>
   {/if}
 

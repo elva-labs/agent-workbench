@@ -38,6 +38,7 @@ import {
   rejoined,
   rememberWorkflow,
   runEnded,
+  runUp,
   toldAtStart,
   toldFor,
   type Session,
@@ -329,6 +330,8 @@ function lastText(parts: Part[]): string | null {
 function ended(session: Session, link: Link, code: number | null, clean: boolean) {
   if (link.handle !== null) byHandle.delete(link.handle);
   link.handle = null;
+  // A run a reopen stopped goes on the other way, and its row never ends.
+  if (runEnded(session.key)) return;
   session.status = clean && !link.conversation.notLoggedIn ? "exited" : "crashed";
   session.exitCode = code;
   session.working = false;
@@ -337,7 +340,6 @@ function ended(session: Session, link: Link, code: number | null, clean: boolean
   rang(session.key);
   // The transcript is complete now, so the history it belongs in moved.
   void loadHistory(session.project);
-  runEnded(session.key);
 }
 
 /**
@@ -404,6 +406,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     row.status = "running";
     row.changedAt = Date.now();
   }
+  runUp(key);
   row.error = null;
   row.exitCode = null;
   for (const body of claim(started.id)) deliver(key, link, body);
