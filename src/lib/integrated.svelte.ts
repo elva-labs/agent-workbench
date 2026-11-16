@@ -2,7 +2,8 @@ import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { unsent, type Sent } from "$lib/mention";
 import { mentionedIn, mentionsOf } from "$lib/mentioned.svelte";
-import { reservedName } from "$lib/unseen";
+import { reservedName, shown } from "$lib/unseen";
+import { failureOf } from "$lib/turnFailure";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { keepMode, modeOf } from "$lib/sessionModes";
 import { heardLimits } from "$lib/limits.svelte";
@@ -25,6 +26,7 @@ import {
   byKey,
   failed,
   followsAgain,
+  givenName,
   keepToken,
   renewToken,
   loadHistory,
@@ -332,9 +334,10 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       beganTurn(session);
       break;
     case "turnEnded":
-      // Interrupted is the user's stop; a turn that failed ended neither
-      // way.
-      session.turnEnd = body.outcome === "done" ? "done" : body.outcome === "interrupted" ? "cut" : null;
+      // Interrupted is the user's stop; a turn that failed ended on an
+      // error, a usage limit among them, which is said for what it is.
+      session.turnEnd = body.outcome === "done" ? "done" : body.outcome === "interrupted" ? "cut" : "failed";
+      session.failure = body.outcome === "failed" ? failureOf(null, body.error === null ? null : shown(body.error)) : null;
       break;
     case "ended":
       ended(session, link, body.code, body.clean);
@@ -889,7 +892,7 @@ export function send(
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt. The workbench's own message names nothing.
-  if (session.title === null && from !== WORKBENCH) {
+  if (session.title === null && givenName(session) === null && from !== WORKBENCH) {
     const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
       .find((candidate) => candidate.trim() !== "")

@@ -3,7 +3,7 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
-import { byKey, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
+import { byKey, close, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
@@ -612,6 +612,72 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}.`);
     expect(byKey(key)).toBeNull();
     expect(forProject(A)).toHaveLength(0);
+  });
+});
+
+describe("a name a start gave", () => {
+  // Recorded: two sessions started with a name ran integrated, were closed
+  // by the user and resumed by id in a terminal, where their rows and the
+  // sessions tool named them by the first eight characters of their ids.
+  it("stays the session's across a close and a resume by id in a terminal", async () => {
+    setKind("claude-code", "integrated");
+    const request = call("start", { project: A, prompt: "Read the brief and review", name: "Confirm review of send now" });
+    const answering = handle(request);
+    if (conductor.asking !== null) allow();
+    await settle();
+    const first = forProject(A).at(-1)!;
+    await launch(first.key);
+    flushSync();
+    await answering;
+    const id = byKey(first.key)!.id!;
+    expect(label(byKey(first.key)!)).toBe("Confirm review of send now");
+
+    close(first.key);
+    setKind("claude-code", "terminal");
+    const resuming = call("start", { session: id, prompt: "Go on" });
+    const resumed = handle(resuming);
+    await settle();
+    const back = forProject(A).at(-1)!;
+    expect(back.kind).toBe("terminal");
+    started(back.key, "pty-back", id);
+    flushSync();
+    await resumed;
+    expect(answerTo(resuming)?.content).toContain(`Resumed session ${id}`);
+    // Claude Code titles its terminal with its own name alone until it has
+    // a title of its own for the session.
+    titled(back.key, "✳ Claude Code");
+    expect(label(byKey(back.key)!)).toBe("Confirm review of send now");
+    const listing = call("sessions");
+    await handle(listing);
+    expect(answerTo(listing)?.content).toContain(`${id}  "Confirm review of send now"`);
+    // Its agent's own title is the better name while it has one.
+    titled(back.key, "✳ send-now-review");
+    expect(label(byKey(back.key)!)).toBe("send-now-review");
+    titled(back.key, "Claude Code");
+    expect(label(byKey(back.key)!)).toBe("Confirm review of send now");
+  });
+
+  it("is not replaced by the first words of a message to a resumed conversation", async () => {
+    setKind("claude-code", "integrated");
+    const request = call("start", { project: A, prompt: "Review it", name: "Confirm review" });
+    const answering = handle(request);
+    if (conductor.asking !== null) allow();
+    await settle();
+    const first = forProject(A).at(-1)!;
+    await launch(first.key);
+    flushSync();
+    await answering;
+    const id = byKey(first.key)!.id!;
+    close(first.key);
+    const resuming = call("start", { session: id, prompt: "The app was restarted; carry on" });
+    const resumed = handle(resuming);
+    await settle();
+    const back = forProject(A).at(-1)!;
+    expect(back.kind).toBe("integrated");
+    await launch(back.key);
+    flushSync();
+    await resumed;
+    expect(label(byKey(back.key)!)).toBe("Confirm review");
   });
 });
 

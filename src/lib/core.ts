@@ -666,11 +666,18 @@ export interface AccountLimitsOptions {
     is asking), `idle` (it has been waiting a while). */
 export interface SessionEvent {
   sessionId: string;
-  kind: "prompt" | "stop" | "delegated" | "permission" | "idle";
-  /** With a stop, the first line of what the agent last said. */
+  kind: "prompt" | "stop" | "delegated" | "failed" | "permission" | "idle";
+  /** With a stop, the first line of what the agent last said; with a
+      failed turn, the first line of the error it showed. */
   note?: string;
   /** With a stop, that the user cut the turn short. */
   cut?: boolean;
+  /** With a failed turn, the agent's word for the error, such as
+      `rate_limit` or `server_error`. */
+  error?: string;
+  /** With a stop, the commands left running in the background, by their
+      descriptions. */
+  background?: string[];
 }
 
 /** A place in a file the agent asked to show, through the daemon's MCP
