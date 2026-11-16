@@ -745,6 +745,218 @@ fn each_answer_to_an_approval_reaches_the_agent_as_its_decision() {
     h.stop();
 }
 
+/// A turn as Codex 0.169.0 sent it for a real model working in code mode,
+/// where the model calls its tools from a script of its own: a word before
+/// it starts, a new file and a command to run outside the sandbox, each
+/// asked about and allowed, a command that needed nothing, a call to an MCP
+/// server that asks, and the answer. The lines are those recorded, with
+/// ids, paths and times made neutral.
+#[test]
+fn a_turn_as_a_real_model_plays_it() {
+    let at = r#""startedAtMs":1794831081000"#;
+    let ask = |id: u32, method: &str, params: String| {
+        format!(r#"say {{"id":{id},"method":"{method}","params":{params}}}"#)
+    };
+    let said = |id: &str, phase: &str, text: &str, done: bool| {
+        item(
+            if done {
+                "item/completed"
+            } else {
+                "item/started"
+            },
+            "turn-1",
+            &format!(
+                r#"{{"type":"agentMessage","moderation":null,"id":"{id}","text":"{}","phase":"{phase}","memoryCitation":null,"delivery":null,"questions":null,{at},"completedAtMs":null}}"#,
+                if done { text } else { "" }
+            ),
+        )
+    };
+    let delta = |id: &str, delta: &str| {
+        notify(
+            "item/agentMessage/delta",
+            &format!(
+                r#"{{"threadId":"{THREAD}","turnId":"turn-1","itemId":"{id}","delta":"{delta}"}}"#
+            ),
+        )
+    };
+    let resolved = |id: u32| {
+        notify(
+            "serverRequest/resolved",
+            &format!(r#"{{"threadId":"{THREAD}","requestId":{id}}}"#),
+        )
+    };
+    let patch = r#""changes":[{"path":"/w/t.txt","kind":{"type":"add"},"diff":"x\n"}]"#;
+    let diff = notify(
+        "turn/diff/updated",
+        &format!(
+            r#"{{"threadId":"{THREAD}","turnId":"turn-1","diff":"diff --git a/t.txt b/t.txt\nnew file mode 100644\n--- /dev/null\n+++ b/t.txt\n@@ -0,0 +1 @@\n+x\n"}}"#
+        ),
+    );
+    let command = |id: &str, run: &str, status: &str, source: &str, rest: &str| {
+        item(
+            if status == "inProgress" {
+                "item/started"
+            } else {
+                "item/completed"
+            },
+            "turn-1",
+            &format!(
+                r#"{{"type":"commandExecution","id":"{id}","pluginId":null,"scriptPath":null,"command":"/bin/zsh -lc '{run}'","cwd":"/w","source":"{source}","status":"{status}","commandActions":[{{"type":"unknown","command":"{run}"}}],{rest},{at}}}"#
+            ),
+        )
+    };
+    let mcp = |status: &str, rest: &str| {
+        item(
+            if status == "inProgress" {
+                "item/started"
+            } else {
+                "item/completed"
+            },
+            "turn-1",
+            &format!(
+                r#"{{"type":"mcpToolCall","id":"exec-4","server":"other","tool":"echo","status":"{status}","arguments":{{"text":"hi"}},"appContext":null,"mcpAppUi":null,"pluginId":null,"readOnlyHint":null,{rest},{at}}}"#
+            ),
+        )
+    };
+    let scenario = [
+        ready_scenario(),
+        take("turn-1"),
+        said("msg_1", "commentary", "", false),
+        delta("msg_1", "I’ll"),
+        delta("msg_1", " do"),
+        delta("msg_1", " it."),
+        said("msg_1", "commentary", "I’ll do it.", true),
+        item("item/started", "turn-1", &format!(r#"{{"type":"fileChange","id":"exec-1",{patch},"status":"inProgress",{at},"completedAtMs":null}}"#)),
+        ask(0, "item/fileChange/requestApproval", format!(r#"{{"threadId":"{THREAD}","turnId":"turn-1","itemId":"exec-1",{at},"reason":null,"grantRoot":null}}"#)),
+        r#"expect "id":0"#.into(),
+        resolved(0),
+        item("item/completed", "turn-1", &format!(r#"{{"type":"fileChange","id":"exec-1",{patch},"status":"completed",{at},"completedAtMs":1794831081033}}"#)),
+        diff.clone(),
+        diff.clone(),
+        command("exec-2", "touch u.txt", "inProgress", "agent", r#""processId":null,"aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        ask(1, "item/commandExecution/requestApproval", format!(r#"{{"kind":"command","threadId":"{THREAD}","turnId":"turn-1","itemId":"exec-2",{at},"environmentId":"local","reason":"May I run `touch u.txt` with escalated permissions as requested?","command":"/bin/zsh -lc 'touch u.txt'","cwd":"/w","commandActions":[{{"type":"unknown","command":"touch u.txt"}}],"proposedExecpolicyAmendment":["touch","u.txt"],"availableDecisions":["accept",{{"acceptWithExecpolicyAmendment":{{"execpolicy_amendment":["touch","u.txt"]}}}},"cancel"]}}"#)),
+        r#"expect "id":1"#.into(),
+        resolved(1),
+        command("exec-2", "touch u.txt", "completed", "unifiedExecStartup", r#""processId":"21060","aggregatedOutput":null,"exitCode":0,"durationMs":44"#),
+        command("exec-3", "echo hi", "inProgress", "unifiedExecStartup", r#""processId":"90438","aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        command("exec-3", "echo hi", "completed", "unifiedExecStartup", r#""processId":"90438","aggregatedOutput":"hi\n","exitCode":0,"durationMs":0"#),
+        mcp("inProgress", r#""result":null,"error":null,"durationMs":null"#),
+        ask(2, "mcpServer/elicitation/request", format!(r#"{{"threadId":"{THREAD}","turnId":"turn-1","serverName":"other","mode":"form","_meta":{{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_name":"echo","tool_description":"Echoes the text it is given.","tool_params":{{"text":"hi"}},"tool_params_display":[{{"name":"text","value":"hi","display_name":"text"}}]}},"message":"Allow the other MCP server to run tool \"echo\"?","requestedSchema":{{"type":"object","properties":{{}}}}}}"#)),
+        r#"expect "id":2"#.into(),
+        resolved(2),
+        mcp("completed", r#""result":{"content":[{"type":"text","text":"echoed"}],"structuredContent":null,"_meta":null},"error":null,"durationMs":0"#),
+        said("msg_2", "final_answer", "", false),
+        delta("msg_2", "Done."),
+        said("msg_2", "final_answer", "Done.", true),
+        diff,
+        notify("thread/tokenUsage/updated", &format!(r#"{{"threadId":"{THREAD}","turnId":"turn-1","tokenUsage":{{"total":{{"totalTokens":24583,"inputTokens":24478,"cachedInputTokens":24320,"cacheWriteInputTokens":0,"outputTokens":105,"reasoningOutputTokens":0}},"last":{{"totalTokens":24583,"inputTokens":24478,"cachedInputTokens":24320,"cacheWriteInputTokens":0,"outputTokens":105,"reasoningOutputTokens":0}},"modelContextWindow":258400}}}}"#)),
+        notify("thread/status/changed", &format!(r#"{{"threadId":"{THREAD}","status":{{"type":"idle"}}}}"#)),
+        notify("turn/completed", &format!(r#"{{"threadId":"{THREAD}","turn":{{"id":"turn-1","rootTurnId":"turn-1","items":[],"itemsView":"summary","status":"completed","error":null,"startedAt":1794831081,"completedAt":1794831085,"durationMs":4758}}}}"#)),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("real-turn", &scenario);
+    h.until_type("ready");
+    h.send("work");
+    for request in ["0", "1", "2"] {
+        h.until(|e| e["type"] == "permissionAsked" && e["request"] == request);
+        answer(&h.sessions, &h.id, request, Choice::Allow, None).unwrap();
+    }
+    let events = h.until_type("turnEnded");
+    let event = |kind: &str, call: &str| {
+        events
+            .iter()
+            .find(|e| e["type"] == kind && (e["call"] == call || e["request"] == call))
+            .unwrap_or_else(|| panic!("no {kind} {call} in {events:#?}"))
+            .clone()
+    };
+
+    let whole: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "text" && e["done"] == true)
+        .collect();
+    assert_eq!(whole[0]["text"], "I’ll do it.");
+    assert_eq!(whole[1]["text"], "Done.");
+    let pieces = events
+        .iter()
+        .filter(|e| e["type"] == "text" && e["done"] == false)
+        .count();
+    assert_eq!(pieces, 4, "every delta is told as it comes");
+
+    let started: Vec<(String, String)> = events
+        .iter()
+        .filter(|e| e["type"] == "toolStarted")
+        .map(|e| {
+            (
+                e["kind"].as_str().unwrap().into(),
+                e["name"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        started,
+        [
+            ("edit".into(), "fileChange".into()),
+            ("command".into(), "commandExecution".into()),
+            ("command".into(), "commandExecution".into()),
+            ("mcp".into(), "mcp__other__echo".into()),
+        ]
+    );
+
+    let file = event("permissionAsked", "0");
+    assert_eq!(file["call"], "exec-1");
+    assert_eq!(file["input"]["changes"][0]["path"], "/w/t.txt");
+    let offered = |asked: &Value| -> Vec<String> {
+        asked["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["choice"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(offered(&file), ["allow", "allowSession", "deny", "cancel"]);
+    let run = event("permissionAsked", "1");
+    assert_eq!(run["call"], "exec-2");
+    assert_eq!(
+        run["description"],
+        "May I run `touch u.txt` with escalated permissions as requested?"
+    );
+    assert_eq!(
+        run["choices"][2]["remembers"],
+        "commands that start with touch u.txt in Codex's rules, from now on"
+    );
+    let tool = event("permissionAsked", "2");
+    assert_eq!(tool["call"], "exec-4", "the one open call of that tool");
+    assert_eq!(tool["input"], json!({"text": "hi"}));
+    let answers = h.answers();
+    assert_eq!(answers[&0]["result"]["decision"], "accept");
+    assert_eq!(answers[&1]["result"]["decision"], "accept");
+    assert_eq!(answers[&2]["result"]["action"], "accept");
+
+    let made = event("toolFinished", "exec-1");
+    assert_eq!(made["error"], false);
+    assert_eq!(
+        made["changes"],
+        json!([{"path": "/w/t.txt", "kind": "create", "to": null, "hunks": [],
+                "content": "x\n", "truncated": false}])
+    );
+    let touched = event("toolFinished", "exec-2");
+    assert_eq!(
+        (touched["output"].clone(), touched["error"].clone()),
+        (json!(""), json!(false))
+    );
+    assert_eq!(event("toolFinished", "exec-3")["output"], "hi\n");
+    assert_eq!(event("toolFinished", "exec-4")["output"], "echoed");
+    let diffs = events.iter().filter(|e| e["type"] == "turnDiff").count();
+    assert_eq!(diffs, 3, "each diff Codex sends is told");
+    assert!(!kinds(&events).contains(&"withdrawn".to_string()));
+    assert!(!kinds(&events).contains(&"error".to_string()));
+    let ended = events.last().unwrap();
+    assert_eq!(ended["outcome"], "done");
+    assert_eq!(ended["durationMs"], 4758);
+    h.stop();
+}
+
 #[test]
 fn a_question_with_a_secret_and_options_alone_is_answered_by_reply() {
     let scenario = [
