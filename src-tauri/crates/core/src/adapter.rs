@@ -391,8 +391,12 @@ fn codex_version(
 /// server is named whole wherever the session has it, with the variables
 /// that say which session it serves among those passed on: an entry that
 /// named only the variables, where no configuration Codex reads names the
-/// server, would stop Codex from starting. The entry lets the server's
-/// tools run without asking.
+/// server, would stop Codex from starting.
+///
+/// A server no configuration names is told to let its tools run without
+/// asking. One the project's configuration names keeps the approval its
+/// entry there says, which the hooks write as the same unless the user
+/// chose another: Codex takes the command line over the project's file.
 ///
 /// A Codex the command interpreter runs, a script on Windows, is not told
 /// the server its configuration already names. Each setting of the server
@@ -420,10 +424,12 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
             text(SESSION_VAR),
             text(ROLE_VAR)
         ));
-        settings.push(format!(
-            "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_APPROVAL_SETTING}={}",
-            text(CODEX_APPROVE)
-        ));
+        if ctx.server.is_some() {
+            settings.push(format!(
+                "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_APPROVAL_SETTING}={}",
+                text(CODEX_APPROVE)
+            ));
+        }
     }
     if ctx.start_only {
         settings.extend(CODEX_NO_SUBAGENTS.iter().map(|setting| setting.to_string()));
@@ -1328,6 +1334,44 @@ mod tests {
         let said = get(&[]);
         assert!(said.contains(&*daemon.to_string_lossy()), "{said}");
         assert_eq!(said.contains(&approves), knows, "{said}");
+
+        // A session in that project is told the server again, for the
+        // variables, and the approval is the project entry's: the hooks'
+        // own, or one the user chose there.
+        let configured = LaunchCtx {
+            server: None,
+            configured: Some(&daemon),
+            ..named
+        };
+        let again = codex_workflow(&configured, false, false).unwrap();
+        assert_eq!(get(&again).contains(&approves), knows);
+        let config = project.join(".codex").join("config.toml");
+        let theirs = std::fs::read_to_string(&config).unwrap().replace(
+            &format!("{CODEX_APPROVAL_SETTING} = \"{CODEX_APPROVE}\""),
+            &format!("{CODEX_APPROVAL_SETTING} = \"prompt\""),
+        );
+        std::fs::write(&config, theirs).unwrap();
+        let said = get(&again);
+        assert_eq!(
+            said.contains(&format!("{CODEX_APPROVAL_SETTING}: prompt")),
+            knows,
+            "{said}"
+        );
+        // And the variables are still passed on.
+        if knows {
+            let read = std::process::Command::new(&codex)
+                .args(&again)
+                .args(["mcp", "get", CODEX_SERVER_KEY, "--json"])
+                .env(CODEX_HOME_VAR, codex_home.path())
+                .current_dir(&project)
+                .output()
+                .unwrap();
+            let entry: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
+            assert_eq!(
+                entry["transport"]["env_vars"],
+                serde_json::json!([SESSION_VAR, ROLE_VAR])
+            );
+        }
     }
 
     #[test]
@@ -1440,7 +1484,8 @@ mod tests {
         // cannot start would stop the session from starting.
         assert!(codex_workflow(&ctx, false, false).unwrap().is_empty());
         // The project's configuration names it: it is named again, whole,
-        // with the variables Codex is to pass on.
+        // with the variables Codex is to pass on, and nothing of its tools'
+        // approval, so the one the project's entry says holds.
         let configured = LaunchCtx {
             configured: Some(daemon),
             ..ctx
@@ -1456,15 +1501,27 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                 .to_string(),
-            "-c".to_string(),
-            "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
         ];
-        // Its tools run without asking; no other server and no approval
-        // policy of the user's is spoken of.
-        assert!(whole
+        assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
+        // Named where no configuration names it, its tools run without
+        // asking. No other server and no approval policy of the user's is
+        // spoken of either way.
+        let named = LaunchCtx {
+            server: Some(daemon),
+            ..ctx
+        };
+        let approving = [
+            whole.to_vec(),
+            vec![
+                "-c".to_string(),
+                "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
+            ],
+        ]
+        .concat();
+        assert_eq!(codex_workflow(&named, false, false).unwrap(), approving);
+        assert!(approving
             .iter()
             .all(|arg| arg == "-c" || arg.starts_with("mcp_servers.agent_workbench.")));
-        assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
         assert_eq!(codex_workflow(&configured, true, false).unwrap(), whole);
         // A script on Windows is told nothing of it: the interpreter would
         // cut the script's path short at the settings' quotes.
