@@ -471,12 +471,21 @@ for (const look of LOOKS)
     });
 
 test("where the guard holds the share at none, the window is exactly as with none asked", async ({ browser }) => {
-  const FOG = { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 };
+  // A theme whose terminal blue holds 4.5:1 on its light card by a hair,
+  // so the guard lets none of the background through there.
+  const tight = { label: "Tight", light: { "ansi-blue": "#717879" }, dark: {}, shape: {} };
   const shot = async (cards: Record<string, number>) => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await installFakeCore(page, {
       open: [PROJECT],
-      settings: { appearance: "dark", look: "modern", backgrounds: { teal: FOG }, cards },
+      settings: {
+        appearance: "light",
+        look: "modern",
+        themes: { tight },
+        palette: "tight",
+        backgrounds: { tight: LAGOON },
+        cards,
+      },
     });
     await page.goto("/");
     await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
@@ -497,7 +506,7 @@ test("where the guard holds the share at none, the window is exactly as with non
     return image;
   };
   const none = await shot({});
-  const held = await shot({ teal: 0.2 });
+  const held = await shot({ tight: 0.2 });
   expect(held.equals(none)).toBe(true);
 });
 
@@ -546,3 +555,81 @@ test.describe("a terminal on a see-through card", () => {
       expect(low, `an inverse cell's text in ${colour}`).toBeGreaterThanOrEqual(4.45);
     });
 });
+
+/** A background of three colours at three quarters of the strength, in a
+    rose window. */
+const TRIAD = {
+  dots: [
+    { hue: 185, chroma: 0.85 },
+    { hue: 305, chroma: 0.85 },
+    { hue: 65, chroma: 0.85 },
+  ],
+  harmony: "triad",
+  strength: 0.75,
+  grain: 0.25,
+};
+
+/** The mean colour of each box in a screenshot of the window. */
+async function means(page: Page, boxes: { x: number; y: number; width: number; height: number }[]) {
+  const shot = await page.screenshot({ animations: "disabled" });
+  return page.evaluate(
+    async ({ data, boxes }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const scale = image.width / innerWidth;
+      return boxes.map((box) => {
+        const pixels = context.getImageData(box.x * scale, box.y * scale, box.width * scale, box.height * scale).data;
+        const sum = [0, 0, 0];
+        for (let at = 0; at < pixels.length; at += 4) for (let c = 0; c < 3; c++) sum[c] += pixels[at + c];
+        return sum.map((value) => value / (pixels.length / 4));
+      });
+    },
+    { data: shot.toString("base64"), boxes },
+  );
+}
+
+const apart = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+
+for (const look of LOOKS)
+  for (const appearance of APPEARANCES)
+    test(`a card shows more of the background at each step and stays apart from the ground, ${look}, ${appearance}`, async ({
+      browser,
+    }) => {
+      const at = async (share: number) => {
+        const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        await installFakeCore(page, {
+          open: [PROJECT],
+          settings: { appearance, look, palette: "rose", backgrounds: { rose: TRIAD }, cards: share > 0 ? { rose: share } : {} },
+        });
+        await page.goto("/");
+        await expect(page.locator(AGENT)).toBeVisible();
+        await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
+        // An empty stretch of the agent's card, low down where the gradient
+        // has turned, and the ground just left of the card beside it.
+        const boxes = await page.locator(AGENT).evaluate((pane) => {
+          const box = pane.getBoundingClientRect();
+          const y = box.top + box.height * 0.6;
+          return [
+            { x: box.left + box.width / 2 - 30, y, width: 60, height: 40 },
+            { x: box.left - 6, y, width: 3, height: 40 },
+          ];
+        });
+        const [card, ground] = await means(page, boxes);
+        await page.close();
+        return { card, ground };
+      };
+      const none = await at(0);
+      const some = await at(0.1);
+      const most = await at(0.25);
+      // Each step moves the card visibly further from a solid one.
+      expect(apart(some.card, none.card)).toBeGreaterThan(4);
+      expect(apart(most.card, none.card)).toBeGreaterThan(apart(some.card, none.card) + 4);
+      // And the card stays apart from the ground beside it.
+      for (const { card, ground } of [none, some, most]) expect(apart(card, ground)).toBeGreaterThan(6);
+    });

@@ -29,6 +29,7 @@ import { noteSent } from "$lib/persist";
 import {
   checkBackground,
   describeBackground,
+  MOST_CARDS,
   rounded,
   swatchOf,
   type Background,
@@ -291,12 +292,12 @@ export function describeSettings(): string {
     through now where the guard holds it back. */
 function describeCards(): string {
   const asked = Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
-  const percent = (share: number) => `${Math.round(share * 100)}%`;
+  const percent = (share: number) => `${Math.round((share / MOST_CARDS) * 100)}%`;
   const now =
     asked > 0 && theme.cardsHeld < asked
       ? `; ${percent(theme.cardsHeld)} shows through now, where the window keeps text readable`
       : "";
-  return `cards: ${percent(asked)} (how much of the background shows through the panes as well, as a share of its strength from 0 to 25%; the user's to change, in the settings${now})`;
+  return `cards: ${percent(asked)} (how much of the background shows through the panes as well, from none to 100%, where a pane shows as much of it as the window around it; the user's to change, in the settings${now})`;
 }
 
 /** A palette's background as the agent reads it: as it is kept, or none. */
