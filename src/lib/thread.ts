@@ -1,7 +1,23 @@
 export { revealed, shown } from "$lib/unseen";
+import { shown } from "$lib/unseen";
 import { spoken } from "$lib/instructions";
-import type { IntegratedEventBody, IntegratedToolKind, PermissionChoice, PermissionOffer } from "$lib/core";
-import type { Conversation, Part, PlanPart, QuestionPart, TextPart, ToolCall } from "$lib/conversation.svelte";
+import type {
+  IntegratedEventBody,
+  IntegratedFileChange,
+  IntegratedToolKind,
+  PermissionChoice,
+  PermissionOffer,
+} from "$lib/core";
+import type {
+  Conversation,
+  Entry,
+  Message,
+  Part,
+  PlanPart,
+  QuestionPart,
+  TextPart,
+  ToolCall,
+} from "$lib/conversation.svelte";
 
 /**
  * What the thread says, worked out from the conversation: how a run of the
@@ -800,81 +816,248 @@ export function foldKey(kind: "work" | "step", part: ToolCall | TextPart): strin
   return `${kind}:${part.kind === "tool" ? part.call : part.block}`;
 }
 
-/** Something the thread holds that can be looked for and brought into
-    view: a message, a block of text or thinking, a call, a plan, a
-    question or a note, by its id; the entry it stands in; and the folds
-    that must open for it to show, outermost first. */
-export interface Held {
-  id: string;
-  /** Null for a message waiting under the thread, which is always drawn. */
-  entry: string | null;
-  folds: string[];
+/** A call's input as its step shows it under the row: a command as
+    typed, the rest as its fields, each named, leaving out what the row
+    already says. Nothing when the row says all of it; while it streams,
+    as it comes. */
+export type StepInput = { command: string } | { fields: { name: string; value: string }[] } | { json: string } | null;
+
+export function stepInput(part: ToolCall, title: Phrase): StepInput {
+  const value = part.inputDone ? part.input : null;
+  if (value === null || value === undefined) return part.inputText ? { json: part.inputText } : null;
+  if (typeof value !== "object" || Array.isArray(value)) return { json: JSON.stringify(value, null, 2) };
+  const record = value as Record<string, unknown>;
+  if (part.tool === "command" && typeof record.command === "string") return { command: record.command };
+  const said = new Set([inputPath(value), title.object].filter((known) => known !== null));
+  const fields = Object.entries(record)
+    .filter(([, field]) => field !== null && field !== undefined && field !== "" && !said.has(field as string))
+    .map(([name, field]) => ({
+      name: name.replace(/_/g, " "),
+      value: typeof field === "string" ? field : JSON.stringify(field, null, 2),
+    }));
+  return fields.length === 0 ? null : { fields };
+}
+
+/** Whether a step shows its command whole under the row, which shows a
+    short one whole itself. */
+export function longCommand(command: string): boolean {
+  return command.includes("\n") || command.length > 72;
+}
+
+/** Whether a step shows its input's fields: an edit that has its changes
+    shows them instead. */
+export function showsFields(part: ToolCall): boolean {
+  return part.tool !== "edit" || part.changes.length === 0;
+}
+
+/** What a step's output shows: what came while it ran, then its result. */
+export function stepOutput(part: ToolCall): string {
+  return part.done ? (part.result ?? part.output) : part.output;
+}
+
+/** Whether a step shows its output: an edit says what it did as diffs. */
+export function showsOutput(part: ToolCall): boolean {
+  return part.tool !== "edit" && stepOutput(part) !== "";
+}
+
+export interface ChangeLine {
+  kind: "add" | "del" | "ctx" | "hunk";
   text: string;
 }
 
-/** A call's input as its step shows it: a field's name and its value,
-    the value as written when it is text. */
-function inputWords(part: ToolCall): string {
-  if (!part.inputDone) return part.inputText;
-  const value = part.input;
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value !== "object" || Array.isArray(value)) return JSON.stringify(value, null, 2);
-  return Object.entries(value as Record<string, unknown>)
-    .filter(([, field]) => field !== null && field !== undefined && field !== "")
-    .map(([name, field]) => `${name.replace(/_/g, " ")}\n${typeof field === "string" ? field : JSON.stringify(field, null, 2)}`)
-    .join("\n");
+/** A changed file's lines as its diff shows them: each hunk's head, then
+    its lines without their marks; a new file whole, as added lines. */
+export function changeLines(change: IntegratedFileChange): ChangeLine[] {
+  if (change.kind === "create" && change.content !== null)
+    return change.content
+      .replace(/\n$/, "")
+      .split("\n")
+      .map((text) => ({ kind: "add", text }));
+  const out: ChangeLine[] = [];
+  for (const hunk of change.hunks) {
+    out.push({ kind: "hunk", text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@` });
+    for (const line of hunk.lines) {
+      const mark = line.charAt(0);
+      out.push({ kind: mark === "+" ? "add" : mark === "-" ? "del" : "ctx", text: line.slice(1) });
+    }
+  }
+  return out;
+}
+
+/** What opening a step shows of a call, in the order drawn: its input,
+    the files it changed, each by its path and its lines, its output, and
+    what the user told the agent when refusing it. A subagent's run, drawn
+    there too, is held apart. */
+export function stepShows(part: ToolCall, root: string | null = null): string[] {
+  const pieces: string[] = [];
+  if (part.tool !== "agent") {
+    const input = stepInput(part, stepTitle(part, root));
+    if (input !== null) {
+      if ("command" in input) {
+        if (longCommand(input.command)) pieces.push(input.command);
+      } else if ("fields" in input) {
+        if (showsFields(part)) pieces.push(...input.fields.map((field) => field.value));
+      } else pieces.push(input.json);
+    }
+    for (const change of part.changes) {
+      pieces.push(shortPath(change.path, root));
+      if (change.to !== null) pieces.push(shortPath(change.to, root));
+      for (const line of changeLines(change)) if (line.kind !== "hunk") pieces.push(line.text);
+    }
+  }
+  if (showsOutput(part)) pieces.push(stepOutput(part));
+  // What the user told the agent with a refusal, under its label.
+  if (part.answer?.message) pieces.push(part.answer.message);
+  return pieces;
+}
+
+/** Something the thread holds that can be looked for and brought into
+    view: a message, a block of text or thinking, a call, a plan, a
+    question or a note, by its id; the entry it stands in; the folds that
+    must open for it to show, outermost first; and what it shows. A call
+    is held twice: by its row, and by what opening its step shows. */
+export interface Held {
+  id: string;
+  /** What the thread marks where it draws this, the id but for what a
+      step shows of a call. */
+  key: string;
+  /** Null for a message waiting under the thread, which is always drawn. */
+  entry: string | null;
+  folds: string[];
+  /** What it shows as plain text, each piece on a line of its own. */
+  text: string;
+  /** What it shows rendered from Markdown, after its text. */
+  markdown: string | null;
+}
+
+export interface HeldOptions {
+  /** The folder paths in the thread are shown from. */
+  root?: string | null;
+  /** A message's words as its bubble shows them. */
+  words?: (message: Message) => string;
 }
 
 /** Everything the thread holds, in the order it is drawn, folded work and
-    a subagent's run under its call included. */
-export function held(conversation: Conversation): Held[] {
+    a subagent's run under its call included, each with what it shows as
+    the reader sees it: what a tool or the agent chose with every unseen
+    character as its marker, and the labels the thread puts around it left
+    out. */
+export function held(conversation: Conversation, options: HeldOptions = {}): Held[] {
+  const ended = endedWith(conversation);
+  return [
+    ...conversation.entries.flatMap((entry) => (entry.key === ended ? [] : heldIn(conversation, entry, options))),
+    ...heldWaiting(conversation, options),
+  ];
+}
+
+/** The error a session ended with, which is said where it offers to
+    resume, not in the thread: the key of its note, or null. */
+export function endedWith(conversation: Conversation): string | null {
+  const last = conversation.entries[conversation.entries.length - 1];
+  return conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
+}
+
+const plainWords = (message: Message) => spoken(message.text, true).text;
+
+/** What one entry of the thread holds, as `held` gives it. */
+export function heldIn(conversation: Conversation, entry: Entry, options: HeldOptions = {}): Held[] {
+  const root = options.root ?? null;
+  const words = options.words ?? plainWords;
   const out: Held[] = [];
-  const walk = (parts: Part[], entry: string, around: string[]) => {
+  const add = (id: string, folds: string[], text: string, markdown: string | null = null, key = id) =>
+    out.push({ id, key, entry: entry.key, folds, text, markdown });
+  const lines = (pieces: (string | null | undefined)[]) =>
+    pieces
+      .filter((piece): piece is string => typeof piece === "string" && piece !== "")
+      .map(shown)
+      .join("\n");
+  const walk = (parts: Part[], around: string[]) => {
     for (const segment of segments(parts)) {
-      if (segment.kind === "text") out.push({ id: segment.part.block, entry, folds: around, text: segment.part.text });
+      if (segment.kind === "text") add(segment.part.block, around, "", segment.part.text);
       else if (segment.kind === "plan") {
         const plan = segment.part;
-        const text = [...plan.steps.map((step) => step.text), plan.text ?? ""].join("\n");
-        out.push({ id: `plan-${plan.at}`, entry, folds: around, text });
+        add(`plan-${plan.at}`, around, lines(plan.steps.map((step) => step.text)), plan.text);
       } else if (segment.kind === "question") {
         const asked = segment.part;
-        const text = [...asked.questions.map((question) => question.question), ...(asked.answers ?? []).flat()].join("\n");
-        out.push({ id: asked.request, entry, folds: around, text });
+        const answered = asked.outcome === "answered";
+        const pieces = asked.questions.flatMap((question, at) => [
+          question.question,
+          answered ? asked.answers?.[at]?.join(", ") : null,
+        ]);
+        add(asked.request, around, lines(pieces));
       } else {
         const work = [...around, foldKey("work", segment.parts[0])];
         for (const part of segment.parts) {
+          const step = [...work, foldKey("step", part)];
           if (part.kind !== "tool") {
-            out.push({ id: part.block, entry, folds: work, text: part.text });
+            add(part.block, step, "", part.text);
             continue;
           }
-          // A change's lines as its diff shows them, without their marks,
-          // and a new file's content.
-          const changes = part.changes.flatMap((change) => [
-            change.path,
-            change.content ?? "",
-            ...change.hunks.flatMap((hunk) => hunk.lines.map((line) => line.slice(1))),
-          ]);
-          const text = [part.name, inputWords(part), part.result ?? part.output, ...changes].join("\n");
-          out.push({ id: part.call, entry, folds: work, text });
-          walk(part.parts, entry, [...work, foldKey("step", part)]);
+          add(part.call, work, lines([stepTitle(part, root).object]));
+          // A subagent's run is drawn before the output of the call that
+          // started it.
+          const shows = () => add(part.call, step, lines(stepShows(part, root)), null, `${part.call}:shows`);
+          if (part.tool === "agent") {
+            walk(part.parts, step);
+            shows();
+          } else {
+            shows();
+            walk(part.parts, step);
+          }
         }
       }
     }
   };
-  const entries = conversation.entries;
-  const last = entries[entries.length - 1];
-  // The error a session ended with is said where it offers to resume, not
-  // in the thread.
-  const endedWith = conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
-  for (const entry of entries) {
-    if (entry.kind === "user") {
-      const message = conversation.messages[entry.message];
-      if (message !== undefined) out.push({ id: message.id, entry: entry.key, folds: [], text: spoken(message.text, true).text });
-    } else if (entry.kind === "agent") walk(entry.parts, entry.key, []);
-    else if (entry.kind === "note" && entry.key !== endedWith) out.push({ id: entry.key, entry: entry.key, folds: [], text: entry.text });
-  }
-  for (const message of conversation.waiting) out.push({ id: message.id, entry: null, folds: [], text: spoken(message.text, true).text });
+  if (entry.kind === "user") {
+    const message = conversation.messages[entry.message];
+    if (message !== undefined) add(message.id, [], shown(words(message)));
+  } else if (entry.kind === "agent") walk(entry.parts, []);
+  else if (entry.kind === "note") add(entry.key, [], shown(entry.text));
+  return out;
+}
+
+/** The messages waiting under the thread, as `held` gives them. */
+export function heldWaiting(conversation: Conversation, options: HeldOptions = {}): Held[] {
+  const words = options.words ?? plainWords;
+  return conversation.waiting.map((message) => ({
+    id: message.id,
+    key: message.id,
+    entry: null,
+    folds: [],
+    text: shown(words(message)),
+    markdown: null,
+  }));
+}
+
+/**
+ * What an entry is made of that what it holds is read from, as a list of
+ * values: two prints with the same values, compared one by one, hold the
+ * same. Cheap to take, so what was read from an entry can be kept until
+ * its print changes.
+ */
+export function entryPrint(conversation: Conversation, entry: Entry): unknown[] {
+  const out: unknown[] = [entry.kind];
+  const parts = (list: Part[]) => {
+    out.push(list.length);
+    for (const part of list) {
+      out.push(part.kind);
+      if (part.kind === "text" || part.kind === "thinking") out.push(part.block, part.text);
+      else if (part.kind === "tool")
+        out.push(part.call, part.tool, part.plan, part.input, part.inputText, part.inputDone);
+      if (part.kind === "tool")
+        out.push(part.output, part.result, part.done, part.changes, part.changes.length, part.answer, part.answer?.message);
+      else if (part.kind === "plan") {
+        out.push(part.at, part.text, part.steps.length);
+        for (const step of part.steps) out.push(step.text);
+      } else if (part.kind === "question") out.push(part.request, part.outcome, part.questions, part.answers);
+      if (part.kind === "tool") parts(part.parts);
+    }
+  };
+  if (entry.kind === "user") {
+    const message = conversation.messages[entry.message];
+    out.push(message, message?.text);
+  } else if (entry.kind === "agent") parts(entry.parts);
+  else if (entry.kind === "note") out.push(entry.text);
   return out;
 }
 
@@ -882,12 +1065,4 @@ export function held(conversation: Conversation): Held[] {
     folds around it. */
 export function locate(conversation: Conversation, id: string): Held | null {
   return held(conversation).find((one) => one.id === id) ?? null;
-}
-
-/** What the thread holds that has `query` in it, case aside, in the
-    order it is drawn. */
-export function matches(conversation: Conversation, query: string): Held[] {
-  const looked = query.toLocaleLowerCase();
-  if (looked === "") return [];
-  return held(conversation).filter((one) => one.text.toLocaleLowerCase().includes(looked));
 }

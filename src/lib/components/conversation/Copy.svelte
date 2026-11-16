@@ -64,6 +64,7 @@
   tabindex="-1"
   data-thread-item
   data-copy={host}
+  data-find-skip
   aria-label={name ?? label}
   onmousedown={(e) => e.preventDefault()}
   onclick={copy}
@@ -73,7 +74,7 @@
   <span class="face" class:off={copied} aria-hidden="true"><Icon name="copy" size={12} />{label}</span>
   <span class="face" class:off={!copied} aria-hidden="true"><Icon name="check" size={12} />Copied</span>
 </button>
-<span class="heard" role="status">{copied ? "Copied" : ""}</span>
+<span class="heard" role="status" data-find-skip>{copied ? "Copied" : ""}</span>
 
 <style>
   .copy {

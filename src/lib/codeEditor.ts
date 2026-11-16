@@ -51,11 +51,15 @@ export function onEditorUpdate(handler: ((update: ViewUpdate) => void) | null) {
 }
 
 const theme = EditorView.theme({
+  // The editor is a layer of its own, so its panels and gutters, which
+  // carry high layers to stand over its text, stay under what the pane
+  // draws over it, such as the focused card's mark.
   "&": {
     height: "100%",
     color: "var(--ink)",
     backgroundColor: "var(--surface)",
     fontSize: "var(--editor-size, 12px)",
+    isolation: "isolate",
   },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": {

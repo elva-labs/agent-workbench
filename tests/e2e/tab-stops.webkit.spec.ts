@@ -17,8 +17,8 @@ const TREE = "[data-testid='file-tree']";
 /** The platforms the app tells apart, by what the browser reports. On
     macOS the system draws the window's controls. On Linux and Windows the
     app draws them at the end of the rightmost header, after the corner,
-    and a menu button at the start of the leftmost; each is a stop where it
-    stands. The app's chords there are Ctrl's. */
+    and a menu button at the start of the sessions pane's, open or folded;
+    each is a stop where it stands. The app's chords there are Ctrl's. */
 const PLATFORMS = [
   { name: "macOS", reported: "MacIntel", mod: "Meta", menu: [] as string[], controls: [] as string[] },
   {
@@ -47,7 +47,7 @@ function holder(page: Page) {
 
 /** Whether the keyboard's place is drawn in the app's own look: a ring in
     the accent, never the browser's own, or a row's edge in it; a
-    splitter's line lit in the accent; a list's cursor on its row; a text
+    divider's line drawn in the accent; a list's cursor on its row; a text
     field's caret. */
 function ringed(page: Page) {
   return page.evaluate(() => {
@@ -66,8 +66,12 @@ function ringed(page: Page) {
     const root = getComputedStyle(owner);
     if (owner.matches("[data-testid='file-tree'], [data-testid='sessions-nav']"))
       return owner.querySelector(".cursor") !== null;
-    if (owner.getAttribute("role") === "separator")
-      return getComputedStyle(owner, "::after").backgroundColor === colour(root.getPropertyValue("--splitter-hover").trim());
+    if (owner.getAttribute("role") === "separator") {
+      const line = owner.querySelector(".line");
+      if (line === null) return false;
+      const drawn = getComputedStyle(line);
+      return drawn.opacity === "1" && drawn.backgroundColor === colour(root.getPropertyValue("--accent").trim());
+    }
     const style = getComputedStyle(owner);
     const accent = colour(root.getPropertyValue("--accent").trim());
     // A row of a list is marked as the tree's cursor is, inside its edge.
@@ -396,10 +400,12 @@ for (const platform of PLATFORMS)
     await expect(page.locator("[data-testid='viewer']")).toBeVisible();
     await page.locator(TREE).focus();
     expect(await walk(page, "Tab", 3)).toEqual(["Resize the file tree", "viewer-edit", "Close the viewer"]);
-    // The menu button, where the app draws one, heads the pane beside the
-    // folded column.
+    // The menu button, where the app draws one, heads the folded column,
+    // over the button the column is.
     await page.getByTestId("start-other").focus();
-    expect(await walk(page, "Shift+Tab", platform.menu.length + 1)).toEqual([...platform.menu, "unfold-sessions"]);
+    expect(await walk(page, "Shift+Tab", platform.menu.length + 1)).toEqual(["unfold-sessions", ...platform.menu]);
+    if (platform.menu.length > 0) await page.keyboard.press("Tab");
+    await expect(page.getByTestId("unfold-sessions")).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(page.locator(".sessions-slot.peeking")).toHaveCount(1);
     await expect(page.getByTestId("sessions-nav")).toBeFocused();

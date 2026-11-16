@@ -66,7 +66,7 @@ state at a glance, and projects on other machines over ssh.
 ## Platforms
 
 macOS, Linux and Windows. The window is the app's own on all three: the
-traffic lights over the leftmost pane on macOS, app-drawn controls on the
+traffic lights at the top left on macOS, app-drawn controls on the
 others. [Platforms](docs/platforms.md) has what differs.
 
 ## Installing it

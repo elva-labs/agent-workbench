@@ -6,7 +6,12 @@
 
 export const FLASH_MS = 1500;
 
-export const flash = $state({ text: null as string | null });
+export const flash = $state({
+  text: null as string | null,
+  /** A word that stays while what it is about holds the keyboard, such as
+      the keys a divider takes, shown whenever no word in passing is. */
+  held: null as string | null,
+});
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let again: ReturnType<typeof setTimeout> | null = null;
@@ -30,8 +35,19 @@ export function say(text: string) {
   }, FLASH_MS);
 }
 
+/** Holds a word in the bar until it is let go. */
+export function hold(text: string) {
+  flash.held = text;
+}
+
+/** Lets a held word go, if it is still the one held. */
+export function letGo(text: string) {
+  if (flash.held === text) flash.held = null;
+}
+
 /** Test seam. */
 export function resetFlash() {
+  flash.held = null;
   if (again !== null) clearTimeout(again);
   again = null;
   if (timer !== null) clearTimeout(timer);

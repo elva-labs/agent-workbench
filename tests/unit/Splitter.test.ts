@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/svelte";
 import Splitter from "$lib/components/Splitter.svelte";
+import { flash, resetFlash } from "$lib/flash.svelte";
 
-function setup() {
+function setup(extra: Record<string, unknown> = {}) {
   const onDelta = vi.fn();
   const onReset = vi.fn();
   const onCommit = vi.fn();
-  render(Splitter, { label: "Resize changes", onDelta, onReset, onCommit });
+  render(Splitter, { label: "Resize changes", onDelta, onReset, onCommit, ...extra });
   return { handle: screen.getByRole("separator"), onDelta, onReset, onCommit };
 }
 
@@ -93,5 +94,33 @@ describe("Splitter", () => {
     expect(onDelta).not.toHaveBeenCalled();
     expect(onReset).not.toHaveBeenCalled();
     expect(onCommit).not.toHaveBeenCalled();
+  });
+});
+
+describe("Splitter, drawn only in use", () => {
+  it("names what it moves for whatever meets it to find it by, and says whether it lies inside a pane", () => {
+    const { handle } = setup({ name: "changes", inner: true });
+    expect(handle).toHaveAttribute("data-divider", "changes");
+    expect(handle).toHaveClass("inner");
+  });
+
+  it("draws its line and names its keys in the status bar once the keyboard moves it, until it loses the keyboard", async () => {
+    resetFlash();
+    const { handle } = setup();
+    handle.focus();
+    await fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(handle).toHaveClass("keyed");
+    expect(flash.held).toBe("Arrows resize, Shift for more, Home resets");
+    handle.blur();
+    await fireEvent.blur(handle);
+    expect(handle).not.toHaveClass("keyed");
+    expect(flash.held).toBeNull();
+  });
+
+  it("takes no drag from a button other than the first", async () => {
+    const { handle, onDelta } = setup();
+    await fireEvent.pointerDown(handle, { clientX: 100, pointerId: 1, button: 2 });
+    await fireEvent.pointerMove(handle, { clientX: 140, pointerId: 1 });
+    expect(onDelta).not.toHaveBeenCalled();
   });
 });

@@ -269,8 +269,26 @@ test.describe("a started session's request in the starter's dock", () => {
     await agent(page, "f.releaseAnswers();");
     await expect(dock).toContainText("Fix the cache asks to run ls");
     await expect(dock.getByTestId("choice-allow")).toBeFocused();
-    // Once it settles in, the last one is answered the same way, and the
-    // keyboard goes back to the composer.
+    // Once it settles in, its choices are whole at once, never faint while
+    // they answer.
+    const whole = await dock.getByTestId("choice-allow").evaluate(
+      (choice) =>
+        new Promise<string>((resolve) => {
+          const told = () => {
+            if (choice.hasAttribute("aria-disabled")) return false;
+            resolve(getComputedStyle(choice).opacity);
+            return true;
+          };
+          if (told()) return;
+          const watch = new MutationObserver(() => {
+            if (told()) watch.disconnect();
+          });
+          watch.observe(choice, { attributes: true, attributeFilter: ["aria-disabled"] });
+        }),
+    );
+    expect(whole).toBe("1");
+    // The last one is answered the same way, and the keyboard goes back to
+    // the composer.
     await expect(dock.getByTestId("choice-allow")).not.toHaveAttribute("aria-disabled");
     await agent(page, "f.holdAnswers();");
     await page.keyboard.press("Enter");

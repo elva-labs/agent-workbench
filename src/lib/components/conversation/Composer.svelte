@@ -949,6 +949,7 @@
         : fileMenu === "list"
           ? rowId(fileMenuId, fileMarking)
           : undefined}
+      data-menu={slashMenu !== null || fileMenu !== null || menu !== null ? "" : undefined}
       data-testid="composer-input"
     ></textarea>
     {#if ghost !== null}

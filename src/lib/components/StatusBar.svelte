@@ -382,7 +382,7 @@
   {/if}
 
   <span class="grow">
-    <span class="flash" class:on={(flash.text ?? "") !== ""} role="status" data-testid="flash-readout">{flash.text ?? ""}</span>
+    <span class="flash" class:on={(flash.text ?? flash.held ?? "") !== ""} role="status" data-testid="flash-readout">{flash.text ?? flash.held ?? ""}</span>
   </span>
   {#if unreadCount() > 0}
     <span class="waiting" data-testid="waiting-readout">{unreadCount()} waiting for you</span>
@@ -481,6 +481,12 @@
        against the bar in every look and theme. */
     --status-quiet: color-mix(in srgb, var(--ink-2) 60%, var(--ink-3));
     --status-warn: color-mix(in srgb, var(--ansi-yellow) 88%, var(--ink));
+  }
+
+  /* On the modern look's ground the bar's words start where the sessions
+     column's do. */
+  :global(:root[data-look="modern"]) .status {
+    padding: 0 15px;
   }
 
   .status > * {

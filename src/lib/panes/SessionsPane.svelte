@@ -75,6 +75,8 @@
   import { openResume } from "$lib/resume.svelte";
   import { lastSegment } from "$lib/paths";
   import {
+    FOLDED,
+    folded as foldedWidth,
     focusPane,
     layout,
     peekSessions,
@@ -1108,6 +1110,30 @@
   /** Folded to its narrow column: the rows keep their places, and the pane
       is one button that opens it. Peeked over the agent, it is open. */
   let folded = $derived(!sessionsShown());
+  /** Folded wide enough to show the start of each session's name, where
+      the column holds the window's buttons. */
+  let wide = $derived(foldedWidth() > FOLDED);
+
+  /** The list scrolls under the foot: only then does a rule part them. */
+  let tree = $state<HTMLDivElement | null>(null);
+  let under = $state(false);
+  function measureUnder() {
+    if (tree === null) return;
+    under = tree.scrollTop + tree.clientHeight < tree.scrollHeight - 1;
+  }
+  $effect(() => {
+    if (tree === null) return;
+    const observer = new ResizeObserver(measureUnder);
+    observer.observe(tree);
+    for (const child of tree.children) observer.observe(child);
+    const mutations = new MutationObserver(measureUnder);
+    mutations.observe(tree, { childList: true, subtree: true });
+    measureUnder();
+    return () => {
+      observer.disconnect();
+      mutations.disconnect();
+    };
+  });
   /** Reviewing folds the pane, and so does editing in a window that keeps
       the editor's room, and the column peeks it over the pane beside it;
       a window too narrow for it otherwise has nothing to open it into. */
@@ -1828,6 +1854,7 @@
   <div
     class="nav"
     class:folded
+    class:wide
     inert={folded}
     tabindex="0"
     aria-label="Projects and sessions"
@@ -1859,7 +1886,7 @@
       data-testid="new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
     >
   </div>
-  <div class="tree">
+  <div class="tree" bind:this={tree} onscroll={measureUnder}>
     {#if workspace.open.length === 0}
       <div class="empty" data-testid="no-project">
         <p>Open a folder to work in. A session starts there, and the changes pane watches it.</p>
@@ -1957,7 +1984,7 @@
   <!-- Whose login the session on screen runs under, once there are
        accounts to tell apart, and the way to the settings beside it. -->
   {#if footAccount !== null}
-    <div class="foot">
+    <div class="foot" class:under>
       <span class="avatar" aria-hidden="true">{footAccount.slice(0, 1).toUpperCase()}</span>
       <span class="who" data-testid="pane-account">{footAccount}</span>
       <button
@@ -2028,6 +2055,12 @@
     mask-image: linear-gradient(to right, #000 calc(var(--folded) - 14px), transparent calc(var(--folded) - 3px));
   }
 
+  /* Folded wide, the start of each session's name shows beside its dot,
+     fading out at the column's edge. */
+  .nav.folded.wide {
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 20px), transparent calc(var(--folded) - 2px));
+  }
+
   .nav.folded .project-row .name {
     text-overflow: clip;
   }
@@ -2060,6 +2093,10 @@
   .nav.folded .cursor::before,
   .error-row.folded {
     visibility: hidden;
+  }
+
+  .nav.folded.wide .session .first .label {
+    visibility: visible;
   }
 
   /* The head: a field that opens go to, and beside it the accent button
@@ -2444,10 +2481,14 @@
     gap: 8px;
     min-height: 37px;
     padding: 6px 14px;
-    border-top: 1px solid var(--head-rule);
+    border-top: 1px solid transparent;
     font-family: var(--chrome);
     font-size: var(--label-size);
     color: var(--ink-2);
+  }
+
+  .foot.under {
+    border-top-color: var(--head-rule);
   }
 
   .avatar {
