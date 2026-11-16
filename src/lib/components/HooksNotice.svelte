@@ -50,6 +50,13 @@
     color: var(--ink);
   }
 
+  /* Where the cards let a background through, the second surface is a
+     fill let through, laid over the card's paint so this still covers
+     what is under it. */
+  :global(:root[data-cards]) .notice {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .title {
     margin: 0 0 4px;
     font-family: var(--chrome);

@@ -205,6 +205,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
+    data-card
     role="dialog"
     aria-modal={palette.open ? "true" : undefined}
     aria-label="Palette"
@@ -377,7 +378,7 @@
     max-height: 70vh;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule);
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
@@ -556,7 +557,7 @@
   }
 
   .dot.permission {
-    background: var(--surface);
+    background: var(--clear-surface);
     border-color: var(--accent);
     animation: none;
   }

@@ -54,7 +54,7 @@
     border: 1px solid var(--rule);
     border-radius: var(--radius);
     overflow: hidden;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .head {

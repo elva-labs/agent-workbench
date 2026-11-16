@@ -57,7 +57,7 @@ const theme = EditorView.theme({
   "&": {
     height: "100%",
     color: "var(--ink)",
-    backgroundColor: "var(--surface)",
+    background: "var(--clear-surface)",
     fontSize: "var(--editor-size, 12px)",
     isolation: "isolate",
   },
@@ -73,8 +73,9 @@ const theme = EditorView.theme({
     outline: "none",
   },
   ".cm-line": { padding: "0 24px 0 4px" },
+  // The gutter covers the code that scrolls under it sideways.
   ".cm-gutters": {
-    backgroundColor: "var(--surface)",
+    background: "var(--paint-surface)",
     color: "var(--ink-3)",
     border: "none",
   },
@@ -106,7 +107,7 @@ const theme = EditorView.theme({
     backgroundColor: "color-mix(in srgb, var(--accent) 38%, transparent)",
   },
   ".cm-panels": {
-    backgroundColor: "var(--surface)",
+    background: "var(--clear-surface)",
     color: "var(--ink-2)",
   },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--head-rule)" },
@@ -163,7 +164,7 @@ const theme = EditorView.theme({
   },
   ".cm-find-button:hover": { color: "var(--ink)" },
   ".cm-find-button[aria-pressed=true]": {
-    backgroundColor: "var(--surface)",
+    background: "var(--paint-surface)",
     color: "var(--ink)",
     boxShadow: "0 0 0 1px var(--head-rule)",
   },

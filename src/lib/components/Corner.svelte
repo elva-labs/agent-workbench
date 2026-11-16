@@ -168,7 +168,7 @@
   }
 
   .mode button.on {
-    background: var(--surface);
+    background: var(--paint-surface);
     color: var(--ink);
     font-weight: var(--btn-weight);
     box-shadow: 0 0 0 1px var(--head-rule);

@@ -330,6 +330,13 @@
     background: var(--surface-2);
   }
 
+  /* In the terminal look the row lies in the box, which lets a background
+     through with the cards: the button lays the hovered tab's fill over
+     the box's paint, so it still covers the end of the name. */
+  :global(:root[data-cards]:not([data-look])) .tab:not(.on):not(.dirty) .close {
+    background: linear-gradient(var(--surface-2), var(--surface-2)), var(--paint-surface);
+  }
+
   .tab:not(.on):not(.dirty):hover .close {
     visibility: visible;
   }
@@ -433,7 +440,7 @@
   }
 
   .views button.on {
-    background: var(--surface);
+    background: var(--paint-surface);
     color: var(--ink);
     font-weight: var(--btn-weight);
     box-shadow: 0 0 0 1px var(--head-rule);

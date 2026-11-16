@@ -153,6 +153,7 @@
       bind:this={popover}
       {id}
       class="popover"
+      data-card
       role="region"
       aria-label="Where the run stands"
       style:left="{at.left}px"
@@ -304,7 +305,7 @@
     box-sizing: border-box;
     overflow-y: auto;
     padding: 11px 12px 12px;
-    background: var(--surface);
+    background: var(--paint-surface);
     border-radius: calc(var(--radius) + 2px);
     box-shadow:
       0 0 0 1px var(--divider, var(--rule)),

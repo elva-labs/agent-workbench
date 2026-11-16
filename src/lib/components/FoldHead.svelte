@@ -208,7 +208,7 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <!-- svelte-ignore a11y_click_events_have_key_events -->
             <div class="scrim" onclick={() => (menuOpen = false)}></div>
-            <div class="menu" role="menu" data-testid="plugin-actions-menu">
+            <div class="menu" data-card role="menu" data-testid="plugin-actions-menu">
               {#each over as action (action.id)}
                 <button
                   role="menuitem"
@@ -355,7 +355,7 @@
     z-index: 5;
     min-width: 148px;
     padding: 4px 0;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius);
     box-shadow: 0 8px 24px color-mix(in srgb, black 25%, transparent);

@@ -438,6 +438,7 @@
       <div
         bind:this={popover}
         class="pop"
+        data-card
         role="dialog"
         tabindex="-1"
         aria-label="Allowance"
@@ -738,7 +739,7 @@
     flex-direction: column;
     padding: 10px 12px 8px;
     border-radius: calc(var(--radius) + 2px);
-    background: var(--surface);
+    background: var(--paint-surface);
     box-shadow:
       0 0 0 1px var(--divider, var(--rule-strong)),
       0 12px 32px color-mix(in srgb, black 24%, transparent);

@@ -60,7 +60,7 @@
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) + 3px);
     overflow: hidden;
-    background: var(--surface);
+    background: var(--clear-surface);
   }
 
   .row {

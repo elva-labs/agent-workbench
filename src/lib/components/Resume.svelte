@@ -80,6 +80,7 @@
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="dialog"
+    data-card
     role="dialog"
     aria-modal="true"
     aria-labelledby="resume-title"
@@ -146,7 +147,7 @@
     max-height: 80vh;
     display: flex;
     flex-direction: column;
-    background: var(--surface);
+    background: var(--paint-surface);
     border: 1px solid var(--accent);
     border-radius: var(--radius);
     box-shadow: 0 18px 48px color-mix(in srgb, black 35%, transparent);
@@ -209,6 +210,12 @@
     background: var(--bg);
     color: var(--ink);
     outline: none;
+  }
+
+  /* On a card that lets a background through, the field is the ink let
+     through rather than the window's ground. */
+  :global(:root[data-cards]) input {
+    background: var(--field-bg);
   }
 
   input:focus {
