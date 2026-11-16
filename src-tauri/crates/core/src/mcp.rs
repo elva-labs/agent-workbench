@@ -33,7 +33,7 @@ pub const PROTOCOL_VERSION: &str = "2024-11-05";
 /// something put together at run time.
 macro_rules! general_instructions {
     () => {
-        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait or notify; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not."
+        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait or notify; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait."
     };
 }
 
@@ -627,7 +627,7 @@ pub fn sessions_tool() -> Value {
 pub fn start_tool() -> Value {
     json!({
         "name": "start",
-        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then call wait to hear how it went, and send to answer anything it asks. With a session named, one you started before that has since stopped, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed.",
+        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then keep calling wait until it and the others you started are done, without handing the turn back while any is running unless you need the user, and send to answer anything one asks. With a session named, one you started before that has since stopped, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -891,6 +891,10 @@ fn call(
     }
 }
 
+/// How long before a wait stops reading the window's answer must be left,
+/// which the core holds it to: the rest is for the answer to land.
+const WAIT_GRACE: Duration = Duration::from_millis(300);
+
 /// How long a wait call waits: what it asked for, no longer than the most
 /// on offer, and the usual wait when it asked for nothing.
 fn waiting_for(arguments: &Value, waits: &Waits) -> Duration {
@@ -912,22 +916,11 @@ fn conduct_call(
     waits: Waits,
     cancelled: &AtomicBool,
 ) -> Result<Value, String> {
-    let id = uuid::Uuid::new_v4().to_string();
-    show::append(
-        home,
-        &Request::Conduct(ConductRequest {
-            id: id.clone(),
-            tool: name.to_string(),
-            arguments: arguments.clone(),
-            cwd: cwd.to_string_lossy().to_string(),
-            session: session.map(str::to_string),
-        }),
-    )?;
     // A wait sits for as long as it asked. A start is put to the user, who
     // may take a while to answer, and is given as long as a wait gets by
     // default: a start that gave up while the user was still deciding
     // started the session anyway, late, and the caller started another.
-    let watching = name == "wait";
+    let watching = name == show::CONDUCT_WAIT;
     let asked = name == "start";
     let wait = if watching {
         waiting_for(arguments, &waits)
@@ -936,6 +929,27 @@ fn conduct_call(
     } else {
         waits.answer
     };
+    // A wait carries the time it stops reading, less a moment for the
+    // answer to land, and the core leaves no answer past it: what the
+    // window tells in one is told only once it is read.
+    let mut arguments = arguments.clone();
+    if watching {
+        if let Some(given) = arguments.as_object_mut() {
+            let deadline = show::now_ms() + wait.saturating_sub(WAIT_GRACE).as_millis() as u64;
+            given.insert("deadline".to_string(), json!(deadline));
+        }
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    show::append(
+        home,
+        &Request::Conduct(ConductRequest {
+            id: id.clone(),
+            tool: name.to_string(),
+            arguments,
+            cwd: cwd.to_string_lossy().to_string(),
+            session: session.map(str::to_string),
+        }),
+    )?;
     let Some(answer) = await_answer_unless(home, &id, wait, cancelled) else {
         if cancelled.load(Ordering::SeqCst) {
             // The window is told so it does not report to a call no one is
@@ -1912,6 +1926,9 @@ mod tests {
         let general = instructions_for(None);
         assert!(general.contains("show tool"));
         assert!(!general.contains("start tool"));
+        // A session that started others, as any session may, keeps waiting
+        // on them rather than handing its turn back.
+        assert!(general.contains("keep calling wait until all of them are done"));
         assert_eq!(instructions_for(Some("something else")), general);
 
         let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE));
@@ -2015,6 +2032,10 @@ mod tests {
             1800
         );
         assert!(wait["description"].as_str().unwrap().contains("blocks"));
+        assert!(named("start")["description"]
+            .as_str()
+            .unwrap()
+            .contains("keep calling wait until it and the others you started are done"));
         assert_eq!(
             named("send")["inputSchema"]["required"],
             json!(["session", "text"])
@@ -2394,7 +2415,9 @@ mod tests {
         };
         // Half an hour asked for, and the cap is what it waits.
         let started = Instant::now();
-        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":1800}}}"#, waits).unwrap();
+        let asked = show::now_ms();
+        let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"wait","arguments":{"seconds":1800,"deadline":1}}}"#, waits).unwrap();
+        let answered = show::now_ms();
         assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(answer["result"]["isError"], true);
         let text = answer["result"]["content"][0]["text"].as_str().unwrap();
@@ -2407,6 +2430,15 @@ mod tests {
         };
         assert_eq!(call.tool, "wait");
         assert_eq!(call.arguments["seconds"], 1800);
+        // The time past which no answer is read, the tool server's own and
+        // not one the agent gave: what it waits less the margin for the
+        // answer to land, from when the call was made.
+        let deadline = call.arguments["deadline"].as_u64().unwrap();
+        let short = waits.longest.saturating_sub(WAIT_GRACE).as_millis() as u64;
+        assert!(
+            deadline >= asked + short && deadline <= answered + short,
+            "{deadline}"
+        );
 
         // Asked for nothing, and the default is what it waits.
         let home = self::home("conduct-wait-default");

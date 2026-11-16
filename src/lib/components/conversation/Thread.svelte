@@ -2,7 +2,7 @@
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
   import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
-  import { reportsShown, spoken } from "$lib/instructions";
+  import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
@@ -1073,10 +1073,16 @@
   {/if}
 {/snippet}
 
+<!-- A message to the agent: the user's, another session's under its name,
+     or the workbench's own, sent to a session that was idle, which says
+     what the sessions it started did, each by the name its row has. -->
 {#snippet userMessage(said: Message)}
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
-  {@const words = spoken(said.text, from === null)}
+  {@const words = from?.workbench
+    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null }
+    : spoken(said.text, from === null)}
+  {@const putBack = from?.workbench ? undefined : onPutBack}
   <article
     class="msg you"
     class:from={from !== null}
@@ -1084,7 +1090,7 @@
     class:dropped={said.state === "dropped" || said.state === "failed"}
     data-testid="user-message"
     data-state={said.state}
-    data-from={from?.id}
+    data-from={from?.workbench ? "workbench" : from?.id}
     data-copy-host="message"
   >
     <header class="who">
@@ -1155,15 +1161,15 @@
     {:else if said.state === "dropped"}
       <p class="state bad">
         Not answered{#if said.error}: <Plain text={said.error} />{/if}
-        {#if onPutBack}
-          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+        {#if putBack}
+          <button class="link" tabindex="-1" data-thread-item onclick={() => putBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {:else if said.state === "failed"}
       <p class="state bad">
         Not sent{#if said.error}: <Plain text={said.error} />{/if}
-        {#if onPutBack}
-          <button class="link" tabindex="-1" data-thread-item onclick={() => onPutBack(said)} data-testid="put-back">Put back in the composer</button>
+        {#if putBack}
+          <button class="link" tabindex="-1" data-thread-item onclick={() => putBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
       </p>
     {/if}
