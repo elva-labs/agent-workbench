@@ -791,6 +791,9 @@ function orchestratorModel(workflow: Workflow): string | null {
  */
 function tokenFor(resumedFrom: string | null, project: string): string {
   if (resumedFrom === null) return crypto.randomUUID();
+  // A run named by the id still runs: what is kept under the id is that
+  // run's until it stops, and moves at its own next start.
+  if (heldLive(resumedFrom)) return crypto.randomUUID();
   const kept = keptToken(resumedFrom);
   if (kept !== null) {
     if (heldLive(kept)) return crypto.randomUUID();
@@ -854,8 +857,9 @@ export function keepToken(session: Session) {
   }
   if (sessions.tokens[id]?.token === session.token) return;
   // A run taken up after a reload that was named by its id goes on so
-  // until it stops; the id is never kept as a token.
-  if (session.token === id) return;
+  // until it stops; an id is never kept as a token, nor the one the row
+  // was resumed from.
+  if (session.token === id || session.token === session.resumedFrom) return;
   sessions.tokens[id] = { token: session.token, project: session.project };
   saveTokens();
 }

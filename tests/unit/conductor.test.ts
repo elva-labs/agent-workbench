@@ -3865,6 +3865,8 @@ describe("sessions told apart by their tokens", () => {
       "orch-old": {
         places: { "kid-old": { step: "Work", kind: "work", piece: "kid-old", round: null, work: null } },
         rounds: { "review\nkid-old": 2 },
+        stopped: { "review\nkid-old": 2 },
+        rested: ["kid-old"],
       },
     },
   };
@@ -3894,14 +3896,17 @@ describe("sessions told apart by their tokens", () => {
     expect(token).not.toBe("orch-old");
     cameUp(back.key, "pty-back", "orch-old");
     expect(sessions.tokens["orch-old"]?.token).toBe(token);
-    // What it started, the places and the rounds are the token's.
+    // What it started, the places, the rounds, the piece stopped at the
+    // review's limit and the session last seen at rest are the token's.
     expect(conductor.started[token].map((known) => known.id)).toEqual(["kid-old"]);
     expect(roundsOf(token, "Review", "kid-old")).toBe(2);
+    expect(stored("workbench.runs")[token]).toEqual(keptOld.runs["orch-old"]);
     await handle(raw("sessions", {}, { session: token }));
     expect(last().content).toContain("kid-old");
-    // The id's own copy stays as it was, for the version before.
+    // The id's list stays as it was, for the version before; no version
+    // reads the id's run, which goes.
     expect(stored("workbench.started")["orch-old"]).toEqual(keptOld.started["orch-old"]);
-    expect(stored("workbench.runs")["orch-old"]).toEqual(keptOld.runs["orch-old"]);
+    expect(stored("workbench.runs")["orch-old"]).toBeUndefined();
     // The version with tokens before this one finds the token kept by the
     // id and what moved under the token.
     expect((stored("workbench.started")[token] as { id: string }[]).map((known) => known.id)).toEqual(["kid-old"]);
@@ -3983,6 +3988,14 @@ describe("sessions told apart by their tokens", () => {
     expect(conductor.started[first.token].map((known) => known.id)).toEqual(["kid-old"]);
     expect(conductor.started[second.token]).toBeUndefined();
     expect(roundsOf(first.token, "Review", "kid-old")).toBe(2);
+    // Two live rows with one id keep a token neither holds for it, and the
+    // session the first started is still the first's: the token's list
+    // goes before the one kept under the id.
+    expect(sessions.tokens["orch-old"]?.token).not.toBe(first.token);
+    const kid = reopened(B, "kid-old", "claude-code", null, null, null);
+    expect(startedFor(kid.key)).toBe(first.token);
+    await handle(raw("stop", { session: "kid-old" }, { session: first.token }));
+    expect(last().content).toBe("Stopped session kid-old.");
   });
 
   it("loses nothing and doubles nothing when a second window moves the same session", async () => {
@@ -4007,17 +4020,73 @@ describe("sessions told apart by their tokens", () => {
     // Neither window gave its row the other's token, nor the id.
     expect(theirs.token).not.toBe(mine.token);
     expect(theirs.token).not.toBe("orch-old");
-    // The first window writes its lists over the second's: the token the
+    // Each window moved the run to its own token, once.
+    expect(roundsOf(theirs.token, "Review", "kid-old")).toBe(2);
+    expect(stored("workbench.runs")["orch-old"]).toBeUndefined();
+    // The first window writes its list over the second's: the token the
     // second kept has lost its copy, and the next start puts it back,
     // once.
     localStorage.setItem("workbench.started", ours.started);
-    localStorage.setItem("workbench.runs", ours.runs);
     restartedWithTokens();
     const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
     expect(back.token).toBe(theirs.token);
     cameUp(back.key, "pty-3", "orch-old");
     expect(conductor.started[back.token].map((known) => known.id)).toEqual(["kid-old"]);
     expect(roundsOf(back.token, "Review", "kid-old")).toBe(2);
+  });
+
+  /** A run the version before named by its id, taken up after a reload
+      while the core still runs it, given a standing answer for B. */
+  async function runUnderItsId() {
+    keptByAnEarlierVersion();
+    const run = reopened(A, "orch-old", "claude-code", null, null, null, "integrated", null, true, "orch-old");
+    run.status = "running";
+    await startAllowed(raw("start", { project: B, prompt: "More" }, { session: "orch-old" }), "pty-new", "kid-new");
+    expect(allowedProjects("orch-old")).toEqual([B]);
+    return run;
+  }
+
+  it("leaves a run named by its id what it has while a second resume of it comes up", async () => {
+    const run = await runUnderItsId();
+    const kid = reopened(B, "kid-old", "claude-code", null, null, null);
+    const second = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    // A token of its own, with nothing kept for the id and nothing moved.
+    expect([run.token, "orch-old"]).not.toContain(second.token);
+    expect(sessions.tokens["orch-old"]).toBeUndefined();
+    expect(conductor.started[second.token]).toBeUndefined();
+    expect(allowedProjects(second.token)).toEqual([]);
+    cameUp(second.key, "pty-second", "orch-old");
+    expect(allowedProjects(second.token)).toEqual([]);
+    // The run goes on as before: its answer, and the sessions it started.
+    expect(allowedProjects("orch-old")).toEqual([B]);
+    expect(startedFor(kid.key)).toBe("orch-old");
+    await handle(raw("stop", { session: "kid-old" }, { session: "orch-old" }));
+    expect(last().content).toBe("Stopped session kid-old.");
+    await handle(raw("sessions", {}, { session: second.token }));
+    expect(last().content).toBe("You have started no sessions.");
+  });
+
+  it("moves a standing answer to the token, so one taken back there does not come back", async () => {
+    const run = await runUnderItsId();
+    run.status = "exited";
+    renewToken(run);
+    const token = run.token;
+    expect(allowedProjects(token)).toEqual([B]);
+    expect(allowedProjects("orch-old")).toEqual([]);
+    run.status = "running";
+    // The user takes it back on the board; the session is closed and
+    // resumed from the pane.
+    revoke(token, B);
+    close(run.key);
+    const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    expect(back.token).toBe(token);
+    cameUp(back.key, "pty-back", "orch-old");
+    expect(allowedProjects(token)).toEqual([]);
+    const asked = handle(raw("start", { project: B, prompt: "Again" }, { session: token }));
+    await settle();
+    expect(conductor.asking).not.toBeNull();
+    refuse();
+    await asked;
   });
 
   it("lets a run named by its id go on until it stops, and moves what it started on its next start", async () => {
