@@ -2491,10 +2491,11 @@ export function viewed(key: string) {
 }
 
 /** The agent left a line for the row: shown under the name, and the row
-    wants attention, until someone looks. */
+    wants attention, until someone looks. A line the run a reopen stops
+    leaves on its way out is not left for the user. */
 export function noted(key: string, text: string) {
   const session = byKey(key);
-  if (session === null) return;
+  if (session === null || reopening.has(key)) return;
   session.note = shown(text);
   unseen(session);
 }
@@ -2553,6 +2554,9 @@ export function exact(
   const still = stills.get(session.key);
   if (still !== undefined) clearTimeout(still);
   stills.delete(session.key);
+  // The line a run that a reopen stops leaves on its way out is not left
+  // for the user.
+  const line = reopening.has(session.key) ? null : note;
   switch (kind) {
     case "prompt":
       session.working = true;
@@ -2575,7 +2579,7 @@ export function exact(
       // own may call its end a stop as well.
       session.turnEnd = cut || session.turnEnd === "cut" ? "cut" : "done";
       changed(session);
-      if (session.note === null && note !== null) session.note = shown(note);
+      if (session.note === null && line !== null) session.note = shown(line);
       unseen(session);
       break;
     case "delegated": {
@@ -2588,7 +2592,7 @@ export function exact(
       session.delegated = true;
       stirred(session);
       if (idle) changed(session);
-      if (session.note === null && note !== null) session.note = shown(note);
+      if (session.note === null && line !== null) session.note = shown(line);
       break;
     }
     case "permission": {

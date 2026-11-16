@@ -1108,6 +1108,43 @@ describe("a session reopened the other way", () => {
     expect(pty.spawned.at(-1)!.mode).toBeUndefined();
   });
 
+  it("leaves no line on the row from what the run it stops says on its way out", async () => {
+    const { key, handle } = await started();
+    // Nobody looks at it.
+    attention.focused = false;
+    send(key, "Go");
+    fake.startTurn(handle);
+    fake.emit(handle, { type: "state", state: "working" });
+    fake.emit(handle, { type: "text", block: "b-1", parent: null, text: "Halfway through the fix", done: true });
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__WORKBENCH_CORE__;
+    const stopNow = seam.integratedStop;
+    let release = () => {};
+    seam.integratedStop = (async (id: string) => {
+      release = () => void stopNow(id as never);
+    }) as never;
+    const reopening = reopenOtherWay(key);
+    await settled();
+    // Its turn ends as it goes, and it comes to rest.
+    fake.endTurn(handle, "interrupted");
+    fake.emit(handle, { type: "state", state: "idle" });
+    release();
+    expect(await reopening).toBe(true);
+    seam.integratedStop = stopNow;
+    await launchTerminal(key, 80, 24, () => {});
+    expect(byKey(key)).toMatchObject({ kind: "terminal", note: null, unread: false });
+
+    // A terminal's stop hook on its way out says the same.
+    const row = terminalRow("conversation-1");
+    pty.onWrite = (id) => {
+      if (pty.written.filter(([on, data]) => on === id && data === "\x03").length < 2) return;
+      exact("conversation-1", "stop", "Fixed the flaky test");
+      endedTerminal({ id, code: 0, clean: true });
+    };
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    expect(byKey(row.key)).toMatchObject({ kind: "integrated", note: null, unread: false });
+  });
+
   it("quits a terminal Claude Code session as the user would, and kills it only if it does not go", async () => {
     const row = terminalRow("conversation-1");
     // It quits on the second Ctrl+C, as Claude Code does at its prompt.
