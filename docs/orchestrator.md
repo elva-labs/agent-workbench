@@ -122,10 +122,24 @@ runs of the app too, so it is the same starter as before. The agent's own
 id is what it is resumed by, and what the tools name the sessions it
 started by; no tool answers with a token.
 
+An agent's id is never a token. The tools answer with ids and the sessions
+pane shows them, so any agent can learn one, and a session named by its id
+could be called as by any of them. A session from before there were
+tokens, which was named by its id, is given a token of its own the first
+time it is resumed, and keeps it from then on; what was kept under its id
+moves to the token, as [what is remembered](#what-is-remembered)
+describes. A session that was still running under its id when the window
+was reloaded, whose environment holds the id, is named by it until it
+stops, and its next start gives it a token.
+
 A call whose token names a session the workbench is not running, one it
 never had or one that has stopped, cannot come from one of its sessions,
 and every one of the seven tools refuses it, with the reason, asking
-nothing.
+nothing. A call that names an agent's id is refused the same way. The
+other tools take either for a call from no session: show, diff, terminal,
+notify and present act as for an agent the workbench did not start, the
+browser tools refuse it, and the settings tools put its change to the user
+as an agent's.
 
 A call that names no session is taken for one from an agent the workbench
 did not start, such as one run by hand in a project whose hooks are on,
@@ -154,10 +168,15 @@ The token is an identifier, not a secret: the workbench cannot see which
 process made a call. A tool server run by hand from a session's shell has
 that session's token in its environment, and an agent started from that
 shell does too; either is taken for that session, as under [following a
-workflow](#following-a-workflow). Every call is also written, with its
-token, to the request log in `~/.agent-workbench`, which any program the
-user runs can read and add to, so any agent of the user's can learn
-another session's token there and call as it.
+workflow](#following-a-workflow). The request log in `~/.agent-workbench`
+is how a call reaches the workbench: the tool server adds a line for each
+call, with its token, and the workbench reads it. The log holds the most
+recent calls, up to a quarter of a megabyte, and any program the user runs
+can read it and add to it, so any agent of the user's can learn the token
+of a session that called lately there and call as it. Keeping tokens out
+of the request log narrows who learns one by accident, not who can: the
+token is also in the environment of the session's own processes and in the
+window's stored state.
 
 ## When the user writes to it
 
@@ -330,6 +349,18 @@ session the orchestrator stopped itself is not offered back: the stop said
 it was done with. The record lives with the window's other memory, so a
 wiped local storage forgets it, which only means the orchestrator starts
 afresh.
+
+A session from before there were tokens had all of this kept under its id,
+and the standing answers it was given in this run of the app as well. When
+it is given a token, they move there: the lists are joined by session id
+and a count of rounds takes the larger of the two, so a move made again
+adds nothing, and puts back what a second window that wrote over the
+first lost. The id's own copy stays for the version before to read, and
+what the workflow ran goes from both, with the token, once the session is
+gone from its project's past sessions. What the session is done with, such
+as a session it stopped, goes from both, so a move never brings it back. A
+session resumed while a run of it named by its id still runs gets a token
+of its own all the same: two rows never share one.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool

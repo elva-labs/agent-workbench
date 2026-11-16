@@ -71,6 +71,8 @@ import {
   launch,
   workflowFor,
   byToken,
+  runningByToken,
+  wake,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import {
@@ -1033,11 +1035,47 @@ describe("the token a session's tools name it by", () => {
     expect(spawned.at(-1)).toMatchObject({ session: "cx-1", token });
   });
 
-  it("is the agent's id for a session from before there were tokens, which needs nothing kept", () => {
+  it("is a new one for a session from before there were tokens, kept by its id at once", async () => {
     const back = create(A, "old-1");
-    expect(back.token).toBe("old-1");
-    started(back.key, "pty-1", "old-1");
-    expect(sessions.tokens["old-1"]).toBeUndefined();
+    expect(back.token).not.toBe("old-1");
+    expect(sessions.tokens["old-1"]).toEqual({ token: back.token, project: A });
+    expect(JSON.parse(localStorage.getItem("workbench.tokens")!)["old-1"].token).toBe(back.token);
+    await launch(back.key, 80, 24, () => {});
+    expect(spawned.at(-1)).toMatchObject({ session: "old-1", token: back.token });
+    expect(sessions.tokens["old-1"]?.token).toBe(back.token);
+    // Resumed again, after a restart too, it has the same one.
+    close(back.key);
+    reset();
+    loadRemembered();
+    expect(create(A, "old-1").token).toBe(back.token);
+  });
+
+  it("is never an agent's id, even one kept as a token by mistake", () => {
+    localStorage.setItem("workbench.tokens", JSON.stringify({ "old-2": { token: "old-2", project: A } }));
+    loadRemembered();
+    const back = create(A, "old-2");
+    expect(back.token).not.toBe("old-2");
+    expect(sessions.tokens["old-2"]?.token).toBe(back.token);
+    expect(byToken("old-2")).toBeNull();
+  });
+
+  it("is kept for a run taken up after a reload until it stops, and the next start has a new one", () => {
+    // The core still runs the session, started with its id as its token by
+    // the version before.
+    const row = reopened(A, "old-3", "claude-code", null, null, null, "integrated", null, true, "old-3");
+    row.status = "running";
+    expect(row.token).toBe("old-3");
+    expect(runningByToken("old-3")?.key).toBe(row.key);
+    // The id is never kept as a token.
+    expect(sessions.tokens["old-3"]).toBeUndefined();
+    row.status = "exited";
+    expect(runningByToken("old-3")).toBeNull();
+    // Woken, or started again in place, it is given a token of its own.
+    row.status = "dormant";
+    wake(row.key);
+    expect(row.token).not.toBe("old-3");
+    expect(sessions.tokens["old-3"]?.token).toBe(row.token);
+    expect(byToken("old-3")).toBeNull();
   });
 
   it("is kept for neither of two live sessions found to have one id, and the session resumed by it is neither", () => {
@@ -2217,7 +2255,10 @@ describe("following a workflow", () => {
     expect(Object.keys(sessions.tokens).sort()).toEqual(["elsewhere", "here"]);
     // What their workflows ran, kept under their tokens, is let go of with
     // them.
-    expect(heard.map((tokens) => [...tokens].sort())).toEqual([["old", "token-gone", "token-plain"]]);
+    // So is what a session from before there were tokens kept under its id.
+    expect(heard.map((tokens) => [...tokens].sort())).toEqual([
+      ["gone", "old", "plain", "token-gone", "token-plain"],
+    ]);
     expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
     expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
   });

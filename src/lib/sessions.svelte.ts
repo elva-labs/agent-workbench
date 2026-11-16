@@ -55,7 +55,9 @@ export interface Session {
   /** What the session's tools name it by: chosen by the window, given to
       the agent's environment when it starts, and the same for a session
       resumed. Every call its tools make carries it, so the window knows
-      which session called. Not a secret: an identifier. */
+      which session called. Not a secret: an identifier. Never the agent's
+      id, but for a run from before there were tokens that the window took
+      up after a reload, until it stops. */
   token: string;
   /** The project this session belongs to, as an absolute path. */
   project: string;
@@ -210,7 +212,7 @@ export const sessions = $state({
   /** The token each session's tools name it by, with the project it runs
       in, by the agent's id for the session, kept between runs, so a session
       resumed is named as it was and still owns what was kept under its
-      token. */
+      token. Never the id itself. */
   tokens: {} as Record<string, KeptToken>,
   /** What is kept of the workflow each session follows, by session id. A
       session that follows none is not here. */
@@ -582,7 +584,7 @@ export function loadRemembered() {
       }
     }
   } catch {
-    // No token is kept, then: a session resumed is named by its id.
+    // No token is kept, then: a session resumed is given a new one.
   }
   try {
     const raw = localStorage.getItem(WORKFLOWS_KEY);
@@ -736,11 +738,12 @@ function pruneKept(project: string) {
     .filter(([id, kept]) => gone(id, kept.project))
     .map(([id]) => id);
   if (workflows.length === 0 && tokens.length === 0) return;
-  // What else is kept for them is kept under their tokens, which for a
-  // session from before there were tokens is its id.
-  const callers = [...new Set([...workflows, ...tokens])].map(
-    (id) => sessions.tokens[id]?.token ?? id,
-  );
+  // What else is kept for them is kept under their tokens, and for a
+  // session from before there were tokens under its id as well.
+  const ids = [...new Set([...workflows, ...tokens])];
+  const callers = [
+    ...new Set(ids.flatMap((id) => [sessions.tokens[id]?.token ?? id, id])),
+  ];
   for (const id of workflows) delete sessions.workflows[id];
   for (const id of tokens) delete sessions.tokens[id];
   if (workflows.length > 0) saveKept();
@@ -751,9 +754,18 @@ function pruneKept(project: string) {
 let forgotten: (tokens: string[]) => void = () => {};
 
 /** Hears the tokens of sessions gone from their project's history, whose
-    kept workflow or token went with them. */
+    kept workflow or token went with them, and their ids, under which a
+    session from before there were tokens kept what it ran. */
 export function onForgotten(handler: ((tokens: string[]) => void) | null) {
   forgotten = handler ?? (() => {});
+}
+
+let moving: (id: string, token: string) => void = () => {};
+
+/** Hears a session given its token, to move what is kept under its id
+    there. */
+export function onMoved(handler: ((id: string, token: string) => void) | null) {
+  moving = handler ?? (() => {});
 }
 
 /** The model a workflow's orchestrator runs on, as the agent's command
@@ -766,17 +778,57 @@ function orchestratorModel(workflow: Workflow): string | null {
 /**
  * The token a new row's tools name it by. A session resumed has the one it
  * had, kept by its id, so it is the same session to everything kept under
- * that token; one from before there were tokens has its id, which is what
- * was kept under it then. A fresh session has a new one, and so does a
- * session whose token a live row holds already: two rows never answer to
- * one token at once.
+ * that token. One with none kept, as a session from before there were
+ * tokens has, is given a new one, kept by its id at once. Either way what
+ * an earlier version kept under the id moves to the token, joined to what
+ * is there so that a move made again adds nothing. A fresh session has a
+ * new one, and so does a session whose token a live row holds already:
+ * two rows never answer to one token at once.
+ *
+ * An agent's id is never a token: the tools answer with ids and the
+ * sessions pane shows them, so a session named by its id could be called
+ * as by any agent that learned it.
  */
-function tokenFor(resumedFrom: string | null): string {
-  const kept =
-    resumedFrom === null ? null : (sessions.tokens[resumedFrom]?.token ?? resumedFrom);
-  if (kept !== null && !sessions.all.some((row) => row.token === kept && isLive(row)))
+function tokenFor(resumedFrom: string | null, project: string): string {
+  if (resumedFrom === null) return crypto.randomUUID();
+  const kept = keptToken(resumedFrom);
+  if (kept !== null) {
+    if (heldLive(kept)) return crypto.randomUUID();
+    moving(resumedFrom, kept);
     return kept;
-  return crypto.randomUUID();
+  }
+  // Kept before anything moves to it, so a move cut short is made again
+  // at the next start, to the same token.
+  const token = crypto.randomUUID();
+  sessions.tokens[resumedFrom] = { token, project };
+  saveTokens();
+  moving(resumedFrom, token);
+  return token;
+}
+
+/** The token kept for a session's id, when one is: never the id. */
+function keptToken(id: string): string | null {
+  const kept = sessions.tokens[id]?.token;
+  return kept === undefined || kept === id ? null : kept;
+}
+
+/** Whether a live row other than this one answers to this token. */
+function heldLive(token: string, except: string | null = null): boolean {
+  return sessions.all.some((row) => row.key !== except && row.token === token && isLive(row));
+}
+
+/**
+ * Gives a row that is about to start a process of its own a token no
+ * running process holds. A row taken up after the window was reloaded has
+ * the token of the run it took up, which for a session from before there
+ * were tokens is its id: that run keeps it, since its environment holds
+ * it, and the next start is given a token of its own, with what was kept
+ * under the id moved to it.
+ */
+export function renewToken(session: Session) {
+  if (session.id !== null && session.token === session.id)
+    session.token = tokenFor(session.id, session.project);
+  if (heldLive(session.token, session.key)) session.token = crypto.randomUUID();
 }
 
 /**
@@ -801,9 +853,9 @@ export function keepToken(session: Session) {
     return;
   }
   if (sessions.tokens[id]?.token === session.token) return;
-  // A session from before there were tokens is named by its id, which
-  // needs nothing kept.
-  if (session.token === id && sessions.tokens[id] === undefined) return;
+  // A run taken up after a reload that was named by its id goes on so
+  // until it stops; the id is never kept as a token.
+  if (session.token === id) return;
   sessions.tokens[id] = { token: session.token, project: session.project };
   saveTokens();
 }
@@ -812,7 +864,7 @@ function saveTokens() {
   try {
     localStorage.setItem(TOKENS_KEY, JSON.stringify(sessions.tokens));
   } catch {
-    // Non-fatal: the session resumed after a restart is named by its id.
+    // Non-fatal: the session resumed after a restart is given a new token.
   }
 }
 
@@ -1420,9 +1472,12 @@ export function reopened(
   kind: SessionKind = "terminal",
   workflow: Workflow | null = null,
   resolve = true,
+  /** The token of a run the core may still be running from before the
+      window was reloaded, which the row takes up with it. */
+  running: string | null = null,
 ): Session {
   const live = added(
-    row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind),
+    row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind, running),
   );
   if (resolve) pending.add(live.key);
   return live;
@@ -1433,6 +1488,7 @@ export function reopened(
 export function wake(key: string) {
   const session = byKey(key);
   if (session?.status !== "dormant") return;
+  renewToken(session);
   session.status = "starting";
   changed(session);
 }
@@ -1448,11 +1504,12 @@ function row(
   status: SessionStatus,
   workflow: Workflow | null = null,
   kind: SessionKind = "terminal",
+  running: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
   return {
     key: `s${++counter}`,
-    token: tokenFor(resumedFrom),
+    token: running ?? tokenFor(resumedFrom, project),
     project,
     agent,
     kind,

@@ -1,7 +1,7 @@
 import { flushSync } from "svelte";
 import type { SpawnOptions } from "$lib/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { conductor, resetConductor } from "$lib/conductor.svelte";
+import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
 import { reopen, settleWhen, startup } from "$lib/reopen.svelte";
 import {
   activeSession,
@@ -270,11 +270,14 @@ describe("coming back", () => {
     onRecord([{ ...entry(A, "codex-a"), agent: "codex" }, entry(A, "claude-a")], null);
     stop = reopen();
     const back = forProject(A).find((session) => session.id === "codex-a")!;
-    // It comes back named by its id, as a session from before there were
-    // tokens, and what the folder held is its.
-    expect(back.token).toBe("codex-a");
-    expect(conductor.started["codex-a"].map((known) => known.id)).toEqual(["kid"]);
-    expect(conductor.started["claude-a"]).toBeUndefined();
+    // A session from before there were tokens comes back under a token of
+    // its own, never its id, and what the folder held is its.
+    expect(back.token).not.toBe("codex-a");
+    expect(sessions.tokens["codex-a"]?.token).toBe(back.token);
+    expect(conductor.started[back.token].map((known) => known.id)).toEqual(["kid"]);
+    expect(startedFor(sessions.all.find((session) => session.id === "claude-a")!.key)).toBeNull();
+    const other = forProject(A).find((session) => session.id === "claude-a")!;
+    expect(conductor.started[other.token]).toBeUndefined();
   });
 
   it("reads a corrupt record as nothing open", () => {

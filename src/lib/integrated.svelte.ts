@@ -25,6 +25,7 @@ import {
   failed,
   followsAgain,
   keepToken,
+  renewToken,
   loadHistory,
   named,
   noted,
@@ -421,6 +422,7 @@ export async function resume(key: string): Promise<void> {
 }
 
 function again(session: Session) {
+  renewToken(session);
   session.status = "starting";
   session.error = null;
   session.exitCode = null;
