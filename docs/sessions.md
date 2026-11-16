@@ -323,17 +323,15 @@ How an agent's sessions run is a setting per agent, a terminal to begin
 with; see [settings](settings.md#sessions). An agent runs integrated only
 where the core says it can drive it in messages, and the rest run in a
 terminal. A session under a
-[workflow](orchestrator.md#following-a-workflow) runs in a terminal
-whatever the setting, since its orchestrator is told the workflow as its
-process starts, and so does a resumed one that was ever told one, with it
-or without it now; the settings say so beside the choice. A single new
+[workflow](orchestrator.md#following-a-workflow) runs the way the setting
+of its orchestrator's agent says, as any session does, and is told the
+workflow either way; so does a resumed one. A single new
 session can be started the other way from New session's, for the agent the
 project used last: from the project's ⋯ menu, under its New session; from
 the palette, beside New session in the project on screen; and, with no
 session on screen, from the agent pane beside its New session button.
-Where the project's workflow makes New session a terminal, that is an
-integrated session. Started the other way, a session is a pick, as an
-agent picked is, and runs alone whatever the project follows. The + and
+Started the other way, a session is a pick, as an agent picked is, and
+runs alone whatever the project follows. The + and
 New session start the agent's own way, or the project's workflow, so
 nothing is asked of someone who never changes it. An integrated session is
 driven through the core in messages, as [integrated](integrated.md)
@@ -470,9 +468,18 @@ changes how it reads without being seen shows as a marker such as
 controls, format characters and every character Unicode says is drawn as
 nothing, line breaks and tabs aside.
 
-The composer under the dock takes several lines, images dropped, pasted or
-picked, and any other dropped file as its path in the text; a message sent
-while an image is still being read waits for it. It shows the model the
+The composer under the dock takes several lines and files: an image
+dropped, pasted or picked with the paper clip goes with the message as a
+picture, and any other file dropped or picked goes as a mention of it (see
+below), shown as a card with its name and size until the message is sent.
+A file from outside the project goes by its full path, and its card says
+which folder it is from; the agent's own rules on reading outside its
+folder then apply, as Claude Code's do by asking. A session on another
+machine is given pictures only, since the files are on this one, and the
+composer says which were left out until the message is sent. A message sent while an image is still
+being read waits for it. The empty composer names the keys that open its
+menus, `/` for commands where the agent lists them and `@` for files where
+the project has a git repository. It shows the model the
 session runs on, which a click changes: the agent's default is named once
 the agent has said which model that is, and a model chosen during a turn is
 said to be used from the next. It shows the mode the session runs in, which
@@ -510,6 +517,46 @@ compaction, with any words after the command for the summary to keep, and
 while a turn runs the composer says it waits for the turn to end. A
 compaction that fails says so in the thread, with the agent's reason, and
 words that could not be sent to compact go back in the composer.
+
+An `@` typed at the start of the composer or after a space opens the
+project's files in the same kind of menu: the changed files first, with
+their counts, then the files and folders at the project's top. The files
+are the ones the changes pane lists, from git, so ignored files are left
+out, a file deleted from the tree is not offered, a session in a worktree
+lists its own tree, and a project on another machine lists that machine's;
+they are read each time the menu opens, and what was read before answers
+until they are in.
+Typing narrows the list by the file's name first, the whole name before
+one that begins with what was typed, then by its path, and a `/` in what
+was typed matches folders; a changed file comes first among equals, then
+the one fewer folders down. The matched letters are marked. A few thousand
+files are filtered as the keys come; more are filtered away from the
+window's thread, and Tab or Enter pressed before the answer picks its best
+once it comes; with nothing to pick, Enter then sends as it would have. An `@` inside a word, as in an email address, or inside code
+between backticks, is text. Taking a file puts its path from the project in
+the composer, drawn in the accent, with a space after it, and Backspace
+right after it takes the whole mention out; undo takes either back. A path
+typed whole after an `@` that is a file in the list is a mention too, once
+the word is done.
+
+A mention is the path, for the agent to read itself, so the read shows in
+its work and it reads the file as it is then. It goes to the agent as the
+path between backticks with its `@`, as in `` `@src/lib/a.ts` ``, one more
+backtick on each side than the longest run in the path, and nothing before
+the `@`: Claude Code takes any word of a message that begins with `@` as a
+file whose content it sends along, and leaves a word that begins with a
+backtick as written; Codex takes a path in the text as it is. A path with
+a line break or another control character in it, or a space before an
+`@`, would break out of that form, so it is not mentioned or attached, and
+a line under the composer says why. Where each mention stands is kept with
+the message, never read back from its words, since the same form is how
+code is written: the user's message in the thread shows each mention as
+`@path` in the accent, and one in the project opens the file in the
+viewer, its changes when it has some, while code the user wrote between
+backticks stays as written. Copy and putting a message back in the
+composer give the mentions as they were typed. A message whose mentions
+were not kept, from another session or another window's store, shows its
+words as they are.
 
 The row's id is the conversation's id as the agent says it once ready, so
 the agent's own tools find the row. Its state, working, asking or idle,

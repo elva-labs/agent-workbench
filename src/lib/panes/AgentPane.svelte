@@ -32,6 +32,7 @@
     sessions,
     statusLabel,
     resumeWithout,
+    dismissKept,
     statusMessage,
     titled,
     wake,
@@ -269,6 +270,19 @@
           onclick={() => dismissRefusal(current!.key)}
           aria-label="Dismiss"
           data-testid="workflow-refused-dismiss">×</button
+        >
+      </p>
+    {:else if current !== null && current.keptFromStart !== null}
+      <!-- What Codex kept from the session's start, which this start
+           could not change. -->
+      <p class="refused" data-testid="session-kept">
+        <span class="refused-lead">Resumed as it began</span>
+        <span class="refused-text">{current.keptFromStart}</span>
+        <button
+          class="refused-close"
+          onclick={() => dismissKept(current!.key)}
+          aria-label="Dismiss"
+          data-testid="session-kept-dismiss">×</button
         >
       </p>
     {/if}

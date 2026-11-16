@@ -1,12 +1,14 @@
 <script lang="ts">
   import type { WorkflowTag } from "$lib/conductor.svelte";
   import { letters } from "$lib/giveWay";
+  import { putAway } from "$lib/popover";
 
   /**
    * The workflow a session is part of and its place in it, quietly beside
    * the pane's title, with the rules that place goes by in a popover: shown
    * while the pointer rests on the tag, and held open by a click or by
-   * Enter or Space on it. Escape, or a press anywhere else, puts it away.
+   * Enter or Space on it. Escape, wherever the keyboard is, or a press
+   * anywhere else, puts it away.
    *
    * Where the header is short of room, the workflow's name gives way first,
    * cut short and then gone, and the place stands whole: it is what the
@@ -84,37 +86,18 @@
     hovered = false;
   }
 
-  function onkeydown(event: KeyboardEvent) {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();
-      event.preventDefault();
-      close();
-      button?.focus();
-    }
-  }
-
-  // A press outside the tag and its popover puts it away, as does the
-  // window changing size under it.
+  // Escape wherever the keyboard is, a press outside the tag and its
+  // popover, or the window changing size under it puts it away.
   $effect(() => {
     if (!open) return;
-    const away = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (target !== null && (button?.contains(target) || popover?.contains(target))) return;
-      close();
-    };
-    window.addEventListener("pointerdown", away, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("resize", close);
-    };
+    return putAway({ inside: () => [button, popover], close, control: () => button });
   });
 
   $effect(() => cancelTimers);
 </script>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<span class="holder" {onkeydown} onpointerenter={pointerIn} onpointerleave={pointerOut}>
+<span class="holder" onpointerenter={pointerIn} onpointerleave={pointerOut}>
   <button
     bind:this={button}
     class="tag"

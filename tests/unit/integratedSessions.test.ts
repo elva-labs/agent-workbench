@@ -23,6 +23,7 @@ import {
   close,
   create,
   isMine,
+  loadRemembered,
   noted,
   reopened,
   reset as resetSessions,
@@ -30,6 +31,9 @@ import {
   wake,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
+import { applyDetect, resetAgent } from "$lib/agent.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
 
@@ -139,6 +143,9 @@ beforeEach(async () => {
   resetIntegrated();
   resetAttention();
   resetLimits();
+  // The window has the workflows, so a resumed row finds out what it
+  // follows as it starts.
+  resetWorkflows();
   await install();
 });
 
@@ -342,12 +349,28 @@ describe("an integrated session behind its row", () => {
   });
 
   it("stops an agent whose row was closed while it came up", async () => {
+    // The core's answer to the start is held until the row has gone.
+    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    let answer: (() => void) | null = null;
+    core.integratedStart = (options: Parameters<FakeIntegrated["start"]>[0]) =>
+      new Promise((resolve) => (answer = () => resolve(fake.start(options))));
+    const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    const coming = launch(session.key);
+    await vi.waitFor(() => expect(answer).not.toBeNull());
+    close(session.key);
+    answer!();
+    await coming;
+    await settled();
+    expect(fake.calls.map((call) => call.method)).toEqual(["start", "stop"]);
+  });
+
+  it("starts nothing for a row closed before its start was sent", async () => {
     const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
     const coming = launch(session.key);
     close(session.key);
     await coming;
     await settled();
-    expect(fake.calls.map((call) => call.method)).toEqual(["start", "stop"]);
+    expect(fake.calls).toEqual([]);
   });
 
   it("asks before a folder that is not trusted, and starts once trusted", async () => {
@@ -472,6 +495,31 @@ describe("what a resumed session said before", () => {
     expect(conversation.entries.findIndex((entry) => entry.key === line.after)).toBe(1);
   });
 
+  it("of an orchestrator, is drawn above as for any session, and the orchestrator is told its workflow afresh", async () => {
+    // It was first told other instructions than the workflow has now.
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    sessions.workflows["old-orchestrator"] = {
+      workflow: defaultWorkflow(),
+      told: "1. Direct the work as it was.",
+      project: PROJECT,
+    };
+    fake.transcript("old-orchestrator", written(1_000_000, "Fix the cache", "Started a session for it."));
+    const { session } = await started({ resumedFrom: "old-orchestrator" });
+    expect(session.workflow?.name).toBe("Build and review");
+    expect(fake.calls.find((call) => call.method === "start")).toMatchObject({
+      options: {
+        session: "old-orchestrator",
+        instructions: orchestratorPrompt(defaultWorkflow()),
+        startOnly: true,
+        afresh: true,
+      },
+    });
+    const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    expect(agentTexts(conversation)).toEqual(["Started a session for it."]);
+    expect(conversation.began!.after).toBe(conversation.entries[1].key);
+  });
+
   it("draws the line at once and goes on under it while what it said before is read, which then goes above", async () => {
     fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."));
     fake.holdHistory();
@@ -566,6 +614,62 @@ describe("what a resumed session said before", () => {
     expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
     expect(conversation.began!.after).toBe(conversation.entries[1].key);
     expect(conversation.late).toBe(false);
+  });
+});
+
+describe("the workflow a session follows, kept for it", () => {
+  // Both agents are here, so a workflow's orchestrator can start on either.
+  beforeEach(() => {
+    for (const id of ["claude-code", "codex"])
+      applyDetect(
+        { id, path: `/usr/local/bin/${id}`, caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+        true,
+      );
+  });
+  afterEach(() => {
+    resetAgent();
+    localStorage.removeItem("workbench.workflows");
+  });
+
+  it("is the copy its last run started on, so a reload after a resume under an edited workflow follows the edit", async () => {
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    const row = create(PROJECT, null, "claude-code", null, null, null, null, defaultWorkflow(), "integrated");
+    await launch(row.key);
+    const id = byKey(row.key)!.id!;
+    fake.stop(handleOf(row.key)!);
+    await vi.waitFor(() => expect(byKey(row.key)!.status).toBe("exited"));
+    // The workflow is edited, and the session resumed in place under it.
+    const edited = { ...defaultWorkflow(), startOnly: false };
+    adoptWorkflows({ list: [edited], default: null, overrides: {} });
+    await resume(row.key);
+    const handle = handleOf(row.key)!;
+    expect(fake.calls.filter((call) => call.method === "start").at(-1)).toMatchObject({
+      options: { session: id, startOnly: false },
+    });
+    expect(sessions.workflows[id].workflow).toMatchObject({ startOnly: false });
+
+    // The window reloads while the core goes on running it.
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    loadRemembered();
+    const back = reopened(PROJECT, id, "claude-code", null, null, null, "integrated");
+    expect(await reattach(back.key, handle)).toBe(true);
+    expect(byKey(back.key)!.workflow).toMatchObject({ name: "Build and review", startOnly: false });
+  });
+
+  it("is kept for a Codex session once ready names its thread", async () => {
+    const codexFlow = { ...defaultWorkflow(), orchestrator: { agent: "codex" as const, model: "default" } };
+    adoptWorkflows({ list: [codexFlow], default: null, overrides: {} });
+    const row = create(PROJECT, null, "codex", null, null, null, null, codexFlow, "integrated");
+    await launch(row.key);
+    const id = byKey(row.key)!.id!;
+    expect(id).toBe("agent-thread-1");
+    expect(sessions.workflows[id]).toMatchObject({
+      workflow: { orchestrator: { agent: "codex" } },
+      told: orchestratorPrompt(codexFlow),
+    });
   });
 });
 
