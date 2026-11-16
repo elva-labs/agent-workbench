@@ -181,10 +181,15 @@ fn turn_event(line: &str) -> Option<&'static str> {
     }
     match value.get("payload")?.get("type")?.as_str()? {
         "task_started" => Some("prompt"),
-        "task_complete" | "turn_aborted" => Some("stop"),
+        "task_complete" => Some("stop"),
+        "turn_aborted" => Some(CUT),
         _ => None,
     }
 }
+
+/// A turn the user cut short, which the window hears as a stop that says
+/// so.
+const CUT: &str = "cut";
 
 /// Follows the running PTY's identity and turn events on its own machine.
 pub fn observe(
@@ -216,13 +221,15 @@ pub fn observe(
             }
         }
         if let Some(kind) = activity.poll(&home) {
+            let cut = kind == CUT;
             crate::events::emit(
                 &sink,
                 crate::activity::SESSION_EVENT,
                 &crate::activity::SessionEvent {
                     session_id: activity.id.clone().unwrap(),
-                    kind: kind.to_string(),
+                    kind: if cut { "stop" } else { kind }.to_string(),
                     note: None,
+                    cut,
                 },
             );
         }
@@ -267,7 +274,8 @@ mod tests {
         );
         assert_eq!(
             turn_event(r#"{"type":"event_msg","payload":{"type":"turn_aborted"}}"#),
-            Some("stop")
+            Some(CUT),
+            "a turn the user cut short says so"
         );
         assert_eq!(
             turn_event(r#"{"type":"event_msg","payload":{"type":"token_count"}}"#),

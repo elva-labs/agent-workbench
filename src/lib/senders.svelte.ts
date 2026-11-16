@@ -73,7 +73,14 @@ export interface Sender {
   name: string;
   /** Its row, when the window has one to go to. */
   key: string | null;
+  /** The workbench itself sent it, with what the sessions this one
+      started did, and no session did. */
+  workbench?: boolean;
 }
+
+/** What a message the workbench sent of its own is kept under as its
+    sender: no session's token and no folder can be it. */
+export const WORKBENCH = "workbench:";
 
 /** What the user knows a session by, by its id, while the window has its
     row. */
@@ -89,6 +96,7 @@ export function sessionName(id: string): string | null {
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
+  if (from === WORKBENCH) return { id: null, key: null, name: "Workbench", workbench: true };
   const row =
     sessions.all.find((candidate) => candidate.token === from) ??
     sessions.all.find((candidate) => candidate.id === from) ??

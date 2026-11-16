@@ -87,3 +87,15 @@ export function mixesScripts(name: string): boolean {
 export function readsAsYou(name: string): boolean {
   return bareName(name) === "you";
 }
+
+/** Whether a name would read as the workbench's own, "Workbench", in the
+    same way: a conversation shows the workbench's messages under it, so no
+    session is called that either. */
+export function readsAsWorkbench(name: string): boolean {
+  return bareName(name) === "workbench";
+}
+
+/** Whether a name is the user's or the workbench's, which no session takes. */
+export function reservedName(name: string): boolean {
+  return readsAsYou(name) || readsAsWorkbench(name);
+}
