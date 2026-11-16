@@ -1,5 +1,5 @@
 import { dirsOf } from "$lib/accounts.svelte";
-import { core, type Settings } from "$lib/core";
+import { core, type HookStatus, type Settings } from "$lib/core";
 import { persist } from "$lib/persist";
 import { hostOf } from "$lib/remote.svelte";
 
@@ -161,30 +161,41 @@ export function isKnown(project: string | null): boolean {
   return project !== null && hook.installed[project] !== undefined;
 }
 
+/** Projects whose hooks are installed with something the next install
+    brings up to date. */
+const outdated = new Set<string>();
+
+/** Takes in what the core says is on disk for a project, or that it could
+    not say. */
+function learn(project: string, status: HookStatus | null) {
+  hook.installed[project] = status?.installed === true;
+  if (status?.outdated === true) outdated.add(project);
+  else outdated.delete(project);
+}
+
 export async function check(project: string) {
   try {
-    hook.installed[project] = (
-      await core().hookStatus(project, dirsOf())
-    ).installed;
+    learn(project, await core().hookStatus(project, dirsOf()));
   } catch {
     // Not knowing is not an error worth showing: the watcher works regardless.
-    hook.installed[project] = false;
+    learn(project, null);
   }
 }
 
 /** Brings a project to the answer: installs or removes as wanted, and does
-    nothing to one already there. */
+    nothing to one already there. One that wants the hooks and has them out
+    of date is installed again, which brings them up to date. */
 export async function apply(project: string) {
   hook.busy = true;
   hook.error = null;
   try {
     if (!isKnown(project)) await check(project);
     const want = wanted(project);
-    if (want === isInstalled(project)) return;
+    if (want === isInstalled(project) && !(want && outdated.has(project))) return;
     const status = want
       ? await core().hookInstall(project, dirsOf())
       : await core().hookUninstall(project, dirsOf());
-    hook.installed[project] = status.installed;
+    learn(project, status);
   } catch (error) {
     hook.error = String(error);
   } finally {
@@ -198,6 +209,7 @@ export async function apply(project: string) {
 export async function reapply(projects: string[]) {
   for (const project of projects) {
     delete hook.installed[project];
+    outdated.delete(project);
     await apply(project);
   }
 }
@@ -261,12 +273,10 @@ async function applyMany(projects: string[]) {
   for (const project of projects) batching.add(project);
   try {
     const answers = await core().hookStatusMany(projects, dirsOf());
-    projects.forEach((project, at) => {
-      hook.installed[project] = answers[at]?.installed === true;
-    });
+    projects.forEach((project, at) => learn(project, answers[at] ?? null));
   } catch {
     // Not knowing is not an error worth showing, as with one project.
-    for (const project of projects) hook.installed[project] = false;
+    for (const project of projects) learn(project, null);
   }
   for (const project of projects) {
     await apply(project);
@@ -301,6 +311,7 @@ export function reset() {
   hook.everywhere = false;
   hook.overrides = {};
   hook.installed = {};
+  outdated.clear();
   hook.busy = false;
   hook.error = null;
 }

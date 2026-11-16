@@ -54,6 +54,11 @@ const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
 #[serde(rename_all = "camelCase")]
 pub struct HookStatus {
     pub installed: bool,
+    /// Whether the hooks are installed with something in a form the next
+    /// install brings up to date: the project's Codex entry for the server
+    /// saying nothing of its tools' approval. They work as they are, so a
+    /// project that should have no hooks is still uninstalled.
+    pub outdated: bool,
     /// Where the settings file is, whether or not it exists yet.
     pub settings: String,
     pub events: String,
@@ -391,20 +396,18 @@ pub fn status_many(
             let hooks = has_hooks_in(&read, home);
             // With a daemon here the server and the prompt hook that asks
             // through it are part of what is installed: a project that got
-            // the hooks before there was either, or whose Codex entry for
-            // the server says nothing of its tools' approval, is brought up
-            // to date by the next install.
+            // the hooks before there was either is brought up to date by the
+            // next install.
             let installed = hooks
                 && (!daemon_here
-                    || has_command(&read, PROMPT_EVENT, &reports_command(home))
-                        && codex_current(home, project)
-                        && {
-                            let states =
-                                servers.get_or_insert_with(|| read_servers(home, accounts, env));
-                            has_server(states, home, project)
-                        });
+                    || has_command(&read, PROMPT_EVENT, &reports_command(home)) && {
+                        let states =
+                            servers.get_or_insert_with(|| read_servers(home, accounts, env));
+                        has_server(states, home, project)
+                    });
             HookStatus {
                 installed,
+                outdated: installed && daemon_here && !codex_current(home, project),
                 settings: settings.to_string_lossy().to_string(),
                 events: events.clone(),
             }
@@ -1110,78 +1113,141 @@ fn runs_daemon(server: &dyn toml_edit::TableLike, daemon: &str) -> bool {
     server.get("command").and_then(|command| command.as_str()) == Some(daemon)
 }
 
-/// Whether the folder's Codex config is as [`point_codex`] writes it, as
-/// far as the entry for the daemon goes: an entry that says nothing of its
-/// tools' approval lacks the setting the install writes, and the next
-/// install adds it. A config with no such entry, or one that cannot be
-/// read, has nothing of the hooks' to bring up to date.
-fn codex_current(home: &Path, folder: &Path) -> bool {
-    let daemon = daemon_path(home).to_string_lossy().to_string();
-    let Ok(text) = std::fs::read_to_string(codex_config_path(folder)) else {
-        return true;
-    };
-    let Ok(document) = text.parse::<toml_edit::DocumentMut>() else {
-        return true;
-    };
-    document
-        .get("mcp_servers")
-        .and_then(|servers| servers.get(CODEX_SERVER_KEY))
-        .and_then(|server| server.as_table_like())
-        .filter(|server| runs_daemon(*server, &daemon))
-        .is_none_or(|server| server.contains_key(CODEX_APPROVAL_SETTING))
+/// A Codex config's text as TOML, past a byte order mark.
+fn parse_codex(text: &str) -> Result<toml_edit::DocumentMut, String> {
+    text.strip_prefix('\u{feff}')
+        .unwrap_or(text)
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| e.to_string())
 }
 
-/// Points Codex at the daemon as an MCP server in the folder's own config,
-/// beside its hooks file, its tools allowed without asking. An entry for
-/// the daemon that says nothing of its tools' approval is given the
-/// setting and keeps the rest of what it says; one that says anything of
-/// it is left as the user has it.
-fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
-    let daemon = daemon_path(home).to_string_lossy().to_string();
-    let codex = codex_config_path(folder);
-    let text = std::fs::read_to_string(&codex).unwrap_or_default();
-    let mut document = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+/// A Codex config written back as the user's file was: with its byte
+/// order mark, and with a carriage return before each line feed where
+/// every line of it had one. The parser writes a bare line feed.
+fn as_the_file_was(file: &str, text: String) -> String {
+    let crlf = file.contains("\r\n") && !file.replace("\r\n", "").contains('\n');
+    let text = if crlf {
+        text.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        text
+    };
+    if file.starts_with('\u{feff}') {
+        format!("\u{feff}{text}")
+    } else {
+        text
+    }
+}
+
+/// What the hooks make of a folder's Codex config.
+struct Pointed {
+    /// Whether it already had an entry for the daemon.
+    had_entry: bool,
+    /// Its text with the entry as the hooks write it, or None where it has
+    /// that already.
+    text: Option<String>,
+}
+
+/// A Codex config's text with the daemon's entry as the hooks write it:
+/// the entry is made where there is none, its tools allowed without
+/// asking, and an entry for the daemon that says nothing of its tools'
+/// approval is given the setting and keeps the rest of what it says. One
+/// that says anything of approval is left as the user has it. Everything
+/// else in the file stays as it was, and an error says it cannot be
+/// written to: it is not TOML, or its servers are not a table.
+fn pointed(daemon: &str, file: &str) -> Result<Pointed, String> {
+    let mut document = parse_codex(file)?;
+    // A table of servers the hooks make holds only their entry, and is
+    // written as the entry's header alone; one the user wrote keeps its
+    // own header and whatever is said above it.
+    let made = !document.contains_key("mcp_servers");
     let servers = document
         .entry("mcp_servers")
         .or_insert(toml_edit::Item::Table(toml_edit::Table::new()));
+    if made {
+        if let Some(table) = servers.as_table_mut() {
+            table.set_implicit(true);
+        }
+    }
+    let inline = servers.is_inline_table();
     let servers = servers
-        .as_table_mut()
+        .as_table_like_mut()
         .ok_or("the mcp_servers setting is not a table")?;
-    servers.set_implicit(true);
     let ours = servers.get_mut(CODEX_SERVER_KEY).filter(|item| {
         item.as_table_like()
-            .is_some_and(|server| runs_daemon(server, &daemon))
+            .is_some_and(|server| runs_daemon(server, daemon))
     });
-    let changed = match ours {
-        Some(server) if server.get(CODEX_APPROVAL_SETTING).is_some() => false,
+    let had_entry = ours.is_some();
+    match ours {
+        Some(server) if server.get(CODEX_APPROVAL_SETTING).is_some() => {
+            return Ok(Pointed {
+                had_entry,
+                text: None,
+            });
+        }
         Some(server) => {
             server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
-            // An inline entry is one line with no comments in it, spaced
-            // afresh so the setting sits as the others do.
+            // An inline entry is spaced afresh so the setting sits as the
+            // others do. Only the spaces between its keys and values move;
+            // a comment inside an array in it stays where it is.
             if let Some(inline) = server.as_inline_table_mut() {
                 inline.fmt();
             }
-            true
         }
         None => {
             let mut server = toml_edit::Table::new();
-            server["command"] = toml_edit::value(daemon.as_str());
+            server["command"] = toml_edit::value(daemon);
             let mut args = toml_edit::Array::new();
             args.push("mcp");
             server["args"] = toml_edit::value(args);
             server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
-            servers.insert(CODEX_SERVER_KEY, toml_edit::Item::Table(server));
-            true
+            // Servers the user wrote inline take the entry inline too.
+            let entry = if inline {
+                toml_edit::Item::Value(toml_edit::Value::InlineTable(server.into_inline_table()))
+            } else {
+                toml_edit::Item::Table(server)
+            };
+            servers.insert(CODEX_SERVER_KEY, entry);
         }
+    }
+    Ok(Pointed {
+        had_entry,
+        text: Some(as_the_file_was(file, document.to_string())),
+    })
+}
+
+/// Whether the folder's Codex config is as [`point_codex`] writes it, as
+/// far as an entry for the daemon there goes: one that says nothing of its
+/// tools' approval is out of date, and the next install adds the setting.
+/// A config with no such entry, or one the install could not write to, has
+/// nothing of the hooks' to bring up to date.
+fn codex_current(home: &Path, folder: &Path) -> bool {
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    let Ok(file) = std::fs::read_to_string(codex_config_path(folder)) else {
+        return true;
     };
-    if changed {
+    !matches!(
+        pointed(&daemon, &file),
+        Ok(Pointed {
+            had_entry: true,
+            text: Some(_),
+        })
+    )
+}
+
+/// Points Codex at the daemon as an MCP server in the folder's own config,
+/// beside its hooks file, as [`pointed`] says.
+fn point_codex(home: &Path, folder: &Path) -> Result<(), String> {
+    let daemon = daemon_path(home).to_string_lossy().to_string();
+    let codex = codex_config_path(folder);
+    let file = std::fs::read_to_string(&codex).unwrap_or_default();
+    let pointed =
+        pointed(&daemon, &file).map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+    if let Some(text) = pointed.text {
         if let Some(parent) = codex.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("could not create {parent:?}: {e}"))?;
         }
-        std::fs::write(&codex, document.to_string())
+        std::fs::write(&codex, text)
             .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
     }
     Ok(())
@@ -1194,14 +1260,13 @@ fn unpoint_codex(folder: &Path) -> Result<(), String> {
     if !codex.exists() {
         return Ok(());
     }
-    let text = std::fs::read_to_string(&codex).unwrap_or_default();
-    let mut document = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|e| format!("could not read {}: {e}", codex.display()))?;
+    let file = std::fs::read_to_string(&codex).unwrap_or_default();
+    let mut document =
+        parse_codex(&file).map_err(|e| format!("could not read {}: {e}", codex.display()))?;
     let mut changed = false;
     if let Some(servers) = document
         .get_mut("mcp_servers")
-        .and_then(|item| item.as_table_mut())
+        .and_then(|item| item.as_table_like_mut())
     {
         changed = servers.remove(CODEX_SERVER_KEY).is_some();
         if servers.is_empty() {
@@ -1212,7 +1277,7 @@ fn unpoint_codex(folder: &Path) -> Result<(), String> {
         if document.as_table().is_empty() {
             std::fs::remove_file(&codex).map_err(|e| format!("could not remove {codex:?}: {e}"))?;
         } else {
-            std::fs::write(&codex, document.to_string())
+            std::fs::write(&codex, as_the_file_was(&file, document.to_string()))
                 .map_err(|e| format!("could not write {}: {e}", codex.display()))?;
         }
     }
@@ -2113,9 +2178,9 @@ mod tests {
         assert!(!project.join(".codex/config.toml").exists());
     }
 
-    // An entry written before it carried its tools' approval reads as not
-    // installed, and the next install adds that one line to it, leaving the
-    // rest of the file as the user has it.
+    // An entry that says nothing of its tools' approval reads as installed
+    // and out of date, and the next install adds that one line to it,
+    // leaving the rest of the file as the user has it, whatever its form.
     #[test]
     fn an_older_codex_entry_gains_its_tools_approval_and_nothing_else() {
         let (home, project) = fixture("codex-approval");
@@ -2136,36 +2201,144 @@ mod tests {
             )
         };
         let config = project.join(".codex/config.toml");
-        std::fs::write(&config, older("")).unwrap();
-        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
-        install(&home, &project, &[], &HashMap::new()).unwrap();
-        assert_eq!(
-            std::fs::read_to_string(&config).unwrap(),
-            older("default_tools_approval_mode = \"approve\"\n")
-        );
-        assert!(status(&home, &project, &[], &HashMap::new()).installed);
+        let checked = || status(&home, &project, &[], &HashMap::new());
+        // The file before is read as installed and out of date, the install
+        // makes it the file after, and it is then up to date and stays so.
+        let brought = |before: &str, after: &str| {
+            std::fs::write(&config, before).unwrap();
+            let was = checked();
+            assert!(was.installed && was.outdated, "{before}");
+            install(&home, &project, &[], &HashMap::new()).unwrap();
+            assert_eq!(std::fs::read_to_string(&config).unwrap(), after);
+            let now = checked();
+            assert!(now.installed && !now.outdated, "{after}");
+            install(&home, &project, &[], &HashMap::new()).unwrap();
+            assert_eq!(std::fs::read_to_string(&config).unwrap(), after);
+        };
+        // A file with nothing of the hooks' to bring up to date reads as
+        // current, and the install leaves it as it is.
+        let left = |file: &str| {
+            std::fs::write(&config, file).unwrap();
+            let was = checked();
+            assert!(was.installed && !was.outdated, "{file}");
+            install(&home, &project, &[], &HashMap::new()).unwrap();
+            assert_eq!(std::fs::read_to_string(&config).unwrap(), file);
+        };
+        let approve = "default_tools_approval_mode = \"approve\"\n";
+        brought(&older(""), &older(approve));
 
         // An approval the user chose for it stays theirs.
-        let theirs = older("default_tools_approval_mode = \"prompt\"\n");
-        std::fs::write(&config, &theirs).unwrap();
-        assert!(status(&home, &project, &[], &HashMap::new()).installed);
-        install(&home, &project, &[], &HashMap::new()).unwrap();
-        assert_eq!(std::fs::read_to_string(&config).unwrap(), theirs);
+        left(&older("default_tools_approval_mode = \"prompt\"\n"));
 
-        // An entry the user wrote inline gains it inline.
-        let inline = format!(
-            "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"
+        // Line breaks of a carriage return and a line feed, and a byte
+        // order mark, are written back as they were.
+        let crlf = |text: &str| text.replace('\n', "\r\n");
+        brought(&crlf(&older("")), &crlf(&older(approve)));
+        brought(
+            &format!("\u{feff}{}", older("")),
+            &format!("\u{feff}{}", older(approve)),
         );
-        std::fs::write(&config, &inline).unwrap();
-        assert!(!status(&home, &project, &[], &HashMap::new()).installed);
+
+        // A table of servers the user wrote out keeps its header and the
+        // comment above it, with or without the entry in it yet.
+        let header = format!(
+            "model = \"o3\"\n\n\
+             # My MCP servers, keep this comment\n\
+             [mcp_servers]\n\n\
+             [mcp_servers.agent_workbench]\n\
+             command = {daemon}\n\
+             args = [\"mcp\"]\n"
+        );
+        brought(&header, &format!("{header}{approve}"));
+        let empty = "model = \"o3\"\n\n# My MCP servers, keep this comment\n[mcp_servers]\n";
+        std::fs::write(&config, empty).unwrap();
         install(&home, &project, &[], &HashMap::new()).unwrap();
         assert_eq!(
             std::fs::read_to_string(&config).unwrap(),
             format!(
-                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
-                 default_tools_approval_mode = \"approve\" }}\n"
+                "{empty}\n[mcp_servers.agent_workbench]\ncommand = {daemon}\n\
+                 args = [\"mcp\"]\n{approve}"
             )
         );
+
+        // Dotted keys, at the top and under the servers' header.
+        let dotted = format!(
+            "mcp_servers.agent_workbench.command = {daemon}\n\
+             mcp_servers.agent_workbench.args = [\"mcp\"]\n"
+        );
+        brought(
+            &dotted,
+            &format!("{dotted}mcp_servers.agent_workbench.{approve}"),
+        );
+        let under = format!(
+            "[mcp_servers]\n\
+             agent_workbench.command = {daemon}\n\
+             agent_workbench.args = [\"mcp\"]\n"
+        );
+        brought(&under, &format!("{under}agent_workbench.{approve}"));
+
+        // An entry the user wrote inline gains it inline, a comment inside
+        // it kept.
+        brought(
+            &format!(
+                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"
+            ),
+            &format!(
+                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
+                 default_tools_approval_mode = \"approve\" }}\n"
+            ),
+        );
+        std::fs::write(
+            &config,
+            format!(
+                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\n  \"mcp\", # the subcommand\n] }}\n"
+            ),
+        )
+        .unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(&config).unwrap();
+        assert!(written.contains("# the subcommand"), "{written}");
+        assert!(written.contains(approve.trim_end()), "{written}");
+
+        // So do servers the user wrote inline, the entry in them or not; the
+        // install can write to them, so they are never read as out of date
+        // with no way to bring them up to date.
+        brought(
+            &format!("mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"] }} }}\n"),
+            &format!(
+                "mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
+                 default_tools_approval_mode = \"approve\" }} }}\n"
+            ),
+        );
+        let theirs = "mcp_servers = { other = { command = \"other\" } }\n";
+        std::fs::write(&config, theirs).unwrap();
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(&config).unwrap();
+        let document = written.parse::<toml_edit::DocumentMut>().unwrap();
+        assert_eq!(
+            document["mcp_servers"]["agent_workbench"]["default_tools_approval_mode"].as_str(),
+            Some("approve"),
+            "{written}"
+        );
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        let written = std::fs::read_to_string(&config).unwrap();
+        let document = written.parse::<toml_edit::DocumentMut>().unwrap();
+        assert!(
+            document["mcp_servers"].get("agent_workbench").is_none(),
+            "{written}"
+        );
+        assert_eq!(
+            document["mcp_servers"]["other"]["command"].as_str(),
+            Some("other")
+        );
+
+        // Servers that are not a table at all cannot be written to, and are
+        // not read as out of date either.
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        std::fs::write(&config, "mcp_servers = 3\n").unwrap();
+        let was = checked();
+        assert!(was.installed && !was.outdated);
+        assert!(install(&home, &project, &[], &HashMap::new()).is_err());
     }
 
     #[test]

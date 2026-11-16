@@ -17,6 +17,8 @@ import {
 
 const state = {
   installed: {} as Record<string, boolean>,
+  /** Installed with something the next install brings up to date. */
+  outdated: {} as Record<string, boolean>,
   calls: [] as string[],
   fail: null as string | null,
   /** Holds a batch for these projects until released, by its first one. */
@@ -30,6 +32,7 @@ vi.mock("$lib/core", () => ({
       if (state.fail !== null) throw new Error(state.fail);
       return {
         installed: state.installed[project] === true,
+        outdated: state.outdated[project] === true,
         settings: "",
         events: "",
       };
@@ -40,6 +43,7 @@ vi.mock("$lib/core", () => ({
       await state.held[projects[0]];
       return projects.map((project) => ({
         installed: state.installed[project] === true,
+        outdated: state.outdated[project] === true,
         settings: "",
         events: "",
       }));
@@ -48,7 +52,8 @@ vi.mock("$lib/core", () => ({
       state.calls.push(`install:${project}`);
       if (state.fail !== null) throw new Error(state.fail);
       state.installed[project] = true;
-      return { installed: true, settings: "", events: "" };
+      state.outdated[project] = false;
+      return { installed: true, outdated: false, settings: "", events: "" };
     },
     async hookUninstall(project: string) {
       state.calls.push(`uninstall:${project}`);
@@ -66,6 +71,7 @@ beforeEach(() => {
   reset();
   localStorage.clear();
   state.installed = {};
+  state.outdated = {};
   state.calls = [];
   state.fail = null;
   state.held = {};
@@ -142,6 +148,28 @@ describe("the answer for every project", () => {
     hook.everywhere = true;
     await apply(A);
     expect(state.calls).toEqual([`status:${A}`]);
+  });
+
+  it("installs again where the hooks are out of date, and still removes them where none are wanted", async () => {
+    state.installed[A] = true;
+    state.outdated[A] = true;
+    hook.everywhere = true;
+    await apply(A);
+    expect(state.calls).toEqual([`status:${A}`, `install:${A}`]);
+    expect(isInstalled(A)).toBe(true);
+    // Up to date now, it is left alone.
+    state.calls = [];
+    await apply(A);
+    expect(state.calls).toEqual([]);
+
+    // Out of date is still installed: a project that should have none has
+    // them taken away.
+    state.installed[B] = true;
+    state.outdated[B] = true;
+    hook.everywhere = false;
+    await apply(B);
+    expect(state.calls).toEqual([`status:${B}`, `uninstall:${B}`]);
+    expect(isInstalled(B)).toBe(false);
   });
 
   it("brings each open project to the answer once", async () => {
@@ -240,6 +268,20 @@ describe("starting", () => {
       `install:${A}`,
     ]);
     expect(isInstalled(B)).toBe(true);
+  });
+
+  it("installs again where the hooks are on and out of date", async () => {
+    hook.starting = true;
+    hook.everywhere = true;
+    state.installed[A] = true;
+    state.outdated[A] = true;
+    state.installed[B] = true;
+    startChecks(() => [A, B]);
+    await vi.waitFor(() => expect(state.calls).toContain(`install:${A}`));
+    expect(state.calls.filter((call) => call.startsWith("install:"))).toEqual([
+      `install:${A}`,
+    ]);
+    expect(isInstalled(A) && isInstalled(B)).toBe(true);
   });
 
   it("asks for a project opened afterwards by itself", async () => {

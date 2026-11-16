@@ -1079,6 +1079,9 @@ export interface Transcript {
 
 export interface HookStatus {
   installed: boolean;
+  /** Installed, with something the next install brings up to date. A core
+      from before it says nothing of it. */
+  outdated?: boolean;
   settings: string;
   events: string;
 }
