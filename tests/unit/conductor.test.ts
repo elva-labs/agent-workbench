@@ -70,6 +70,7 @@ import {
   output,
   QUIET_MS,
   renewToken,
+  resumeWithout,
   reopened,
   reset as resetSessions,
   sessions,
@@ -5657,6 +5658,46 @@ describe("a session the user closed or the app lost", () => {
     expect(label(back)).toBe("Cache flake");
     await handle(call("sessions", {}, as));
     expect(last().content).toMatch(/^sid-1 {2}"Cache flake" {2}/);
+  });
+
+  // Recorded as a probe: closed by the user, resumed by hand from the
+  // pane, open at the quit; after the restart it was still listed as
+  // closed by the user.
+  it("forgets the user closed it once it comes back by hand", async () => {
+    const row = await startOne();
+    close(row.key);
+    flushSync();
+    const back = create(A, "sid-1", "claude-code");
+    started(back.key, "pty-8", "sid-1");
+    flushSync();
+    await handle(call("sessions", {}, as));
+    expect(last().content).not.toContain("closed by the user");
+    restarted();
+    await handle(call("sessions", {}, as));
+    expect(last().content).toContain("not running since the workbench was restarted");
+  });
+
+  // Resumed in place, as a session whose workflow was lost is, the session
+  // goes on in another row, and a wait held for it follows it there.
+  it("keeps a held wait on a session resumed in another row in its place", async () => {
+    const row = await startOne();
+    row.workflowLost = "Gone";
+    flushSync();
+    const answering = handle(call("wait", {}, as));
+    await settle();
+    const back = resumeWithout(row.key)!;
+    started(back.key, "pty-8", "sid-1");
+    flushSync();
+    await settle();
+    expect(answers.filter((answer) => answer.content?.includes("was closed"))).toHaveLength(0);
+    back.working = true;
+    flushSync();
+    back.working = false;
+    flushSync();
+    await answering;
+    expect(last().content).toBe('Session sid-1 stopped working. It has left no line.');
+    await handle(call("sessions", {}, as));
+    expect(last().content).not.toContain("closed by the user");
   });
 
   it("stops one the user closed by taking it off the list, and says it was not running", async () => {

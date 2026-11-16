@@ -521,7 +521,11 @@ app itself was closed, the orchestrator comes back with the other sessions
 that were open, and the sessions it started do not. `sessions` then lists
 them as not running since the workbench was restarted, after the running
 ones; one whose row the user closed is listed as closed by the user, and
-one whose row had ended as ended, before a restart and after it. `start`
+one whose row had ended as ended, before a restart and after it, until a
+row of it is up again, however it came back: by `start`, by hand from the
+pane, or in place of its row, as a session whose workflow was lost is. A
+wait held for a session resumed in place of its row goes on with the new
+row. `start`
 with one of those ids
 in place of a project and prompt brings it back where it ran, in its
 worktree with its conversation. A prompt given with it is what the session

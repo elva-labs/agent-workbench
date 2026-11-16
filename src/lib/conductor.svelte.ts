@@ -1367,6 +1367,25 @@ function observe(session: Session) {
     const rested = mark.rest === "quiet";
     untrack(() => keepRested(caller, id, rested));
   }
+  // Up again in a row of its own, however it came back, why its last row
+  // went is past.
+  if (id !== null && caller !== null && isLive(session)) untrack(() => cameBack(caller, id));
+}
+
+/** The live row a caller's session has under the same id, when the one a
+    wait watched has gone and another took its place. */
+function rowAgain(owner: string, id: string | null): Session | null {
+  if (id === null) return null;
+  return sessions.all.find((row) => row.id === id && isLive(row) && startedFor(row.key) === owner) ?? null;
+}
+
+/** A session a caller started has a live row again: the reason its last
+    row went is no longer what the tools say of it. */
+function cameBack(caller: string, id: string) {
+  const entry = remembered(caller, id);
+  if (entry?.left === undefined) return;
+  delete entry.left;
+  saveStarted();
 }
 
 function observeAll() {
@@ -2832,12 +2851,15 @@ async function holdWait(
       // has not been told of comes first, whatever order they are in.
       let busy = false;
       let again: { key: string; text: string } | null = null;
-      for (const key of names.keys()) {
-        const session = byKey(key);
+      for (const watchedKey of names.keys()) {
+        // A row that went while another row of the same session came up,
+        // as when it was resumed in place, is that session going on.
+        const session = byKey(watchedKey) ?? rowAgain(owner, ids.get(watchedKey) ?? null);
         if (session === null) {
-          settle(closedText(owner, ids.get(key) ?? null, names.get(key) ?? key));
+          settle(closedText(owner, ids.get(watchedKey) ?? null, names.get(watchedKey) ?? watchedKey));
           return;
         }
+        const key = session.key;
         // Reopened the other way, it is the same session going on, at
         // work as far as the wait goes until its next run is up.
         if (reopeningRow(key)) {
