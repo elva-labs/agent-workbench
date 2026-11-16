@@ -234,9 +234,8 @@ the starter is idle, the workbench wakes it: it sends the starter what a
 wait would have answered, a line for each session in the same words, then
 the ones still at work by their ids, and the starter goes on as it would
 after a wait. Sessions that come to rest within three seconds of the first
-go in the same message. The orchestrator, a plain session that started
-others and a session that was itself started are woken alike, and there is
-no setting for it.
+go in the same message. The orchestrator and a plain session that started
+others are woken alike, and there is no setting for it.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal
@@ -249,7 +248,12 @@ and none in the last five seconds. Enter alone is no sign the line went:
 Ctrl+J, a backslash before Enter and Alt+Enter each add a newline to the
 agent's input, Ctrl+U empties only one line of several, and a command such
 as /config opens a panel the next keys would answer, none with a prompt
-hook. A turn the user cut short, with Escape or the stop button, leaves
+hook. The keys that answer a permission prompt are the prompt's, not the
+line's, up to the moment the agent is seen at work again, and what the
+terminal answers on its own when the agent asks it something, its
+attributes, the cursor's place or its size, is no key at all. While keys
+of the user's hold a wake, the pointer text on the row's not heard yet
+mark says so. A turn the user cut short, with Escape or the stop button, leaves
 the starter unwoken until a turn of the user's has ended as the agent
 ended it. A line typed or sent into it, by `send` or by a wake, leaves it
 unwoken until a turn of its agent's ends, and lines go into a terminal one
@@ -273,6 +277,8 @@ begins with a slash. It is never typed while the starter shows a question
 or a permission prompt, where a key would answer for the user, and whether
 the starter is still idle is asked again before the line goes in and
 before its Enter: a key of the user's in between leaves the line unsent.
+The wake's text then stays on the line ahead of the user's key, since
+nothing can take it back safely, and the user's next message carries it.
 
 What a wake carries counts as told the moment it is sent, so the next wait,
 listing or note does not say it again, and the prompt hook the message sets
@@ -287,9 +293,9 @@ no turn between that the workbench did not start, as when a session it
 started ends turns on its own, the starter is not woken again until such a
 turn begins, the user's or one a line from its own starter sets off; the
 row's not heard yet mark carries the rest, and its pointer text says why.
-No two sessions can have started each other, since a start resumes only a
-session its caller started, and an agent the workbench did not start has
-nothing to be woken in. A rest that began before the window first saw the
+A session another started cannot start sessions of its own, so no two
+sessions can wake each other in turn, and an agent the workbench did not
+start has nothing to be woken in. A rest that began before the window first saw the
 session, as after a reload, wakes no one, so a wake is never sent twice;
 the row still says the starter has not heard it, and the next wait tells
 it.

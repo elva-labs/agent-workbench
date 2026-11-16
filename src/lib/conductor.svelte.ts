@@ -1366,9 +1366,9 @@ export function unheard(session: Session): Session[] {
  * user's keys there have been still a while. A turn the user cut short
  * leaves it unwoken until a turn of theirs ends. A line typed into it, by
  * `send` or a wake, leaves it so until a turn of its agent's ends, and
- * lines are typed into a terminal one at a time. A starter that was itself
- * started is woken as any other: no two sessions can have started each
- * other, since a start resumes only a session its caller started. After
+ * lines are typed into a terminal one at a time. A session another
+ * started cannot start sessions of its own, so no two sessions can wake
+ * each other in turn. After
  * WAKES_MAX wakes with no turn between that the workbench did not start,
  * it is not woken again until one begins, so a session that ends turns on
  * its own does not keep its starter at work with no one there. An agent
