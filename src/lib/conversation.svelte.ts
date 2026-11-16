@@ -259,6 +259,9 @@ export class Conversation {
       way, laid in the thread, or not read, for an agent whose history is
       not read here or a read that failed. */
   earlier = $state<"loading" | "read" | "unread" | null>(null);
+  /** Why what was said before could not be read, where the read failed
+      and said why. */
+  earlierWhy = $state<string | null>(null);
   /** What was read leaves out the start of the conversation, it being
       too long to hold. */
   earlierCut = $state(false);
@@ -458,9 +461,11 @@ export class Conversation {
     this.began = { after: null, at };
   }
 
-  /** What was said before was not read: no line stands for it. */
-  unread() {
+  /** What was said before was not read, and `why` where the read said:
+      no line stands for it. */
+  unread(why: string | null = null) {
     this.earlier = "unread";
+    this.earlierWhy = why;
     if (this.began?.after === null) this.began = null;
   }
 
@@ -508,6 +513,7 @@ export class Conversation {
     }
     this.earlierCut = history.cut;
     this.earlier = "read";
+    this.earlierWhy = null;
     this.late = false;
   }
 

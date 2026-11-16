@@ -488,7 +488,7 @@ fn leaves_out_the_first_turns_of_a_history_longer_than_it_holds() {
         .iter()
         .map(|said| serde_json::to_vec(said).unwrap().len())
         .sum();
-    assert!(size <= HISTORY_KEEP);
+    assert!(size <= History::KEEP);
     // What is left begins with a message of the user's and its turn.
     assert!(line(&history.items[0]).starts_with("message Sent"));
     assert!(line(&history.items[1]).starts_with("turn started"));
@@ -500,7 +500,7 @@ fn leaves_out_the_first_turns_of_a_history_longer_than_it_holds() {
 
 #[test]
 fn cuts_long_content_down_and_says_so() {
-    let output = "o".repeat(OUTPUT_KEEP + 10);
+    let output = "o".repeat(History::OUTPUT_KEEP + 10);
     let body = format!(
         r#"{{"type":"user","uuid":"u-1","parentUuid":null,"message":{{"role":"user","content":"Read it"}}}}
 {{"type":"assistant","uuid":"a-1","parentUuid":"u-1","message":{{"id":"m","content":[{{"type":"tool_use","id":"t","name":"Read","input":{{"file_path":"/projects/demo/big.txt"}}}}],"stop_reason":"tool_use"}}}}
@@ -519,7 +519,7 @@ fn cuts_long_content_down_and_says_so() {
             _ => None,
         })
         .unwrap();
-    assert!(truncated && output.len() <= OUTPUT_KEEP);
+    assert!(truncated && output.len() <= History::OUTPUT_KEEP);
 }
 
 #[test]

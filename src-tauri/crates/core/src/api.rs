@@ -724,9 +724,11 @@ impl Core {
 
     /// What a conversation said and did before, read from where its agent
     /// keeps it under the account whose configuration directory is given,
-    /// or the agent's own: the session's transcript in the project, or in
-    /// the folder under it the session ran in. None for an agent whose
-    /// history is not read here; empty where there is none to read.
+    /// or the agent's own: Claude Code's transcript of the session in the
+    /// project, or in the folder under it the session ran in, and Codex's
+    /// thread, through Codex itself. None for an agent whose history is not
+    /// read here; empty where there is none to read; an error where the
+    /// agent could not read it.
     pub fn integrated_history(
         &self,
         agent: &str,
@@ -734,16 +736,32 @@ impl Core {
         cwd: Option<&Path>,
         session: &str,
         config_dir: Option<&str>,
-    ) -> Option<crate::integrated::History> {
-        let home = self.home.as_ref()?;
+    ) -> Result<Option<crate::integrated::History>, String> {
+        let Some(home) = self.home.as_ref() else {
+            return Ok(None);
+        };
+        let environment = env::environment();
         match agent {
-            "claude-code" => Some(crate::claude_history::read_session(
-                &account::claude_dir(home, config_dir, &env::environment().vars),
+            "claude-code" => Ok(Some(crate::claude_history::read_session(
+                &account::claude_dir(home, config_dir, &environment.vars),
                 project,
                 cwd,
                 session,
-            )),
-            _ => None,
+            ))),
+            "codex" => {
+                let config_dir = config_dir
+                    .filter(|dir| !dir.trim().is_empty())
+                    .map(|dir| account::expand(home, dir));
+                crate::codex_history::read_thread(
+                    &environment.vars,
+                    config_dir.as_deref(),
+                    project,
+                    cwd,
+                    session,
+                )
+                .map(Some)
+            }
+            _ => Ok(None),
         }
     }
 

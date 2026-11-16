@@ -14,8 +14,11 @@ export const AGENTS: AgentId[] = ["claude-code", "codex"];
     product and as the one speaking in a conversation, how the user signs
     in to it in a terminal, the variable that names its account's
     directory, the mode a session of it starts in unless the user picks
-    another, the one that asks before it acts, and whether it lists slash
-    commands once ready. */
+    another, the one that asks before it acts, whether it lists slash
+    commands once ready, and whether its record of a conversation names
+    the model each turn ran on. A run of an agent whose record does not
+    goes under the agent's name, live or read back, so that a reload
+    draws it under the same name. */
 export interface AgentProfile {
   product: string;
   name: string;
@@ -23,6 +26,7 @@ export interface AgentProfile {
   configVar: string;
   safeMode: string;
   commands: boolean;
+  turnModels: boolean;
 }
 
 const PROFILES: Record<AgentId, AgentProfile> = {
@@ -33,6 +37,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CLAUDE_CONFIG_DIR",
     safeMode: "default",
     commands: true,
+    turnModels: true,
   },
   codex: {
     product: "Codex",
@@ -41,6 +46,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CODEX_HOME",
     safeMode: "read-only",
     commands: false,
+    turnModels: false,
   },
 };
 

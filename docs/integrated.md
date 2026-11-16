@@ -81,7 +81,8 @@ name, which Codex files the threads it starts under, then reads the
 account, the models Codex offers and the efforts each takes, and the
 user's configuration as Codex sees it from the session's folder, and
 starts a thread in that folder, or resumes the one asked for without its
-past turns, which the window does not draw. The thread starts with the
+past turns, which the window reads apart, as described under
+[history](#history). The thread starts with the
 model, the effort and the mode the session asked for, and with approvals
 sent to the window whoever the user's own configuration names to review
 them. A session that follows a workflow gives the workflow's instructions
@@ -191,7 +192,7 @@ the same way.
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
 | Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, every subagent still at work as its start went out, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
-| History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running, and answers with none for an agent whose history is not read, which Codex's is not. |
+| History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running. It answers with none for an agent whose history is not read, and fails with why where the agent could not read it. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
@@ -595,6 +596,50 @@ output and each string of its input to sixteen kilobytes, a changed file to
 sixty-four, and a block of text to a quarter of a megabyte; an image larger
 than four megabytes is left out; and a history of more than thirty-two
 megabytes in all leaves out its first turns and says so.
+
+What a Codex conversation said before is read through Codex itself, which
+keeps each thread's turns and their items. For each read the workbench
+starts a `codex app-server` of its own under the account's home, in the
+session's folder, with its plugins off so that it starts nothing, and ends
+it, with anything left in its process group, once the read is done. So a
+thread is read whether a session of it runs or not. Codex gives a
+thread's turns a page at a time, newest first, each with its items. A
+page too long to read is asked for again a turn at a time, and a turn
+too long for that without its items, which then come a page at a time,
+and a page of those too long to read comes again an item at a time.
+
+Each item comes back as the event a live session sends for it, under the
+same id: a message of the user's under the id the window sent it with, or
+Codex's own for one sent elsewhere, with its text and images; text and
+thinking whole; commands, edits, MCP and other tool calls with their
+input, result and the files they changed; plans; and compactions. A turn
+answers the first message of the user's that comes before anything the
+agent said in it, and a later one was taken into it. A turn with no
+message is one the agent began by itself, and a compaction in such a turn
+was asked for, while one in a turn the user began was made because the
+context was full. Codex's app-server names no model for a turn, so a turn
+read from it names none. An item of a kind the workbench does not know is
+skipped. Codex keeps no record of a command an interrupt stopped, of a
+plan's steps or of a turn's diff, so none of those comes back. A thread
+kept by an older Codex, which kept less, comes back with its messages and
+what the agent said, under ids of Codex's own that differ from those its
+live events had.
+
+Read from a process of its own, a turn that still runs comes back as
+interrupted with no time it completed, where one that was interrupted has
+one. So the newest turn is left open while it has no end, for the
+session's own events and snapshot to settle, and an older one Codex never
+ended was interrupted. A call left running in a turn that ended failed.
+Long content is cut down as a transcript's is. Turns are read newest
+first until the history holds as much as it may, and the older ones are
+left out and said to be. An item too long to read ends what is read of
+its turn, and a turn none of whose items can be read ends the reading, as
+does a read still going after twenty seconds; what was read is kept, and
+its start is said to be left out. A thread Codex does not have, a Codex
+too old to give a thread back, a Codex that is not on the PATH and one
+that answers nothing in time make the read fail, with why in a few plain
+words, and the window says the earlier messages could not be read, and
+why. Reading needs no login.
 
 ## Drawing a conversation
 

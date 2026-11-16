@@ -1049,6 +1049,68 @@ pub struct Said {
     pub event: Event,
 }
 
+impl History {
+    /// The most of a tool call's output, and of each string in its input,
+    /// a history keeps.
+    pub(crate) const OUTPUT_KEEP: usize = 16 * 1024;
+    /// The most of a changed file's content, or of its hunks, kept.
+    pub(crate) const CONTENT_KEEP: usize = 64 * 1024;
+    /// The most of one block of what was said kept.
+    pub(crate) const TEXT_KEEP: usize = 256 * 1024;
+    /// The largest image kept, as base64.
+    pub(crate) const IMAGE_KEEP: usize = 4 * 1024 * 1024;
+    /// The most a history holds, all told: of a longer one, its last turns.
+    #[cfg(not(test))]
+    pub(crate) const KEEP: usize = 32 * 1024 * 1024;
+    #[cfg(test)]
+    pub(crate) const KEEP: usize = 64 * 1024;
+
+    /// An event cut down to what a history holds of it.
+    pub(crate) fn kept(mut event: Event) -> Event {
+        match &mut event {
+            Event::ToolInput {
+                input: Some(input),
+                truncated,
+                ..
+            } => *truncated |= cut_strings(input, Self::OUTPUT_KEEP),
+            Event::ToolFinished {
+                output,
+                truncated,
+                changes,
+                ..
+            } => {
+                *truncated |= cut(output, Self::OUTPUT_KEEP);
+                changes
+                    .iter_mut()
+                    .for_each(|change| cut_change(change, Self::CONTENT_KEEP));
+            }
+            Event::Text { text, .. } | Event::Thinking { text, .. } => {
+                cut(text, Self::TEXT_KEEP);
+            }
+            Event::Plan {
+                text: Some(text), ..
+            } => {
+                cut(text, Self::TEXT_KEEP);
+            }
+            Event::Message { text, images, .. } => {
+                if let Some(text) = text {
+                    cut(text, Self::TEXT_KEEP);
+                }
+                images.retain(|image| image.data.len() <= Self::IMAGE_KEEP);
+            }
+            _ => {}
+        }
+        event
+    }
+}
+
+impl Said {
+    /// How much it takes, as it goes out.
+    pub(crate) fn size(&self) -> usize {
+        serde_json::to_vec(self).map_or(0, |bytes| bytes.len())
+    }
+}
+
 /// The state of a session as its events say it, and the bookkeeping that
 /// says it.
 ///
@@ -2185,7 +2247,7 @@ fn keep_tail(mut stderr: impl Read, tail: Arc<Mutex<String>>) {
 }
 
 /// Kills the agent and everything in its process group.
-fn kill_tree(child: &mut Child) {
+pub(crate) fn kill_tree(child: &mut Child) {
     #[cfg(unix)]
     if let Ok(group) = i32::try_from(child.id()) {
         // The group is the child's own, made at its start.

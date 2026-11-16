@@ -25,19 +25,10 @@ use serde_json::Value;
 
 use crate::claude_stream::{file_changes, steps, text_of, tool_kind, PLAN_TOOL, TODO_TOOL};
 use crate::integrated::{
-    cut, cut_change, cut_strings, CompactReason, Event, History, Image, MessageState, Outcome,
-    Said, ToolKind,
+    CompactReason, Event, History, Image, MessageState, Outcome, Said, ToolKind,
 };
 use crate::transcripts::mangle;
 
-/// The most of a tool call's output, and of each string in its input, kept.
-const OUTPUT_KEEP: usize = 16 * 1024;
-/// The most of a changed file's content, or of its hunks, kept.
-const CONTENT_KEEP: usize = 64 * 1024;
-/// The most of one block of what was said kept.
-const TEXT_KEEP: usize = 256 * 1024;
-/// The largest image kept, as base64.
-const IMAGE_KEEP: usize = 4 * 1024 * 1024;
 /// A line longer than this is passed over.
 #[cfg(not(test))]
 const LINE_KEEP: usize = 32 * 1024 * 1024;
@@ -48,11 +39,6 @@ const LINE_KEEP: usize = 64 * 1024;
 const FILE_KEEP: u64 = 512 * 1024 * 1024;
 #[cfg(test)]
 const FILE_KEEP: u64 = 256 * 1024;
-/// The most a history holds, all told: of a longer one, its last turns.
-#[cfg(not(test))]
-const HISTORY_KEEP: usize = 32 * 1024 * 1024;
-#[cfg(test)]
-const HISTORY_KEEP: usize = 64 * 1024;
 /// How deep subagents that started subagents are followed.
 const DEPTH: usize = 3;
 /// A subagent's description of itself is a few lines.
@@ -506,7 +492,7 @@ impl Reader {
         self.items.push(Said {
             at: self.at,
             model: None,
-            event: bounded(event),
+            event: History::kept(event),
         });
     }
 
@@ -1023,44 +1009,6 @@ fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     Some(text[start..end].trim())
 }
 
-/// An event cut down to what a history holds of it.
-fn bounded(mut event: Event) -> Event {
-    match &mut event {
-        Event::ToolInput {
-            input: Some(input),
-            truncated,
-            ..
-        } => *truncated |= cut_strings(input, OUTPUT_KEEP),
-        Event::ToolFinished {
-            output,
-            truncated,
-            changes,
-            ..
-        } => {
-            *truncated |= cut(output, OUTPUT_KEEP);
-            changes
-                .iter_mut()
-                .for_each(|change| cut_change(change, CONTENT_KEEP));
-        }
-        Event::Text { text, .. } | Event::Thinking { text, .. } => {
-            cut(text, TEXT_KEEP);
-        }
-        Event::Plan {
-            text: Some(text), ..
-        } => {
-            cut(text, TEXT_KEEP);
-        }
-        Event::Message { text, images, .. } => {
-            if let Some(text) = text {
-                cut(text, TEXT_KEEP);
-            }
-            images.retain(|image| image.data.len() <= IMAGE_KEEP);
-        }
-        _ => {}
-    }
-    event
-}
-
 /// Leaves out the first turns of a history longer than it may hold, so
 /// that what is left starts where a turn does. The last turn is kept
 /// whatever its size, each of its items being cut down already.
@@ -1070,9 +1018,9 @@ fn keep_within(history: &mut History) {
     let mut total = 0;
     for said in &history.items {
         before.push(total);
-        total += serde_json::to_vec(said).map_or(0, |bytes| bytes.len());
+        total += said.size();
     }
-    if total <= HISTORY_KEEP {
+    if total <= History::KEEP {
         return;
     }
     // Where a turn starts: at the message it answers, or at its start.
@@ -1100,7 +1048,7 @@ fn keep_within(history: &mut History) {
     let from = starts
         .iter()
         .copied()
-        .find(|&start| total - before[start] <= HISTORY_KEEP)
+        .find(|&start| total - before[start] <= History::KEEP)
         .or_else(|| starts.last().copied())
         .unwrap_or(0);
     if from > 0 {

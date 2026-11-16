@@ -436,7 +436,10 @@ user's own message reads as theirs whatever another session sent; the sentence t
 workbench adds to a started session's prompt, asking it to call notify, is
 never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
-not known, with the time, down a quiet line at the side. What the session
+not known, with the time, down a quiet line at the side. Codex's app-server
+names no model for a turn, so every run of a Codex session, live or read
+back, goes under the agent's name and keeps it over a reload; the model it
+runs on is on the composer's model chip. What the session
 shows is chosen by the kind of each call and the shape of what it carries,
 the same for every agent. What the agent wrote is drawn as
 Markdown, its code and tables included, and grows in place while it streams,
@@ -752,18 +755,22 @@ session that ended or could not start says why, and Resume starts it again
 on the same conversation, the thread drawn so far staying above what comes,
 with a quiet line saying when it resumed.
 
-A Claude Code session opened from the past sessions, or brought back after a
-restart, draws its earlier messages, read from its transcript, above what
-this run says, in the same look. The line where this run began is there at
-once, with a breathing line above it while the transcript is read; the
-session can be written to meanwhile, and what it says goes under the line.
-The earlier messages fill in above it, and a thread with earlier messages
-sits at the foot of the pane while it is shorter than the pane, so nothing
-under them moves. A turn the transcript gives no end, as when the app quit
-during it, is over, and its unfinished steps failed. When nothing earlier is
-found, a line above says so. A conversation too long to hold whole leaves
-out its start and says so. [Integrated sessions](integrated.md#history) has
-what is read and how.
+An integrated session opened from the past sessions, or brought back after
+a restart, draws its earlier messages above what this run says, in the
+same look: Claude Code's read from its transcript, and Codex's from its
+thread, through Codex itself. The line where this run began is there at
+once, with a breathing line above it while the earlier messages are read;
+the session can be written to meanwhile, and what it says goes under the
+line. The earlier messages fill in above it, and a thread with earlier
+messages sits at the foot of the pane while it is shorter than the pane,
+so nothing under them moves. A turn the agent's record gives no end, as
+when the app quit during it, is over, and its unfinished steps failed.
+When nothing earlier is found, a line above says so. A conversation too
+long to hold whole leaves out its start and says so. Earlier messages
+that cannot be read leave the session able to be written to, with a line
+saying they could not be read and why, such as that Codex does not have
+the conversation. [Integrated sessions](integrated.md#history) has what
+is read and how.
 
 The line reads `Resumed here, today 09:40`, naming the day when it is
 another. The first time shown on each day names its day too, as `Thu 18:02`,
@@ -775,10 +782,6 @@ its own name, who sent each message and when, and the line where a resumed
 run began. That holds for an orchestrator's sessions and for an integrated
 session another session started, which comes back under its starter, as
 after a restart, when it waits to be resumed like any other.
-
-A Codex session's earlier messages are not read: a resumed one says they are
-in its transcript and not shown, and after a reload so does one that was
-spoken to.
 
 ## Dropping files
 

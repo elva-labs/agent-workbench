@@ -743,9 +743,13 @@ describe("what a conversation said before, read back", () => {
     const conversation = new Conversation(() => 99_000);
     conversation.beganAbove(7_000);
     conversation.earlier = "loading";
-    conversation.unread();
+    conversation.unread("Codex does not have this conversation");
     expect(conversation.earlier).toBe("unread");
+    expect(conversation.earlierWhy).toBe("Codex does not have this conversation");
     expect(conversation.began).toBeNull();
+    // Read after all, there is no why.
+    conversation.lay({ items: [], cut: false }, null);
+    expect(conversation.earlierWhy).toBeNull();
   });
 
   it("marks this run before the first of the main thread's events from when it began", () => {

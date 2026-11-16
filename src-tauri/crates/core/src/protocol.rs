@@ -538,7 +538,7 @@ pub fn dispatch(
                 p.cwd.as_deref(),
                 &p.session,
                 p.config_dir.as_deref(),
-            ))
+            )?)
         }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;
@@ -849,7 +849,11 @@ mod tests {
         assert_eq!(items[1]["model"], "claude-sonnet-5-5");
         assert_eq!(items[2]["event"]["type"], "text");
         assert_eq!(items[3]["event"]["type"], "turnEnded");
-        let none = dispatch(&core(), "integrated_history", params("codex"), no_output).unwrap();
+        // Codex's history is read through Codex, which a session id that
+        // cannot be a thread's never reaches.
+        let codex = dispatch(&core(), "integrated_history", params("codex"), no_output).unwrap();
+        assert_eq!(codex, json!({"items": [], "cut": false}));
+        let none = dispatch(&core(), "integrated_history", params("nobody"), no_output).unwrap();
         assert_eq!(none, Value::Null);
         std::fs::remove_dir_all(&dir).ok();
     }

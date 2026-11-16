@@ -117,14 +117,16 @@ export async function installFakeCore(
     integrable?: string[];
     /** Keeps the integrated sessions across a reload, as the core does. */
     keepIntegrated?: boolean;
-    /** Past Claude Code sessions the core reports for the first project,
-        each from the agent's own directory unless it names an account's. */
+    /** Past sessions the core reports for the first project, each Claude
+        Code's unless it names another agent, and from the agent's own
+        directory unless it names an account's. */
     transcripts?: {
       id: string;
       modified: number;
       size: number;
       title: string | null;
       configDir?: string;
+      agent?: string;
     }[];
     /** The project in front when the window last closed; the first open
         one unless said. */
@@ -1310,8 +1312,10 @@ export async function installFakeCore(
         },
 
         transcripts: async (project: string, agent: string, configDir?: string) =>
-          project === open[0] && agent === "claude-code"
-            ? transcripts.filter((transcript) => transcript.configDir === configDir)
+          project === open[0]
+            ? transcripts.filter(
+                (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
+              )
             : [],
         transcriptsMany: async (
           projects: string[],
@@ -1321,8 +1325,10 @@ export async function installFakeCore(
           const w = window as unknown as { __historyReads?: string[][] };
           (w.__historyReads ??= []).push(projects);
           return projects.map((project) =>
-            project === open[0] && agent === "claude-code"
-              ? transcripts.filter((transcript) => transcript.configDir === configDir)
+            project === open[0]
+              ? transcripts.filter(
+                  (transcript) => transcript.configDir === configDir && (transcript.agent ?? "claude-code") === agent,
+                )
               : [],
           );
         },
