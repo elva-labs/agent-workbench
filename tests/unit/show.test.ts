@@ -211,7 +211,7 @@ describe("a call from a session the user is not looking at", () => {
     workspace.active = "/one";
     const a = create("/one");
     started(a.key, "pty-1", "s1");
-    await showRequested(place("s1"));
+    await showRequested(place(a.token));
     expect(shown).toEqual([["src/a.rs", 3, 5, "Here."]]);
   });
 
@@ -222,7 +222,7 @@ describe("a call from a session the user is not looking at", () => {
     started(a.key, "pty-1", "s1");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
-    await showRequested(place("s1"));
+    await showRequested(place(a.token));
     expect(shown).toEqual([]);
     select(a.key);
     switched(a.key);
@@ -241,12 +241,12 @@ describe("a call from a session the user is not looking at", () => {
     started(a.key, "pty-1", "s1");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
-    await showRequested(place("s1"));
+    await showRequested(place(a.token));
     await diffRequested({
       path: "/one/src/b.rs",
       note: "The rename.",
       cwd: "/one",
-      session: "s1",
+      session: a.token,
     });
     select(a.key);
     switched(a.key);
@@ -263,7 +263,7 @@ describe("a call from a session the user is not looking at", () => {
     workspace.active = "/two";
     const b = create("/two");
     started(b.key, "pty-2", "s2");
-    terminalRequested({ command: "npm run dev", cwd: "/one", session: "s1" });
+    terminalRequested({ command: "npm run dev", cwd: "/one", session: a.token });
     expect(shells).toEqual([]);
     expect(workspace.active).toBe("/two");
     select(a.key);
@@ -329,6 +329,33 @@ describe("a call from a session the user is not looking at", () => {
     expect(shells).toHaveLength(1);
   });
 
+  // An agent's id is not a session's name: the tools answer with ids and
+  // the sessions pane shows them, so a call naming one is from no session,
+  // whichever of these tools it is.
+  it("places a call naming an agent's id on no session, and opens it at once", async () => {
+    workspace.open.push(repo("/one"));
+    workspace.active = "/one";
+    const a = create("/one");
+    started(a.key, "pty-1", "s1");
+    const b = create("/one");
+    started(b.key, "pty-2", "s2");
+    select(b.key);
+    notified({ text: "Done", cwd: "/one", session: "s1" });
+    expect(sessions.all.map((session) => session.note)).toEqual([null, null]);
+    await showRequested(place("s1"));
+    expect(shown).toHaveLength(1);
+    await diffRequested({ path: "/one/src/b.rs", note: null, cwd: "/one", session: "s1" });
+    expect(diffed).toHaveLength(1);
+    terminalRequested({ command: "ls", cwd: "/one", session: "s1" });
+    expect(shells).toEqual([[{ project: "/one", session: b.key }, "ls"]]);
+    // Nothing waits on the session the id belongs to.
+    select(a.key);
+    switched(a.key);
+    await Promise.resolve();
+    expect(shown).toHaveLength(1);
+    expect(diffed).toHaveLength(1);
+  });
+
   it("places a call from a session that has stopped on no session, and opens it at once", async () => {
     workspace.open.push(repo("/one"));
     workspace.active = "/one";
@@ -390,7 +417,7 @@ describe("a call from a session the user is not looking at", () => {
     started(a.key, "pty-1", "s1");
     const b = create("/one");
     started(b.key, "pty-2", "s2");
-    await showRequested(place("s1"));
+    await showRequested(place(a.token));
     resetSessions();
     switched(a.key);
     await Promise.resolve();
