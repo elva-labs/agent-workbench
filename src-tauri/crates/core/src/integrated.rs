@@ -848,6 +848,22 @@ pub trait Protocol: Send + Sync {
     /// A fresh reader and writer of the agent's lines for one session.
     fn driver(&self, launch: &Launch) -> Box<dyn Driver>;
 
+    /// The mode a conversation resumed with no mode named starts in where
+    /// the agent's own terminal would restore one that its stream does
+    /// not: the mode the conversation last ran in, as the agent recorded
+    /// it under the account whose configuration directory is given, if it
+    /// is one a session can switch to. None leaves the start to the agent.
+    fn resumed_mode(
+        &self,
+        _home: &Path,
+        _config_dir: Option<&Path>,
+        _env: &HashMap<String, String>,
+        _folder: &Path,
+        _session: &str,
+    ) -> Option<String> {
+        None
+    }
+
     /// Whether the agent holds a folder as trusted to run its project's
     /// own hooks and servers, by the record the agent's own question
     /// writes, under the account whose configuration directory is given.
