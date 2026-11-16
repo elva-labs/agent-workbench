@@ -54,25 +54,19 @@ export function follow(element: HTMLElement, vertical: boolean, x: number, y: nu
   else element.style.setProperty("--grip-at", `${clamp(x - box.left - length / 2, 2, box.width - length - 2)}px`);
 }
 
-/** Whether the element under a point on one side of a divider wants the
-    pointer for itself: a control, or a scroll bar along the edge that side
-    meets the divider at. Scroll bars run down the right of what scrolls
-    and along its foot, so only the side before a divider, left of it or
-    above it, can have one there. */
-function wants(target: Element | null, vertical: boolean, before: boolean, x: number, y: number): boolean {
+/** Whether the element under a point in a divider's reach wants the
+    pointer for itself: a control, or a scroll bar, which runs down the
+    right of what scrolls and along its foot, wherever the divider meets
+    it, along that bar or across its end. */
+function wants(target: Element | null, x: number, y: number): boolean {
   if (target === null) return false;
   if (target.closest(CONTROL) !== null) return true;
-  if (!before) return false;
   for (let at: Element | null = target; at !== null && at !== document.body; at = at.parentElement) {
     const style = getComputedStyle(at);
     const box = at.getBoundingClientRect();
-    if (vertical) {
-      const scrolls = /auto|scroll/.test(style.overflowY) && at.scrollHeight > at.clientHeight + 1;
-      if (scrolls && box.right - x <= SCROLLBAR) return true;
-    } else {
-      const scrolls = /auto|scroll/.test(style.overflowX) && at.scrollWidth > at.clientWidth + 1;
-      if (scrolls && box.bottom - y <= SCROLLBAR) return true;
-    }
+    const down = /auto|scroll/.test(style.overflowY) && at.scrollHeight > at.clientHeight + 1;
+    const across = /auto|scroll/.test(style.overflowX) && at.scrollWidth > at.clientWidth + 1;
+    if ((down && box.right - x <= SCROLLBAR) || (across && box.bottom - y <= SCROLLBAR)) return true;
   }
   return false;
 }
@@ -112,8 +106,8 @@ function frame() {
     // The reach on either side gives way to what lies under it.
     const inBefore = along && (vertical ? x >= before.left && x < box.left : y >= before.top && y < box.top);
     const inAfter = along && (vertical ? x > box.right && x <= after.right : y > box.bottom && y <= after.bottom);
-    const yieldBefore = inBefore && wants(under(x, y), vertical, true, x, y);
-    const yieldAfter = inAfter && wants(under(x, y), vertical, false, x, y);
+    const yieldBefore = inBefore && wants(under(x, y), x, y);
+    const yieldAfter = inAfter && wants(under(x, y), x, y);
     if (yieldBefore !== state.yieldBefore) {
       state.yieldBefore = yieldBefore;
       element.toggleAttribute("data-yield-before", yieldBefore);

@@ -67,7 +67,16 @@
   $effect(() => {
     const again = () => place();
     window.addEventListener("resize", again);
-    return () => window.removeEventListener("resize", again);
+    return () => {
+      window.removeEventListener("resize", again);
+      // Gone in the middle of a drag: the grips are let go and the two
+      // dividers no longer marked.
+      if (dragging) holdGrips(false);
+      for (const divider of document.querySelectorAll(`.splitter[data-divider="${side}"], .splitter[data-divider="${foot}"]`)) {
+        divider.removeAttribute("data-met");
+        divider.removeAttribute("data-met-drag");
+      }
+    };
   });
 
   /** The two grips meet in a T: the one coming down reaches the middle of

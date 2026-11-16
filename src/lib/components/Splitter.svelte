@@ -36,6 +36,9 @@
     return () => {
       stop();
       letGo(KEYS);
+      // Gone in the middle of a drag, as a pane that folds under it: the
+      // other grips are let go.
+      if (dragging) holdGrips(false);
     };
   });
 
