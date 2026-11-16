@@ -183,6 +183,7 @@
         // Meta+Enter to the agent, and Meta+Enter is a newline. Refused on
         // every phase: the keypress would otherwise send the return itself.
         if (event.type === "keydown" && ptyId !== null) {
+          typed(ptyId, "\x1b\r");
           core().write(ptyId, "\x1b\r").catch(() => {});
         }
         return false;
