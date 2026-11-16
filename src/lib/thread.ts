@@ -571,9 +571,13 @@ export function tokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
-/** A clock time as the thread shows it, in the user's own format. */
+let clockFormat: Intl.DateTimeFormat | null = null;
+
+/** A clock time as the thread shows it, in the user's own format. One
+    format is made and kept, since a thread can show thousands of times. */
 export function clock(at: number): string {
-  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  clockFormat ??= new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+  return clockFormat.format(at);
 }
 
 /** The day a time falls on, as the thread names it beside the time: today,
@@ -752,4 +756,102 @@ export function address(text: string): Address | null {
   if (latin > 0 && latin < letters.length) warnings.push("its host mixes scripts");
   else if (latin === 0 && letters.length > 0) warnings.push("its host is not in Latin letters");
   return { host, other, warnings };
+}
+
+/** The key a fold of the thread is kept open by: a stretch of work by the
+    call or block it starts with, a step by its own. */
+export function foldKey(kind: "work" | "step", part: ToolCall | TextPart): string {
+  return `${kind}:${part.kind === "tool" ? part.call : part.block}`;
+}
+
+/** Something the thread holds that can be looked for and brought into
+    view: a message, a block of text or thinking, a call, a plan, a
+    question or a note, by its id; the entry it stands in; and the folds
+    that must open for it to show, outermost first. */
+export interface Held {
+  id: string;
+  /** Null for a message waiting under the thread, which is always drawn. */
+  entry: string | null;
+  folds: string[];
+  text: string;
+}
+
+/** A call's input as its step shows it: a field's name and its value,
+    the value as written when it is text. */
+function inputWords(part: ToolCall): string {
+  if (!part.inputDone) return part.inputText;
+  const value = part.input;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || Array.isArray(value)) return JSON.stringify(value, null, 2);
+  return Object.entries(value as Record<string, unknown>)
+    .filter(([, field]) => field !== null && field !== undefined && field !== "")
+    .map(([name, field]) => `${name.replace(/_/g, " ")}\n${typeof field === "string" ? field : JSON.stringify(field, null, 2)}`)
+    .join("\n");
+}
+
+/** Everything the thread holds, in the order it is drawn, folded work and
+    a subagent's run under its call included. */
+export function held(conversation: Conversation): Held[] {
+  const out: Held[] = [];
+  const walk = (parts: Part[], entry: string, around: string[]) => {
+    for (const segment of segments(parts)) {
+      if (segment.kind === "text") out.push({ id: segment.part.block, entry, folds: around, text: segment.part.text });
+      else if (segment.kind === "plan") {
+        const plan = segment.part;
+        const text = [...plan.steps.map((step) => step.text), plan.text ?? ""].join("\n");
+        out.push({ id: `plan-${plan.at}`, entry, folds: around, text });
+      } else if (segment.kind === "question") {
+        const asked = segment.part;
+        const text = [...asked.questions.map((question) => question.question), ...(asked.answers ?? []).flat()].join("\n");
+        out.push({ id: asked.request, entry, folds: around, text });
+      } else {
+        const work = [...around, foldKey("work", segment.parts[0])];
+        for (const part of segment.parts) {
+          if (part.kind !== "tool") {
+            out.push({ id: part.block, entry, folds: work, text: part.text });
+            continue;
+          }
+          // A change's lines as its diff shows them, without their marks,
+          // and a new file's content.
+          const changes = part.changes.flatMap((change) => [
+            change.path,
+            change.content ?? "",
+            ...change.hunks.flatMap((hunk) => hunk.lines.map((line) => line.slice(1))),
+          ]);
+          const text = [part.name, inputWords(part), part.result ?? part.output, ...changes].join("\n");
+          out.push({ id: part.call, entry, folds: work, text });
+          walk(part.parts, entry, [...work, foldKey("step", part)]);
+        }
+      }
+    }
+  };
+  const entries = conversation.entries;
+  const last = entries[entries.length - 1];
+  // The error a session ended with is said where it offers to resume, not
+  // in the thread.
+  const endedWith = conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
+  for (const entry of entries) {
+    if (entry.kind === "user") {
+      const message = conversation.messages[entry.message];
+      if (message !== undefined) out.push({ id: message.id, entry: entry.key, folds: [], text: spoken(message.text, true).text });
+    } else if (entry.kind === "agent") walk(entry.parts, entry.key, []);
+    else if (entry.kind === "note" && entry.key !== endedWith) out.push({ id: entry.key, entry: entry.key, folds: [], text: entry.text });
+  }
+  for (const message of conversation.waiting) out.push({ id: message.id, entry: null, folds: [], text: spoken(message.text, true).text });
+  return out;
+}
+
+/** Where the thread holds a message, block or call: its entry and the
+    folds around it. */
+export function locate(conversation: Conversation, id: string): Held | null {
+  return held(conversation).find((one) => one.id === id) ?? null;
+}
+
+/** What the thread holds that has `query` in it, case aside, in the
+    order it is drawn. */
+export function matches(conversation: Conversation, query: string): Held[] {
+  const looked = query.toLocaleLowerCase();
+  if (looked === "") return [];
+  return held(conversation).filter((one) => one.text.toLocaleLowerCase().includes(looked));
 }

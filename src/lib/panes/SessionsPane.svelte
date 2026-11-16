@@ -61,7 +61,7 @@
     parentOf,
   } from "$lib/orchestrator.svelte";
   import {
-    placeOf,
+    placeTextOf,
     startedFor,
     unheard,
     WAKES_MAX,
@@ -1126,12 +1126,16 @@
 
   // The pointer resting on the folded column peeks the pane over the pane
   // beside it where it peeks, and leaving the pane puts it back, unless the keyboard
-  // is in it: then Escape, Enter or the focus chord put it back. A press in
-  // the pane is noted while it lasts, so the keyboard arriving with a click
-  // is not taken for the keyboard walking the rows.
+  // is in it: then Escape, Enter or the focus chord put it back. A wait for
+  // either ends once the pane peeks or goes back some other way, a click or
+  // a chord, so a peek put away is not brought back by a pointer that came
+  // to the column before it. A press in the pane is noted while it lasts,
+  // so the keyboard arriving with a click is not taken for the keyboard
+  // walking the rows.
   $effect(() => {
     const pane = nav?.closest<HTMLElement>('[data-pane="sessions"]');
     if (!pane) return;
+    void layout.sessionsPeek;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const later = (what: () => void, after: number) => {
       if (timer !== null) clearTimeout(timer);
@@ -1315,11 +1319,12 @@
 <!-- The sessions a session started, hanging under it on a rail from its
      dot, one line each: the state, the name, the account it runs under
      when that is not its project's, the project it runs in when that is
-     another, the model or, in the accent, that it is asking for a
-     permission, and when it last changed. Short of room, the project is
-     cut first, then the model goes whole and the project with it, then the
-     account, and the name gives way last; the time and asking always
-     stand. Delete does nothing on these rows; their own × stops them. -->
+     another, the model, or its step and round, or, in the accent, that it
+     is asking for a permission, and when it last changed. Short of room,
+     the project is cut first, then the model goes whole and the project
+     with it, then the account, and the name gives way last; the time, the
+     step and round, and asking always stand. Delete does nothing on these
+     rows; their own × stops them. -->
 {#snippet rail(parent: Session)}
   {@const kids = childrenOf(parent)}
   {@const news = unheard(parent)}
@@ -1327,10 +1332,10 @@
     <div class="kids" data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
         <!-- A session started for a step of its starter's workflow shows
-             its step where another shows its model: the step set the
-             model, and the step is what tells the rows apart. The round is
-             in the header, where there is room for it. -->
-        {@const role = placeOf(kid.key)?.step ?? null}
+             its step and round where another shows its model, "Review, 2
+             of 4": the step set the model, and the step is what tells the
+             rows apart. -->
+        {@const role = placeTextOf(kid.key)?.short ?? null}
         <div
           class="session kid"
           class:first={index === 0}
@@ -1362,9 +1367,7 @@
               {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
                   >{projectLabel(kid.project)}</span
                 >{/if}
-              {#if !isAsking(kid) && role !== null}
-                <span class="model" data-testid="started-role">{role}</span>
-              {:else if !isAsking(kid) && kid.model !== null}
+              {#if !isAsking(kid) && role === null && kid.model !== null}
                 <span class="model" data-testid="started-model">{modelLabel(kid.model)}</span>
               {/if}
               {#if news.includes(kid)}
@@ -1379,6 +1382,8 @@
             </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
+            {:else if role !== null}
+              <span class="model role" data-testid="started-role">{role}</span>
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told"
@@ -3172,7 +3177,8 @@
   }
 
   .kid-row .when,
-  .model.asking {
+  .model.asking,
+  .model.role {
     flex: none;
   }
 
