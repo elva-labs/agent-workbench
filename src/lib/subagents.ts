@@ -1,5 +1,6 @@
 import type { Conversation, Task, ToolCall } from "$lib/conversation.svelte";
 import { callInput } from "$lib/thread";
+import { shown } from "$lib/unseen";
 
 /**
  * The subagents a session has out, as the sessions rail hangs them under
@@ -186,10 +187,11 @@ export function subagentNote(subagent: Subagent): string | null {
   }
 }
 
-/** What a subagent's row says to a screen reader. */
+/** What a subagent's row says to a screen reader, what cannot be seen in
+    the agent's words written out. */
 export function subagentSaid(subagent: Subagent): string {
-  const what = subagent.about === null ? "A subagent" : `Subagent for ${subagent.about}`;
+  const what = subagent.about === null ? "A subagent" : `Subagent for ${shown(subagent.about)}`;
   const state =
     subagent.state === "asking" ? "asking for a permission" : subagent.state === "running" ? "running" : subagent.state;
-  return subagent.kind === null ? `${what}, ${state}` : `${what}, ${subagent.kind}, ${state}`;
+  return subagent.kind === null ? `${what}, ${state}` : `${what}, ${shown(subagent.kind)}, ${state}`;
 }

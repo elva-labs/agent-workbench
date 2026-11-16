@@ -13,6 +13,7 @@
     stepOutput,
     stepTitle,
   } from "$lib/thread";
+  import { markedCall } from "$lib/callShown.svelte";
   import Copy from "./Copy.svelte";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
@@ -69,7 +70,14 @@
   let tasks = $derived(part.kind === "tool" ? part.tasks.filter((task) => !task.ambient) : []);
 </script>
 
-<div class="step" class:open data-testid="step" data-tool={part.kind === "tool" ? part.tool : "thinking"}>
+<div
+  class="step"
+  class:open
+  class:marked={part.kind === "tool" && markedCall.call === part.call}
+  data-testid="step"
+  data-tool={part.kind === "tool" ? part.tool : "thinking"}
+  data-call={part.kind === "tool" ? part.call : undefined}
+>
   <!-- The row's button reaches over the whole line, its status too, so a
        click anywhere on it folds, but on the Copy, which stands above it. -->
   <div class="head" data-copy-host="command" data-testid="step-head">
@@ -183,6 +191,11 @@
 <style>
   .step {
     min-width: 0;
+  }
+
+  /* The call a session was opened at, marked for a moment. */
+  .step.marked > .head {
+    box-shadow: 0 0 0 2px var(--accent);
   }
 
   .head {

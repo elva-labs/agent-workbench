@@ -97,6 +97,11 @@
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
   import { overrideOf, workflowOf } from "$lib/workflows.svelte";
+  import { linkOf } from "$lib/integrated.svelte";
+  import { subagentNote, subagentSaid, subagentWords, subagentsOf, type Subagent } from "$lib/subagents";
+  import { showCall } from "$lib/callShown.svelte";
+  import Plain from "$lib/components/conversation/Plain.svelte";
+  import Icon from "$lib/components/conversation/Icon.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -701,7 +706,8 @@
     run: () => void;
   }
 
-  let rows = $derived.by(() => {
+  /** Every row but the subagents', in the order the pane shows them. */
+  let walk = $derived.by(() => {
     const out: Row[] = [
       { id: "sort", run: openSort },
       { id: "menu", run: openMenu },
@@ -730,6 +736,135 @@
       }
     }
     return out;
+  });
+
+  /** Every row, a session's subagents right under it. */
+  let rows = $derived.by(() => {
+    const out: Row[] = [];
+    for (const row of walk) {
+      out.push(row);
+      if (!row.id.startsWith("session:")) continue;
+      const key = row.id.slice("session:".length);
+      for (const one of subGroups.get(key) ?? []) out.push({ id: subId(key, one.call), run: () => openSubagent(key, one.call) });
+    }
+    return out;
+  });
+
+  /** A subagent's row id: its session's key and the call that started it. */
+  function subId(key: string, call: string): string {
+    return `sub:${key}\n${call}`;
+  }
+
+  /** The session a subagent's row hangs under, by its row id. */
+  function subOwner(id: string): string | null {
+    if (!id.startsWith("sub:")) return null;
+    const cut = id.indexOf("\n");
+    return cut === -1 ? null : id.slice("sub:".length, cut);
+  }
+
+  /** A session's subagents as its conversation has them. Only an
+      integrated Claude Code session's are known: Codex's run as threads
+      of their own that the window does not follow, and a terminal's hooks
+      do not say enough. */
+  function liveSubagents(session: Session): Subagent[] {
+    if (session.kind !== "integrated" || session.agent !== "claude-code" || !isLive(session)) return [];
+    const link = linkOf(session.key);
+    return link === null ? [] : subagentsOf(link.conversation);
+  }
+
+  /** The row the pointer is on, by its row id, while it is in the pane. */
+  let pointed = $state<string | null>(null);
+
+  function onPointerover(e: PointerEvent) {
+    pointed = (e.target as HTMLElement).closest<HTMLElement>("[data-row]")?.dataset.row ?? null;
+  }
+
+  /** The subagents each session's rows show last drawn, by its key. */
+  const shownSubs = new Map<string, Subagent[]>();
+
+  /** Where the pointer and the keyboard are in the order of the rows: a
+      subagent's row counts as just under its session's. */
+  function anchors(): number[] {
+    const at = (id: string | null): number | null => {
+      if (id === null) return null;
+      const owner = subOwner(id);
+      const index = walk.findIndex((row) => row.id === (owner === null ? id : `session:${owner}`));
+      return index === -1 ? null : owner === null ? index : index + 0.5;
+    };
+    const keys = walking ? (cursor ?? (sessions.active === null ? null : `session:${sessions.active}`)) : null;
+    return [at(keys), pointerIn ? at(pointed) : null].filter((index) => index !== null);
+  }
+
+  /**
+   * The subagents each session's rows show, by its key. They come and go
+   * as the conversations say, except where that would move the row under
+   * the pointer or the keyboard's place: a session's rows above either
+   * keep what they show until both have moved off or away. Kept, a row
+   * that has gone stays, its subagent as done, and one that has come
+   * waits, while each row kept shows its subagent as it now stands.
+   */
+  let subGroups = $derived.by(() => {
+    const held = anchors();
+    const out = new Map<string, Subagent[]>();
+    for (const [index, row] of walk.entries()) {
+      if (!row.id.startsWith("session:")) continue;
+      const key = row.id.slice("session:".length);
+      const session = byKey(key);
+      const live = session === null ? [] : liveSubagents(session);
+      const before = shownSubs.get(key) ?? [];
+      const drawn = held.some((at) => at > index) ? kept(before, live) : live;
+      if (drawn.length > 0) out.set(key, drawn);
+    }
+    shownSubs.clear();
+    for (const [key, drawn] of out) shownSubs.set(key, drawn);
+    return out;
+  });
+
+  /** The rows drawn before, each with its subagent as it now stands, or
+      as done once it has gone. */
+  function kept(before: Subagent[], live: Subagent[]): Subagent[] {
+    const now = new Map(live.map((one) => [one.call, one]));
+    return before.map(
+      (one) => now.get(one.call) ?? (one.state === "running" || one.state === "asking" ? { ...one, state: "done" } : one),
+    );
+  }
+
+  /** Picking a subagent's row opens its session at the call that started
+      it, the call open and marked. */
+  function openSubagent(key: string, call: string) {
+    if (!goTo(key)) return;
+    showCall(key, call);
+    focusPane("agent");
+  }
+
+  /** What a screen reader is told of subagents as they start, once each,
+      politely: the calls told of so far, and whether those already out
+      when the pane came have been taken in without a word. */
+  let subagentSaidNow = $state("");
+  const toldOf = new Set<string>();
+  let primed = false;
+
+  $effect(() => {
+    const fresh: string[] = [];
+    for (const session of sessions.all)
+      for (const one of liveSubagents(session)) {
+        if (toldOf.has(one.call)) continue;
+        // What it was asked is said once the call says it.
+        if (primed && one.about === null && one.state === "running") continue;
+        toldOf.add(one.call);
+        if (primed && (one.state === "running" || one.state === "asking"))
+          fresh.push(`${label(session)} started a subagent${one.about === null ? "" : ` for ${shown(one.about)}`}`);
+      }
+    primed = true;
+    if (fresh.length === 0) return;
+    untrack(() => {
+      const text = `${fresh.join(". ")}.`;
+      if (subagentSaidNow !== text) subagentSaidNow = text;
+      else {
+        subagentSaidNow = "";
+        queueMicrotask(() => (subagentSaidNow = text));
+      }
+    });
   });
 
   /** A project's rows in the order drawn: its sessions, each with the
@@ -1004,10 +1139,16 @@
   }
 
   /** Left and Right on a session that started others fold its started
-      sessions into dots and let them out again; Left on one of those
-      climbs to the session that started it. False when the row under the
-      cursor is neither. */
+      sessions into dots and let them out again; Left on one of those, or
+      on a subagent's row, climbs to the session it hangs under. False
+      when the row under the cursor is none of these. */
   function onRail(left: boolean): boolean {
+    const owner = current === null ? null : subOwner(current);
+    if (owner !== null) {
+      if (!left) return false;
+      cursor = `session:${owner}`;
+      return true;
+    }
     const session = current?.startsWith("session:") ? byKey(current.slice("session:".length)) : null;
     if (session === null) return false;
     const parent = parentOf(session);
@@ -1187,6 +1328,7 @@
     };
     const leave = () => {
       pointerIn = false;
+      pointed = null;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
@@ -1227,9 +1369,15 @@
   {@const news = unheard(session)}
   {@const woken = wokenBy(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
+  {@const drawnSubs = subGroups.get(session.key) ?? []}
+  {@const liveSubs = drawnSubs.length > 0 ? liveSubagents(session) : []}
+  {@const subsSaid =
+    folded || session.note !== null || kids.length > 0 || news.length > 0 || drawnSubs.length === 0
+      ? null
+      : subagentWords(liveSubs.length > 0 ? liveSubs : drawnSubs)}
   {@const line = folded
     ? startedWords(kids)
-    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : null))}
+    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : subsSaid))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"
@@ -1267,11 +1415,15 @@
         <span class="second">
           <span
             class="note"
-            class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
+            class:asking={owned
+              ? session.needs === "permission"
+              : subsSaid !== null
+                ? (liveSubs.length > 0 ? liveSubs : drawnSubs).some((one) => one.state === "asking")
+                : kids.some(isAsking)}
             class:first-say={news.length > 0}
             class:shares={!folded && news.length === 0 && woken !== null}
             title={line}
-            data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
+            data-testid={owned ? "session-note" : subsSaid !== null ? "subagent-summary" : "orchestrator-summary"}>{line}</span
           >
           {#if news.length > 0}
             <!-- What it has not heard from the sessions it started, while it
@@ -1345,6 +1497,81 @@
   </div>
 {/snippet}
 
+<!-- A session's subagents, hanging under it on a rail of their own while
+     they run, one line each: the state, the agent's glyph, what it was
+     asked, which is the agent's text and drawn as it is, its kind while it
+     runs or its state in a word after, asking in the accent, and when that
+     last changed. A started session's hang one step further in, under its
+     own row. One done stays greyed until its session's turn ends. A
+     subagent is a run inside its session, not a session: it has no × and
+     cannot be typed into, and its row opens the session at the call that
+     started it. Folded to the narrow column, the rows keep their height
+     and show only a dot for each, packed together. -->
+{#snippet subagents(owner: Session, deep: boolean, pass: boolean, more: boolean)}
+  {@const subs = subGroups.get(owner.key) ?? []}
+  {#if subs.length > 0}
+    <div class="subs" class:deep data-testid="subagent-rail">
+      {#if pass}<span class="rail-pass" aria-hidden="true"></span>{/if}
+      <span class="sub-dots" aria-hidden="true" data-testid="subagent-dots"
+        >{#each subs as one (one.call)}<span
+            class="dot mini"
+            class:live={one.state === "running" || one.state === "asking"}
+            class:working={one.state === "running"}
+            class:permission={one.state === "asking"}
+            class:bad={one.state === "failed"}
+          ></span>{/each}</span
+      >
+      {#each subs as one, index (one.call)}
+        {@const id = subId(owner.key, one.call)}
+        {@const note = subagentNote(one)}
+        {@const over = one.state !== "running" && one.state !== "asking"}
+        <div
+          class="session sub"
+          class:first={index === 0}
+          class:over
+          class:cursor={current === id}
+          data-row={id}
+          in:rowFade|local
+          out:rowFade|local
+        >
+          <span class="rail-in" aria-hidden="true"></span>
+          {#if index < subs.length - 1 || more}<span class="rail-on" aria-hidden="true"></span>{/if}
+          <button
+            class="row sub-row"
+            tabindex="-1"
+            onclick={() => openSubagent(owner.key, one.call)}
+            title={one.about === null ? undefined : shown(one.about)}
+            aria-label={subagentSaid(one)}
+            data-testid="subagent-row"
+            data-state={one.state}
+          >
+            <span
+              class="dot"
+              class:live={!over}
+              class:working={one.state === "running"}
+              class:permission={one.state === "asking"}
+              class:bad={one.state === "failed"}
+            ></span>
+            <span class="sub-glyph"><Icon name="agent" size={11} /></span>
+            <span class="label sub-label" data-testid="subagent-about"
+              >{#if one.about === null}Subagent{:else}<Plain text={one.about} />{/if}</span
+            >
+            {#if note !== null}
+              <span
+                class="sub-note"
+                class:asking={one.state === "asking"}
+                class:bad={one.state === "failed"}
+                data-testid="subagent-note">{#if one.state === "running"}<Plain text={note} />{:else}{note}{/if}</span
+              >
+            {/if}
+            <span class="when">{since(one.at, now)}</span>
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
 <!-- The sessions a session started, hanging under it on a rail from its
      dot, one line each: the state, the name, the account it runs under
      when that is not its project's, the project it runs in when that is
@@ -1358,7 +1585,7 @@
   {@const kids = childrenOf(parent)}
   {@const news = unheard(parent)}
   {#if kids.length > 0 && !collapsed[parent.key]}
-    <div class="kids" data-testid="started-rail">
+    <div class="kids" class:after-subs={subGroups.has(parent.key)} data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
         <!-- A session started for a step of its starter's workflow shows
              its step and round where another shows its model, "Review, 2
@@ -1430,6 +1657,7 @@
             >
           </span>
         </div>
+        {@render subagents(kid, true, index < kids.length - 1, false)}
       {/each}
     </div>
   {/if}
@@ -1600,6 +1828,7 @@
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
       {#if entry.kind === "session"}
         {@render sessionRow(entry.session)}
+        {@render subagents(entry.session, false, false, childrenOf(entry.session).length > 0 && !collapsed[entry.session.key])}
         {@render rail(entry.session)}
       {:else}
         {@render pastRow(path, entry.transcript)}
@@ -1861,6 +2090,7 @@
     bind:this={nav}
     onkeydown={onKeydown}
     onpointerdown={onPointerdown}
+    onpointerover={onPointerover}
     onfocusin={onFocusin}
     onfocusout={onFocusout}
     data-testid="sessions-nav"
@@ -2003,6 +2233,9 @@
     </div>
   {/if}
   </div>
+  <!-- Subagents as they start, said once each, outside the rows, which
+       are inert while the pane is folded. -->
+  <p class="state told" aria-live="polite" data-testid="subagent-said">{subagentSaidNow}</p>
 </Pane>
 
 <style>
@@ -3160,6 +3393,130 @@
   .rail-on {
     top: 50%;
     bottom: 0;
+  }
+
+  /* Rows hang right under a session's subagents and carry on the rail
+     theirs come down. */
+  .kids.after-subs .kid.first .rail-in {
+    top: 0;
+    height: 50%;
+  }
+
+  /* A session's subagents hang under it on a rail of their own, a little
+     smaller than the sessions it started; a started session's hang from
+     its own dot, one step further in. */
+  .subs {
+    --rail-x: calc(var(--row-pad-x) + var(--dot) / 2 - 0.5px);
+    --rail-reach: calc(var(--row-pad-y) + var(--label-size) * 1.35 + 1px + var(--row-size) * 0.75 - var(--dot) / 2);
+    position: relative;
+    margin-bottom: 1px;
+  }
+
+  .subs.deep {
+    --rail-x: calc(var(--row-pad-x) + var(--dot) + 14px);
+    --rail-reach: calc(3px + var(--fold-size) * 0.75 - var(--dot) / 2);
+  }
+
+  .sub.first .rail-in {
+    top: calc(-1 * var(--rail-reach));
+    height: calc(50% + var(--rail-reach));
+  }
+
+  /* The rail of the sessions their starter started goes on past a
+     started session's subagents to the next of them. */
+  .rail-pass {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--row-inset) + var(--row-pad-x) + var(--dot) / 2 - 0.5px);
+    border-left: 1px solid var(--rule-strong);
+    pointer-events: none;
+  }
+
+  .sub-row {
+    gap: 0;
+    padding: 2px var(--row-pad-x) 2px calc(var(--rail-x) + 15px);
+    font-size: calc(var(--fold-size) - 0.5px);
+  }
+
+  .sub-row .dot {
+    width: calc(var(--dot) - 1px);
+    height: calc(var(--dot) - 1px);
+    margin-right: 8px;
+  }
+
+  .dot.bad {
+    background: var(--del);
+    border-color: var(--del);
+  }
+
+  .sub-glyph {
+    flex: none;
+    margin-right: 7px;
+    color: var(--ink-3);
+  }
+
+  .sub-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-2);
+  }
+
+  .sub.over .sub-label {
+    color: var(--ink-3);
+  }
+
+  .sub-note {
+    flex: none;
+    max-width: 12ch;
+    margin-left: auto;
+    padding-left: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--label-size);
+    color: var(--ink-3);
+  }
+
+  .sub-note.asking {
+    color: var(--accent);
+  }
+
+  .sub-note.bad {
+    color: var(--del);
+  }
+
+  .sub-note + .when {
+    margin-left: 0;
+  }
+
+  /* A subagent's row has no button of its own to give its time up to. */
+  .session.sub:hover > .row .when {
+    visibility: visible;
+  }
+
+  /* Folded to the narrow column, a session's subagents are a dot each,
+     packed from under its own dot to the column's edge, where their rows
+     stand. */
+  .sub-dots {
+    display: none;
+  }
+
+  .nav.folded .sub-dots {
+    position: absolute;
+    top: 3px;
+    left: calc(var(--row-inset) + var(--rail-x) - var(--dot) / 2 + 0.5px);
+    width: calc(var(--folded) - var(--row-inset) - var(--rail-x) - 4px);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .nav.folded .sub {
+    visibility: hidden;
   }
 
   /* A started session on one line. */

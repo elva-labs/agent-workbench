@@ -10,6 +10,8 @@
   import { unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
   import { answerable, dockedFor } from "$lib/docked.svelte";
+  import { markCall, shownCall, takeCall } from "$lib/callShown.svelte";
+  import { foldKey, locate } from "$lib/thread";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
@@ -87,6 +89,26 @@
   }
 
   let view = $state<HTMLDivElement | null>(null);
+
+  // A call this session is to be opened at, once it is on screen: the call
+  // comes into view with the folds around it and the call itself open, and
+  // is marked for a moment.
+  $effect(() => {
+    shownCall.asked;
+    if (!active || thread === null || shownCall.key !== session.key) return;
+    untrack(() => void openAt(takeCall(session.key)));
+  });
+
+  async function openAt(id: string | null) {
+    const call = id === null ? null : conversation.call(id);
+    const where = id === null ? null : locate(conversation, id);
+    if (call === null || where === null || where.entry === null || thread === null) return;
+    for (const fold of [...where.folds, foldKey("step", call)]) conversation.opened.add(fold);
+    await tick();
+    await thread.reveal(where.entry);
+    view?.querySelector(`[data-call="${CSS.escape(call.call)}"]`)?.scrollIntoView({ block: "center" });
+    markCall(call.call);
+  }
 
   // With no composer to type in, the keyboard goes where the next step is:
   // Resume once the session is over, the card that asks before it can run.
