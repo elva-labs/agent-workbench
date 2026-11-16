@@ -793,8 +793,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
-    await expect(page.getByTestId("workflow-tag-flow")).toHaveText("Build and review·");
-    await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
     const [start] = await calls(page);
     expect(start).toMatchObject({
       method: "start",
@@ -804,14 +803,14 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     expect(told).toContain('workflow "Build and review"');
     expect(told).toContain('2. For the step "Work"');
     expect(await spawns(page)).toEqual([]);
-    // The tag in the header keeps the keyboard it is clicked with, as it
-    // does over a terminal, so Escape puts its rules away.
-    await page.getByTestId("workflow-tag").click();
-    await expect(page.getByTestId("workflow-rules")).toBeVisible();
-    await expect(page.getByTestId("workflow-tag")).toBeFocused();
+    // The run's chip in the header keeps the keyboard it is clicked with,
+    // as it does over a terminal, so Escape puts its popover away.
+    await page.getByTestId("run-chip").click();
+    await expect(page.getByTestId("run-popover")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeFocused();
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("workflow-rules")).toHaveCount(0);
-    await expect(page.getByTestId("workflow-tag")).toBeFocused();
+    await expect(page.getByTestId("run-popover")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toBeFocused();
     // Away to another pane and back by key, the composer has it again.
     await page.keyboard.press("ControlOrMeta+1");
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
@@ -819,7 +818,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await expect(page.getByTestId("composer-input")).toBeFocused();
   });
 
-  test("Escape puts the tag's rules away wherever the keyboard is, and never stops the turn", async ({ page }) => {
+  test("Escape puts the run chip's popover away wherever the keyboard is, and never stops the turn", async ({ page }) => {
     await installFakeCore(page, UNDER);
     await page.goto("/");
     await page.getByTestId("start-agent").click();
@@ -830,13 +829,13 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await agent(page, `f.startTurn("${H}");`);
     const status = page.locator(`${AGENT} header .meta`);
     await expect(status).toHaveText("working");
-    const rules = page.getByTestId("workflow-rules");
+    const rules = page.getByTestId("run-popover");
     const interrupted = async () => (await calls(page)).some((call) => call.method === "interrupt");
 
     // Opened by a click that leaves the keyboard in the composer, as a
     // click does in the macOS webview.
     await expect(input).toBeFocused();
-    await page.getByTestId("workflow-tag").dispatchEvent("click");
+    await page.getByTestId("run-chip").dispatchEvent("click");
     await expect(rules).toBeVisible();
     await expect(input).toBeFocused();
     await page.keyboard.press("Escape");
@@ -845,8 +844,8 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await expect(status).toHaveText("working");
     await expect(input).toBeFocused();
 
-    // Shown by the pointer resting on the tag, the same.
-    await page.getByTestId("workflow-tag").hover();
+    // Shown by the pointer resting on the chip, the same.
+    await page.getByTestId("run-chip").hover();
     await expect(rules).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(rules).toHaveCount(0);
@@ -866,13 +865,14 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     // Started the other way, it is a pick: it follows no workflow.
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
     expect(await spawns(page)).toEqual([expect.not.objectContaining({ instructions: expect.anything() })]);
     // New session is the workflow's orchestrator, integrated: the choice it
     // opens stands on the workflow.
     await page.getByTestId("new-session").click();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("workflow-tag")).toBeVisible();
+    await expect(page.getByTestId("run-chip")).toBeVisible();
   });
 
   test("the palette offers a terminal session, alone, beside New session", async ({ page }) => {
@@ -886,6 +886,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await rows.filter({ hasText: "New session in a terminal in demo" }).click();
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
   test("the project menu offers a terminal session", async ({ page }) => {
@@ -898,6 +899,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("project-menu-other").click();
     await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
     await expect(page.getByTestId("workflow-tag")).toHaveCount(0);
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
   });
 
   test("the settings no longer say a session under a workflow runs in a terminal", async ({ page }) => {
@@ -1002,7 +1004,7 @@ test.describe("a Codex orchestrator, integrated", () => {
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("workflow-tag-role")).toHaveText("orchestrator");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
     const [first] = await calls(page);
     expect(first).toMatchObject({ method: "start", options: { agent: "codex", startOnly: true } });
     await agent(page, `f.end("${H}", true);`);

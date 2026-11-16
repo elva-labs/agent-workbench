@@ -242,10 +242,10 @@ a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
   editor mode to the editor. This is the one key whose meaning
   depends on context, so the resolution takes the focus state and lives in one
   testable place. The one exception is a popover the user opened from a
-  header, such as a workflow tag's rules: while it is open, Esc puts it away
-  wherever the keyboard is and reaches nothing else, since a click does not
-  move the keyboard on every platform and the key that closes a popover
-  must never also stop the agent's turn. With no popover open, Esc is the
+  header, such as a workflow tag's rules or where a run stands: while it
+  is open, Esc puts it away wherever the keyboard is and reaches nothing
+  else, since a click does not move the keyboard on every platform and the
+  key that closes a popover must never also stop the agent's turn. With no popover open, Esc is the
   terminal's or the composer's again.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
@@ -321,7 +321,8 @@ the agent waits on the user, a dock between them; see
 [sessions](sessions.md#integrated-sessions). Focusing the pane by key, or
 the session coming on screen in it, puts the keyboard in its composer,
 unless another control of that same session has it, or a control of the
-pane's own, such as the workflow tag in its header, as for a terminal; a
+pane's own, such as the workflow tag or a run's chip in its header, as
+for a terminal; a
 session going off screen lets the keyboard go. With no composer, the
 keyboard goes to Resume once the session has ended, and to the card that
 asks before a session can run, which is read before its buttons are

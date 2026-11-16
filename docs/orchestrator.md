@@ -382,40 +382,114 @@ the directory it calls from.
 
 ## In the panes
 
-The agent pane's header names the workflow a session is part of and its
-place in it, quietly beside the title and in the header's own type: the
-workflow and orchestrator for the session following it, the workflow
-marked deleted where it follows the copy it kept, or the workflow, the step
-and the round for a session started for a step. Where the header is short
-of room, the workflow's name is cut short and then left out, then the
-header's status, and the place stays whole until both have gone; only
-then is it cut short, and it goes with its tag at a letter or two, before
-the title gives way (see [layout](layout.md)). The rules for that place open in a popover under the tag when
-the pointer rests on it, or on a click, Enter or Space, and Escape puts
-them away wherever the keyboard is, without reaching the agent. For the orchestrator they are its instructions. For a session
-started for a step they are what the step allows, in the words of its
-settings: the models it may use, how many sessions it runs at once, and
-for a review when the work passes, and where and how often it sends the
-work back. A start the workflow refuses its orchestrator is shown over the
-terminal in one line, whole while the pointer or the keyboard is on it, as
-well as answered to the agent, until a start goes through or the line is
-put away.
+The agent pane's header says where a session stands in its workflow,
+right after the title and in the header's own type, the same for a session
+in a terminal and an integrated one.
+
+For the session that follows the workflow it is a chip: a pip for each step
+in order, grey once the run has passed it, in the accent where the run
+stands and empty for a step to come, and the words for where it stands.
+The chip says what the workbench knows and no more.
+
+Before anything is started the words are the workflow's name, marked
+deleted where it follows the copy it kept. Then they name the step where
+the work stands, with its round where it has one, "Review, round 2 of 4",
+and with pieces of work in different steps, how many stand in each, "1 in
+Work, 1 in Review". A piece stands where a session of it is at work, or
+else where its latest session came to rest. With pieces at work the chip
+names their steps; with none, the steps the pieces rest in. A piece that
+never reached the work a review checks, such as a plan the orchestrator
+did not carry on into the work, is left out once another piece has.
+
+The workbench never learns whether a review passed. Once every piece has
+finished a round of the last step and nothing is at work, the orchestrator
+included, every pip is grey and the words say the round that finished,
+"Review, round 2 of 4 done", or how many pieces finished it, "2 done in
+Review". They never say the run is done.
+
+A round is finished only when the workbench saw its session come to rest
+after a turn of work. That is remembered with the run, so a session the
+orchestrator stopped once it was done, or one that is not back after a
+restart, is still done. A session that crashed reads stopped. One that
+ended or was closed while at work, or before it was seen to rest, reads
+ended. Neither has finished its round, and the chip names its step
+without saying done.
+
+While a round past the limit waits on the user the chip turns to the
+accent and says so, "Round 4 of 4 done, asks you", with the step of any
+piece still at work lit beside it. A piece the user stopped there, with
+Stop at the limit, reads "Stopped at round 4 of 4" in the chip's own ink,
+its review lit, until another round of it goes ahead. A screen reader hears
+the same, with each step done, skipped, now or to come; a step passed with
+nothing run for it, as when the orchestrator did it itself, is grey and
+said to be skipped.
+
+A popover under the chip says what stands in each step: the latest session
+of each piece there, by its name, with its round and whether it is
+working, asking, done, stopped, ended or stopped at the limit, and the
+name opens that
+session; a step passed with nothing run for it says skipped. The rules the
+orchestrator was given are folded at its foot. It shows when the pointer
+rests on the chip, and a click, Enter or Space holds it open, the one the
+pointer showed as well, with Tab going on into it; a second click puts it
+away. Escape, wherever the keyboard is, or a press elsewhere puts it
+away without reaching the agent, and Escape gives the keyboard back to the
+chip when it was in the popover.
+
+A round is one pass of work and review. A review's round is counted as
+under [following a workflow](#following-a-workflow). Work its piece goes
+back to once that review has come to rest, by a line, a resume with a
+prompt or a new start that carries the piece on, goes on in the next
+round, so work sent back once reads "Work, round 2 of 4". A line to the
+work while its review is still at it, such as an answer to the review's
+question, is no round of its own. The workbench cannot tell work sent back
+from a line after a review that passed, such as one asking for a commit,
+so that too reads as the next round. Work the user stopped at the limit
+goes on in the last round, never past it, so it reads "Stopped at round 4
+of 4" again once it rests. The most counts the first pass: a review that
+sends the work back three times at most has four rounds. A
+round of work is remembered with the run, as a review's is, and so is a
+stop at the limit.
+
+A session started for a step has a quiet tag in the chip's place: the
+workflow and its place, "Review, round 2 of 4". Its rules open in a popover
+under it the same way: what the step allows, in the words of its settings,
+the models it may use, how many sessions it runs at once, and for a review
+when the work passes, and where and how often it sends the work back, and
+Escape puts it away wherever the keyboard is, without reaching the agent.
+
+Where the header is short of room, a tag's workflow name is cut short and
+then left out, then the header's status, and the place, or the chip's
+words, stay whole until both have gone; only then are they cut short, and
+they go at a letter or two. The chip's pips stay until the title has given
+way, and the words take no room once gone (see [layout](layout.md)). A
+start the workflow refuses its
+orchestrator is shown over the terminal in one line, whole while the
+pointer or the keyboard is on it, as well as answered to the agent, until
+a start goes through or the line is put away.
 
 The sessions a session started hang directly under it, one line each,
 joined to its dot by a thin rail: the state dot, the name, the model it was
 started on and when it last changed. A session started for a step of its
 starter's workflow shows its step there instead of the model, since the
-step chose the model; a review's round is in the agent pane's header. One
+step chose the model, with its round of the most in short, "Review, 2 of
+4", kept whole while the name is cut. One
 that runs under another account than its project's names the account after
 its own name, as in `as Work`, and one that runs in another project than
 its starter names that project next. Short of room, the project is cut
 first, then the model is left out and the project with it, then the
-account, and the name is cut last; the time always stands. The line speaks
+account, and the name is cut last; the time, the step and asking always
+stand. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
 a permission, which only you can grant. Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the
 session it started. A session whose starter the window no longer has
 stands in its own project like any other.
+
+In an integrated session's thread, the sessions a turn started stand as
+rows under it: the state dot, the step it was started for, the name, its
+round of the most and what it is doing, "round 2 of 4, working", the model,
+and Open, which goes to it.
 
 A starter's second line says in words what the sessions it started are
 doing, each counted once, `2 running, 1 asking, 1 done`, unless its agent
