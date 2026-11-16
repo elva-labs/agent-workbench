@@ -172,8 +172,73 @@ test.describe("a conversation as long as a real one kept for days", () => {
     }
     await huge.click();
     await expect(page.locator(HUGE)).toHaveClass(/active/);
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    await expect.poll(() => footInView(page)).toBe(true);
     expect(await rowsChanged(page)).toBe(0);
-    expect(await fromFoot(page)).toBeLessThan(2);
+  });
+
+  test("lays out none of what a conversation behind another holds", async ({ page }) => {
+    await openHuge(page);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='conversation'][data-session='s2'] [data-testid='composer-input']")).toBeVisible();
+    // Behind the new one, the long conversation takes no room in the
+    // window's layout, however much it holds.
+    expect(await page.locator(HUGE).evaluate((node) => node.getClientRects().length)).toBe(0);
+    expect(await thread(page).evaluate((node) => node.querySelectorAll("[data-row]").length)).toBeGreaterThan(0);
+  });
+
+  test("keeps the line read when going to another session and back", async ({ page }) => {
+    await openHuge(page);
+    await thread(page).hover();
+    for (let step = 0; step < 6; step++) await page.mouse.wheel(0, -1200);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(5000);
+    // The innermost block at the top of the view, and how far below the
+    // top it stands.
+    const mark = () =>
+      thread(page).evaluate((node) => {
+        const top = node.getBoundingClientRect().top;
+        node.querySelector("[data-mark]")?.removeAttribute("data-mark");
+        let at: Element = node.querySelector("[data-testid='thread-rows']")!;
+        for (;;) {
+          const next = [...at.children].find((child) => {
+            const box = child.getBoundingClientRect();
+            return box.height > 0 && box.bottom > top;
+          });
+          if (next === undefined) break;
+          at = next;
+        }
+        at.setAttribute("data-mark", "");
+        return at.getBoundingClientRect().top - top;
+      });
+    const marked = () =>
+      thread(page).evaluate((node) => node.querySelector("[data-mark]")!.getBoundingClientRect().top - node.getBoundingClientRect().top);
+    await expect.poll(async () => Math.abs((await mark()) - (await mark()))).toBeLessThan(1);
+    const before = await mark();
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='conversation'][data-session='s2']")).toHaveClass(/active/);
+    await page.locator("[data-row='session:s1'] [data-testid='session-row']").click();
+    await expect(page.locator(HUGE)).toHaveClass(/active/);
+    await expect.poll(async () => Math.abs((await marked()) - before)).toBeLessThan(1);
+    await expect(page.locator(`${HUGE} [data-testid='jump-latest']`)).toHaveCount(0);
+  });
+
+  test("goes on to what came while it was behind another session, when it was at its foot", async ({ page }) => {
+    await openHuge(page);
+    // At the foot by the reader's own hand.
+    await thread(page).hover();
+    await page.mouse.wheel(0, -2000);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(1000);
+    for (let step = 0; step < 20 && (await fromFoot(page)) > 1; step++) await page.mouse.wheel(0, 1000);
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    await page.getByTestId("new-session").click();
+    await expect(page.locator("[data-testid='conversation'][data-session='s2']")).toHaveClass(/active/);
+    // More than a few screens of it.
+    for (let turn = 0; turn < 4; turn++)
+      await agent(page, `f.turn("${H}", "What came while the session was behind, ${turn}.\\n\\n${"A paragraph that runs on. ".repeat(150)}");`);
+    await page.locator("[data-row='session:s1'] [data-testid='session-row']").click();
+    await expect(page.locator(HUGE)).toHaveClass(/active/);
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    await expect(page.locator(`${HUGE} [data-testid='agent-text']`).last()).toContainText("What came while the session was behind, 3.");
     await expect.poll(() => footInView(page)).toBe(true);
   });
 

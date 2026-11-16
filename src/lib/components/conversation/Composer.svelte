@@ -561,7 +561,8 @@
 
   /** The field grows with what is written, up to a share of the pane. */
   function grow() {
-    if (field === null) return;
+    // Out of view the field has no size to grow to; it grows when back.
+    if (field === null || field.getClientRects().length === 0) return;
     field.style.height = "auto";
     field.style.height = `${field.scrollHeight}px`;
     gutter = field.offsetWidth - field.clientWidth;

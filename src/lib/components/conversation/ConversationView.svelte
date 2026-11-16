@@ -293,7 +293,6 @@
     flex-direction: column;
     min-width: 0;
     min-height: 0;
-    visibility: hidden;
     background: var(--clear-surface);
     font-family: var(--chrome);
     /* The conversation's type scale, from the look's own sizes: what is
@@ -312,8 +311,11 @@
     --conv-size: 12.5px;
   }
 
-  .conv.active {
-    visibility: visible;
+  /* A conversation not in front is out of layout, so a window that holds
+     many costs no more to lay out or restyle than one that holds the one
+     on screen. Its thread keeps its place and goes back to it. */
+  .conv:not(.active) {
+    display: none;
   }
 
   .foot {

@@ -158,6 +158,10 @@
     const scrolled = scroller;
     const inner = col;
     const observer = new ResizeObserver((seen) => {
+      // Out of view, the thread has no size to follow. Back in view, the
+      // browser puts the view where it was, and from there it goes on as
+      // for any change of size: to the foot, if it followed its foot.
+      if (!shown()) return;
       heard();
       // Which rows to draw is worked out again a frame on: drawing them
       // now would change the size this has just been told of.
@@ -198,8 +202,17 @@
   let ownTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
+    if (!shown()) return;
     node.scrollTop = node.scrollHeight;
     ownTop = node.scrollTop;
+  }
+
+  /** Whether the thread is laid out. A session not in front is not, so
+      the conversations behind it cost nothing when the window is laid
+      out; its sizes and its scroll position then read as nothing and are
+      left alone. */
+  function shown(): boolean {
+    return scroller !== null && scroller.getClientRects().length > 0;
   }
 
   /** Whether a long thread is at its foot to follow it: it follows, and it
@@ -240,7 +253,7 @@
   /** Takes in where the user has scrolled before the thread moves on its
       own: a browser can tell of a scroll only after more has come. */
   function heard() {
-    if (scroller !== null && scroller.scrollTop !== lastTop) onscroll();
+    if (scroller !== null && shown() && scroller.scrollTop !== lastTop) onscroll();
   }
 
   function onscroll() {
@@ -546,7 +559,7 @@
    * the keyboard leaves a row before it goes.
    */
   function look() {
-    if (scroller === null || box === null || !windowed) return;
+    if (scroller === null || box === null || !windowed || !shown()) return;
     // What moved under the reader since the thread last looked is put back
     // before the place is taken again. A browser tells of a scroll at the
     // frame after it, and rows can move in between: a type size, a font or
@@ -658,7 +671,7 @@
       While the user scrolls, the space above the rows drawn takes the
       change where it can: a scroll set then would stop theirs in WebKit. */
   function keep() {
-    if (scroller === null || anchor === null) return;
+    if (scroller === null || anchor === null || !shown()) return;
     const node = box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(anchor.key)}"]`);
     if (node === null || node === undefined) return;
     // The block that stood there, or the row it was in when that block has
