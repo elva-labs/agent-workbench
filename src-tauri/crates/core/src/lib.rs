@@ -36,6 +36,7 @@ pub mod scratch;
 pub mod selection;
 pub mod settings;
 pub mod shell;
+pub(crate) mod short_lived;
 pub mod show;
 pub mod styles;
 pub mod transcripts;

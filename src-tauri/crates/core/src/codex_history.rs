@@ -26,10 +26,7 @@
 //! the older turns are left out, and the history says its start was.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, Stdio};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -38,8 +35,9 @@ use crate::adapter::{prepare_process, process, CODEX_HOME_VAR};
 use crate::codex_app_server::{call_of, finished, said, turned_down};
 use crate::env::find_on_path;
 use crate::integrated::{
-    cut, kill_tree, now_millis, CompactReason, Event, History, Image, MessageState, Outcome, Said,
+    cut, now_millis, CompactReason, Event, History, Image, MessageState, Outcome, Said,
 };
+use crate::short_lived::{Gone, Line, ShortLived};
 
 /// How long a whole read may take. A read still going then keeps what it
 /// has.
@@ -50,17 +48,6 @@ const TURNS_PAGE: u64 = 16;
 const ITEMS_PAGE: u64 = 64;
 /// The most of a reason Codex gives for not reading a thread that is kept.
 const WHY_KEEP: usize = 200;
-/// The longest answer read. A longer one is passed over without being held.
-#[cfg(not(test))]
-const LINE_KEEP: usize = 32 * 1024 * 1024;
-#[cfg(test)]
-const LINE_KEEP: usize = 64 * 1024;
-/// How much of the start of a line too long to read is kept, to tell
-/// which request it answers.
-const HEAD_KEEP: usize = 64;
-/// How long Codex has to end once its input is closed, before it is
-/// killed.
-const END_GRACE: Duration = Duration::from_secs(2);
 
 /// What the thread with this id said and did, read by the Codex on the
 /// PATH of `env`, under the account's home where one is given. Empty for a
@@ -535,24 +522,17 @@ fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<
     out
 }
 
-/// A line of Codex's output: whole, or too long to read, with the id of
-/// the request it answers where its start names one.
-enum Line {
-    Whole(String),
-    Long(Option<i64>),
-}
-
 /// A `codex app-server` started for one read, ended when it is dropped.
-struct AppServer {
-    child: Option<Child>,
-    stdin: Option<ChildStdin>,
-    lines: Receiver<Line>,
+pub(crate) struct AppServer {
+    process: ShortLived,
     next: i64,
-    deadline: Instant,
 }
 
 impl AppServer {
-    fn start(
+    /// Starts the Codex on the PATH of `env` under the account's home
+    /// where one is given, in `folder`, or where that is gone, in the
+    /// system's temporary folder. Every wait on it ends by `deadline`.
+    pub(crate) fn start(
         env: &HashMap<String, String>,
         config_dir: Option<&Path>,
         folder: &Path,
@@ -575,39 +555,13 @@ impl AppServer {
         if let Some(dir) = config_dir {
             command.env(CODEX_HOME_VAR, dir);
         }
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let mut child = command
-            .spawn()
+        let process = ShortLived::start(command, deadline, answered)
             .map_err(|e| format!("codex could not be started: {e}"))?;
-        let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
-            (Some(stdin), Some(stdout)) => (stdin, stdout),
-            _ => {
-                kill_tree(&mut child);
-                let _ = child.wait();
-                return Err("could not talk to codex".into());
-            }
-        };
-        let (sender, lines) = mpsc::channel();
-        std::thread::spawn(move || read_lines(stdout, &sender));
-        Ok(Self {
-            child: Some(child),
-            stdin: Some(stdin),
-            lines,
-            next: 0,
-            deadline,
-        })
+        Ok(Self { process, next: 0 })
     }
 
     /// The handshake every client begins with.
-    fn introduce(&mut self) -> Result<(), String> {
+    pub(crate) fn introduce(&mut self) -> Result<(), String> {
         let answer = self.ask(
             "initialize",
             json!({
@@ -629,11 +583,8 @@ impl AppServer {
     }
 
     fn write(&mut self, line: &str) -> Result<(), String> {
-        let stdin = self.stdin.as_mut().ok_or("Codex has ended")?;
-        stdin
-            .write_all(line.as_bytes())
-            .and_then(|_| stdin.write_all(b"\n"))
-            .and_then(|_| stdin.flush())
+        self.process
+            .write(line)
             .map_err(|e| format!("could not write to codex: {e}"))
     }
 }
@@ -647,20 +598,12 @@ impl Ask for AppServer {
             return Answer::Gone(error);
         }
         loop {
-            let left = self.deadline.saturating_duration_since(Instant::now());
-            let line = match self.lines.recv_timeout(left) {
-                Ok(line) => line,
-                Err(RecvTimeoutError::Timeout) => {
-                    return Answer::Gone("Codex did not answer in time".into())
-                }
-                Err(RecvTimeoutError::Disconnected) => {
-                    return Answer::Gone("Codex ended before it answered".into())
-                }
-            };
-            let text = match line {
-                Line::Long(Some(of)) if of == id => return Answer::TooLong,
-                Line::Long(_) => continue,
-                Line::Whole(text) => text,
+            let text = match self.process.next() {
+                Ok(Line::Long(Some(of))) if of == id => return Answer::TooLong,
+                Ok(Line::Long(_)) => continue,
+                Ok(Line::Whole(text)) => text,
+                Err(Gone::Late) => return Answer::Gone("Codex did not answer in time".into()),
+                Err(Gone::Ended) => return Answer::Gone("Codex ended before it answered".into()),
             };
             let Ok(value) = serde_json::from_str::<Value>(&text) else {
                 continue;
@@ -682,95 +625,6 @@ impl Ask for AppServer {
                 }
                 _ => {}
             }
-        }
-    }
-}
-
-impl Drop for AppServer {
-    /// Closes Codex's input, which ends it, then kills whatever is left in
-    /// its group, Codex too once it has had a little while, without waiting
-    /// here for either. The group goes before Codex is reaped, so that its
-    /// id is still Codex's own when it is signalled.
-    fn drop(&mut self) {
-        self.stdin.take();
-        let Some(mut child) = self.child.take() else {
-            return;
-        };
-        std::thread::spawn(move || {
-            let until = Instant::now() + END_GRACE;
-            while !ended(&mut child) && Instant::now() < until {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            kill_tree(&mut child);
-            let _ = child.wait();
-        });
-    }
-}
-
-/// Whether Codex has ended, leaving it unreaped where the system allows,
-/// so that what it started can still be reached through its group.
-#[cfg(unix)]
-fn ended(child: &mut Child) -> bool {
-    // SAFETY: a zeroed siginfo is a valid one for waitid to fill, and
-    // WNOWAIT leaves the child to be reaped by its wait.
-    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    let result = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            child.id() as libc::id_t,
-            &mut info,
-            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-        )
-    };
-    result != 0 || unsafe { info.si_pid() } != 0
-}
-
-#[cfg(not(unix))]
-fn ended(child: &mut Child) -> bool {
-    !matches!(child.try_wait(), Ok(None))
-}
-
-/// Hands each line of Codex's output on, past a line too long to hold,
-/// which is named by the request its start says it answers.
-fn read_lines(stdout: impl Read, lines: &Sender<Line>) {
-    let mut reader = BufReader::new(stdout);
-    let mut line: Vec<u8> = Vec::new();
-    let mut head: Vec<u8> = Vec::new();
-    let mut long = false;
-    loop {
-        let available = match reader.fill_buf() {
-            Ok([]) => break,
-            Ok(available) => available,
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        };
-        let end = available.iter().position(|&byte| byte == b'\n');
-        let piece = &available[..end.unwrap_or(available.len())];
-        if !long && line.len() + piece.len() > LINE_KEEP {
-            long = true;
-            head = line.iter().chain(piece).take(HEAD_KEEP).copied().collect();
-            line = Vec::new();
-        } else if !long {
-            line.extend_from_slice(piece);
-        }
-        let used = end.map_or(available.len(), |at| at + 1);
-        reader.consume(used);
-        if end.is_some() {
-            let sent = if long {
-                lines.send(Line::Long(answered(&head)))
-            } else {
-                let text = String::from_utf8_lossy(&line).trim().to_string();
-                if text.is_empty() {
-                    Ok(())
-                } else {
-                    lines.send(Line::Whole(text))
-                }
-            };
-            if sent.is_err() {
-                return;
-            }
-            line.clear();
-            long = false;
         }
     }
 }
