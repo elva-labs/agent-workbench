@@ -12,6 +12,7 @@ import {
   stamps,
   choiceLabel,
   choiceMeans,
+  choiceMeansIn,
   inputPath,
   lastRun,
   mcpName,
@@ -362,6 +363,38 @@ describe("a permission request, in words", () => {
     );
     expect(choiceMeans(offer("deny", null, true))).toContain("You can tell the agent why");
     expect(choiceMeans(offer("cancel"))).toBe("Refuses this call and stops the turn.");
+  });
+
+  it("says each choice of another session's request as that session's, and whose folder keeps a rule", () => {
+    const offer = (choice: PermissionOffer["choice"], remembers: string | null = null, message = false): PermissionOffer => ({
+      choice,
+      remembers,
+      message,
+    });
+    const said = (made: PermissionOffer) => choiceMeansIn(made, "Fix the cache", "demo").join("");
+    expect(said(offer("allow"))).toBe("Allows this call in Fix the cache and remembers nothing.");
+    expect(said(offer("allowSession", "Bash(cargo test:*) for the rest of this session"))).toBe(
+      "Allows this call in Fix the cache and remembers Bash(cargo test:*) for the rest of that session.",
+    );
+    expect(said(offer("allow", "network access for the rest of this turn"))).toBe(
+      "Allows this call in Fix the cache and remembers nothing.",
+    );
+    expect(said(offer("allowSession", "network access for the rest of this turn"))).toBe(
+      "Allows this call in Fix the cache and remembers network access for the rest of its turn.",
+    );
+    expect(said(offer("allowAlways", "Bash(cargo test:*) in this project's uncommitted local settings"))).toBe(
+      "Allows this call in Fix the cache and remembers Bash(cargo test:*) in demo's uncommitted local settings, for every session in demo.",
+    );
+    // Only the end the core adds is said again, never what the agent wrote.
+    expect(said(offer("allowSession", "Bash(echo this session) for the rest of this session"))).toBe(
+      "Allows this call in Fix the cache and remembers Bash(echo this session) for the rest of that session.",
+    );
+    expect(said(offer("allowAlways", "commands that start with cargo in Codex's rules, from now on"))).toBe(
+      "Allows this call in Fix the cache and remembers commands that start with cargo in Codex's rules, from now on.",
+    );
+    expect(said(offer("allowSession"))).toBe("Allows this call in Fix the cache and remembers it.");
+    expect(said(offer("deny", null, true))).toBe("Refuses this call in Fix the cache and its turn goes on. You can tell it why.");
+    expect(said(offer("cancel"))).toBe("Refuses this call and stops Fix the cache's turn.");
   });
 });
 

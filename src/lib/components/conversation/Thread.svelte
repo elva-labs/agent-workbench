@@ -538,6 +538,11 @@
    */
   function look() {
     if (scroller === null || box === null || !windowed) return;
+    // What moved under the reader since the thread last looked is put back
+    // before the place is taken again. A browser tells of a scroll at the
+    // frame after it, and rows can move in between: a type size, a font or
+    // a width coming in.
+    if (!atFoot()) keep();
     const view = scroller.getBoundingClientRect();
     const nodes = rowNodes();
     anchor = null;
@@ -638,19 +643,20 @@
     win = next;
   }
 
-  /** Puts the row at the top of the view back where it stood, unless the
-      user scrolled since the thread was looked at, which is where they
-      want to be. While the user scrolls, the space above the rows drawn
-      takes the change where it can: a scroll set then would stop theirs
-      in WebKit. */
+  /** Puts what stood at the top of the view back where it stood when the
+      rows moved under it since the thread was looked at. A scroll since
+      then, heard yet or not, is where the view is meant to be, and stays.
+      While the user scrolls, the space above the rows drawn takes the
+      change where it can: a scroll set then would stop theirs in WebKit. */
   function keep() {
-    if (scroller === null || anchor === null || scroller.scrollTop !== lookedTop) return;
+    if (scroller === null || anchor === null) return;
     const node = box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(anchor.key)}"]`);
     if (node === null || node === undefined) return;
     // The block that stood there, or the row it was in when that block has
     // been drawn again since.
     const [kept, offset] = node.contains(anchor.block) ? [anchor.block, anchor.blockOffset] : [node, anchor.offset];
-    const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
+    const scrolled = scroller.scrollTop - lookedTop;
+    const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset + scrolled;
     if (Math.abs(moved) < 0.5) return;
     const scrolling = dragging || performance.now() - scrolledBy < 1000 || performance.now() - glided < 1000;
     if (scrolling && range().from > 0 && space.above - moved >= 0) {
@@ -658,9 +664,10 @@
       paint();
       return;
     }
+    const was = scroller.scrollTop;
     scroller.scrollTop += moved;
     ownTop = scroller.scrollTop;
-    lookedTop = scroller.scrollTop;
+    lookedTop += scroller.scrollTop - was;
   }
 
   // Once the rows drawn or the entries change: the foot while the thread

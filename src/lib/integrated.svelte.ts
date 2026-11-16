@@ -26,6 +26,7 @@ import {
   failed,
   followsAgain,
   keepToken,
+  renewToken,
   loadHistory,
   named,
   noted,
@@ -132,6 +133,11 @@ export function linkFor(key: string): Link {
 /** The conversation behind a row. */
 export function conversationOf(key: string): Conversation {
   return linkFor(key).conversation;
+}
+
+/** The row's link, when one was made for it; never makes one. */
+export function linkOf(key: string): Link | null {
+  return links.get(key) ?? null;
 }
 
 /** The core's id for a row's session, while it runs. */
@@ -431,6 +437,7 @@ export async function resume(key: string): Promise<void> {
 }
 
 function again(session: Session) {
+  renewToken(session);
   session.status = "starting";
   session.error = null;
   session.exitCode = null;
@@ -462,7 +469,12 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const session = byKey(key);
       if (
         session === null ||
-        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id)
+        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id) ||
+        // A row named by its id takes up only a run that has said that id:
+        // one that has not may be a newer session the core numbered the
+        // same, and the row would be a running session named by an id no
+        // process of it holds.
+        (snapshot.ready === null && session.id !== null && session.token === session.id)
       )
         throw new Error("another session");
       await earlier;

@@ -55,6 +55,8 @@ import { SvelteSet } from "svelte/reactivity";
 import { core, type ConductRequest } from "$lib/core";
 import {
   nameTaken,
+  named as nameRow,
+  readsAsAgent,
   byKey,
   byToken,
   close,
@@ -68,6 +70,7 @@ import {
   label,
   onDirected,
   onForgotten,
+  onMoved,
   onTurn,
   runningByToken,
   sessions,
@@ -404,7 +407,8 @@ export const conductor = $state({
       between runs. A row whose id is here is the caller's whether or not it
       was started in this run. A list an earlier version kept under the bare
       folder a caller that named no session called from is kept as it is,
-      and is no caller's, since no caller is a bare folder. */
+      and is no caller's, since no caller is a bare folder. A list it kept
+      under a session's id is the token's that session is given. */
   started: {} as Record<string, Started[]>,
   /** Where each started row stands in its caller's workflow, by the row's
       key, from the moment it is made: the place of a row with no id yet. */
@@ -691,13 +695,45 @@ function placed(caller: string, id: string): Place | null {
   return conductor.places[row.key] ?? null;
 }
 
+/** Takes a session off its caller's list, and off the list a session
+    from before there were tokens kept under its id, which is the caller's
+    as well: a session the caller is done with is not moved back to it.
+    That is the list of each id whose kept token the caller is, and of the
+    caller's own id, whose kept token two rows of it running at once leave
+    to neither. */
 function forget(caller: string, id: string) {
-  const list = conductor.started[caller];
-  if (list === undefined) return;
-  const kept = list.filter((known) => known.id !== id);
-  if (kept.length === 0) delete conductor.started[caller];
-  else conductor.started[caller] = kept;
-  saveStarted();
+  const own = sessions.all.find((row) => row.token === caller)?.id ?? null;
+  let changed = false;
+  for (const key of new Set([caller, ...idsOf(caller), ...(own === null ? [] : [own])])) {
+    const list = conductor.started[key];
+    if (list === undefined || !list.some((known) => known.id === id)) continue;
+    const kept = list.filter((known) => known.id !== id);
+    if (kept.length === 0) delete conductor.started[key];
+    else conductor.started[key] = kept;
+    changed = true;
+  }
+  if (changed) saveStarted();
+}
+
+/** The token a session kept under this id is named by now; anything else
+    as it is. So is an id while a run named by it still runs: what is kept
+    under the id is that run's until it stops. */
+function tokenOf(caller: string): string {
+  const kept = sessions.tokens[caller]?.token;
+  if (kept === undefined || kept === "" || namesLiveRun(caller)) return caller;
+  return kept;
+}
+
+/** Whether a running row is named by this, as a run taken up after a
+    reload can be named by its id. */
+const namesLiveRun = (name: string) =>
+  sessions.all.some((row) => row.token === name && isLive(row));
+
+/** The ids of the sessions whose kept token this is. */
+function idsOf(token: string): string[] {
+  return Object.entries(sessions.tokens)
+    .filter(([id, kept]) => kept.token === token && id !== token)
+    .map(([id]) => id);
 }
 
 /** Whether a list is kept under a folder rather than a caller's token: an
@@ -706,17 +742,24 @@ const byFolder = (caller: string) => /^(?:\/|ssh:\/\/|[A-Za-z]:[\\/])/.test(call
 
 /** The caller of each remembered session, by the session's id: the first
     caller listed where two remember one, a caller's own list before one
-    kept under a bare folder. A session a folder's list holds was started
-    by another all the same, so it starts none of its own, and no call acts
-    on it: no caller is a bare folder. */
+    kept under the id of a session from before there were tokens, which
+    holds what moved to the token as well, and both before one kept under
+    a bare folder. A session a folder's list holds was started by another
+    all the same, so it starts none of its own, and no call acts on it: no
+    caller is a bare folder. */
 const owners = $derived.by(() => {
   const index = new Map<string, string>();
   const lists = Object.entries(conductor.started);
-  for (const folders of [false, true])
+  const rank = (caller: string) =>
+    byFolder(caller) ? 2 : sessions.tokens[caller] !== undefined ? 1 : 0;
+  for (const at of [0, 1, 2])
     for (const [caller, entries] of lists) {
-      if (byFolder(caller) !== folders) continue;
+      if (rank(caller) !== at) continue;
+      // A list kept under the id of a session from before there were
+      // tokens is its token's, once it has one: no call names the id.
+      const owner = tokenOf(caller);
       for (const entry of entries)
-        if (!index.has(entry.id)) index.set(entry.id, caller);
+        if (!index.has(entry.id)) index.set(entry.id, owner);
     }
   return index;
 });
@@ -1721,6 +1764,16 @@ async function startSession(request: Placed): Promise<Answered> {
   }
 }
 
+/** How many characters a name a caller gives a session keeps: as many as
+    a row's name taken from a first message. */
+export const NAME_MOST = 60;
+
+/** A name cut to what a row's name holds, marked where it was cut. */
+function nameCut(name: string): string {
+  const chars = Array.from(name);
+  return chars.length > NAME_MOST ? `${chars.slice(0, NAME_MOST - 1).join("")}…` : name;
+}
+
 /** The rest of a start, once it has been held to the caller's workflow:
     the account it runs under, which turns on the agent the step chose, the
     question, and the session itself. */
@@ -1804,12 +1857,13 @@ async function startFitted(
     // The row holds its place in the step from here.
     fit.hold();
   }
-  // The name the caller gave is the row's, until the agent names it. One
-  // that reads as "You" is the user's alone, one that reads as "Workbench"
-  // the workbench's, and one another live session has is that session's:
-  // none is taken, and the row is named by the prompt instead.
+  // The name the caller gave is the row's, until the agent names it, cut
+  // to what a row's name holds. One that reads as "You" is the user's
+  // alone, one that reads as "Workbench" the workbench's, one that reads as
+  // an agent's that agent's, and one another live session has is that
+  // session's: none is taken, and the row is named by the prompt instead.
   // Weighed as it would be stored.
-  const candidate = name === null ? null : oneLine(name);
+  const candidate = name === null ? null : nameCut(oneLine(name));
   const you = candidate !== null && readsAsYou(candidate);
   const taken = candidate !== null && !you && nameTaken(candidate, session.key);
   const called = candidate !== null && !you && !taken ? candidate : null;
@@ -1833,6 +1887,9 @@ async function startFitted(
     name: called,
     account,
   });
+  // Kept by the session's id as well, as any name is, so the row is called
+  // so after a restart; unless the agent named it meanwhile.
+  if (called !== null && byKey(session.key)?.title === called) nameRow(session.key, called);
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   const notCalled = you
     ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
@@ -1841,8 +1898,12 @@ async function startFitted(
         ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
         : readsAsWorkbench(candidate!)
           ? ` It is not called ${oneLine(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
-          : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
-      : "";
+          : readsAsAgent(candidate!)
+            ? ` It is not called ${oneLine(name!)}: a conversation shows an agent's own words and requests under that name, so the session is named by its prompt.`
+            : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+      : called !== null && called !== oneLine(name!)
+        ? ` Its name is cut to ${NAME_MOST} characters: ${called}.`
+        : "";
   if (fit === null)
     return said(
       `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
@@ -2762,6 +2823,52 @@ onForgotten((tokens) => {
   saveRuns();
 });
 
+// A session from before there were tokens kept what it started, what its
+// workflow ran and its standing answers under its id. They go to the
+// token it is given whenever it is given one, unless a run named by the id
+// still runs, whose they stay until it stops. What it started is joined
+// by session id, the id's list staying for the version before, so a move
+// made again, or by a second window, adds nothing and puts back what a
+// window that wrote over it lost. Standing answers, the rows it started in
+// this run and what its workflow ran move whole: no version reads the
+// id's copy of them, and one left behind would bring back what the token
+// has since let go of.
+onMoved((id, token) => {
+  if (namesLiveRun(id)) return;
+  for (const entry of [...allowed]) {
+    const [caller, project, account, bare] = JSON.parse(entry) as Allowance;
+    if (caller !== id) continue;
+    allowed.delete(entry);
+    allowed.add(allowance(token, project, { account, bare }));
+  }
+  for (const [key, caller] of Object.entries(conductor.startedBy))
+    if (caller === id) conductor.startedBy[key] = token;
+  if (cut.delete(id)) cut.add(token);
+  const list = conductor.started[id];
+  if (list !== undefined) {
+    const have = conductor.started[token] ?? [];
+    const added = list.filter((entry) => !have.some((known) => known.id === entry.id));
+    if (added.length > 0) {
+      conductor.started[token] = [...have, ...added.map((entry) => ({ ...entry }))];
+      saveStarted();
+    }
+  }
+  const run = $state.snapshot(conductor.runs[id]);
+  if (run !== undefined) {
+    const into = $state.snapshot(conductor.runs[token]) ?? { places: {}, rounds: {} };
+    for (const [kid, at] of Object.entries(run.places)) into.places[kid] ??= at;
+    for (const [key, count] of Object.entries(run.rounds))
+      into.rounds[key] = Math.max(into.rounds[key] ?? 0, count);
+    for (const [key, count] of Object.entries(run.stopped ?? {}))
+      (into.stopped ??= {})[key] = Math.max(into.stopped[key] ?? 0, count);
+    const rested = [...new Set([...(into.rested ?? []), ...(run.rested ?? [])])];
+    if (rested.length > 0) into.rested = rested;
+    conductor.runs[token] = into;
+    delete conductor.runs[id];
+    saveRuns();
+  }
+});
+
 /** The rows a session started, running or not. */
 export function startedBy(sessionId: string): Session[] {
   return sessions.all.filter(
@@ -2898,6 +3005,15 @@ export function once() {
 /** No session, and the caller hears it as a refusal. */
 export function refuse() {
   answerAsk("no");
+}
+
+/** Answers a round past a review's limit, for this one round or not,
+    when it is still the question on screen: an answer given to a question
+    that has gone reaches no other. True when it was answered. */
+export function answerRound(ask: Ask, allowed: boolean): boolean {
+  if (conductor.asking !== ask || ask.round === null) return false;
+  answerAsk(allowed ? "once" : "no");
+  return true;
 }
 
 /** The projects a caller may start sessions in without being asked. */

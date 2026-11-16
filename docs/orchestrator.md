@@ -91,6 +91,9 @@ message, the answer says, with the way to start it again.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
+The row takes the name cut to 60 characters, and not at all when it would
+pass for the user, the workbench, an agent or another session (see
+[sessions](sessions.md#integrated-sessions)); the answer says which.
 A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
@@ -135,10 +138,24 @@ runs of the app too, so it is the same starter as before. The agent's own
 id is what it is resumed by, and what the tools name the sessions it
 started by; no tool answers with a token.
 
+An agent's id is never a token. The tools answer with ids and the sessions
+pane shows them, so any agent can learn one, and a session named by its id
+could be called as by any of them. A session from before there were
+tokens, which was named by its id, is given a token of its own the first
+time it is resumed, and keeps it from then on; what was kept under its id
+moves to the token, as [what is remembered](#what-is-remembered)
+describes. A session that was still running under its id when the window
+was reloaded, whose environment holds the id, is named by it until it
+stops, and its next start gives it a token.
+
 A call whose token names a session the workbench is not running, one it
 never had or one that has stopped, cannot come from one of its sessions,
 and every one of the seven tools refuses it, with the reason, asking
-nothing.
+nothing. A call that names an agent's id is refused the same way. The
+other tools never take either for that session's: show, diff, terminal,
+notify and present act as for an agent the workbench did not start, the
+browser tools refuse it, and the settings tools put its change to the user
+as an agent's.
 
 A call that names no session is taken for one from an agent the workbench
 did not start, such as one run by hand in a project whose hooks are on,
@@ -167,10 +184,14 @@ The token is an identifier, not a secret: the workbench cannot see which
 process made a call. A tool server run by hand from a session's shell has
 that session's token in its environment, and an agent started from that
 shell does too; either is taken for that session, as under [following a
-workflow](#following-a-workflow). Every call is also written, with its
-token, to the request log in `~/.agent-workbench`, which any program the
-user runs can read and add to, so any agent of the user's can learn
-another session's token there and call as it.
+workflow](#following-a-workflow). The request log in `~/.agent-workbench`
+is how a call reaches the workbench: the tool server adds a line for each
+call, with its token, and the workbench reads it. The log holds the most
+recent calls, up to a quarter of a megabyte, and any program the user runs
+can read it and add to it, so any agent of the user's can learn the token
+of a session that called lately there and call as it. The token is also in
+the environment of the session's own processes and in the window's stored
+state, which any program the user runs can read too.
 
 ## When the user writes to it
 
@@ -421,6 +442,20 @@ it was done with. The record lives with the window's other memory, so a
 wiped local storage forgets it, which only means the orchestrator starts
 afresh.
 
+A session from before there were tokens had all of this kept under its id,
+and the standing answers it was given in this run of the app as well. When
+it is given a token, they move there. What it started is joined to the
+token's list by session id, so a move made again adds nothing and puts
+back a list a second window that wrote over the first lost; the id's list
+stays for the version before to read, and a session the starter is done
+with, such as one it stopped, goes from both, so a move never brings it
+back. What its workflow ran, the standing answers and the sessions it
+started in this run move whole, and the id keeps none of them, so one the
+starter has since let go of does not come back. A session resumed while a
+run of it named by its id still runs gets a token of its own, and nothing
+moves until that run stops: what is kept under the id is the run's, and
+two rows never share a token.
+
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
 all say how it went.
@@ -439,7 +474,13 @@ review past a workflow's limit is asked about every time, however the
 project was allowed. It says the project the round runs in, then names the
 review and the work by the names the user sees, "Review has run twice on
 Fix the cache, as many times as the workflow allows. Allow another round?",
-with Allow one more round or Stop at the limit. An allowed caller is
+with Allow one more round or Stop at the limit. For a caller that runs
+integrated, the round docks over its composer while its conversation is on
+screen, with the same two choices taken as the dock takes any request (see
+[sessions](sessions.md#integrated-sessions)), so it never covers the
+header that says where the run stands; anywhere else it is put over the
+agent pane as above, and it moves into the dock once the caller is on
+screen. An allowed caller is
 remembered for that project and what the session ran on, for as long as the
 app runs: the account, and the agent too where the account keeps no
 directory for it, since that agent then runs on its own. A later start
@@ -571,7 +612,10 @@ first, then the model is left out and the project with it, then the
 account, and the name is cut last; the time, the step and asking always
 stand. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
-a permission, which only you can grant. Everything else they wait on, the
+a permission, which only you can grant. A starter that runs integrated
+also holds that request in its dock, to be answered there for that session,
+or for one in a terminal with the way to it (see
+[sessions](sessions.md#integrated-sessions)). Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the
 session it started. A session whose starter the window no longer has
 stands in its own project like any other.
