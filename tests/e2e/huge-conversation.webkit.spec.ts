@@ -60,6 +60,17 @@ const countRows = (page: Page) =>
 
 const rowsChanged = (page: Page) => page.evaluate(() => (window as unknown as { __rowsChanged: number }).__rowsChanged);
 
+/** Whether the huge thread's view holds still for a quarter of a second:
+    WebKit on Linux glides to where the wheel sends it. */
+const still = (page: Page) =>
+  thread(page).evaluate(
+    (node) =>
+      new Promise<boolean>((resolve) => {
+        const top = node.scrollTop;
+        setTimeout(() => resolve(node.scrollTop === top), 250);
+      }),
+  );
+
 test.describe("a conversation as long as a real one kept for days", () => {
   test("opens at its foot, with the line where it was resumed just above the composer", async ({ page }) => {
     await openHuge(page);
@@ -192,6 +203,7 @@ test.describe("a conversation as long as a real one kept for days", () => {
     await thread(page).hover();
     for (let step = 0; step < 6; step++) await page.mouse.wheel(0, -1200);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(5000);
+    await expect.poll(() => still(page)).toBe(true);
     // The innermost block at the top of the view, and how far below the
     // top it stands.
     const mark = () =>
