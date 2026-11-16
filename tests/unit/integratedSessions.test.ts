@@ -341,6 +341,25 @@ describe("an integrated session behind its row", () => {
     expect(onTheirWay(session.key)).toBe(false);
   });
 
+  it("leaves the next turn going when the agent says it stopped the last only after the next began", async () => {
+    const { session, handle } = await started();
+    const conversation = conversationOf(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const waiting = send(session.key, "and this")!;
+    await settled();
+    // The turn's end and the next turn's start are heard before the answer.
+    fake.sendNow = (id) => {
+      fake.endTurn(id, "interrupted");
+      fake.startTurn(id, [waiting]);
+      return { sendNow: "stopped" };
+    };
+    expect(await sendNow(session.key)).toBe(true);
+    expect(conversation.turns[2].messages).toEqual([waiting]);
+    expect(conversation.current).toBe(2);
+    expect(conversation.interrupting).toBe(false);
+  });
+
   it("keeps Codex's steered messages on their way until Codex takes them", async () => {
     await install({ holding: true, mints: true });
     const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");

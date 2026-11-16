@@ -275,6 +275,26 @@ test("leaves a thread at its foot where a scroll nobody here made put it, as a s
   expect(read.y + read.height).toBeLessThanOrEqual(view.y + view.height + 1);
 });
 
+test("never draws the next turn as stopping when the agent says it stopped the last only after the next began", async ({ page }) => {
+  await open(page);
+  await busy(page, "and this");
+  // The turn's end and the next turn's start come before the answer does.
+  await agent(
+    page,
+    `f.sendNow = (id) => {
+       f.calls.push({ method: "sendNow", id });
+       f.endTurn(id, "interrupted");
+       f.startTurn(id, f.events.filter((e) => e.type === "message" && e.state === "queued").map((e) => e.message));
+       return new Promise((done) => setTimeout(() => { done({ sendNow: "stopped" }); f.answered = true; }, 100));
+     };`,
+  );
+  await page.getByTestId("send-now").click();
+  await expect(page.getByTestId("user-message").filter({ hasText: "and this" })).toHaveAttribute("data-state", "taken");
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __integrated: { answered?: boolean } }).__integrated.answered)).toBe(true);
+  await expect(page.getByTestId("turn-outcome")).toHaveText("Interrupted");
+  expect(await page.getByTestId("conversation").textContent()).not.toContain("Stopping");
+});
+
 test("brings a message that comes to wait into view just after a press in the thread", async ({ page }) => {
   await open(page);
   for (let turn = 0; turn < 10; turn++) {

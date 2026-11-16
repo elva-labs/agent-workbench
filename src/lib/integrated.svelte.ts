@@ -946,10 +946,13 @@ export async function sendNow(key: string): Promise<boolean> {
   link.nowError = null;
   link.sendingNow = true;
   link.sentNow = link.conversation.waiting.filter((said) => said.state === "queued").map((said) => said.id);
+  const turn = link.conversation.current;
   try {
     const sent = await core().integratedSendNow(link.handle);
-    // A turn stopped for them ends as interrupted, its end to come.
-    if (sent.sendNow === "stopped" && link.conversation.current !== null) link.conversation.interrupting = true;
+    // The turn stopped for them ends as interrupted, its end to come; one
+    // that has ended, or the next that has begun, is left as it is.
+    if (sent.sendNow === "stopped" && turn !== null && link.conversation.current === turn)
+      link.conversation.interrupting = true;
     if (sent.sendNow === "nothingWaiting") link.sentNow = [];
     return true;
   } catch (error) {
