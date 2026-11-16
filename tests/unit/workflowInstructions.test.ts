@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewStep, Workflow, WorkflowStep } from "$lib/core";
 import { instructionLines, instructions, modelText, orchestratorPrompt } from "$lib/workflowInstructions";
-import { defaultWorkflow } from "$lib/workflows.svelte";
+import { defaultWorkflow, directWorkflow } from "$lib/workflows.svelte";
 
 const work = (name: string, parallel = 1): WorkflowStep => ({ kind: "work", name, models: [], parallel });
 const review = (name: string, backTo: string, limit = 2): ReviewStep => ({
@@ -38,6 +38,27 @@ describe("what an orchestrator is told", () => {
     expect(first).toContain("leave the model out where it says no model");
     expect(first).toContain("name the step it is for");
     expect(first).toContain("names the session whose work it checks");
+  });
+
+  // Direct has one step, on any model, and no review: what each start
+  // names is the step, and nothing of models named or work checked.
+  it("names in a start only what the workflow's steps have", () => {
+    const [first, step, last] = instructionLines(directWorkflow());
+    expect(first).toBe(
+      "You direct this work and do not do it yourself: do not edit files. Delegate every piece by starting a session with the workbench's start tool, never with your own subagents. In each start, name the step it is for.",
+    );
+    expect(step).toContain('For the step "Work", split the task into pieces and start a session for each, on any agent and model.');
+    expect(last).toBe('When every piece has come out of "Work", report to the user.');
+
+    // A step that names a model brings the models in; a review brings in
+    // the work it checks.
+    const named = workflowOf(work("Build"));
+    named.steps[0].models = [{ agent: "claude-code", model: "sonnet" }];
+    expect(instructionLines(named)[0]).toContain("give the agent and the model named below");
+    expect(instructionLines(named)[0]).not.toContain("names the session whose work it checks");
+    const reviewed = instructionLines(workflowOf(work("Build"), review("Check", "Build")))[0];
+    expect(reviewed).not.toContain("give the agent and the model named below");
+    expect(reviewed).toContain("A review also names the session whose work it checks");
   });
 
   it("lets an orchestrator that keeps its subagents use them for help, and not for a piece", () => {

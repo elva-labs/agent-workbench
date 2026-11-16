@@ -22,8 +22,11 @@ leave a line on its own row when it stops, whether to relay a question or
 to report, as well as the workflow's own steps. A fresh install has a
 workflow for exactly that, Direct: one step of work, on any model, with as
 many sessions at once as a session may run (see
-[settings](settings.md#workflows)). A session that follows no workflow is
-told none of this. Every session, an orchestrator included, is told that
+[settings](settings.md#workflows)). Its steps add what any workflow's do:
+edit no files, hand out work only through `start` and never through its
+own subagents, name the step in each start, and stop a piece's session
+once it is done with. A session that follows no workflow is told none of
+this. Every session, an orchestrator included, is told that
 once it has started sessions it keeps calling `wait` until all of them are
 done, and does not hand its turn back while any is running unless it needs
 the user, and that a message from the workbench, not the user, is what
