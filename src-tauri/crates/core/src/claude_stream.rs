@@ -1985,21 +1985,19 @@ impl Stream {
                     self.interrupting = false;
                 }
             }
+            // A request the agent refused stops nothing.
             Sent::SendNow => {
-                let how = body
-                    .and_then(|b| b["send_now"].as_str())
-                    .unwrap_or("stopped");
-                // Its result follows a stop, which ends the turn as
-                // interrupted; a turn that takes the messages in goes on.
-                if how == "stopped" {
-                    self.interrupting = self.turn;
-                }
-                if reply.is_ok() {
-                    let how = match how {
-                        "delivering" => "delivering",
-                        "nothing_waiting" => "nothingWaiting",
+                if let Some(body) = body {
+                    let how = match body["send_now"].as_str() {
+                        Some("delivering") => "delivering",
+                        Some("nothing_waiting") => "nothingWaiting",
                         _ => "stopped",
                     };
+                    // Its result follows a stop, which ends the turn as
+                    // interrupted; a turn that takes the messages in goes on.
+                    if how == "stopped" {
+                        self.interrupting = self.turn;
+                    }
                     reply = Ok(json!({ "sendNow": how }));
                 }
             }
@@ -3389,6 +3387,36 @@ mod tests {
         assert_eq!(
             started(&reading.events),
             vec![vec![M2.to_string(), M3.to_string()]]
+        );
+    }
+
+    #[test]
+    fn a_send_now_the_agent_refuses_stops_nothing() {
+        let mut stream = sending_now_agent();
+        let (_, key) = send_now(&mut stream, M3);
+        let reading = readings(
+            &mut stream,
+            &[
+                json!({"type":"control_response","response":{"subtype":"error","request_id":key,
+                       "error":"the agent is busy"}}),
+                // The turn then fails on its own, as an older agent says it.
+                json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["the API failed"]}),
+            ],
+        );
+        assert_eq!(
+            reading.replies,
+            vec![(key, Err("the agent is busy".to_string()))]
+        );
+        assert!(
+            reading.events.iter().any(|e| matches!(
+                e,
+                Event::TurnEnded {
+                    outcome: Outcome::Failed,
+                    ..
+                }
+            )),
+            "{:?}",
+            reading.events
         );
     }
 
