@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
+  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -922,23 +922,10 @@
 
   function announce() {
     if (!windowed) return;
-    const fresh: string[] = [];
-    const tell = (key: string, at: number | null, text: string) => {
-      if (told.has(key) || at === null || at < opened || text === "") return;
-      told.add(key);
-      fresh.push(text);
-    };
-    const entries = conversation.entries;
-    for (let at = Math.max(0, entries.length - 12); at < entries.length; at++) {
-      const entry = entries[at];
-      if (entry.kind === "user") {
-        const message = conversation.messages[entry.message];
-        if (message !== undefined) tell(`m:${message.id}`, message.at, spoken(message.text, sender?.(message) == null).text);
-      } else if (entry.kind === "agent") {
-        for (const part of entry.parts)
-          if (part.kind === "text" && part.done) tell(`b:${part.block}`, part.at, plain(part.text));
-      } else if (entry.kind === "note") tell(`n:${entry.key}`, entry.at, entry.text);
-    }
+    const fresh = toHear(conversation, told, opened, {
+      message: (message) => spoken(message.text, sender?.(message) == null).text,
+      block: plain,
+    });
     if (fresh.length > 0) said = fresh.join("\n\n");
   }
 

@@ -684,6 +684,43 @@ export function stamps(times: { at: number; day?: boolean }[], now: number = Dat
   });
 }
 
+/**
+ * What a screen reader is to hear of the latest entries: each message, each
+ * block of the agent's text once whole, and each note that came at or after
+ * `since` and is not in `told`, which it is then added to, in the order they
+ * stand. Only the last `last` entries are looked at. `words` makes what is
+ * said of a message and of a block's Markdown, and is asked only for what is
+ * to be heard: never for what came before or was heard already.
+ */
+export function toHear(
+  conversation: Conversation,
+  told: Set<string>,
+  since: number,
+  words: { message: (message: Message) => string; block: (markdown: string) => string },
+  last = 12,
+): string[] {
+  const heard: string[] = [];
+  const hear = (key: string, at: number | null, say: () => string) => {
+    if (at === null || at < since || told.has(key)) return;
+    const text = say();
+    if (text === "") return;
+    told.add(key);
+    heard.push(text);
+  };
+  const entries = conversation.entries;
+  for (let at = Math.max(0, entries.length - last); at < entries.length; at++) {
+    const entry = entries[at];
+    if (entry.kind === "user") {
+      const message = conversation.messages[entry.message];
+      if (message !== undefined) hear(`m:${message.id}`, message.at, () => words.message(message));
+    } else if (entry.kind === "agent") {
+      for (const part of entry.parts)
+        if (part.kind === "text" && part.done) hear(`b:${part.block}`, part.at, () => words.block(part.text));
+    } else if (entry.kind === "note") hear(`n:${entry.key}`, entry.at, () => entry.text);
+  }
+  return heard;
+}
+
 /** What the agent last said and did, as plain text for another agent to
     read: its last run with the messages it answered, a line per step, and
     what it is doing or waiting for now. At most `lines` lines, the latest
