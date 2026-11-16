@@ -173,8 +173,9 @@ pub enum Event {
     /// Where a message the window sent stands, between `send` and the turn
     /// that answers it: `sent` when it went to the agent with nothing ahead
     /// of it, `queued` while it waits behind a turn already running,
-    /// `taken` when the running turn took it in, and `dropped`, with
-    /// `error`, when it will not be answered at all. The first event for a
+    /// `taken` when the running turn took it in, `dropped`, with `error`,
+    /// when it will not be answered at all, and `withdrawn` when the user
+    /// took it back before the agent took it. The first event for a
     /// message, `sent` or `queued`, carries its `text` and `images` as they
     /// were sent, so that any window can draw it; the others carry neither.
     Message {
@@ -444,6 +445,7 @@ pub enum MessageState {
     Queued,
     Taken,
     Dropped,
+    Withdrawn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -896,6 +898,13 @@ pub const UNTRUSTED: &str = "untrusted";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Control {
     Interrupt,
+    /// Sends the messages waiting for a turn now, in the order sent: an
+    /// agent that takes messages into a running turn has the turn
+    /// interrupted, after which it takes them all at once; one that does
+    /// not has them steered into the running turn.
+    SendNow,
+    /// Takes back a message the agent has not taken yet.
+    Withdraw(String),
     /// Compact the conversation, in whatever way the agent does it, with
     /// what the summary should keep where the agent takes that.
     Compact {
@@ -936,6 +945,9 @@ pub struct Reading {
     pub replies: Vec<(String, Result<Value, String>)>,
     /// Lines to write back at once.
     pub writes: Vec<String>,
+    /// Messages steered into the running turn that the agent would not
+    /// take, with its words for why: they wait for a turn again.
+    pub unsteered: Vec<(String, String)>,
     /// The session cannot go on, such as when the agent refused to begin
     /// or speaks a version the driver cannot: it is ended, with this said
     /// once as an error after the events.
@@ -969,6 +981,24 @@ pub trait Driver: Send {
     /// The line that sends the user's message, under the window's id. An
     /// error refuses the message: at once, or as dropped for one held.
     fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String>;
+
+    /// For an agent that takes no message while a turn runs, the line that
+    /// steers a held message into the running turn, under the window's id.
+    /// The driver names it as taken once the agent answers, or in
+    /// [`Reading::unsteered`] when the agent will not take it.
+    fn steer(&mut self, _message: &str, _text: &str, _images: &[Image]) -> Result<String, String> {
+        Err("the agent takes no message into a running turn".into())
+    }
+
+    /// For an agent that takes messages into a running turn, how sending
+    /// the waiting messages now goes, `last` being the last of them. By
+    /// default an interrupt, after which the agent takes them all. The
+    /// reply says `sendNow`: `stopped` when the turn was stopped for them,
+    /// `delivering` when the running turn takes them in, and
+    /// `nothingWaiting` when the agent had none waiting.
+    fn send_now(&mut self, _last: &str) -> Result<Sending, String> {
+        self.control(&Control::Interrupt)
+    }
 
     /// The line that answers a permission request.
     fn answer(
@@ -1226,6 +1256,23 @@ impl Tracker {
         Ok(queued)
     }
 
+    /// Why the messages that wait cannot be sent now, or None when they
+    /// can: a turn runs to send them into, nothing waits on the user, and
+    /// the conversation is not being compacted.
+    fn not_now(&self) -> Option<&'static str> {
+        if self.pending.is_empty() {
+            Some("no message waits")
+        } else if !self.asking.is_empty() {
+            Some("the agent waits for an answer first")
+        } else if self.compacting {
+            Some("the conversation is being compacted")
+        } else if !self.turn {
+            Some("no turn runs, and the agent takes the message next")
+        } else {
+            None
+        }
+    }
+
     /// A message that could not be sent after all.
     fn unsend(&mut self, message: &str) {
         self.pending.retain(|m| m != message);
@@ -1295,7 +1342,7 @@ impl Tracker {
             }
             Event::Message {
                 message,
-                state: MessageState::Taken | MessageState::Dropped,
+                state: MessageState::Taken | MessageState::Dropped | MessageState::Withdrawn,
                 ..
             } => {
                 if !self.pending.contains(message) {
@@ -1619,6 +1666,10 @@ struct Machine {
     /// Messages held for an agent that takes none while a turn runs, in
     /// the order sent.
     held: VecDeque<Held>,
+    /// Held messages steered into the running turn, in the order sent,
+    /// until the agent takes each or will not: one it will not take is
+    /// held again.
+    steered: Vec<Held>,
     /// The message last handed over to such an agent, until the agent
     /// names it in a turn or drops it, or the core gives up on it. Nothing
     /// more is handed over before.
@@ -1650,6 +1701,7 @@ impl Machine {
             driver,
             tracker: Tracker::default(),
             held: VecDeque::new(),
+            steered: Vec::new(),
             handed: None,
             handovers: None,
             replies: HashMap::new(),
@@ -1763,6 +1815,7 @@ impl Live {
             }
             machine.tracker.observe(bounded(event), &mut out);
         }
+        self.unsteer(machine, reading.unsteered, &mut out);
         if let Some((kind, message)) = reading.fatal {
             // Said once, as `abandon` does, and ended as `stop` ends it:
             // stdin closes once what is queued has gone, and an agent still
@@ -1788,6 +1841,92 @@ impl Live {
             if let Some(waiting) = machine.replies.remove(&key) {
                 self.put(Out::Reply(waiting, reply));
             }
+        }
+    }
+
+    /// Steers every held message into the running turn, in the order sent,
+    /// and hands back where to hear the last of their lines went. One the
+    /// driver cannot make a line of stays held, with those after it.
+    fn steer(&self, machine: &mut Machine) -> Result<Receiver<Result<(), String>>, String> {
+        let mut went = None;
+        while let Some(held) = machine.held.pop_front() {
+            if !machine.tracker.pending.contains(&held.message) {
+                continue;
+            }
+            match machine
+                .driver
+                .steer(&held.message, &held.text, &held.images)
+            {
+                Ok(line) => {
+                    went = Some(self.enqueue(line)?);
+                    // Given the time a message handed over has to be named,
+                    // so that one the agent never answers holds up nothing.
+                    if let Some(handovers) = &machine.handovers {
+                        let _ = handovers.send((
+                            held.message.clone(),
+                            Instant::now() + self.deadlines.handover,
+                        ));
+                    }
+                    machine.steered.push(held);
+                }
+                Err(error) => {
+                    machine.held.push_front(held);
+                    if went.is_none() {
+                        return Err(error);
+                    }
+                    break;
+                }
+            }
+        }
+        went.ok_or_else(|| "no message waits".to_string())
+    }
+
+    /// Holds again the steered messages the agent would not take, ahead of
+    /// those held since, and says so once.
+    fn unsteer(
+        &self,
+        machine: &mut Machine,
+        unsteered: Vec<(String, String)>,
+        out: &mut Vec<Event>,
+    ) {
+        let mut why = None;
+        for (message, said) in unsteered {
+            if let Some(at) = machine
+                .steered
+                .iter()
+                .position(|held| held.message == message)
+            {
+                let held = machine.steered.remove(at);
+                if machine.tracker.pending.contains(&held.message) {
+                    machine.tracker.observe(
+                        Event::message(&held.message, MessageState::Queued, None),
+                        out,
+                    );
+                    machine.held.push_front(held);
+                    why.get_or_insert(said);
+                }
+            }
+        }
+        // Put back in the order they were sent.
+        let pending = &machine.tracker.pending;
+        machine
+            .held
+            .make_contiguous()
+            .sort_by_key(|held| pending.iter().position(|m| *m == held.message));
+        let pending = machine.tracker.pending.clone();
+        machine
+            .steered
+            .retain(|held| pending.contains(&held.message));
+        if let Some(why) = why {
+            machine.tracker.observe(
+                Event::Notice {
+                    level: NoticeLevel::Warning,
+                    message: format!(
+                        "The agent did not take the message into the running turn ({why}), so it waits for the turn to end."
+                    ),
+                },
+                out,
+            );
         }
     }
 
@@ -1824,17 +1963,25 @@ impl Live {
         }
     }
 
-    /// Gives up on a message handed over that the agent has not named in
-    /// time: it is dropped, and the next one held goes.
+    /// Gives up on a message handed over, or steered into the running
+    /// turn, that the agent has not named in time: it is dropped, and the
+    /// next one held goes.
     fn overdue(&self, message: &str) {
         let mut machine = self.machine.lock().expect("machine lock");
-        if machine.ended
-            || self.stopping.load(Ordering::SeqCst)
-            || machine.handed.as_deref() != Some(message)
-        {
+        if machine.ended || self.stopping.load(Ordering::SeqCst) {
             return;
         }
-        machine.handed = None;
+        let steered = machine
+            .steered
+            .iter()
+            .position(|held| held.message == message);
+        match steered {
+            Some(at) => {
+                machine.steered.remove(at);
+            }
+            None if machine.handed.as_deref() == Some(message) => machine.handed = None,
+            None => return,
+        }
         let mut out = Vec::new();
         if machine.tracker.pending.iter().any(|m| m == message) {
             machine.tracker.observe(
@@ -2376,6 +2523,7 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     }
     machine.ready.take();
     machine.held.clear();
+    machine.steered.clear();
     machine.handed = None;
     let code = status.and_then(|status| status.code());
     let clean = status.is_some_and(|status| status.success());
@@ -2578,7 +2726,13 @@ fn settle(
 /// Sends a control request and waits for the agent's reply.
 pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value, String> {
     let by = std::time::Instant::now() + sessions.get(id)?.deadlines.control;
-    request(sessions, id, control, by)
+    let reply = request(sessions, id, control, by)?;
+    // An agent that says nothing of how it sent them now stopped the turn
+    // for them, as an interrupt does.
+    if *control == Control::SendNow && !reply["sendNow"].is_string() {
+        return Ok(serde_json::json!({ "sendNow": "stopped" }));
+    }
+    Ok(reply)
 }
 
 /// Sends a control request and waits for the agent's reply, for as long
@@ -2596,7 +2750,46 @@ fn request(
     }
     let (went, waiting) = {
         let mut machine = live.machine.lock().expect("machine lock");
-        let sending = machine.driver.control(control)?;
+        let sending = match control {
+            Control::SendNow => {
+                if let Some(why) = machine.tracker.not_now() {
+                    return Err(why.into());
+                }
+                if machine.driver.takes_while_busy() {
+                    let last = machine.tracker.pending.last().cloned().unwrap_or_default();
+                    machine.driver.send_now(&last)?
+                } else {
+                    // Steered here rather than by the driver, since the
+                    // messages are held here.
+                    let went = live.steer(&mut machine)?;
+                    let mut out = Vec::new();
+                    machine.tracker.push_state(&mut out);
+                    live.emit(&out);
+                    drop(machine);
+                    return live
+                        .written(went)
+                        .map(|()| serde_json::json!({ "sendNow": "delivering" }));
+                }
+            }
+            Control::Withdraw(message) => {
+                if let Some(at) = machine
+                    .held
+                    .iter()
+                    .position(|held| held.message == *message)
+                {
+                    machine.held.remove(at);
+                    Sending::Local {
+                        reply: Value::Null,
+                        events: vec![Event::message(message, MessageState::Withdrawn, None)],
+                    }
+                } else if !machine.tracker.pending.contains(message) {
+                    return Err("the agent has taken the message already".into());
+                } else {
+                    machine.driver.control(control)?
+                }
+            }
+            _ => machine.driver.control(control)?,
+        };
         let mut out = Vec::new();
         if *control == Control::Interrupt {
             machine.tracker.interrupted(&mut out);
@@ -3229,7 +3422,9 @@ mod tests {
     /// An agent that takes no message while a turn runs, spoken to in
     /// lines of words: `start <ids>` begins a turn for the messages named,
     /// `end` ends it, `ack` is a reply that means nothing, `drop <id>`
-    /// says a message will not be answered, `answer <key>` answers a
+    /// says a message will not be answered, `took <id>` that a message
+    /// steered into the turn was taken, `unsteer <id>` that it was not,
+    /// `answer <key>` answers a
     /// request, `fatal` ends the turn and says the session cannot go on.
     /// The line it sends a message with names the model it runs on when it
     /// is sent. A model is settled without asking it; a mode or an effort
@@ -3286,6 +3481,15 @@ mod tests {
                     MessageState::Dropped,
                     Some("refused".into()),
                 )],
+                (Some("took"), Some(message)) => {
+                    vec![Event::message(message, MessageState::Taken, None)]
+                }
+                (Some("unsteer"), Some(message)) => {
+                    return Reading {
+                        unsteered: vec![(message.to_string(), "the turn is ending".into())],
+                        ..Reading::default()
+                    }
+                }
                 (Some("question"), Some(request)) => vec![Event::QuestionAsked {
                     request: request.to_string(),
                     call: None,
@@ -3346,6 +3550,13 @@ mod tests {
             Ok(format!("send {message} {text} on {}", self.model))
         }
 
+        fn steer(&mut self, message: &str, text: &str, _: &[Image]) -> Result<String, String> {
+            if text == "bad" {
+                return Err("not a message this agent takes".into());
+            }
+            Ok(format!("steer {message} {text}"))
+        }
+
         fn answer(&mut self, _: &str, _: Choice, _: Option<&str>) -> Result<String, String> {
             Err("nothing asked".into())
         }
@@ -3368,7 +3579,9 @@ mod tests {
                         line: "compact".into(),
                     })
                 }
-                Control::Interrupt => return Err("not here".into()),
+                Control::Interrupt | Control::SendNow | Control::Withdraw(_) => {
+                    return Err("not here".into())
+                }
             };
             self.model = model.clone();
             Ok(Sending::Local {
@@ -3500,6 +3713,152 @@ mod tests {
         let at = |kind: &str| events.iter().position(|e| e["type"] == kind).unwrap();
         assert!(at("turnEnded") < at("error"), "after the events");
         assert!(bench.live.stopping.load(Ordering::SeqCst));
+    }
+
+    /// What became of `message` last, as the events said.
+    fn last_state(events: &[Value], message: &str) -> Option<String> {
+        events
+            .iter()
+            .rfind(|e| e["type"] == "message" && e["message"] == message)
+            .map(|e| e["state"].as_str().unwrap_or_default().to_string())
+    }
+
+    /// A session with M1's turn running and M2 and M3 held behind it.
+    fn two_held() -> Bench {
+        let bench = Bench::new(fake());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M2, "two");
+        bench.send(M3, "three");
+        assert_eq!(bench.next(), None, "held while the turn runs");
+        bench
+    }
+
+    #[test]
+    fn sending_now_steers_the_held_messages_into_the_turn_in_order() {
+        let bench = two_held();
+        control(&bench.sessions, "int-bench", &Control::SendNow).unwrap();
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("steer {M2} two").as_str())
+        );
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("steer {M3} three").as_str())
+        );
+        bench.live.take(&format!("took {M2}"));
+        bench.live.take(&format!("took {M3}"));
+        let events = bench.events();
+        assert_eq!(last_state(&events, M2).as_deref(), Some("taken"));
+        assert_eq!(last_state(&events, M3).as_deref(), Some("taken"));
+        // Nothing waits for the turn's end any more.
+        bench.live.take("end");
+        assert_eq!(bench.next(), None);
+        let snapshot = snapshot(&bench.sessions, "int-bench").unwrap();
+        assert!(snapshot.messages.is_empty());
+    }
+
+    #[test]
+    fn a_steered_message_the_agent_never_answers_is_dropped_in_time() {
+        let bench = Bench::keeping(
+            fake(),
+            Deadlines {
+                handover: Duration::from_millis(300),
+                ..Deadlines::default()
+            },
+        );
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M2, "two");
+        let reply = control(&bench.sessions, "int-bench", &Control::SendNow).unwrap();
+        assert_eq!(reply["sendNow"], "delivering");
+        assert!(bench.next().is_some());
+        // The agent never answers the steer.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let events = bench.events();
+            if last_state(&events, M2).as_deref() == Some("dropped") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{events:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(snapshot(&bench.sessions, "int-bench")
+            .unwrap()
+            .messages
+            .is_empty());
+    }
+
+    #[test]
+    fn a_message_the_agent_would_not_steer_in_waits_for_the_turn_again() {
+        let bench = two_held();
+        control(&bench.sessions, "int-bench", &Control::SendNow).unwrap();
+        assert!(bench.next().is_some());
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("took {M2}"));
+        bench.live.take(&format!("unsteer {M3}"));
+        let events = bench.events();
+        // Said to wait again, after it was first said to wait.
+        let queued = events
+            .iter()
+            .filter(|e| e["type"] == "message" && e["message"] == M3 && e["state"] == "queued")
+            .count();
+        assert_eq!(queued, 2, "{events:?}");
+        assert!(events.iter().any(|e| e["type"] == "notice"
+            && e["message"]
+                .as_str()
+                .unwrap()
+                .contains("the turn is ending")));
+        // It goes once the turn ends, as any held message does.
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M3} three on haiku").as_str())
+        );
+    }
+
+    #[test]
+    fn sending_now_says_why_when_it_cannot() {
+        let bench = Bench::new(fake());
+        let refused =
+            |bench: &Bench| control(&bench.sessions, "int-bench", &Control::SendNow).unwrap_err();
+        assert_eq!(refused(&bench), "no message waits");
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        // Handed over, with no turn of its own yet.
+        bench.send(M2, "two");
+        assert_eq!(
+            refused(&bench),
+            "no turn runs, and the agent takes the message next"
+        );
+        bench.live.take(&format!("start {M1}"));
+        bench.live.take("question q1");
+        assert_eq!(refused(&bench), "the agent waits for an answer first");
+        assert_eq!(bench.next(), None, "nothing steered");
+    }
+
+    #[test]
+    fn a_held_message_taken_back_is_withdrawn_and_never_goes() {
+        let bench = two_held();
+        control(&bench.sessions, "int-bench", &Control::Withdraw(M2.into())).unwrap();
+        let events = bench.events();
+        assert_eq!(last_state(&events, M2).as_deref(), Some("withdrawn"));
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M3} three on haiku").as_str())
+        );
+        bench.live.take(&format!("start {M3}"));
+        // Taken by now, so not to be taken back.
+        let error =
+            control(&bench.sessions, "int-bench", &Control::Withdraw(M3.into())).unwrap_err();
+        assert_eq!(error, "the agent has taken the message already");
+        assert!(snapshot(&bench.sessions, "int-bench")
+            .unwrap()
+            .messages
+            .is_empty());
     }
 
     #[test]

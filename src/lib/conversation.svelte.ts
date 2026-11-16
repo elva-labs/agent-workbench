@@ -931,6 +931,11 @@ export class Conversation {
         message.error = event.error;
         if (!message.placed) this.#place(message);
         break;
+      // Taken back before the agent took it: its words went back to the
+      // composer of the window that took it, and it leaves every thread.
+      case "withdrawn":
+        this.forget(message.id);
+        break;
     }
   }
 
