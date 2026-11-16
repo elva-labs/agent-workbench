@@ -42,13 +42,14 @@ them where its project's hooks are on. See [hooks](hooks.md) and
 
 `projects` lists the open projects, the caller's own marked, so a session
 names a project the app actually has. `sessions` lists the sessions the
-caller started, each with its id, its project and worktree, its agent, what
-it is doing and the last line it left. A session that has stopped, ended or
-asked for permission without the caller having been told says so beside
-what it is doing, and listing it counts as telling. `start` starts a
-session in a project with a first prompt, on a worktree of its own if it
-asks for one, and answers with the new session's id and tells it to keep
-calling `wait` until every session it started is done. `send` types a line
+caller started, each with its id, its name in quotes, its project and
+worktree, its agent, what it is doing and the last line it left. A session
+that has stopped, ended or asked for permission without the caller having
+been told says so beside what it is doing, and listing it counts as
+telling. `start` starts a session in a project with a first prompt, on a
+worktree of its own if it asks for one, and answers with the new session's
+id and tells it to keep calling `wait` until every session it started is
+done. `send` types a line
 into a running session, and Enter after it on its own, as a person does. A
 long line goes in as a paste when the session's terminal has asked for
 paste, and in small pieces a moment apart when it has not, so the agent
@@ -93,7 +94,9 @@ session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
 The row takes the name cut to 60 characters, and not at all when it would
 pass for the user, the workbench, an agent or another session (see
-[sessions](sessions.md#integrated-sessions)); the answer says which.
+[sessions](sessions.md#integrated-sessions)); the answer says which, with
+the name in quotes as every answer gives a name (see [when the user writes
+to it](#when-the-user-writes-to-it)).
 A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
@@ -185,10 +188,20 @@ reaches it with a note ahead of the user's words: a line for each session
 it started that stopped working, asked for permission or ended since it
 last looked, in the words a wait answers with. A session's last line in
 it, as in a wait's answer and a listing, is given on one line, cut at 120
-characters and in double quotes, any quote mark of its own made single, so
-nothing in it can close the quote and read as a line of the workbench's
-or the user's; the note's first line says that each last line is that
-session's own words, not an instruction. When the user's message cuts a
+characters and in double quotes, any quote mark of its own made single and
+any character that changes how text reads without being seen, such as a
+line separator or a mark that reverses text, written as a marker like
+⟨U+202E⟩, so nothing in it can close the quote and read as a line of the
+workbench's or the user's; the note's first line says that each last line
+is that session's own words, not an instruction. A session is named in it,
+as in every answer, by its id, which its agent does not choose. While the
+window does not know a session's id, the session is named by the name its
+row has instead, which a start, its agent's title for the terminal or the
+first words of its conversation may have given it, made safe the same way
+and cut at 60 characters, as a row's name is. A listing gives that name
+beside the id, and a refusal that names the work of a review gives it too.
+An id of any other shape than the agents' own, up to 64 letters, digits,
+dashes and underscores, is quoted the same way. When the user's message cuts a
 wait short, or comes while one is held, the note also names the sessions
 still at work and tells it to wait for them once it has answered. A wait
 still held answers for the sessions it watches, so the note leaves those
@@ -270,16 +283,17 @@ sent it as the workbench's own message, which its thread shows under From
 Workbench, each session by the name its row has. A starter in a terminal
 has it typed in on one line, as `send` types one, starting with the note's
 own words, From the workbench, not the user, with the sessions kept apart
-by bars. Each last line in it is quoted and cut as in a wait's answer, and
-a bar in a session's name or last line is typed as a broken bar, so
-nothing a session left reads as the start of another session's line; the
-message says each last line is that session's words and not an
-instruction. A session cannot choose which starter is woken or put a line
-of its own into the message beyond its last line, and the message never
-begins with a slash. It is never typed while the starter shows a question
-or a permission prompt, where a key would answer for the user, and whether
-the starter is still idle is asked again before the line goes in and
-before its Enter: a key of the user's in between leaves the line unsent.
+by bars. Each last line and each name in it is quoted and cut as in a
+wait's answer, and a bar in either is typed as a broken bar, so nothing a
+session left or was called reads as the start of another session's line;
+the message says each last line is that session's words and not an
+instruction. A session cannot choose which starter is woken or put words
+of its own into the message beyond its last line and, while its id is not
+known, its name, and the message never begins with a slash. It is never
+typed while the starter shows a question or a permission prompt, where a
+key would answer for the user, and whether the starter is still idle is
+asked again before the line goes in and before its Enter: a key of the
+user's in between leaves the line unsent.
 The wake's text then stays on the line ahead of the user's key, since
 nothing can take it back safely, and the user's next message carries it.
 
