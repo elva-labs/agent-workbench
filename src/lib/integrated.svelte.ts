@@ -117,6 +117,8 @@ export class Link {
   after: Change | null = null;
   /** The changes asked of the run behind the row and not answered yet. */
   unanswered = new Set<Change>();
+  /** The user chose the mode the session runs in. */
+  modeChosen = false;
   /** What the run behind the row was started on. */
   ranOn: Run | null = null;
   /** The agent the row was started on, once a workflow picked for it may
@@ -568,7 +570,12 @@ async function restart(key: string, session: Session, link: Link) {
     not offer is left to them again rather than replaced. */
 export function startMode(session: Session, link: Link): string | undefined {
   const mode = link.conversation.settings.mode;
-  if (mode !== null) return offers(link, mode) ? mode : undefined;
+  if (mode !== null) {
+    if (!offers(link, mode)) return undefined;
+    // A new conversation nothing has been said in starts again as a new
+    // one would, unless the user chose its mode.
+    return unspoken(session) && !link.modeChosen ? undefined : mode;
+  }
   return session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined);
 }
 
@@ -873,6 +880,7 @@ export function reply(key: string, request: string, answers: string[][] | null) 
 export async function configure(key: string, change: Change) {
   const link = links.get(key);
   if (link === undefined) return;
+  if (change.mode !== undefined) link.modeChosen = true;
   const handle = link.handle;
   if (handle === null) {
     // Made on the new run once it is up.

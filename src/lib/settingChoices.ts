@@ -64,7 +64,7 @@ export function modeChoices(conversation: Conversation): Choice[] {
           {
             value: mode,
             name: modeName(conversation, mode),
-            about: "From the agent's own settings, which a session here cannot switch to. Once another mode is chosen, this one comes back only in a new session.",
+            about: "From the agent's own settings. Once another is chosen, it comes back only in a new session.",
             on: true,
           },
         ]

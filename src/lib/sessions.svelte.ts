@@ -1861,6 +1861,9 @@ export async function reopenOtherWay(key: string): Promise<void> {
     // The conversation the stopped run had, which the other way lets go
     // of: the next run reads it back from the agent's own record.
     if (row.kind === "integrated") stopIntegrated(row);
+    // The row keeps the name it showed, which a row resumed by its id
+    // would otherwise give up for the id's start.
+    row.title ??= label(row);
     row.kind = to;
     row.resumedFrom = row.id;
     followsAgain(key);

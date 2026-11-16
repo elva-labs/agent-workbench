@@ -320,6 +320,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     { value: "default", name: "Default", description: null },
     { value: "acceptEdits", name: "Accept edits", description: null },
     { value: "plan", name: "Plan", description: null },
+    { value: "auto", name: "Auto", description: null },
+    { value: "dontAsk", name: "Don't ask", description: null },
   ];
   const MODELS = [
     {

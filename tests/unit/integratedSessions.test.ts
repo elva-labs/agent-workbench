@@ -33,6 +33,7 @@ import {
   sessions,
   started as startedTerminal,
   ended as endedTerminal,
+  label,
   midTurn,
   otherWayFor,
   reopenOtherWay,
@@ -897,6 +898,7 @@ describe("a session reopened the other way", () => {
   it("goes on with a terminal session as a conversation once its process has ended, in the same row", async () => {
     const row = terminalRow("conversation-1");
     const { key, token, ordinal } = row;
+    const name = label(row);
     expect(otherWayFor(row)).toBe("integrated");
     const reopening = reopenOtherWay(key);
     // Its process is asked to end, and nothing starts until it has.
@@ -907,6 +909,7 @@ describe("a session reopened the other way", () => {
     await reopening;
     const now = byKey(key)!;
     expect(now).toMatchObject({ kind: "integrated", status: "starting", resumedFrom: "conversation-1", token, ordinal });
+    expect(label(now)).toBe(name);
     // Its end was the user's doing, and no news.
     expect(now.unread).toBe(false);
     await launch(key);
@@ -1036,10 +1039,8 @@ describe("a new conversation put under a workflow", () => {
     follow(key, "Build and review");
     await vi.waitFor(() => expect(starts()).toHaveLength(3));
     const picked = starts().at(-1)!.options;
-    const without = ({ token: _token, mode: _mode, ...rest }: Record<string, unknown>) => rest;
+    const without = ({ token: _token, ...rest }: Record<string, unknown>) => rest;
     expect(without(picked as never)).toEqual(without(direct as never));
-    // The run started again keeps the mode the one it left ran in.
-    expect(picked.mode).toBe("default");
   });
 
   it("goes back to the agent alone, on its own default model", async () => {
