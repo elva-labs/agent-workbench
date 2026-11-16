@@ -45,13 +45,15 @@ variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
 those two variables to pass on. Named for a workflow where no
-configuration names it, its tools run without asking, as an integrated
-session's do. Named again where the project's configuration has it, the
-command line says nothing of approval, since Codex takes the command line
-over the project's file: the entry there decides, and the
-[hooks](hooks.md#the-agents-tools) write it so the tools run without
-asking unless the user set another approval in it. Every other server
-asks as the user configured it, and the approval policy is the user's.
+configuration names it, it is given the approvals the
+[hooks](hooks.md#the-agents-tools) write: the tools that read, show or
+are asked about by the window run without asking, each by an approval of
+its own, and the rest ask as the user's approval policy says. Named again
+where the project's configuration has it, the command line says nothing
+of approval, since Codex takes the command line over the project's file:
+the entry there decides, as the hooks wrote it or as the user changed it.
+Every other server asks as the user configured it, and the approval
+policy is the user's.
 An entry that named only the variables, for a server no configuration
 names, would stop Codex from starting, so a session without the tool
 server is told nothing of it. On Windows a Codex installed as a script is

@@ -113,8 +113,12 @@ refused goes with the next.
 
 The workbench's tool server is attached to each thread through the
 thread's own configuration, under the name the hooks install it by, with
-its tools allowed without asking, so it needs no entry in the account's
-configuration. The servers the user's configuration names ask as it says.
+every one of its tools allowed without asking, the plugins' tools among
+them, so it needs no entry in the account's configuration. The thread's
+configuration is read over the project's, so an approval the user set in
+the project's entry does not hold there; a terminal session lets fewer of
+the tools run unasked, as [the hooks](hooks.md#the-agents-tools) list.
+The servers the user's configuration names ask as it says.
 Codex gives the servers it starts an environment of its own choosing, so
 the session's token and role go into the server's entry, for a fresh
 thread as for a resumed one: the token is the workbench's, chosen before

@@ -103,6 +103,62 @@ pub fn tools() -> Vec<Value> {
     listed
 }
 
+/// The tools a terminal Codex session runs without asking, by name: each
+/// is given an approval of its own in the server's entry, and the server
+/// as a whole is given none. They are the tools that only read or show,
+/// and those the window asks the user about itself each time. Every other
+/// tool of the server asks as the user's approval policy says, a plugin's
+/// tool or one added to the server later among them, until it is put here.
+pub const RUN_UNASKED: &[&str] = &[
+    // They read or show.
+    "notify",
+    "show",
+    "diff",
+    "present",
+    "selection",
+    "sessions",
+    "wait",
+    "read",
+    "projects",
+    "settings",
+    // The tools of the workbench's own plugins, todos and git, that read.
+    "todos_list",
+    "git_status",
+    "git_log",
+    // The window asks the user each time.
+    "settings_change",
+    "theme_save",
+    "styles_write",
+    "terminal",
+    "start",
+];
+
+/// The tools left off [`RUN_UNASKED`] on purpose, so they ask as the
+/// user's approval policy says, with Codex's question the only one before
+/// they act: the browser's tools, which act in sites the user signed into
+/// in the workbench's browser, send and stop, which reach the session's
+/// own sessions, and the tools of the workbench's own plugins that change
+/// things. Named so that a tool added to the server is never left off
+/// either list by accident.
+pub const ASK_AS_POLICY_SAYS: &[&str] = &[
+    "browser_open",
+    "browser_tabs",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_console",
+    "browser_screenshot",
+    "browser_eval",
+    "browser_close",
+    "send",
+    "stop",
+    "todos_add",
+    "todos_finish",
+    "git_commit",
+    "github_pr",
+];
+
 /// How long a plugin or the app has to answer a call before the agent is
 /// told it did not. A call that is over is over: the answer is dropped if
 /// it lands.
@@ -1502,6 +1558,54 @@ mod tests {
     fn home(name: &str) -> Scratch {
         let dir = Scratch::new(&format!("mcp-{name}"));
         dir
+    }
+
+    /// Every tool the server offers of its own is on one of the two lists,
+    /// so a new tool is never run without asking for want of a decision;
+    /// what the lists name besides is the workbench's own plugins' tools,
+    /// and a plugin's tool on neither asks.
+    #[test]
+    fn every_tool_of_the_server_runs_unasked_or_asks_on_purpose() {
+        let own: Vec<String> = tools()
+            .into_iter()
+            .chain(conductor_tools())
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+        for name in &own {
+            let unasked = RUN_UNASKED.contains(&name.as_str());
+            let asks = ASK_AS_POLICY_SAYS.contains(&name.as_str());
+            assert!(unasked ^ asks, "{name}: on both lists or on neither");
+        }
+        let mut named: Vec<&str> = RUN_UNASKED
+            .iter()
+            .chain(ASK_AS_POLICY_SAYS)
+            .copied()
+            .collect();
+        let count = named.len();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), count, "a tool named twice");
+        let mut plugins: Vec<&str> = named
+            .into_iter()
+            .filter(|name| !own.iter().any(|tool| tool == name))
+            .collect();
+        plugins.sort_unstable();
+        assert_eq!(
+            plugins,
+            [
+                "git_commit",
+                "git_log",
+                "git_status",
+                "github_pr",
+                "todos_add",
+                "todos_finish",
+                "todos_list"
+            ]
+        );
+        // Only reading tools of theirs run unasked.
+        for tool in ["git_commit", "github_pr", "todos_add", "todos_finish"] {
+            assert!(!RUN_UNASKED.contains(&tool), "{tool}");
+        }
     }
 
     fn first(home: &Path) -> Request {

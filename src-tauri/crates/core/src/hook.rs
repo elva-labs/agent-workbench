@@ -32,7 +32,11 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 
 use crate::account::{self, Dirs};
-use crate::adapter::{CODEX_APPROVAL_SETTING, CODEX_APPROVE, CODEX_SERVER_KEY, SERVER_NAME};
+use crate::adapter::{
+    CODEX_APPROVAL_SETTING, CODEX_APPROVE, CODEX_SERVER_KEY, CODEX_TOOLS, CODEX_TOOL_APPROVAL,
+    SERVER_NAME,
+};
+use crate::mcp::RUN_UNASKED;
 
 /// Held across each read, change and write of an account's agent state, so
 /// two installs, removals or trust writes at the same moment cannot each
@@ -1147,13 +1151,103 @@ struct Pointed {
     text: Option<String>,
 }
 
+/// A table holding a tool's approval to run without asking, made in the
+/// form of the table of tools it goes into: inline in an inline one, as
+/// dotted keys where its siblings are written so or under a header of the
+/// table's own, and under a header of its own beside headers.
+fn approving(tools: &toml_edit::Item) -> toml_edit::Item {
+    if tools.is_inline_table() {
+        let mut one = toml_edit::InlineTable::new();
+        one.set_dotted(true);
+        one.insert(CODEX_TOOL_APPROVAL, toml_edit::Value::from(CODEX_APPROVE));
+        return toml_edit::Item::Value(toml_edit::Value::InlineTable(one));
+    }
+    let mut one = toml_edit::Table::new();
+    one.set_dotted(
+        tools
+            .as_table()
+            .is_none_or(|table| table.is_dotted() || !table.is_implicit()),
+    );
+    one[CODEX_TOOL_APPROVAL] = toml_edit::value(CODEX_APPROVE);
+    toml_edit::Item::Table(one)
+}
+
+/// Gives the workbench's entry the approvals the hooks write: each tool
+/// of [`RUN_UNASKED`] that has no approval of its own is given one to run
+/// without asking, and the entry has none for the whole server, so every
+/// other tool asks as the user's approval policy says. The approval for
+/// the whole server that an earlier build wrote is taken out. One of any
+/// other value is the user's own, and the entry is then left as it is; so
+/// is an approval a tool already has. Says whether anything changed, or
+/// that the entry cannot take them.
+fn approve_tools(server: &mut toml_edit::Item) -> Result<bool, String> {
+    let inline = server.is_inline_table();
+    let entry = server
+        .as_table_like_mut()
+        .ok_or("the server's entry is not a table")?;
+    let earlier = match entry.get(CODEX_APPROVAL_SETTING) {
+        None => false,
+        Some(mode) if mode.as_str() == Some(CODEX_APPROVE) => true,
+        Some(_) => return Ok(false),
+    };
+    let mut changed = false;
+    if !entry.contains_key(CODEX_TOOLS) {
+        let tools = if inline {
+            let mut tools = toml_edit::InlineTable::new();
+            tools.set_dotted(true);
+            toml_edit::Item::Value(toml_edit::Value::InlineTable(tools))
+        } else {
+            let mut tools = toml_edit::Table::new();
+            tools.set_dotted(true);
+            toml_edit::Item::Table(tools)
+        };
+        entry.insert(CODEX_TOOLS, tools);
+    }
+    let tools = entry
+        .get_mut(CODEX_TOOLS)
+        .ok_or("the server's tools are not a table")?;
+    let one = approving(tools);
+    let tools = tools
+        .as_table_like_mut()
+        .ok_or("the server's tools are not a table")?;
+    for tool in RUN_UNASKED {
+        match tools.get_mut(tool) {
+            Some(item) => {
+                let own = item
+                    .as_table_like_mut()
+                    .ok_or_else(|| format!("the server's tool {tool} is not a table"))?;
+                if !own.contains_key(CODEX_TOOL_APPROVAL) {
+                    own.insert(CODEX_TOOL_APPROVAL, toml_edit::value(CODEX_APPROVE));
+                    changed = true;
+                }
+            }
+            None => {
+                tools.insert(tool, one.clone());
+                changed = true;
+            }
+        }
+    }
+    if earlier {
+        entry.remove(CODEX_APPROVAL_SETTING);
+        changed = true;
+    }
+    // An inline entry is spaced afresh so what was added sits as the rest
+    // does. Only the spaces between its keys and values move; a comment
+    // inside an array in it stays where it is.
+    if changed {
+        if let Some(inline) = server.as_inline_table_mut() {
+            inline.fmt();
+        }
+    }
+    Ok(changed)
+}
+
 /// A Codex config's text with the daemon's entry as the hooks write it:
-/// the entry is made where there is none, its tools allowed without
-/// asking, and an entry for the daemon that says nothing of its tools'
-/// approval is given the setting and keeps the rest of what it says. One
-/// that says anything of approval is left as the user has it. Everything
-/// else in the file stays as it was, and an error says it cannot be
-/// written to: it is not TOML, or its servers are not a table.
+/// the entry is made where there is none, and an entry for the daemon is
+/// given the approvals [`approve_tools`] says and keeps the rest of what
+/// it says. Everything else in the file stays as it was, and an error
+/// says it cannot be written to: it is not TOML, or its servers, the
+/// entry or its tools are not tables.
 fn pointed(daemon: &str, file: &str) -> Result<Pointed, String> {
     let mut document = parse_codex(file)?;
     // A table of servers the hooks make holds only their entry, and is
@@ -1178,19 +1272,12 @@ fn pointed(daemon: &str, file: &str) -> Result<Pointed, String> {
     });
     let had_entry = ours.is_some();
     match ours {
-        Some(server) if server.get(CODEX_APPROVAL_SETTING).is_some() => {
-            return Ok(Pointed {
-                had_entry,
-                text: None,
-            });
-        }
         Some(server) => {
-            server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
-            // An inline entry is spaced afresh so the setting sits as the
-            // others do. Only the spaces between its keys and values move;
-            // a comment inside an array in it stays where it is.
-            if let Some(inline) = server.as_inline_table_mut() {
-                inline.fmt();
+            if !approve_tools(server)? {
+                return Ok(Pointed {
+                    had_entry,
+                    text: None,
+                });
             }
         }
         None => {
@@ -1199,7 +1286,6 @@ fn pointed(daemon: &str, file: &str) -> Result<Pointed, String> {
             let mut args = toml_edit::Array::new();
             args.push("mcp");
             server["args"] = toml_edit::value(args);
-            server[CODEX_APPROVAL_SETTING] = toml_edit::value(CODEX_APPROVE);
             // Servers the user wrote inline take the entry inline too.
             let entry = if inline {
                 toml_edit::Item::Value(toml_edit::Value::InlineTable(server.into_inline_table()))
@@ -1207,6 +1293,15 @@ fn pointed(daemon: &str, file: &str) -> Result<Pointed, String> {
                 toml_edit::Item::Table(server)
             };
             servers.insert(CODEX_SERVER_KEY, entry);
+            let made = servers
+                .get_mut(CODEX_SERVER_KEY)
+                .ok_or("the server's entry was not made")?;
+            approve_tools(made)?;
+            // Inline servers are spaced afresh so the entry sits as the
+            // others do, as an inline entry is.
+            if inline {
+                servers.fmt();
+            }
         }
     }
     Ok(Pointed {
@@ -2151,16 +2246,23 @@ mod tests {
         assert!(codex.contains("[mcp_servers.other]"));
         assert!(codex.contains("[mcp_servers.agent_workbench]"));
         assert!(codex.contains("args = [\"mcp\"]"));
-        // The workbench's tools run without asking; the other server asks
-        // as the user configured it.
+        // The workbench's tools that read, show or are asked about by the
+        // window run without asking, each by its own approval; the rest,
+        // and the other server, ask as the user's approval policy says.
         let document = codex.parse::<toml_edit::DocumentMut>().unwrap();
-        assert_eq!(
-            document["mcp_servers"]["agent_workbench"]["default_tools_approval_mode"].as_str(),
-            Some("approve")
-        );
-        assert!(document["mcp_servers"]["other"]
-            .get("default_tools_approval_mode")
-            .is_none());
+        let ours = &document["mcp_servers"]["agent_workbench"];
+        assert!(ours.get("default_tools_approval_mode").is_none());
+        for tool in RUN_UNASKED {
+            assert_eq!(
+                ours["tools"][tool]["approval_mode"].as_str(),
+                Some("approve"),
+                "{tool}"
+            );
+        }
+        for tool in crate::mcp::ASK_AS_POLICY_SAYS {
+            assert!(ours["tools"].get(tool).is_none(), "{tool}");
+        }
+        assert!(document["mcp_servers"]["other"].get("tools").is_none());
 
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
@@ -2182,11 +2284,13 @@ mod tests {
         assert!(!project.join(".codex/config.toml").exists());
     }
 
-    // An entry that says nothing of its tools' approval reads as installed
-    // and out of date, and the next install adds that one line to it,
-    // leaving the rest of the file as the user has it, whatever its form.
+    // An entry without the approvals the hooks write, or with the one for
+    // the whole server an earlier build wrote, reads as installed and out
+    // of date. The next install gives each listed tool its own approval and
+    // takes the server's out, leaving the rest of the file as the user has
+    // it, whatever its form, and every approval of the user's own as it is.
     #[test]
-    fn an_older_codex_entry_gains_its_tools_approval_and_nothing_else() {
+    fn an_older_codex_entry_gets_its_tools_approvals_and_nothing_else() {
         let (home, project) = fixture("codex-approval");
         with_daemon(&home);
         install(&home, &project, &[], &HashMap::new()).unwrap();
@@ -2228,19 +2332,46 @@ mod tests {
             install(&home, &project, &[], &HashMap::new()).unwrap();
             assert_eq!(std::fs::read_to_string(&config).unwrap(), file);
         };
-        let approve = "default_tools_approval_mode = \"approve\"\n";
-        brought(&older(""), &older(approve));
+        // The approvals the hooks write, as dotted keys under `prefix`,
+        // leaving out the tools in `but`.
+        let approvals = |prefix: &str, but: &[&str]| -> String {
+            RUN_UNASKED
+                .iter()
+                .filter(|tool| !but.contains(tool))
+                .map(|tool| format!("{prefix}{tool}.approval_mode = \"approve\"\n"))
+                .collect()
+        };
+        let approve = approvals("tools.", &[]);
+        // From before there were approvals, and from the build that wrote
+        // one for the whole server.
+        brought(&older(""), &older(&approve));
+        brought(
+            &older("default_tools_approval_mode = \"approve\"\n"),
+            &older(&approve),
+        );
 
-        // An approval the user chose for it stays theirs.
+        // An approval for the whole server that the user chose stays
+        // theirs, and the entry is left as it is.
         left(&older("default_tools_approval_mode = \"prompt\"\n"));
+        // So does a tool's own, listed or not, and the rest are added.
+        let theirs = "tools.show.approval_mode = \"prompt\"\n\
+                      tools.git_commit.approval_mode = \"approve\"\n";
+        brought(
+            &older(theirs),
+            &older(&format!("{theirs}{}", approvals("tools.", &["show"]))),
+        );
+        left(&older(&format!(
+            "{theirs}{}",
+            approvals("tools.", &["show"])
+        )));
 
         // Line breaks of a carriage return and a line feed, and a byte
         // order mark, are written back as they were.
         let crlf = |text: &str| text.replace('\n', "\r\n");
-        brought(&crlf(&older("")), &crlf(&older(approve)));
+        brought(&crlf(&older("")), &crlf(&older(&approve)));
         brought(
             &format!("\u{feff}{}", older("")),
-            &format!("\u{feff}{}", older(approve)),
+            &format!("\u{feff}{}", older(&approve)),
         );
 
         // A table of servers the user wrote out keeps its header and the
@@ -2272,24 +2403,49 @@ mod tests {
         );
         brought(
             &dotted,
-            &format!("{dotted}mcp_servers.agent_workbench.{approve}"),
+            &format!(
+                "{dotted}{}",
+                approvals("mcp_servers.agent_workbench.tools.", &[])
+            ),
         );
         let under = format!(
             "[mcp_servers]\n\
              agent_workbench.command = {daemon}\n\
              agent_workbench.args = [\"mcp\"]\n"
         );
-        brought(&under, &format!("{under}agent_workbench.{approve}"));
+        brought(
+            &under,
+            &format!("{under}{}", approvals("agent_workbench.tools.", &[])),
+        );
+
+        // A tool's approval the user wrote under a header of its own: the
+        // others go under headers of their own beside it.
+        let headed = format!(
+            "{}\n[mcp_servers.agent_workbench.tools.show]\napproval_mode = \"prompt\"\n",
+            older("").trim_end()
+        );
+        let headers: String = RUN_UNASKED
+            .iter()
+            .filter(|tool| **tool != "show")
+            .map(|tool| {
+                format!(
+                    "\n[mcp_servers.agent_workbench.tools.{tool}]\napproval_mode = \"approve\"\n"
+                )
+            })
+            .collect();
+        brought(&headed, &format!("{headed}{headers}"));
 
         // An entry the user wrote inline gains it inline, a comment inside
         // it kept.
+        // The approvals as dotted keys inside an inline table.
+        let inline_approvals: String = RUN_UNASKED
+            .iter()
+            .map(|tool| format!(", tools.{tool}.approval_mode = \"approve\""))
+            .collect();
         brought(
+            &format!("[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"),
             &format!(
-                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"
-            ),
-            &format!(
-                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
-                 default_tools_approval_mode = \"approve\" }}\n"
+                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }}\n"
             ),
         );
         std::fs::write(
@@ -2302,7 +2458,7 @@ mod tests {
         install(&home, &project, &[], &HashMap::new()).unwrap();
         let written = std::fs::read_to_string(&config).unwrap();
         assert!(written.contains("# the subcommand"), "{written}");
-        assert!(written.contains(approve.trim_end()), "{written}");
+        assert!(written.contains(&inline_approvals), "{written}");
 
         // So do servers the user wrote inline, the entry in them or not; the
         // install can write to them, so they are never read as out of date
@@ -2310,19 +2466,18 @@ mod tests {
         brought(
             &format!("mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"] }} }}\n"),
             &format!(
-                "mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"], \
-                 default_tools_approval_mode = \"approve\" }} }}\n"
+                "mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }} }}\n"
             ),
         );
-        let theirs = "mcp_servers = { other = { command = \"other\" } }\n";
-        std::fs::write(&config, theirs).unwrap();
+        let inline_servers = "mcp_servers = { other = { command = \"other\" } }\n";
+        std::fs::write(&config, inline_servers).unwrap();
         install(&home, &project, &[], &HashMap::new()).unwrap();
-        let written = std::fs::read_to_string(&config).unwrap();
-        let document = written.parse::<toml_edit::DocumentMut>().unwrap();
         assert_eq!(
-            document["mcp_servers"]["agent_workbench"]["default_tools_approval_mode"].as_str(),
-            Some("approve"),
-            "{written}"
+            std::fs::read_to_string(&config).unwrap(),
+            format!(
+                "mcp_servers = {{ other = {{ command = \"other\" }}, agent_workbench = {{ command = {daemon}, \
+                 args = [\"mcp\"]{inline_approvals} }} }}\n"
+            )
         );
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let written = std::fs::read_to_string(&config).unwrap();

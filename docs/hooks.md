@@ -104,20 +104,38 @@ under any of them has the tools; Codex in the project's
 a file is the agent's own: the core changes its one entry and writes the
 rest back as it found it, comments, headers, dotted keys, inline tables,
 line breaks and a byte order mark included, and one it cannot parse or
-whose servers are not a table it leaves alone rather than replaces. The
-entry lets the server's tools run without asking, with
-`default_tools_approval_mode = "approve"`, and says nothing of any other
-server or of the approval policy. An entry for the server that has no such
-setting reads as installed but out of date when the project is checked.
-Where the project should have the hooks, the install that follows adds
-that one line to it and leaves the rest of the file as it was; where it
-should have none, they are taken away. An entry that names an approval of
-its own keeps it, and so does a session in that project, since the server
-is named again on its command line with nothing of approval. A Codex older
-than 0.122.0 does not know the setting and passes over it, and there each
-call to the workbench's tools asks. A machine kind the app has no daemon
-build for gets the hooks without the tool. An app run from the source uses
-the daemon built beside it.
+whose servers are not a table it leaves alone rather than replaces.
+
+The entry lets some of the server's tools run without asking, each by a
+line of its own, `tools.notify.approval_mode = "approve"`: those that only
+read or show, `notify`, `show`, `diff`, `present`, `selection`,
+`sessions`, `wait`, `read`, `projects` and `settings`, the tools of the
+workbench's own plugins that read, `todos_list`, `git_status` and
+`git_log`, and those the window asks the user about itself each time,
+`settings_change`, `theme_save`, `styles_write`, `terminal` and `start`.
+It says nothing for the server as a whole, so every other tool asks as the
+user's approval policy says: the browser's tools, which act in sites
+signed into in the workbench's browser, `send` and `stop`, the plugins'
+tools that change things, and a tool the server gains later until it is
+put on the list. The entry says nothing of any other server or of the
+approval policy.
+
+An entry for the server that lacks one of those lines, or that holds the
+line for the whole server an earlier version wrote,
+`default_tools_approval_mode = "approve"`, reads as installed but out of
+date when the project is checked. Where the project should have the
+hooks, the install that follows adds the missing lines, in the form the
+entry's tools are already written in, takes that one out, and leaves the
+rest of the file as it was; where it should have none, they are taken
+away. An approval of the user's own is kept: a tool's, and one for the
+whole server of any other value, which leaves the entry as it is. A
+session in that project keeps them too, since the server is named again
+on its command line with nothing of approval. A Codex older than 0.117.0
+does not know a tool's own approval and passes over it, and there each
+call to the workbench's tools asks.
+
+A machine kind the app has no daemon build for gets the hooks without the
+tool. An app run from the source uses the daemon built beside it.
 
 What a session's agent asks to show is for that session. While the user is
 looking at another session, the call waits on the agent's own rather than

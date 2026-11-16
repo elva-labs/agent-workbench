@@ -126,13 +126,23 @@ pub const CODEX_NO_SUBAGENTS: &[&str] = &[
 pub const SERVER_NAME: &str = "agent-workbench";
 pub const CODEX_SERVER_KEY: &str = "agent_workbench";
 
-/// The setting of a Codex server's entry that says whether its tools ask
-/// before they run, and the value that lets them run without asking. The
-/// workbench's own entry carries it wherever the workbench names the
-/// server to Codex; the servers the user configured ask as their entries
-/// say. A Codex that does not know the setting passes over it.
+/// The setting of a Codex server's entry that says whether all of its
+/// tools ask before they run, and the value that lets them run without
+/// asking. An integrated session's thread gives the workbench's server
+/// this value; a terminal session's entry does not carry the setting, and
+/// the hooks take the line out of an entry an earlier build wrote it into.
+/// From Codex 0.122.0.
 pub const CODEX_APPROVAL_SETTING: &str = "default_tools_approval_mode";
 pub const CODEX_APPROVE: &str = "approve";
+
+/// Where a Codex server's entry gives one tool an approval of its own:
+/// `tools.<tool>.approval_mode`, which Codex reads from 0.117.0 and takes
+/// over the setting for the whole server. A terminal session's entry for
+/// the workbench's server gives each of [`crate::mcp::RUN_UNASKED`] the
+/// value that lets it run without asking, and no other tool any. A Codex
+/// that does not know the setting passes over it.
+pub const CODEX_TOOLS: &str = "tools";
+pub const CODEX_TOOL_APPROVAL: &str = "approval_mode";
 
 /// The variable that names the session to the tools the agent starts: the
 /// token the workbench chose for it.
@@ -393,10 +403,11 @@ fn codex_version(
 /// named only the variables, where no configuration Codex reads names the
 /// server, would stop Codex from starting.
 ///
-/// A server no configuration names is told to let its tools run without
-/// asking. One the project's configuration names keeps the approval its
-/// entry there says, which the hooks write as the same unless the user
-/// chose another: Codex takes the command line over the project's file.
+/// A server no configuration names is told which of its tools run without
+/// asking, each by its own approval; the rest ask as the user's approval
+/// policy says. One the project's configuration names keeps the approvals
+/// its entry there says, which the hooks write as the same unless the user
+/// chose others: Codex takes the command line over the project's file.
 ///
 /// A Codex the command interpreter runs, a script on Windows, is not told
 /// the server its configuration already names. Each setting of the server
@@ -425,10 +436,12 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
             text(ROLE_VAR)
         ));
         if ctx.server.is_some() {
-            settings.push(format!(
-                "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_APPROVAL_SETTING}={}",
-                text(CODEX_APPROVE)
-            ));
+            settings.extend(crate::mcp::RUN_UNASKED.iter().map(|tool| {
+                format!(
+                    "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_TOOLS}.{tool}.{CODEX_TOOL_APPROVAL}={}",
+                    text(CODEX_APPROVE)
+                )
+            }));
         }
     }
     if ctx.start_only {
@@ -700,6 +713,20 @@ mod tests {
 
     fn vars_with_path(dir: &Path) -> HashMap<String, String> {
         HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())])
+    }
+
+    /// The settings that let each tool of [`crate::mcp::RUN_UNASKED`] run
+    /// without asking, as the command line gives them.
+    fn tool_approvals() -> Vec<String> {
+        crate::mcp::RUN_UNASKED
+            .iter()
+            .flat_map(|tool| {
+                [
+                    "-c".to_string(),
+                    format!("mcp_servers.agent_workbench.tools.{tool}.approval_mode=\"approve\""),
+                ]
+            })
+            .collect()
     }
 
     fn fake_claude(label: &str) -> Scratch {
@@ -1117,25 +1144,29 @@ mod tests {
         );
 
         let codex_settings = [
-            "-c".to_string(),
-            format!(
-                "mcp_servers.agent_workbench.command=\"{}\"",
-                server.display()
-            ),
-            "-c".to_string(),
-            "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
-            "-c".to_string(),
-            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
-                .to_string(),
-            "-c".to_string(),
-            "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
-            "-c".to_string(),
-            "features.multi_agent=false".to_string(),
-            "-c".to_string(),
-            "features.multi_agent_v2.disable_native_tools=true".to_string(),
-            "-c".to_string(),
-            r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
-        ];
+            vec![
+                "-c".to_string(),
+                format!(
+                    "mcp_servers.agent_workbench.command=\"{}\"",
+                    server.display()
+                ),
+                "-c".to_string(),
+                "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+                "-c".to_string(),
+                "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
+                    .to_string(),
+            ],
+            tool_approvals(),
+            vec![
+                "-c".to_string(),
+                "features.multi_agent=false".to_string(),
+                "-c".to_string(),
+                "features.multi_agent_v2.disable_native_tools=true".to_string(),
+                "-c".to_string(),
+                r#"developer_instructions="1. Direct the work.\n2. Say \"done\".""#.to_string(),
+            ],
+        ]
+        .concat();
         assert_eq!(codex_workflow(&ctx, false, false).unwrap(), codex_settings);
         let tail = ["--model", "fable", "--", "Fix the flaky test"].map(str::to_string);
         if !cfg!(windows) {
@@ -1268,15 +1299,69 @@ mod tests {
         }
     }
 
+    /// Codex's configuration as its app-server reads it in `cwd`, under the
+    /// home given and with `settings` on its command line, or null where it
+    /// gives none within a minute.
+    fn effective_config(
+        codex: &Path,
+        home: &Path,
+        cwd: &Path,
+        settings: &[String],
+    ) -> serde_json::Value {
+        use std::io::{BufRead, Write};
+        let mut child = std::process::Command::new(codex)
+            .args(settings)
+            .arg("app-server")
+            .env(CODEX_HOME_VAR, home)
+            .current_dir(cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut stdin = child.stdin.take().unwrap();
+        for message in [
+            serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": { "clientInfo": { "name": "workbench-test", "version": "0" } } }),
+            serde_json::json!({ "jsonrpc": "2.0", "method": "initialized" }),
+            serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "config/read",
+                "params": { "includeLayers": false, "cwd": cwd } }),
+        ] {
+            writeln!(stdin, "{message}").unwrap();
+        }
+        let stdout = child.stdout.take().unwrap();
+        let (send, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                let message: serde_json::Value = serde_json::from_str(&line).unwrap_or_default();
+                if message["id"] == 2 {
+                    let _ = send.send(message["result"]["config"].clone());
+                    break;
+                }
+            }
+        });
+        let config = answer
+            .recv_timeout(std::time::Duration::from_secs(60))
+            .unwrap_or_default();
+        let _ = child.kill();
+        let _ = child.wait();
+        config
+    }
+
     /// Codex reads the workbench's server, as the command line names it and
-    /// as the hooks write it into a project's configuration, with its tools
-    /// allowed without asking. A Codex from before the setting starts all
-    /// the same. Run where Codex is installed, on a home of its own; a
-    /// machine without it has nothing to check.
+    /// as the hooks write it into a project's configuration, with each tool
+    /// of [`crate::mcp::RUN_UNASKED`] given its own approval to run without
+    /// asking, no other tool any, and nothing for the whole server. A
+    /// tool's approval the user set in the project's entry holds under the
+    /// command line that names the server again. A Codex from before
+    /// per-tool approvals starts all the same. Run where Codex is
+    /// installed, on a home of its own; a machine without it has nothing to
+    /// check.
     #[test]
-    fn codex_runs_the_workbench_s_tools_without_asking_from_either_entry() {
-        /// The first Codex that knows the setting.
-        const KNOWS_APPROVAL: (u64, u64, u64) = (0, 122, 0);
+    fn codex_runs_only_the_listed_tools_of_the_workbench_without_asking() {
+        /// The first Codex that reads a tool's own approval.
+        const KNOWS_TOOL_APPROVAL: (u64, u64, u64) = (0, 117, 0);
         let vars: HashMap<String, String> = std::env::vars().collect();
         let Some(codex) = find_on_path(&vars, "codex") else {
             return;
@@ -1284,9 +1369,10 @@ mod tests {
         let workbench = Scratch::new("codex-approval-workbench");
         let codex_home = Scratch::new("codex-approval-codex-home");
         let project = Scratch::new("codex-approval-project");
-        let knows =
-            codex_version(&codex, &project, &vars).is_some_and(|version| version >= KNOWS_APPROVAL);
-        let get = |settings: &[String]| {
+        let knows = codex_version(&codex, &project, &vars)
+            .is_some_and(|version| version >= KNOWS_TOOL_APPROVAL);
+        // Codex starts with the settings, whatever its version.
+        let starts = |settings: &[String]| {
             let output = std::process::Command::new(&codex)
                 .args(settings)
                 .args(["mcp", "get", CODEX_SERVER_KEY])
@@ -1302,7 +1388,30 @@ mod tests {
             );
             said
         };
-        let approves = format!("{CODEX_APPROVAL_SETTING}: {CODEX_APPROVE}");
+        // The server's entry as Codex reads it says the approvals the hooks
+        // write, but for the tools the user gave one of their own.
+        let approves = |settings: &[String], theirs: &[(&str, &str)]| {
+            if !knows {
+                return;
+            }
+            let config = effective_config(&codex, codex_home.path(), &project, settings);
+            let entry = &config["mcp_servers"][CODEX_SERVER_KEY];
+            assert!(entry.is_object(), "{config}");
+            assert!(entry[CODEX_APPROVAL_SETTING].is_null(), "{entry}");
+            for tool in crate::mcp::RUN_UNASKED {
+                let mode = theirs
+                    .iter()
+                    .find(|(named, _)| named == tool)
+                    .map_or(CODEX_APPROVE, |(_, mode)| mode);
+                assert_eq!(
+                    entry[CODEX_TOOLS][tool][CODEX_TOOL_APPROVAL], *mode,
+                    "{tool}"
+                );
+            }
+            for tool in crate::mcp::ASK_AS_POLICY_SAYS {
+                assert!(entry[CODEX_TOOLS][tool].is_null(), "{tool}");
+            }
+        };
 
         let daemon = crate::hook::daemon_path(&workbench);
         let named = LaunchCtx {
@@ -1323,20 +1432,21 @@ mod tests {
             configured: None,
             afresh: false,
         };
-        let said = get(&codex_workflow(&named, false, false).unwrap());
+        let named_settings = codex_workflow(&named, false, false).unwrap();
+        let said = starts(&named_settings);
         assert!(said.contains(&*daemon.to_string_lossy()), "{said}");
-        assert_eq!(said.contains(&approves), knows, "{said}");
+        approves(&named_settings, &[]);
 
         std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         std::fs::write(&daemon, "").unwrap();
         crate::hook::install(&workbench, &project, &[], &HashMap::new()).unwrap();
         crate::hook::codex_trust(&codex_home.join("config.toml"), &project).unwrap();
-        let said = get(&[]);
+        let said = starts(&[]);
         assert!(said.contains(&*daemon.to_string_lossy()), "{said}");
-        assert_eq!(said.contains(&approves), knows, "{said}");
+        approves(&[], &[]);
 
         // A session in that project is told the server again, for the
-        // variables, and the approval is the project entry's: the hooks'
+        // variables, and the approvals are the project entry's: the hooks'
         // own, or one the user chose there.
         let configured = LaunchCtx {
             server: None,
@@ -1344,19 +1454,15 @@ mod tests {
             ..named
         };
         let again = codex_workflow(&configured, false, false).unwrap();
-        assert_eq!(get(&again).contains(&approves), knows);
+        starts(&again);
+        approves(&again, &[]);
         let config = project.join(".codex").join("config.toml");
         let theirs = std::fs::read_to_string(&config).unwrap().replace(
-            &format!("{CODEX_APPROVAL_SETTING} = \"{CODEX_APPROVE}\""),
-            &format!("{CODEX_APPROVAL_SETTING} = \"prompt\""),
+            &format!("tools.show.{CODEX_TOOL_APPROVAL} = \"{CODEX_APPROVE}\""),
+            &format!("tools.show.{CODEX_TOOL_APPROVAL} = \"prompt\""),
         );
         std::fs::write(&config, theirs).unwrap();
-        let said = get(&again);
-        assert_eq!(
-            said.contains(&format!("{CODEX_APPROVAL_SETTING}: prompt")),
-            knows,
-            "{said}"
-        );
+        approves(&again, &[("show", "prompt")]);
         // And the variables are still passed on.
         if knows {
             let read = std::process::Command::new(&codex)
@@ -1503,25 +1609,34 @@ mod tests {
                 .to_string(),
         ];
         assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
-        // Named where no configuration names it, its tools run without
-        // asking. No other server and no approval policy of the user's is
-        // spoken of either way.
+        // Named where no configuration names it, the tools that read, show
+        // or are asked about by the window run without asking, each by an
+        // approval of its own, and the rest ask as the user's approval
+        // policy says: nothing is said for the whole server. No other
+        // server and no approval policy of the user's is spoken of either.
         let named = LaunchCtx {
             server: Some(daemon),
             ..ctx
         };
-        let approving = [
-            whole.to_vec(),
-            vec![
-                "-c".to_string(),
-                "mcp_servers.agent_workbench.default_tools_approval_mode=\"approve\"".to_string(),
-            ],
-        ]
-        .concat();
+        let approving = [whole.to_vec(), tool_approvals()].concat();
         assert_eq!(codex_workflow(&named, false, false).unwrap(), approving);
+        assert!(approving.contains(
+            &"mcp_servers.agent_workbench.tools.notify.approval_mode=\"approve\"".into()
+        ));
         assert!(approving
             .iter()
             .all(|arg| arg == "-c" || arg.starts_with("mcp_servers.agent_workbench.")));
+        assert!(approving
+            .iter()
+            .all(|arg| !arg.contains("default_tools_approval_mode")));
+        for tool in crate::mcp::ASK_AS_POLICY_SAYS {
+            assert!(
+                approving
+                    .iter()
+                    .all(|arg| !arg.contains(&format!(".{tool}."))),
+                "{tool}"
+            );
+        }
         assert_eq!(codex_workflow(&configured, true, false).unwrap(), whole);
         // A script on Windows is told nothing of it: the interpreter would
         // cut the script's path short at the settings' quotes.
