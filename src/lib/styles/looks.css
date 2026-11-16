@@ -3,16 +3,18 @@
  *
  * tokens.css holds the terminal look, which is what no stamp on <html>
  * means: one hand for everything, small capitals with wide tracking, square
- * corners, hairlines, and panes drawn as bordered boxes edge to edge.
+ * corners, hairlines, and panes drawn as bordered boxes on the window's
+ * ground, the gap between two boxes empty.
  *
  * The modern look restates those same tokens. It speaks the sans, sets its
- * labels in sentence case, rounds its corners, and lays the three panes
- * flush on one surface with a single hairline between each pair: the resize
- * track is one pixel wide and that pixel is the divider, so the rule under
- * the headers meets it with no gap. The sessions pane sits a shade below,
- * and the focused pane says so with its header alone. A few decisions have
- * no token of their own because they belong to one control; those rules
- * follow the token block, each scoped to the pane that owns it.
+ * labels in sentence case and rounds its corners. The window's ground is
+ * its darkest tone, and the sessions pane, the pane headers and the status
+ * bar lie on it. What each other pane holds stands on the ground as a card
+ * under its header, the cards a gap apart, and the gap is the divider: no
+ * line is drawn between panes. The focused card says so with an accent
+ * along its top. A few decisions have no token of their own because they
+ * belong to one control; those rules follow the token block, each scoped to
+ * the pane that owns it.
  */
 
 :root[data-look="modern"] {
@@ -31,23 +33,42 @@
   --radius-tag: 6px;
   --radius-pane: 0px;
 
-  /* One line between panes, mixed from the surface and the ink so it is a
-     light grey on white and a line lighter than the surface in the dark. */
+  /* The line where two parts of one surface meet, a header over its list
+     or one group over the next, mixed from the surface and the ink so it is
+     a light grey on white and a line lighter than the surface in the dark. */
   --divider: color-mix(in srgb, var(--surface) 82%, var(--ink) 18%);
 
+  /* The sessions pane starts at the window's edge on the ground, the
+     header row at its top, so neither has padding before it. */
+  --ground: var(--deep);
+  --frame-pad: 8px;
+  --frame-pad-top: 0px;
+  --frame-pad-left: 0px;
+  --panel-inset: 8px;
+
+  --pane-bg: transparent;
   --pane-border: transparent;
   --pane-border-on: transparent;
   --pane-margin: 0px;
   --pane-shadow: none;
   --pane-shadow-on: none;
 
-  --splitter-w: 1px;
-  --splitter-grab: 3px;
-  --splitter: var(--divider);
-  --splitter-hover: var(--accent);
+  --card-bg: var(--surface);
+  --card-radius: 10px;
+  --card-shadow: var(--card-cast);
+  --card-mark: 2px;
 
+  --splitter-w: 8px;
+  --splitter-reach: 16px;
+  --splitter-line: 2px;
+  --grip-w: 4px;
+  --grip-w-on: 6px;
+  --grip-len: 32px;
+  --grip-radius: 99px;
+
+  --head-height: 40px;
   --head-rule: var(--divider);
-  --head-mark-on: inset 0 2px 0 var(--accent);
+  --head-mark-on: none;
 
   --title-align: flex-start;
   --title-size: 13px;
@@ -75,24 +96,43 @@
   --field-border: transparent;
   --field-size: 12.5px;
 
-  --term-air: 6px 4px;
+  --term-air-y: 6px;
+  --term-air-x: 4px;
 
-  --status-rule: var(--divider);
-  --status-bg: var(--surface);
+  --status-rule: transparent;
+  --status-bg: var(--ground);
   --status-size: 11.5px;
 }
 
-/* The sessions pane sits a shade below the surface the other two share, so
-   it reads as the layer underneath rather than a third section of the same
-   thing. The tone is mixed rather than a palette's own so every palette
-   keeps the step. */
-:root[data-look="modern"] [data-pane="sessions"] {
-  --pane-bg: color-mix(in srgb, var(--bg) 96%, var(--ink) 4%);
+/* More contrast brings the lines back: each card takes an outline in the
+   strong rule, the rules on the ground take it too, the status bar has its
+   rule again, and the dividers inside a pane draw theirs. */
+@media (prefers-contrast: more), (forced-colors: active) {
+  :root[data-look="modern"] {
+    --pane-border: transparent;
+    --head-rule: var(--rule-strong);
+    --status-rule: var(--rule-strong);
+    --card-edge: var(--rule-strong);
+  }
 }
 
-/* With the panes flush there is no ground to show around them. */
-:root[data-look="modern"] .frame {
-  --frame-pad: 0px;
+/* The sessions pane is part of the ground rather than a card: it holds no
+   card, its header carries the rule over its list, and while it has the
+   focus the header carries the mark. */
+:root[data-look="modern"] [data-pane="sessions"] {
+  --pane-bg: var(--ground);
+  --card-bg: transparent;
+  --card-radius: 0px;
+  --card-shadow: none;
+  --card-mark: 0px;
+  --card-edge: transparent;
+  --head-mark-on: inset 0 2px 0 var(--accent);
+}
+
+/* A header over a card lies on the ground with no rule: the card's top
+   edge stands where the rule would. */
+:root[data-look="modern"] section[data-pane]:not([data-pane="sessions"]) > header {
+  border-bottom-color: transparent;
 }
 
 /* Files against lines is one control with two halves, so the pair sits on a
@@ -109,12 +149,11 @@
   background: var(--accent-soft);
 }
 
-/* A header that leads the window with the menu button, a title and its
-   meta, which is the agent's while the sessions pane is away: the title
-   sits by the menu and the meta keeps the far end, rather than the title
-   floating between them. */
+/* The header that leads the window with the menu button, the sessions
+   pane's: the title sits by the menu and takes the room it needs before
+   what follows it, rather than floating between them. */
 :root[data-look="modern"] header.leads:not(.lone) .title {
-  flex: 1;
+  flex: 1 1 auto;
   text-align: left;
 }
 
@@ -133,8 +172,8 @@
   background: var(--field-bg);
 }
 
-/* The column of tabs takes the same step below the surface the sessions pane
+/* The column of tabs takes the step below the surface the window's ground
    takes, so the settings read as a pane with a list beside it. */
 :root[data-look="modern"] [data-testid="settings"] nav {
-  --pane-bg: color-mix(in srgb, var(--bg) 96%, var(--ink) 4%);
+  --pane-bg: var(--deep);
 }

@@ -55,6 +55,9 @@
     onFileRef?: (path: string, line: number) => void;
     /** How large the terminal is drawn, in pixels: its own zoom. */
     fontSize?: number;
+    /** Drawn a step toward the ground, as a shell beside the one with the
+        keyboard is. */
+    dim?: boolean;
   }
 
   let {
@@ -69,7 +72,22 @@
     newlineOnShiftEnter = false,
     onFileRef,
     fontSize = DEFAULT_SIZE,
+    dim = false,
   }: Props = $props();
+
+  /** The colours the terminal draws in: the theme's, on the well's ground
+      where it is drawn a step toward the ground. The well is a mix, so it is
+      read as the page paints it. */
+  function colours() {
+    const built = buildTheme(tokenReader(document.documentElement));
+    if (!dim) return built;
+    const probe = document.createElement("span");
+    probe.style.color = "var(--well)";
+    document.body.appendChild(probe);
+    const well = getComputedStyle(probe).color;
+    probe.remove();
+    return well === "" ? built : { ...built, background: well, cursorAccent: well };
+  }
 
   /** What WebGL here draws with, unmasked where the browser allows. */
   function glRenderer(): string | null {
@@ -117,7 +135,7 @@
       fontSize,
       lineHeight: 1.35,
       scrollback: 10_000,
-      theme: buildTheme(tokenReader(document.documentElement)),
+      theme: colours(),
       // Links the program marked up itself (OSC 8), as Claude Code does.
       linkHandler: { activate: follow },
     });
@@ -329,9 +347,10 @@
   // Live setter: the TUI recolours without a respawn.
   $effect(() => {
     theme.painted;
+    void dim;
     if (!terminal) return;
     untrack(() => {
-      terminal!.options.theme = buildTheme(tokenReader(document.documentElement));
+      terminal!.options.theme = colours();
     });
   });
 

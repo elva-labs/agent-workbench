@@ -293,6 +293,7 @@
 
     <Splitter
       label="Resize the terminal list"
+      inner
       onDelta={resizeList}
       onReset={resetList}
       onCommit={saveLayout}
@@ -305,6 +306,7 @@
         {#if afterFirst(shell)}
           <Splitter
             label="Resize {label(shell)}"
+            inner
             onDelta={(dx) => resizeSplit(shell.key, dx, shellsWidth)}
             onReset={() => equalize(shell.key)}
           />
@@ -313,6 +315,9 @@
           class="slot"
           class:on={shell.group === shown}
           class:focused={shell.key === terminals.active && groupOf(shell.key).length > 1}
+          class:beside={shell.group === shown && shell.key !== terminals.active && groupOf(shell.key).length > 1}
+          class:first={groupOf(shell.key)[0] === shell}
+          class:last={groupOf(shell.key).at(-1) === shell}
           style:flex="{share(shell)} 1 0px"
           role="presentation"
           onpointerdown={() => select(shell.key)}
@@ -326,6 +331,7 @@
             focused={layout.focus === "terminal" && shell.key === terminals.active}
             start={(cols, rows, onOutput) => launch(shell.key, cols, rows, onOutput)}
             fontSize={sizeOf(shell.key)}
+            dim={shell.group === shown && shell.key !== terminals.active && groupOf(shell.key).length > 1}
           />
         </div>
       {/each}
@@ -368,11 +374,15 @@
 </Pane>
 
 <style>
+  /* The list's top row is a pane header's height, its title's line in the
+     middle of it, as every header in the window is. */
   .top {
+    --head-pad: calc((var(--head-height) - 1px - var(--title-size) * var(--line-ui)) / 2);
     display: flex;
     align-items: baseline;
     gap: 2px;
-    padding: 9px var(--pane-pad) 8px;
+    height: var(--head-height);
+    padding: var(--head-pad) var(--pane-pad);
     border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
@@ -448,18 +458,38 @@
     pointer-events: none;
   }
 
-  /* Only among siblings does it matter which one has the keyboard. */
-  .slot.focused {
-    box-shadow: inset 0 2px 0 var(--accent);
+  /* Only among siblings does it matter which one has the keyboard: the
+     others sit a step toward the ground, the terminal in them drawn on the
+     same tone, out to the panel's edges through the room around the
+     shells. */
+  .slot.on.beside {
+    isolation: isolate;
   }
 
+  .slot.on.beside::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: calc(-1 * var(--term-air-y)) 0;
+    background: var(--well);
+  }
+
+  .slot.on.beside.first::before {
+    left: calc(-1 * var(--term-air-x));
+  }
+
+  .slot.on.beside.last::before {
+    right: calc(-1 * var(--term-air-x));
+  }
+
+  /* The list beside the shells sits a step toward the ground. */
   .list {
     flex: none;
     display: flex;
     flex-direction: column;
     overflow-y: auto;
     padding-bottom: 6px;
-    border-left: 1px solid var(--rule);
+    background: var(--well);
   }
 
   .owner {

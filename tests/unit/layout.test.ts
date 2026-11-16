@@ -33,7 +33,6 @@ import {
   focusPane,
   hideTerminal,
   layout,
-  leftmost,
   loadLayout,
   peekSessions,
   returnFocus,
@@ -700,24 +699,16 @@ describe("the terminal list", () => {
   });
 });
 
-describe("the leftmost pane", () => {
-  it("is the sessions pane while that is showing", () => {
-    applyLayout(1600, 900);
-    expect(leftmost()).toBe("sessions");
-  });
-
-  it("is the agent once the sessions pane is gone", () => {
+describe("the pane beside the sessions column", () => {
+  it("is the agent while that is showing", () => {
     togglePane("sessions");
-    expect(leftmost()).toBe("agent");
-    layout.sessionsChosen = true;
-    applyLayout(500);
-    expect(leftmost()).toBe("agent");
+    expect(besideSessions()).toBe("agent");
   });
 
   it("is the viewer when reviewing hides the agent too", () => {
     layout.mode = "reviewing";
     applyLayout(500);
-    expect(leftmost()).toBe("changes");
+    expect(besideSessions()).toBe("changes");
   });
 });
 
@@ -1015,11 +1006,10 @@ describe("peeking while editing", () => {
 });
 
 describe("the edges while editing", () => {
-  it("puts the files pane beside the sessions column and leftmost when it folds", () => {
+  it("puts the files pane beside the sessions column", () => {
     applyLayout(1440);
     setEditing(true);
     expect(besideSessions()).toBe("changes");
-    expect(leftmost()).toBe("changes");
   });
 
   it("puts the agent rightmost, and the files pane once the agent is away", () => {

@@ -666,9 +666,9 @@
   });
   let titleWidth = $derived.by(() => {
     if (!editing || conducting !== null) return null;
-    // The cell's edge stands on the splitter's line, which is drawn in the
-    // middle of its track.
-    return editTreeVisible() ? `calc(${layout.editTreeDrawn}px + var(--splitter-w) / 2 + 0.5px)` : "auto";
+    // The cell is as wide as the column under it, so the tabs beside it
+    // stand over the editor.
+    return editTreeVisible() ? `calc(${layout.editTreeDrawn}px + var(--splitter-inner-w))` : "auto";
   });
 
   let startedOpen = $state(true);
@@ -1108,6 +1108,7 @@
             <Splitter
               label="Resize the sections under the tree"
               orientation="horizontal"
+              inner
               onDelta={resizeMedia}
               onReset={resetMedia}
               onCommit={saveLayout}
@@ -1382,7 +1383,7 @@
       {/if}
       {#if reviewing}
         {#if !fullView}
-          <Splitter label="Resize the file tree" onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
+          <Splitter label="Resize the file tree" inner onDelta={resizeTree} onReset={resetTree} onCommit={saveLayout} />
         {/if}
         {#if browser.showing}
           <BrowserView />
@@ -1392,7 +1393,13 @@
       {/if}
       {#if editing}
         {#if !fullView && treeColumn}
-          <Splitter label="Resize the file tree" onDelta={resizeEditTree} onReset={resetEditTree} onCommit={saveLayout} />
+          <Splitter
+            label="Resize the file tree"
+            inner
+            onDelta={resizeEditTree}
+            onReset={resetEditTree}
+            onCommit={saveLayout}
+          />
         {/if}
         <EditorColumn />
       {/if}
@@ -2244,7 +2251,15 @@
 
   .split.reviewing,
   .split.editing {
-    grid-template-columns: var(--tree-w) var(--splitter-w) minmax(0, 1fr);
+    grid-template-columns: var(--tree-w) var(--splitter-inner-w) minmax(0, 1fr);
+  }
+
+  /* Beside the viewer or the editor the tree is a list beside what is read,
+     so its column sits a step toward the ground. Alone in the pane it is
+     what is read. */
+  .split.reviewing:not(.full) > .column,
+  .split.editing:not(.treeless, .full) > .column {
+    background: var(--well);
   }
 
   /* Editing in a window that gave up the tree's column: the editor alone. */

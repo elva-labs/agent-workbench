@@ -9,7 +9,6 @@
     layout,
     focusPane,
     besideSessions,
-    leftmost,
     rightmost,
     sessionsShown,
     type PaneId,
@@ -55,9 +54,10 @@
   // The right pane's button and the mode switch stand at the same end, on
   // every platform, before the window controls.
   let corner = $derived(!bare && rightmost() === id);
-  // And a menu button at the start of the leftmost, where macOS has its
-  // lights: the native popup that stands in for a menu bar.
-  let appMenu = $derived(!mac && !bare && leftmost() === id);
+  // And a menu button at the start of the sessions pane's header, where
+  // macOS has its lights, open or folded: the native popup that stands in
+  // for a menu bar.
+  let appMenu = $derived(!mac && !bare && id === "sessions");
 
   function openAppMenu() {
     core()
@@ -152,16 +152,63 @@
     box-shadow: var(--pane-shadow-on);
   }
 
+  /* A card stands on the ground under its header and holds what the pane
+     holds: in the modern look the header lies on the ground above it and
+     the card's top edge stands where the rule under the header would. The
+     terminal look's box is the pane itself and the card is not drawn. */
+  .body {
+    position: relative;
+    background: var(--card-bg);
+    border-radius: var(--card-radius);
+    box-shadow: var(--card-shadow);
+  }
+
+  /* The focused card's accent runs along its top and down into its
+     rounded corners, where it ends square. */
+  .pane.focused > .body::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    z-index: 6;
+    height: var(--card-radius);
+    border: var(--card-mark) solid var(--accent);
+    border-bottom: 0;
+    border-radius: var(--card-radius) var(--card-radius) 0 0;
+    pointer-events: none;
+  }
+
+  /* Where the system asks for more contrast the card takes an outline,
+     drawn over what it holds. */
+  .body::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    border: 1px solid var(--card-edge);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+
+  /* Over a card the header and the card's lift are free to stand past the
+     pane's box: the card clips what it holds. */
+  :global(:root[data-look="modern"]) .pane:not([data-pane="sessions"]) {
+    overflow: visible;
+  }
+
   /* --lead is the room before the title: the pane's padding, or what the
      macOS window controls need. A header in columns gives it to its first
-     cell instead. */
+     cell instead. Every header is the look's one height, the rule under it
+     included, and its title's line sits in the middle of it, so the titles
+     stand on one line across the window whatever a header holds. */
   header {
     --lead: var(--pane-pad);
+    --head-pad: calc((var(--head-height) - 1px - var(--title-size) * var(--line-ui)) / 2);
     display: flex;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
-    padding: 9px var(--pane-pad) 9px var(--lead);
+    height: var(--head-height);
+    padding: var(--head-pad) var(--pane-pad) var(--head-pad) var(--lead);
     border-bottom: 1px solid var(--head-rule);
     flex: none;
   }
@@ -175,13 +222,13 @@
 
   /* The frame's padding and the pane's border are already part of the inset. */
   header.inset {
-    --lead: calc(var(--controls-inset) - var(--frame-pad) - 1px);
+    --lead: calc(var(--controls-inset) - var(--frame-pad-left) - 1px);
   }
 
   header.inset.beside {
     --lead: max(
       var(--pane-pad),
-      calc(var(--controls-inset) - var(--frame-pad) - 1px - var(--sessions-col))
+      calc(var(--controls-inset) - var(--frame-pad-left) - 1px - var(--sessions-col))
     );
   }
 
@@ -189,8 +236,8 @@
     --lead: 0px;
   }
 
-  /* In columns: the first cell is as wide as the column under it, takes the
-     lead, and carries the column's edge up through the header. */
+  /* In columns: the first cell is as wide as the column under it and takes
+     the lead. */
   header.columns {
     padding-left: 0;
     gap: 0;
@@ -204,9 +251,8 @@
     align-items: baseline;
     gap: 8px;
     align-self: stretch;
-    margin: -9px 0;
-    padding: 9px 10px 9px var(--lead);
-    border-right: 1px solid var(--head-rule);
+    margin: calc(-1 * var(--head-pad)) 0;
+    padding: var(--head-pad) 10px var(--head-pad) var(--lead);
     overflow: hidden;
   }
 
@@ -231,8 +277,9 @@
 
   .app-menu {
     align-self: stretch;
+    flex: none;
     width: 40px;
-    margin: -9px 2px -9px 0;
+    margin: calc(-1 * var(--head-pad)) 2px calc(-1 * var(--head-pad)) 0;
     border: 0;
     background: none;
     color: var(--ink-2);
@@ -300,6 +347,23 @@
   .controls button.close:hover {
     background: #c42b1c;
     color: #ffffff;
+  }
+
+  /* In the modern look the header row is the window's own band of ground,
+     so the buttons stand flush in the window's corner, the band's height,
+     past the frame's padding and the pane's edge, and the header keeps
+     only the room they take inside it. */
+  :global(:root[data-look="modern"]) .controls {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: auto;
+    z-index: 11;
+    height: calc(var(--frame-pad-top) + 1px + var(--head-height));
+  }
+
+  :global(:root[data-look="modern"]) header.controlled {
+    padding-right: calc(var(--controls-w) + var(--pane-pad) - var(--frame-pad) - 1px);
   }
 
   .title,

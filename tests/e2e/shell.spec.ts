@@ -2239,7 +2239,7 @@ test.describe("the window's own controls", () => {
     await expect.poll(indent).toBeGreaterThan(40);
   });
 
-  test("put a menu button at the leftmost header that asks the core for the native menu", async ({
+  test("put a menu button at the start of the sessions pane's header that asks the core for the native menu", async ({
     page,
   }) => {
     await page.locator(`${SESSIONS} [data-testid='app-menu']`).click();
@@ -2250,9 +2250,17 @@ test.describe("the window's own controls", () => {
             .__windowControls,
       ),
     ).toEqual(["menu"]);
+    // Folded, the column keeps it, on the ground in its header row.
     await page.keyboard.press(`${MOD}+b`);
-    await expect(
-      page.locator(`${AGENT} [data-testid='app-menu']`),
-    ).toBeVisible();
+    const menu = page.locator(`${SESSIONS} [data-testid='app-menu']`);
+    await expect(menu).toBeVisible();
+    await expect(page.locator(`${AGENT} [data-testid='app-menu']`)).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const box = (await menu.boundingBox())!;
+        const column = (await page.locator(SESSIONS).boundingBox())!;
+        return box.x >= column.x && box.x + box.width <= column.x + column.width;
+      })
+      .toBe(true);
   });
 });

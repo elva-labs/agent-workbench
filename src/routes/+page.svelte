@@ -3,6 +3,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import Splitter from "$lib/components/Splitter.svelte";
+  import Junction from "$lib/components/Junction.svelte";
   import SessionsPane from "$lib/panes/SessionsPane.svelte";
   import AgentPane from "$lib/panes/AgentPane.svelte";
   import ChangesPane from "$lib/panes/ChangesPane.svelte";
@@ -129,7 +130,7 @@
     DEFAULT,
     defaultChanges,
     minChanges,
-    FOLDED,
+    folded,
     MIN,
     MIN_REVIEW,
     agentVisible,
@@ -488,26 +489,15 @@
       tree stands beside it. */
   let peekWidth = $derived(
     editing && editTreeVisible()
-      ? `max(${layout.sessions}px, calc(${FOLDED + layout.editTreeDrawn}px + var(--splitter-w) * 2))`
+      ? `max(${layout.sessions}px, calc(${folded() + layout.editTreeDrawn}px + var(--splitter-w) + var(--splitter-inner-w)))`
       : `${layout.sessions}px`,
   );
 
   /** The sessions column's width, folded or open or on its way, the splitter
       beside it included. */
   let sessionsColumn = $derived(
-    `calc(${FOLDED + (layout.sessions - FOLDED) * sessionsOpen.current}px + var(--splitter-w))`,
+    `calc(${folded() + (layout.sessions - folded()) * sessionsOpen.current}px + var(--splitter-w))`,
   );
-
-  // The folded pane's header runs on into the header beside it, so the line
-  // down the column's edge starts under the header row.
-  let sessionsHead = $state(0);
-  $effect(() => {
-    const header = document.querySelector("section[data-pane='sessions'] > header");
-    if (header === null) return;
-    const observer = new ResizeObserver(() => (sessionsHead = (header as HTMLElement).offsetHeight));
-    observer.observe(header);
-    return () => observer.disconnect();
-  });
 
   // The terminal panel eases up and down, and the panes above it give up
   // and take back the height as it goes. The shells in it are never
@@ -585,6 +575,28 @@
     applyLayout(viewport, stack);
     saveLayout();
   }
+
+  function resetSessions() {
+    layout.sessions = DEFAULT.sessions;
+    applyLayout(viewport);
+    saveLayout();
+  }
+
+  /** The dividers between panes that meet the one over the terminal
+      panel, each with what a move across and a reset do to it. */
+  let meetings = $derived.by(() => {
+    const out: { side: string; across: (dx: number) => void; reset: () => void }[] = [];
+    if (sessionsVisible()) out.push({ side: "sessions", across: resizeSessions, reset: resetSessions });
+    if (changesVisible() && agentVisible()) {
+      if (editing) out.push({ side: "agent", across: resizeEditAgent, reset: resetEditAgent });
+      else out.push({ side: "changes", across: resizeChanges, reset: resetChanges });
+    }
+    return out;
+  });
+
+  /** What moves the meeting points: the columns, the panel's height and
+      the window. */
+  let meetingKey = $derived(`${columns}|${layout.terminal}|${viewport}|${stack}|${theme.look}`);
 
   /** Whether a modal dialog other than the palette is on screen: the
       settings, the remote and resume lists, an action's input, or a prompt
@@ -925,8 +937,7 @@
   class="frame"
   style:--controls-inset="{CONTROLS_INSET}px"
   style:--sessions-col={sessionsColumn}
-  style:--folded="{FOLDED}px"
-  style:--head-h="{sessionsHead}px"
+  style:--folded="{folded()}px"
 >
   <div class="stack" bind:clientHeight={stack}>
   <main
@@ -951,16 +962,13 @@
       {#if sessionsVisible()}
         <Splitter
           label="Resize projects and sessions"
+          name="sessions"
           onDelta={resizeSessions}
-          onReset={() => {
-            layout.sessions = DEFAULT.sessions;
-            applyLayout(viewport);
-            saveLayout();
-          }}
+          onReset={resetSessions}
           onCommit={saveLayout}
         />
       {:else}
-        <div class="fold-edge" aria-hidden="true"></div>
+        <div class="fold-edge" aria-hidden="true" data-tauri-drag-region></div>
       {/if}
     </div>
 
@@ -976,6 +984,7 @@
       {#if agentVisible() && !editing}
         <Splitter
           label={reviewing ? "Resize the viewer" : "Resize changes"}
+          name="changes"
           onDelta={resizeChanges}
           onReset={resetChanges}
           onCommit={saveLayout}
@@ -983,7 +992,13 @@
       {/if}
       <ChangesPane />
       {#if agentVisible() && editing}
-        <Splitter label="Resize the agent" onDelta={resizeEditAgent} onReset={resetEditAgent} onCommit={saveLayout} />
+        <Splitter
+          label="Resize the agent"
+          name="agent"
+          onDelta={resizeEditAgent}
+          onReset={resetEditAgent}
+          onCommit={saveLayout}
+        />
       {/if}
     {/if}
   </main>
@@ -1001,12 +1016,14 @@
   <div
     class="terminal-group"
     class:hidden={!terminalVisible() && terminalOpen.current === 0}
+    class:sliding={terminalOpen.current !== 1}
     style:height="calc({layout.terminal * terminalOpen.current}px + var(--splitter-w) * {terminalOpen.current})"
   >
     {#if terminalVisible() || terminalOpen.current > 0}
       <Splitter
         label="Resize the terminal"
         orientation="horizontal"
+        name="terminal"
         onDelta={resizeTerminal}
         onReset={resetTerminal}
         onCommit={saveLayout}
@@ -1018,6 +1035,27 @@
   </div>
   </div>
 </div>
+
+<!-- Where a divider between two panes meets the one over the terminal
+     panel, the pointer drags both. -->
+{#if terminalVisible() && terminalOpen.current === 1 && !layout.sessionsPeek}
+  {#each meetings as meeting (meeting.side)}
+    <Junction
+      side={meeting.side}
+      foot="terminal"
+      at={meetingKey}
+      onDelta={(dx, dy) => {
+        meeting.across(dx);
+        resizeTerminal(dy);
+      }}
+      onReset={() => {
+        meeting.reset();
+        resetTerminal();
+      }}
+      onCommit={saveLayout}
+    />
+  {/each}
+{/if}
 
 {#if settings.open}
   <Settings />
@@ -1043,18 +1081,25 @@
 <UserStyles />
 
 <style>
-  /* Wide enough that a pane's sharp corner stays clear of the window's
-     rounded one on macOS. */
+  /* The window's ground, with the look's padding around the panes: in the
+     terminal look wide enough that a box's sharp corner stays clear of the
+     window's rounded one on macOS, in the modern look none before the
+     sessions pane and the header row, which lie on the ground. */
   .frame {
-    --frame-pad: 10px;
     height: calc(100vh - 26px);
-    padding: var(--frame-pad);
-    background: var(--bg);
+    padding: var(--frame-pad-top) var(--frame-pad) var(--frame-pad) var(--frame-pad-left);
+    background: var(--ground);
   }
 
-  /* The terminal look's ground between the boxes carries a background. */
+  /* The ground carries a background: the terminal look's between its
+     boxes, the modern look's under the headers, the sessions pane and the
+     status bar alike. */
   :global(:root[data-background]:not([data-look])) .frame {
     background: linear-gradient(var(--tint-frame), var(--tint-frame)), var(--tint-backdrop);
+  }
+
+  :global(:root[data-background][data-look="modern"]) .frame {
+    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
   }
 
   .stack {
@@ -1073,11 +1118,17 @@
   }
 
   /* The bar and the panel, one thing to show and to hide, cut off at the
-     window's foot while they are on their way. */
+     window's foot while they are on their way. The panel can stand in from
+     the left, clear of the window's edge where the sessions pane lies on
+     the ground above it. */
   .terminal-group {
     display: flex;
     flex-direction: column;
     flex: none;
+    margin-left: var(--panel-inset);
+  }
+
+  .terminal-group.sliding {
     overflow: hidden;
   }
 
@@ -1143,60 +1194,27 @@
     min-width: calc(var(--sessions-w) - 2px);
   }
 
-  /* Folded, the header is part of the row the header beside it starts: the
-     same ground, and nothing in it. */
-  .sessions-slot.folded :global([data-pane="sessions"] > header) {
-    background: var(--surface);
-  }
-
-  :global(:root[data-background][data-look="modern"])
-    .sessions-slot.folded
-    :global([data-pane="sessions"] > header) {
-    background: linear-gradient(var(--tint-surf), var(--tint-surf)), var(--tint-backdrop);
-  }
-
-  :global(:root[data-background][data-look="modern"]) .sessions-slot.folded :global([data-pane="sessions"]) {
-    background:
-      var(--edge-rule),
-      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px))
-        border-box,
-      var(--tint-backdrop);
-  }
-
-  /* The line between the sessions pane and the agent belongs to the
-     sessions pane, so with a background it is drawn over that pane's tint. */
-  :global(:root[data-background][data-look="modern"]) .sessions-slot > :global(.splitter) {
-    background: linear-gradient(var(--tint-side), var(--tint-side)), var(--tint-backdrop);
-  }
-
-  .sessions-slot.folded :global([data-pane="sessions"] > header > *) {
+  /* Folded, the header row is ground with nothing in it but, where the
+     app draws them, the menu button. */
+  .sessions-slot.folded :global([data-pane="sessions"] > header > :not(.app-menu)) {
     visibility: hidden;
   }
 
-  /* The splitter's line with nothing to drag, from under the header row. */
+  /* In the modern look the folded column's header row is the ground's own,
+     with no rule under it: the window's buttons stand on it. */
+  :global(:root[data-look="modern"]) .sessions-slot.folded :global([data-pane="sessions"] > header) {
+    border-bottom-color: transparent;
+  }
+
+  .sessions-slot.folded :global([data-pane="sessions"] > header > .app-menu) {
+    margin-left: calc((var(--folded) - 2px - 40px) / 2);
+  }
+
+  /* Beside the folded column there is nothing to drag: the gap stays, as
+     ground, and the window drags by it as by the headers. */
   .fold-edge {
-    position: relative;
     flex: none;
     width: var(--splitter-w);
-    background: linear-gradient(var(--surface) var(--head-h), transparent var(--head-h));
-  }
-
-  /* With a background the edge is drawn over the tint beside it: the
-     headers' beside the header row, the sessions pane's below it. */
-  :global(:root[data-background][data-look="modern"]) .fold-edge {
-    background:
-      linear-gradient(var(--tint-surf) calc(var(--head-h) + 1px), var(--tint-side) calc(var(--head-h) + 1px)),
-      var(--tint-backdrop);
-  }
-
-  .fold-edge::after {
-    content: "";
-    position: absolute;
-    top: var(--head-h);
-    bottom: 0;
-    left: calc(50% - 0.5px);
-    width: 1px;
-    background: var(--splitter);
   }
 
   .agent-slot {
