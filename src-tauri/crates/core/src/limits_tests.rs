@@ -515,6 +515,23 @@ fn an_account_is_read_once_its_last_read_is_five_minutes_old() {
 }
 
 #[test]
+fn a_read_that_panics_fails_and_the_account_is_read_again_later() {
+    let clock = Clock::new();
+    let limits = limits(&clock, None);
+    let held = limits.poll(
+        "claude-code",
+        Path::new(DIR),
+        true,
+        || -> Result<Event, String> { panic!("a reader's own fault") },
+    );
+    assert_eq!(held, None);
+    clock.on(MINUTE);
+    let reads = AtomicUsize::new(0);
+    assert_eq!(percent(poll(&limits, &clock, &reads, 10.0)), Some(10.0));
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn an_account_no_session_worked_on_since_is_read_every_half_hour() {
     let clock = Clock::new();
     let limits = limits(&clock, None);

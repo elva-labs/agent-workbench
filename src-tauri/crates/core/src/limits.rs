@@ -483,7 +483,12 @@ impl Limits {
                     .get(&key)
                     .is_none_or(|account| account.due(now, fresh_for))
             };
-            due.then(read)
+            // A read that panics fails like any other, so the account is
+            // not left marked as being read.
+            due.then(|| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(read))
+                    .unwrap_or_else(|_| Err("the read of the limits panicked".into()))
+            })
         };
         let saved = {
             let mut state = self.state();

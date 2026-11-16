@@ -1,5 +1,5 @@
 import { core, type AgentId } from "$lib/core";
-import { dirFor } from "$lib/accounts.svelte";
+import { accounts, dirFor } from "$lib/accounts.svelte";
 import { AGENTS } from "$lib/agent.svelte";
 import { heardLimits, limitsOf } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
@@ -51,8 +51,11 @@ function keyOf(use: InUse): string {
   return JSON.stringify([use.host, use.agent, use.account]);
 }
 
+/** A session's account in use, or none for an agent with no figures, or
+    an account no longer in the list, whose directories are not known. */
 function useOf(session: Session): InUse | null {
   if (!AGENTS.includes(session.agent)) return null;
+  if (session.account !== null && accounts.list[session.account] === undefined) return null;
   return {
     host: hostOf(session.project),
     project: session.project,

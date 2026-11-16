@@ -89,6 +89,8 @@ afterEach(() => {
 
 describe("the accounts in use", () => {
   it("are those of the sessions that run and of the one on screen, each once, on its own machine", () => {
+    const dirs = { claude: null, codex: null };
+    adoptAccounts({ list: { Work: dirs, Home: dirs, Old: dirs }, everywhere: null, overrides: {} });
     sessions.all = [
       session("a", { account: "Work" }),
       session("b", { account: "Work", status: "starting" }),
@@ -96,6 +98,9 @@ describe("the accounts in use", () => {
       session("d", { account: "Old", status: "dormant" }),
       session("e", { agent: "codex", account: "Work" }),
       session("f", { project: REMOTE, account: "Work" }),
+      session("g", { account: null }),
+      // An account taken out of the list: its directories are not known.
+      session("h", { account: "Removed" }),
     ];
     sessions.active = "d";
     expect(accountsInUse().map((use) => [use.host, use.agent, use.account])).toEqual([
@@ -103,6 +108,7 @@ describe("the accounts in use", () => {
       [null, "claude-code", "Old"],
       [null, "codex", "Work"],
       ["build", "claude-code", "Work"],
+      [null, "claude-code", null],
     ]);
   });
 });
@@ -162,7 +168,7 @@ describe("asking for the figures", () => {
     await vi.advanceTimersByTimeAsync(ASK_EVERY);
     expect(worked()).toEqual([true, false, true, false]);
     // Another account's work is not this one's.
-    noteWork(session("b", { account: "Home" }));
+    noteWork(session("b", { agent: "codex", account: "Work" }));
     window.dispatchEvent(new Event("pointermove"));
     await vi.advanceTimersByTimeAsync(ASK_EVERY);
     expect(worked()).toEqual([true, false, true, false, false]);
