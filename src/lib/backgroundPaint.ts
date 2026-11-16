@@ -24,14 +24,21 @@ import {
  * one and dark under the system preference unless light was chosen and
  * again under the explicit choice, so switching between light and dark is
  * the stylesheets' to follow and needs nothing from here. The gradient is
- * drawn once for each appearance into a small image stretched over the
- * window, and the grain into a tile; each is named once, and the sets refer
- * to them.
+ * drawn once for each appearance into an image stretched over the window,
+ * and the grain into a tile; each is named once, and the sets refer to them.
  */
 
-/** How large the gradient is drawn before it is stretched: it is smooth,
-    and dithered so a soft run does not band. */
-const IMAGE = { width: 192, height: 120 };
+/** How large the gradient is drawn before it is stretched. It is dithered,
+    so a soft run does not band, but the dither only hides steps as fine as
+    its own pixels: stretched, each pixel shows as one flat patch, and the
+    steps between patches show where the colour runs steeply. At full size
+    a pixel is at most five device pixels across on a window 3840 device
+    pixels wide, the whole of a 4K screen or 1920 points on a screen of
+    twice the density, and no steps show. While a background moves the
+    gradient is drawn small, which keeps up with the pointer, and at full
+    size once it rests. */
+const MOVING = { width: 192, height: 120 };
+export const FULL = { width: 768, height: 480 };
 const GRAIN_TILE = 128;
 
 export interface Images {
@@ -41,6 +48,9 @@ export interface Images {
   dark: string | null;
   /** The grain's tile, or null for none. */
   grain: string | null;
+  /** The appearances whose gradient here is drawn small, to be drawn at
+      full size once the background rests. */
+  rough?: Appearance[];
 }
 
 const SELECTORS: Record<Look, string> = {
@@ -149,14 +159,27 @@ export function backgroundCss(
 /* Images, drawn where the page has a canvas.                              */
 /* ---------------------------------------------------------------------- */
 
-let canDraw: boolean | null = null;
+type Draw = (pixels: Uint8ClampedArray, width: number, height: number) => string | null;
 
-function drawable(): boolean {
+let canDraw: boolean | null = null;
+let drawInstead: Draw | null = null;
+
+/** How images are drawn: on a canvas where the page has one. */
+function drawer(): Draw | null {
+  if (drawInstead !== null) return drawInstead;
   canDraw ??=
     typeof document !== "undefined" &&
     !/jsdom/i.test(navigator.userAgent) &&
     typeof document.createElement("canvas").getContext === "function";
-  return canDraw;
+  return canDraw ? toUrl : null;
+}
+
+/** Test seam: draws images with `draw` in place of a canvas, or as the
+    page can again with null, forgetting every image drawn. */
+export function drawImagesWith(draw: Draw | null) {
+  drawInstead = draw;
+  drawn.clear();
+  drawnFull.clear();
 }
 
 function toUrl(pixels: Uint8ClampedArray, width: number, height: number): string | null {
@@ -171,32 +194,46 @@ function toUrl(pixels: Uint8ClampedArray, width: number, height: number): string
   return canvas.toDataURL("image/png");
 }
 
-/** Drawn images, by what they were drawn from. A few are kept, so moving a
-    dot back and forth or sliding the grain draws nothing twice. */
+/** Drawn images, by what they were drawn from. A few small ones are kept,
+    so moving a dot back and forth or sliding the grain draws nothing twice,
+    and the last four full-size gradients, whichever appearance each is
+    for. */
 const drawn = new Map<string, string | null>();
+const drawnFull = new Map<string, string | null>();
 
-function remembered(key: string, draw: () => string | null): string | null {
-  const known = drawn.get(key);
+function remembered(
+  kept: Map<string, string | null>,
+  most: number,
+  key: string,
+  draw: () => string | null,
+): string | null {
+  const known = kept.get(key);
   if (known !== undefined) {
-    drawn.delete(key);
-    drawn.set(key, known);
+    kept.delete(key);
+    kept.set(key, known);
     return known;
   }
   const url = draw();
-  drawn.set(key, url);
-  if (drawn.size > 32) drawn.delete(drawn.keys().next().value!);
+  kept.set(key, url);
+  if (kept.size > most) kept.delete(kept.keys().next().value!);
   return url;
 }
 
 /** The images a background needs: a gradient for each appearance it is
     given the palette's colours for, where it has more than one colour, and
-    the grain's tile where it has grain. */
+    the grain's tile where it has grain. A gradient already drawn at full
+    size is given at full size. One that is not is drawn so in the
+    appearances `full` names, and drawn small in the others, which `rough`
+    then names. */
 export function imagesOf(
   background: Background,
   palettes: Partial<Record<Appearance, Record<string, string>>>,
+  full: readonly Appearance[] = ["light", "dark"],
 ): Images {
-  const images: Images = { light: null, dark: null, grain: null };
-  if (!drawable()) return images;
+  const rough: Appearance[] = [];
+  const images: Images = { light: null, dark: null, grain: null, rough };
+  const draw = drawer();
+  if (draw === null) return images;
   if (background.dots.length > 1) {
     for (const appearance of ["light", "dark"] as const) {
       const palette = palettes[appearance];
@@ -204,15 +241,22 @@ export function imagesOf(
       const tone = toneOf(palette);
       const colours = background.dots.map((dot) => dotColour(dot, tone));
       const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
-      images[appearance] = remembered(key, () =>
-        toUrl(gradientPixels(colours, IMAGE.width, IMAGE.height), IMAGE.width, IMAGE.height),
-      );
+      if (full.includes(appearance) || drawnFull.has(key)) {
+        images[appearance] = remembered(drawnFull, 4, key, () =>
+          draw(gradientPixels(colours, FULL.width, FULL.height), FULL.width, FULL.height),
+        );
+      } else {
+        images[appearance] = remembered(drawn, 32, key, () =>
+          draw(gradientPixels(colours, MOVING.width, MOVING.height), MOVING.width, MOVING.height),
+        );
+        rough.push(appearance);
+      }
     }
   }
   if (background.grain > 0) {
     const grain = Math.round(background.grain * 100) / 100;
-    images.grain = remembered(`grain:${grain}`, () =>
-      toUrl(grainPixels(GRAIN_TILE, grain), GRAIN_TILE, GRAIN_TILE),
+    images.grain = remembered(drawn, 32, `grain:${grain}`, () =>
+      draw(grainPixels(GRAIN_TILE, grain), GRAIN_TILE, GRAIN_TILE),
     );
   }
   return images;

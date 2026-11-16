@@ -523,13 +523,14 @@ export function padPixels(size: number, appearance: Appearance): Uint8ClampedArr
 }
 
 /** How far along the run from the first colour to the second a point is,
-    and how strongly the third glows there. */
+    and how strongly the third glows there: as strongly as its reach across
+    to the point's column and its reach down to the point's row together
+    allow, so an image works each out once a column and once a row. */
 const run = (u: number, v: number) => smooth(clamp(((u * 0.9 + v * 1.5) / 2.4 - 0.04) / 0.9, 0, 1));
-const glow = (u: number, v: number) => {
-  const dx = (u - 0.94) * 1.6;
-  const dy = v + 0.04;
-  return 0.92 * Math.exp(-(dx * dx + dy * dy) / 0.55);
-};
+const MOST_GLOW = 0.92;
+const glowAcross = (u: number) => Math.exp(-(((u - 0.94) * 1.6) ** 2) / 0.55);
+const glowDown = (v: number) => MOST_GLOW * Math.exp(-((v + 0.04) ** 2) / 0.55);
+const glow = (u: number, v: number) => glowAcross(u) * glowDown(v);
 
 /** The colour the window gets at (u, v), each 0 to 1 across and down. One
     colour is flat. Two run from the top left down to the foot, steeply, so
@@ -543,28 +544,64 @@ export function field(colours: Lab[]): (u: number, v: number) => Lab {
   };
 }
 
+/** How many places along the run between the first two colours, and how
+    many strengths of a third colour's glow, the gradient's colours are
+    worked out at. A pixel takes the nearest place along the run, within a
+    tenth of a step of its own colour, rather than reading between two:
+    where a third colour glows, the colour jumps between two places at the
+    hue where the glow's shortest turn goes the other way round. It reads
+    between the two strengths of the glow it falls between, which keeps it
+    within a tenth of a step as well, and within one where a channel is
+    held at either end of its range. */
+const RUN_PLACES = 512;
+const GLOW_PLACES = 24;
+
 /** The gradient as pixels, RGBA, for an image stretched over the window.
-    The run between the first two colours is worked out once along its
-    length, and the whole is dithered by half a step, so a soft run does
-    not band. */
+    Its colours are worked out once, at places along the run and, with a
+    third colour, at strengths of its glow. The whole is dithered by half a
+    step, so a soft run does not band. */
 export function gradientPixels(colours: Lab[], width: number, height: number): Uint8ClampedArray {
-  const steps = 512;
-  const along = Array.from({ length: steps }, (_, at) =>
-    colours.length === 1 ? colours[0] : mixLch(colours[0], colours[1], at / (steps - 1)),
-  );
-  const plain = along.map(labToRgb);
+  const places = colours.length > 1 ? RUN_PLACES : 1;
+  const strengths = colours.length > 2 ? GLOW_PLACES : 1;
+  // The colours as RGB: a row of places along the run for each strength.
+  const table = new Float64Array(places * strengths * 3);
+  for (let place = 0; place < places; place++) {
+    const along = places === 1 ? colours[0] : mixLch(colours[0], colours[1], place / (places - 1));
+    for (let strength = 0; strength < strengths; strength++) {
+      const lab =
+        strengths === 1 ? along : mixLch(along, colours[2], (strength / (strengths - 1)) * MOST_GLOW);
+      table.set(labToRgb(lab), (strength * places + place) * 3);
+    }
+  }
+  const across = Float64Array.from({ length: width }, (_, x) => glowAcross(x / (width - 1)));
+  const down = Float64Array.from({ length: height }, (_, y) => glowDown(y / (height - 1)));
+  // The last strength a pixel reads from with the one after it.
+  const lastStrength = Math.max(strengths - 2, 0);
   const pixels = new Uint8ClampedArray(width * height * 4);
+  // A number from -0.5 up to 0.5, the same sequence every time.
   let seed = 11;
-  const noise = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5;
+  const noise = () => {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296 - 0.5;
+  };
   for (let y = 0; y < height; y++) {
+    const v = y / (height - 1);
     for (let x = 0; x < width; x++) {
-      const u = x / (width - 1);
-      const v = y / (height - 1);
-      const step = colours.length === 1 ? 0 : Math.round(run(u, v) * (steps - 1));
-      const rgb = colours.length > 2 ? labToRgb(mixLch(along[step], colours[2], glow(u, v))) : plain[step];
+      // Where the pixel falls in the table: the nearest place along the
+      // run, the strength at or below its glow, and how far on towards the
+      // next strength.
+      const place = Math.round(run(x / (width - 1), v) * (places - 1));
+      const strength = ((across[x] * down[y]) / MOST_GLOW) * (strengths - 1);
+      const s0 = Math.min(Math.floor(strength), lastStrength);
+      const alongGlow = strength - s0;
+      const low = (s0 * places + place) * 3;
+      const high = (Math.min(s0 + 1, strengths - 1) * places + place) * 3;
       const offset = (y * width + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
-        pixels[offset + channel] = Math.round(rgb[channel] + noise());
+        const value = table[low + channel] + (table[high + channel] - table[low + channel]) * alongGlow;
+        pixels[offset + channel] = Math.round(value + noise());
       }
       pixels[offset + 3] = 255;
     }

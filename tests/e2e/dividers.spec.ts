@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, WITH_WORKFLOW, foldedWidth, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, backgroundAtRest, foldedWidth, installFakeCore } from "./fake";
 
 /**
  * The frame every pane lives in: in the modern look the panes stand as
@@ -374,6 +374,7 @@ test("over a background of the user's own in dark, the ground under the headers 
   };
   await open(page, { appearance: "dark", settings: { backgrounds: { teal: dusk } } });
   await expect(page.locator("html")).toHaveAttribute("data-background", "");
+  await backgroundAtRest(page);
   const card = await box(page, `${AGENT} > .body`);
   const header = await box(page, `${AGENT} > header`);
   // In the gap past the agent's header, clear of anything it holds.

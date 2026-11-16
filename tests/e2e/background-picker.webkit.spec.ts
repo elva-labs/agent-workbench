@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, backgroundAtRest, installFakeCore } from "./fake";
 
 // The background picker by keyboard alone, in WebKit, the app's webview on
 // macOS, as well as Chromium. The pad, each dot, the add and remove buttons
@@ -134,6 +134,7 @@ for (const look of ["terminal", "modern"]) {
     await slider.scrollIntoViewIfNeeded();
     const box = (await slider.boundingBox())!;
     const clip = { x: box.x - 6, y: box.y - 6, width: box.width + 12, height: box.height + 12 };
+    await backgroundAtRest(page);
     // From the ready-made row the next stop is the slider; back again
     // leaves it at rest.
     await page.getByTestId("ready-none").focus();

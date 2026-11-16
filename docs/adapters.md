@@ -44,11 +44,18 @@ environment to the servers it starts. Codex passes a server only the
 variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
-those two variables to pass on. An entry that named only the variables,
-for a server no configuration names, would stop Codex from starting, so a
-session without the tool server is told nothing of it. On Windows a Codex
-installed as a script is not told the server either; see [under a
-workflow](#under-a-workflow).
+those two variables to pass on. Named for a workflow where no
+configuration names it, its tools run without asking, as an integrated
+session's do. Named again where the project's configuration has it, the
+command line says nothing of approval, since Codex takes the command line
+over the project's file: the entry there decides, and the
+[hooks](hooks.md#the-agents-tools) write it so the tools run without
+asking unless the user set another approval in it. Every other server
+asks as the user configured it, and the approval policy is the user's.
+An entry that named only the variables, for a server no configuration
+names, would stop Codex from starting, so a session without the tool
+server is told nothing of it. On Windows a Codex installed as a script is
+not told the server either; see [under a workflow](#under-a-workflow).
 
 Codex passes a server the variables its entry names from 0.47.0 on. An
 older Codex takes the entry without a word and passes the server none of
@@ -135,7 +142,9 @@ Codex hold quotes. So a Codex installed as a script is not told the server
 on Windows: it starts the server from its own configuration, which passes
 the server none of the session's variables, and every call the session
 makes names no session. The workbench takes such a call for one from [an
-agent it did not start](orchestrator.md#who-is-calling).
+agent it did not start](orchestrator.md#who-is-calling). Its tools ask or
+not as the project's entry for the server says, as they do wherever the
+project's configuration names it.
 
 ## Detection
 
