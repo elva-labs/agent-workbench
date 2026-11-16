@@ -454,7 +454,12 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const session = byKey(key);
       if (
         session === null ||
-        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id)
+        (snapshot.ready !== null && session.id !== null && snapshot.ready.sessionId !== session.id) ||
+        // A row named by its id takes up only a run that has said that id:
+        // one that has not may be a newer session the core numbered the
+        // same, and the row would be a running session named by an id no
+        // process of it holds.
+        (snapshot.ready === null && session.id !== null && session.token === session.id)
       )
         throw new Error("another session");
       await earlier;
