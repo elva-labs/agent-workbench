@@ -2282,12 +2282,14 @@ export function rang(key: string) {
 
 /** A terminal rang its bell, or was sent a notification. While the agent
     works or asks it is news. At rest it may only say again that the agent
-    waits, as Claude Code's idle notice does when it is set to ring, and a
-    session read at rest since takes no mark from it. */
+    waits, as Claude Code's idle notice does when it is set to ring: where
+    the hooks report the agent's turns, a session read at rest since takes
+    no mark from it. Without them it is news, as it may be the only sign of
+    a turn too short for its output to show. */
 export function belled(key: string) {
   const session = byKey(key);
   if (session === null) return;
-  unseen(session, false, atRest(session));
+  unseen(session, false, session.exact && atRest(session));
 }
 
 /** The user looked: the session is on screen in a focused window. */

@@ -1894,6 +1894,10 @@ describe("a session read stays read", () => {
   const FULL_COMPACTION_SAYS = [0, 9];
   /** The whole of a minute's idle: the cursor redrawn as focus left. */
   const IDLE_MINUTE = [44];
+  /** A turn the agent started by itself when a command it ran in the
+      background ended, in the second recording: two seconds of output with
+      bullets in both, too short to count as work. */
+  const OWN_TURN = [2843, 2743];
 
   /** Plays seconds of output into a session, a chunk a second, a bullet in
       each second `says` names. */
@@ -2187,6 +2191,27 @@ describe("a session read stays read", () => {
       select(front.key);
       belled(fresh.key);
       expect(fresh.unread).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Without hooks a turn that short shows nothing on the row, and the bell
+  // of the idle notice a minute later is the only sign of it.
+  it("takes a bell at rest for news without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed("pty-2", "go\r");
+      plays(behind.key, TURN, TURN_SAYS);
+      look(behind);
+      select(front.key);
+
+      plays(behind.key, OWN_TURN, [0, 1]);
+      expect(behind.unread).toBe(false);
+      vi.advanceTimersByTime(60_000);
+      belled(behind.key);
+      expect(behind.unread).toBe(true);
     } finally {
       vi.useRealTimers();
     }

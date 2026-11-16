@@ -253,7 +253,9 @@ line it leaves, its ending, or a bell while it works. A notice that only
 says again that it waits changes nothing: Claude Code's idle notice, which
 it sends a minute after a turn ends and again a minute after each recap or
 compaction, and a bell or terminal notification from a session read at
-rest with nothing new from it since. A session that goes unread while the
+rest with nothing new from it since, when its hooks report its turns.
+Without hooks such a bell is news, since a short turn may show nothing
+else. A session that goes unread while the
 window is in the background also says so through the system, once each time
 it goes unread: a notification with the project, the session and what it
 waits on, the line the agent left when there is one, and a chime if that is

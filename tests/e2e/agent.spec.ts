@@ -469,13 +469,6 @@ const running = async (page: Page) => {
   if ((await spawnCount(page)) === 0) await startHere(page);
   await expect(page.locator(AGENT)).toContainText("running");
 };
-/** A turn of a session's agent starts and ends, as its hooks say: news,
-    which marks the row even when it was read at rest before. */
-const turnEnds = (page: Page, sessionId = "session-1") =>
-  page.evaluate((sessionId) => {
-    window.__fake.sessionEvent?.({ sessionId, kind: "prompt" });
-    window.__fake.sessionEvent?.({ sessionId, kind: "stop" });
-  }, sessionId);
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
 /** The row of the session with this name, wherever the order puts it: the
     latest change is on top. */
@@ -1230,6 +1223,16 @@ test.describe("working, and waiting for you", () => {
     await event("idle");
     await event("idle");
     await event("idle");
+    // Claude Code set to ring its idle notice as well: with the hooks
+    // reporting its turns, the bell says nothing new either. Taken in once
+    // the words after it are on its screen.
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07rang"));
+    const key = await named(page, "session 1").evaluate((row) =>
+      row.closest("[data-row]")!.getAttribute("data-row")!.replace("session:", ""),
+    );
+    await expect
+      .poll(() => page.evaluate((key) => window.__fake.bufferOf(key), key))
+      .toContain("rang");
     // Drawn once what came after the notices is.
     await page.evaluate(() =>
       window.__fake.sessionEvent?.({ sessionId: "session-2", kind: "prompt" }),
@@ -2072,13 +2075,13 @@ test.describe("the palettes", () => {
       await page.keyboard.press(COMMANDS);
       await page.keyboard.press("ArrowDown");
       const name = (await chosen(page).locator("[data-testid='palette-label']").innerText()).trim();
-      await turnEnds(page);
+      await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
       await expect(kind(page, "attention")).toContainText("1 waiting");
       await expect(chosen(page).locator("[data-testid='palette-label']")).toHaveText(name);
     });
 
     test("the jump takes the keyboard to the session waiting", async ({ page }) => {
-      await turnEnds(page);
+      await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
       await expect(page.locator(`${SESSIONS} .label.unread`)).toHaveCount(1);
       await page.keyboard.press(COMMANDS);
       await expect(kind(page, "attention")).toContainText("1 waiting");
@@ -2136,7 +2139,7 @@ test.describe("the palettes", () => {
       await page.keyboard.press("Escape");
 
       // A session that changes moves above the rest.
-      await turnEnds(page);
+      await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
       await expect(page.locator(`${SESSIONS} .label.unread`)).toHaveCount(1);
       await page.keyboard.press(GOTO);
       await expect(chosen(page).getByTestId("palette-label")).toHaveText("session 1");
@@ -2442,7 +2445,7 @@ test.describe("the palettes", () => {
       const target = kind(page, "session").filter({ hasText: "session 1" });
       await expect(target).toHaveAttribute("aria-selected", "true");
       await expect(kind(page, "session").first()).toContainText("session 2");
-      await turnEnds(page);
+      await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
       await expect(kind(page, "session").first()).toContainText("session 1");
       await expect(target).toHaveAttribute("aria-selected", "true");
       await page.keyboard.press("Enter");
