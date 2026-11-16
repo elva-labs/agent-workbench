@@ -212,6 +212,20 @@
     return { after: end - 1, depth: shown.depth + 1, prefix: `${rest}/`, virtual: null };
   });
 
+  /** The order the name field takes among the rows. */
+  const FIELD_ORDER = 1;
+
+  /** A row's order among the rest: none, which draws the rows as they are
+      listed, and past the name field the one order after the field's. The
+      tree is a flex column, and WebKit walks one in its children once for
+      every order they hold, in each layout and each paint, so an order of
+      its own on each of a few thousand rows makes every one of those walks
+      take millions of steps. */
+  function orderOf(index: number): number | undefined {
+    if (placement === null || index <= placement.after) return undefined;
+    return FIELD_ORDER + 1;
+  }
+
   /** The user has put the cursor somewhere: by a key, a click or the menu.
       Until then it sits on the first row by default and says nothing. */
   let touched = $state(false);
@@ -439,7 +453,7 @@
       aria-selected={!node.dir && files.selected === node.path}
       aria-expanded={node.dir ? isOpen(node) : undefined}
       style:padding-left="{8 + row.depth * 13}px"
-      style:order={index * 2}
+      style:order={orderOf(index)}
       onclick={() => {
         cursor = rows.indexOf(row);
         touched = true;
@@ -492,7 +506,7 @@
       <p
         class="problem"
         style:padding-left="{8 + row.depth * 13 + 20}px"
-        style:order={index * 2}
+        style:order={orderOf(index)}
         role="alert"
         data-testid="name-problem"
       >
@@ -506,7 +520,7 @@
        files, never make them again. -->
   {#if field !== null && placement !== null}
     {#key field.session}
-      {@const order = placement.after * 2 + 1}
+      {@const order = FIELD_ORDER}
       {#if placement.virtual !== null}
         <div
           class="row dir pending"
