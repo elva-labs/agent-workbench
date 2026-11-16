@@ -141,7 +141,8 @@ test("picking a workflow makes the session its orchestrator, as New session unde
   const readout = page.getByTestId("model-readout");
   await expect(readout).toHaveText("Fable");
   await expect(readout).toHaveAttribute("title", "Set by Build and review");
-  await model.click();
+  // A press on it opens nothing.
+  await model.dispatchEvent("click");
   await expect(page.getByTestId("model-menu")).toHaveCount(0);
   // The composer says the workflow; the header's chip waits for the first
   // message.
