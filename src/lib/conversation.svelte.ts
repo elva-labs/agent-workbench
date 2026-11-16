@@ -380,6 +380,59 @@ export class Conversation {
     found.error = error;
   }
 
+  /** Whether nothing has been said or done in the conversation: no message
+      sent, by this window or another, no turn run, nothing asked and
+      nothing of an earlier run read or due. Notes the agent made as it
+      started may stand. */
+  get untouched(): boolean {
+    return (
+      this.order.length === 0 &&
+      Object.keys(this.turns).length === 0 &&
+      this.requests.length === 0 &&
+      !this.compacting &&
+      !this.late &&
+      this.earlier === null &&
+      this.began === null &&
+      this.entries.every((entry) => entry.kind === "note")
+    );
+  }
+
+  /** The session starts again on another run before anything was said in
+      it: nothing its last run said stands. With the same agent, what the
+      agent offers, the mode and the effort stay until the new run says its
+      own, so the controls that show them stay as they were; the model is
+      the one the new run is started on. */
+  restarted(model: string | null, sameAgent: boolean) {
+    this.sessionId = null;
+    if (sameAgent) this.settings = { ...this.settings, model };
+    else {
+      this.ready = null;
+      this.settings = { model, mode: null, effort: null };
+      this.efforts = [];
+    }
+    this.state = null;
+    this.entries = [];
+    this.messages = {};
+    this.order = [];
+    this.turns = {};
+    this.current = null;
+    this.requests = [];
+    this.tasks = [];
+    this.context = null;
+    this.compacting = false;
+    this.interrupting = false;
+    this.skipped = 0;
+    this.notLoggedIn = false;
+    this.errors = [];
+    this.ended = null;
+    this.nextModel = null;
+    this.opened.clear();
+    this.#blocks.clear();
+    this.#calls.clear();
+    this.#taskIndex.clear();
+    this.#loose.clear();
+  }
+
   /** The session starts again after it ended: what ended it is over, and
       the thread goes on under it. */
   resumed() {

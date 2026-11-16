@@ -1,7 +1,8 @@
 <script lang="ts">
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
-  import { linkFor, resume, trust } from "$lib/integrated.svelte";
+  import { aloneOn, linkFor, resume, trust, unspoken } from "$lib/integrated.svelte";
+  import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
   import { spoken } from "$lib/instructions";
@@ -143,11 +144,17 @@
     session.status === "starting"
       ? `Starting ${agent}…`
       : session.resumedFrom === null
-        ? `A new ${agent} session in ${projectLabel(session.project)}, with your login, settings, hooks and tools.`
+        ? session.workflow === null
+          ? `A new ${agent} session in ${projectLabel(session.project)}, with your login, settings, hooks and tools.`
+          : `A new ${agent} session in ${projectLabel(session.project)}, following ${session.workflow.name}. It directs; ${stepsGist(session.workflow)}.`
         : conversation.earlier === "read"
           ? "No earlier messages were found for this session."
           : "This session was resumed. Its earlier messages are in its transcript and are not shown here.",
   );
+
+  /** Nothing has been said in it yet, so its workflow can still be
+      chosen, where there is a workflow to choose or one to leave. */
+  let choosable = $derived(unspoken(session) && (workflows.list.length > 0 || session.workflow !== null));
 
   /** Why the session is over, in a sentence. */
   let why = $derived.by(() => {
@@ -239,7 +246,7 @@
           sessionKey={session.key}
           {conversation}
           agent={name}
-          ready={session.status === "running" && link.handle !== null}
+          ready={session.status === "running" && (link.handle !== null || link.restarting)}
           {active}
           onDock={toDock}
           answers={docked.some(answerable)}
@@ -248,6 +255,10 @@
           root={sessionRoot(session)}
           dir={session.cwd ?? folder}
           project={projectLabel(session.project)}
+          agentId={session.agent}
+          alone={agentProfile(aloneOn(session)).name}
+          workflow={session.workflow}
+          {choosable}
         />
       {/if}
     </div>

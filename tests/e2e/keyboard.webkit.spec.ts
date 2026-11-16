@@ -51,10 +51,22 @@ test("reaches and uses every control of the composer by Tab", async ({ page }) =
   await page.getByTestId("model-chip").focus();
   await page.keyboard.press("Tab");
   expect(await focused(page)).toBe("mode-chip");
+  // Before the first message, the workflow: its menu by keyboard too.
+  await page.keyboard.press("Tab");
+  expect(await focused(page)).toBe("workflow-chip");
+  expect(await visiblyFocused(page)).toBe(true);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("workflow-menu")).toBeVisible();
+  expect(await focused(page)).toBe("workflow-option");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("workflow-menu")).toHaveCount(0);
+  expect(await focused(page)).toBe("workflow-chip");
   await page.keyboard.press("Tab");
   expect(await focused(page)).toBe("send");
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("user-message")).toHaveCount(1);
+  // Sent, the workflow is kept and its chip goes.
+  await expect(page.getByTestId("workflow-chip")).toHaveCount(0);
 });
 
 test("walks the thread as one stop, with the arrows", async ({ page }) => {

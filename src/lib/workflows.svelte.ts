@@ -266,6 +266,29 @@ export function workflowNamed(name: string | null | undefined): Workflow | undef
     : workflows.list.find((workflow) => workflow.name === name);
 }
 
+/** What each step of a workflow does and the model it runs on first:
+    "Sonnet works", "Opus reviews". */
+function stepGists(workflow: Workflow): string[] {
+  return workflow.steps.map((step) => `${gistModel(step.models[0])} ${step.kind === "work" ? "works" : "reviews"}`);
+}
+
+function gistModel(model: WorkflowModel | undefined): string {
+  return model === undefined ? "Any model" : modelLabel(model.agent, model.model);
+}
+
+/** A workflow in a few words: the model each part runs on first, and what
+    it does. "Fable directs, Sonnet works, Opus reviews". */
+export function workflowGist(workflow: Workflow): string {
+  return [`${gistModel(workflow.orchestrator)} directs`, ...stepGists(workflow)].join(", ");
+}
+
+/** What the sessions a workflow's orchestrator starts do, said to the
+    orchestrator's own session: "Sonnet works and Opus reviews". */
+export function stepsGist(workflow: Workflow): string {
+  const said = stepGists(workflow);
+  return said.length < 2 ? (said[0] ?? "") : `${said.slice(0, -1).join(", ")} and ${said.at(-1)}`;
+}
+
 /** The workflow a project follows: its own word, else the default. Null
     is none. */
 export function workflowOf(project: string): Workflow | null {
