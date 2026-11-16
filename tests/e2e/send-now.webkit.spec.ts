@@ -202,6 +202,52 @@ for (const look of ["modern", "terminal"] as const) {
   });
 }
 
+/** A long thread, drawn only near the view, in a smaller window, with a
+    turn at work on a command, and the core's news of each message sent
+    coming 600 ms after it, as over a slow route to another machine. */
+async function slowLongThread(page: Page) {
+  await page.setViewportSize({ width: 980, height: 720 });
+  await open(page);
+  for (let turn = 0; turn < 45; turn++) {
+    await say(page, `question ${turn}`);
+    await agent(page, `f.turn("${H}", ${JSON.stringify(`Reply ${turn}. `.repeat(20))});`);
+  }
+  await say(page, "go");
+  await agent(page, `f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "sleep 60" }, { kind: "command" });`);
+  await expect.poll(async () => (await geometry(page)).fromFoot).toBeLessThan(1);
+  await agent(page, `const send = f.send.bind(f); f.send = (...args) => { setTimeout(() => send(...args), 600); };`);
+}
+
+/** The waiting line, wholly in view above the composer, or the way back
+    down offered. */
+const seenOrOffered = async (page: Page) => {
+  const now = await geometry(page);
+  const pill = await page.getByTestId("jump-latest").count();
+  return pill > 0 || (now.lastLineBottom !== null && now.lastLineBottom <= now.threadBottom && now.lastLineBottom <= now.composerTop);
+};
+
+test("follows a message sent just after the wheel nudged the thread a little off its foot", async ({ page }) => {
+  await slowLongThread(page);
+  await page.getByTestId("thread").hover();
+  await page.mouse.wheel(0, -20);
+  await expect.poll(async () => (await geometry(page)).fromFoot).toBeGreaterThan(5);
+  await say(page, "and this");
+  await expect(queued(page)).toHaveCount(1);
+  // Long enough for every move the thread makes of itself to have landed.
+  await page.waitForTimeout(800);
+  await expect.poll(() => seenOrOffered(page)).toBe(true);
+  await expect.poll(async () => (await geometry(page)).fromFoot).toBeLessThan(1);
+});
+
+test("follows a message sent just before a click in the thread's gutter", async ({ page }) => {
+  await slowLongThread(page);
+  await say(page, "and this");
+  await page.getByTestId("thread").click({ position: { x: 4, y: 200 } });
+  await expect(queued(page)).toHaveCount(1);
+  await page.waitForTimeout(800);
+  await expect.poll(() => seenOrOffered(page)).toBe(true);
+});
+
 test("brings a message that comes to wait into view just after a press in the thread", async ({ page }) => {
   await open(page);
   for (let turn = 0; turn < 10; turn++) {
