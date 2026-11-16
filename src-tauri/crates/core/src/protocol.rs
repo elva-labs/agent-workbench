@@ -107,6 +107,8 @@ struct SpawnParams {
     #[serde(default)]
     model: Option<String>,
     #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
     config_dir: Option<String>,
     #[serde(default)]
     instructions: Option<String>,
@@ -462,6 +464,7 @@ pub fn dispatch(
                 p.token.as_deref(),
                 p.prompt.as_deref(),
                 p.model.as_deref(),
+                p.mode.as_deref(),
                 p.config_dir.as_deref(),
                 p.instructions.as_deref(),
                 p.start_only,

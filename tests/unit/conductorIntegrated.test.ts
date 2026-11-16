@@ -3,7 +3,7 @@ import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
 import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
-import { byKey, create, forProject, label, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
+import { byKey, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
@@ -97,6 +97,7 @@ beforeEach(async () => {
     transcriptsMany: async (projects: string[]) => projects.map(() => []),
     worktrees: async () => [],
     kill: async () => {},
+    write: async () => {},
     setWindowTitle: async () => {},
   };
   stop = await listenIntegrated();
@@ -246,6 +247,38 @@ describe("the orchestrator's tools with an integrated session", () => {
     await handle(asking);
     expect(answerTo(asking)?.content?.split("\n").at(-1)).toBe("It is waiting for the user to allow it to use Bash to run rm -rf build.");
     expect(conversationOf(key).open).toHaveLength(1);
+  });
+
+  it("hears nothing of a session reopened the other way while it waits, and hears its next run", async () => {
+    // A terminal session the caller started, at work.
+    const row = create(A, null, "claude-code", null, null, null, null, undefined, "terminal");
+    conductor.startedBy[row.key] = callerToken();
+    started(row.key, "pty-kid", "kid-1");
+    byKey(row.key)!.working = true;
+    flushSync();
+    const waiting = call("wait", { session: "kid-1", seconds: 60 });
+    const waited = handle(waiting);
+    await settle();
+    // The user reopens it as a conversation: its process quits, and the
+    // row goes on the other way.
+    const reopening = reopenOtherWay(row.key);
+    await settle();
+    endedTerminal({ id: "pty-kid", code: 0, clean: true });
+    flushSync();
+    expect(await reopening).toBe(true);
+    await settle();
+    flushSync();
+    expect(answerTo(waiting)?.content).toBeUndefined();
+    expect(byKey(row.key)).toMatchObject({ kind: "integrated", status: "starting" });
+    // Its next run comes up and is at rest, which is what the wait hears.
+    // A resumed run finds out what it follows once the window has the
+    // workflows.
+    adoptWorkflows({ list: [], default: null, overrides: {} });
+    await launch(row.key);
+    flushSync();
+    await waited;
+    expect(answerTo(waiting)?.content).toMatch(/^Session kid-1 stopped working\./);
+    expect(answerTo(waiting)?.content).not.toMatch(/exited|ended/);
   });
 
   it("lists and waits on the session by the state its events give it", async () => {

@@ -471,7 +471,9 @@ buttons on its title row, the field that opens go to and the
 new-session button included, the menus' items walked with the arrows while
 one is open. <kbd>Delete</kbd> closes the project or session under the
 cursor, except a session another session started, which only its own × or
-its starter's board stops.
+its starter's board stops. The menu key, or <kbd>Shift</kbd><kbd>F10</kbd>,
+opens the menu of the session under the cursor, as a right click on its row
+does.
 
 Confirming a session moves the keyboard into the agent, so
 <kbd>Cmd</kbd><kbd>1</kbd>, <kbd>↓</kbd>, <kbd>Enter</kbd>, type is the whole

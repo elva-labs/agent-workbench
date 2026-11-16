@@ -374,6 +374,8 @@ impl Core {
     /// instructions or none, differs from what its conversation was first
     /// given. `token` is what the window knows the session by, which the
     /// agent's tools are given so that every call they make names it.
+    /// `mode` is the mode the conversation last ran in where the window
+    /// knows it, by the name its integrated sessions offer it under.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -384,6 +386,7 @@ impl Core {
         token: Option<&str>,
         prompt: Option<&str>,
         model: Option<&str>,
+        mode: Option<&str>,
         config_dir: Option<&str>,
         instructions: Option<&str>,
         start_only: bool,
@@ -404,6 +407,7 @@ impl Core {
             token,
             prompt,
             model,
+            mode,
             config_dir,
             instructions,
             start_only,
@@ -468,6 +472,7 @@ impl Core {
         token: Option<&str>,
         prompt: Option<&str>,
         model: Option<&str>,
+        mode: Option<&str>,
         config_dir: Option<&str>,
         instructions: Option<&str>,
         start_only: bool,
@@ -542,6 +547,7 @@ impl Core {
             token,
             prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
             model: model.filter(|model| !model.trim().is_empty()),
+            mode: mode.filter(|mode| !mode.trim().is_empty()),
             config_dir: expanded.as_deref(),
             orchestrator,
             instructions,
@@ -641,6 +647,15 @@ impl Core {
             std::fs::create_dir_all(dir)
                 .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
         }
+        let mode = start_mode(
+            protocol,
+            mode,
+            resume.then_some(session.as_deref()).flatten(),
+            self.home.as_deref(),
+            expanded.as_deref(),
+            &environment.vars,
+            project,
+        );
         let launch = crate::integrated::Launch {
             project,
             env: &environment.vars,
@@ -648,7 +663,7 @@ impl Core {
             token: token.filter(|token| !token.trim().is_empty()),
             resume,
             model: model.filter(|model| !model.trim().is_empty()),
-            mode: mode.filter(|mode| !mode.trim().is_empty()),
+            mode: mode.as_deref(),
             effort: effort.filter(|effort| !effort.trim().is_empty()),
             config_dir: expanded.as_deref(),
             tool_server: tool_server.as_deref(),
@@ -1272,6 +1287,24 @@ fn orchestrator_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("orchestrator")
 }
 
+/// The mode an integrated session is started in: the one the window named,
+/// else for a resumed conversation the one its agent's terminal would
+/// resume it in, else none, which leaves it to the agent's own settings.
+fn start_mode(
+    protocol: &dyn crate::integrated::Protocol,
+    named: Option<&str>,
+    resumed: Option<&str>,
+    home: Option<&Path>,
+    config_dir: Option<&Path>,
+    env: &HashMap<String, String>,
+    folder: &Path,
+) -> Option<String> {
+    if let Some(mode) = named.filter(|mode| !mode.trim().is_empty()) {
+        return Some(mode.to_string());
+    }
+    protocol.resumed_mode(home?, config_dir, env, folder, resumed?)
+}
+
 pub fn home_directory() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -1570,6 +1603,7 @@ mod tests {
                     None,
                     None,
                     None,
+                    None,
                     instructions,
                     true,
                     false,
@@ -1600,6 +1634,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             Some("1. Direct the work."),
             true,
             false,
@@ -1608,6 +1643,35 @@ mod tests {
             |_| Box::new(|_: &[u8]| true),
         );
         assert_eq!(spawned.err().as_deref(), Some(NO_TOOLS));
+    }
+
+    #[test]
+    fn an_integrated_start_names_a_mode_only_where_the_window_or_a_resumed_transcript_does() {
+        let home = Scratch::new("api-start-mode");
+        let folder = Path::new("/projects/demo");
+        let dir = crate::transcripts::directory_for(&home.join(".claude"), folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("s-1.jsonl"),
+            "{\"type\":\"permission-mode\",\"permissionMode\":\"plan\"}\n",
+        )
+        .unwrap();
+        let claude = &crate::claude_stream::CLAUDE_STREAM;
+        let env = HashMap::new();
+        let mode =
+            |named, resumed| start_mode(claude, named, resumed, Some(&home), None, &env, folder);
+        // Named by the window: as named, resumed or not.
+        assert_eq!(
+            mode(Some("acceptEdits"), Some("s-1")).as_deref(),
+            Some("acceptEdits")
+        );
+        // Resumed with none named: as the agent's terminal resumes it.
+        assert_eq!(mode(None, Some("s-1")).as_deref(), Some("plan"));
+        assert_eq!(mode(Some(" "), Some("s-1")).as_deref(), Some("plan"));
+        // A new conversation, or one with no mode on record: the agent's
+        // own settings decide.
+        assert_eq!(mode(None, None), None);
+        assert_eq!(mode(None, Some("s-2")), None);
     }
 
     #[test]

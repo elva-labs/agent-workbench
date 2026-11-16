@@ -4,7 +4,7 @@ import { unsent, type Sent } from "$lib/mention";
 import { mentionedIn, mentionsOf } from "$lib/mentioned.svelte";
 import { reservedName } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
-import { agentProfile } from "$lib/agent.svelte";
+import { keepMode, modeOf } from "$lib/sessionModes";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import {
@@ -32,10 +32,14 @@ import {
   leaveRun,
   noted,
   onIntegratedClose,
+  onIntegratedHalt,
   putUnder,
   rang,
   rejoined,
   rememberWorkflow,
+  reopeningRow,
+  runEnded,
+  runUp,
   toldAtStart,
   toldFor,
   type Session,
@@ -136,6 +140,8 @@ export class Link {
   after: Change | null = null;
   /** The changes asked of the run behind the row and not answered yet. */
   unanswered = new Set<Change>();
+  /** The user chose the mode the session runs in. */
+  modeChosen = false;
   /** What the run behind the row was started on. */
   ranOn: Run | null = null;
   /** The agent the row was started on, once a workflow picked for it may
@@ -309,9 +315,11 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       identify(session, body.sessionId);
       // This run started on the workflow the row follows now.
       rememberWorkflow(session);
+      keepRunMode(session, link);
       break;
     case "configured":
       session.model = body.model;
+      keepRunMode(session, link);
       break;
     case "limits":
       heardLimits(hostOf(session.project), session.account, body);
@@ -403,6 +411,8 @@ function lastText(parts: Part[]): string | null {
 function ended(session: Session, link: Link, code: number | null, clean: boolean) {
   if (link.handle !== null) byHandle.delete(link.handle);
   link.handle = null;
+  // A run a reopen stopped goes on the other way, and its row never ends.
+  if (runEnded(session.key)) return;
   session.status = clean && !link.conversation.notLoggedIn ? "exited" : "crashed";
   session.exitCode = code;
   session.working = false;
@@ -477,6 +487,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     row.status = "running";
     row.changedAt = Date.now();
   }
+  runUp(key);
   row.error = null;
   row.exitCode = null;
   for (const body of claim(started.id)) deliver(key, link, body);
@@ -635,13 +646,33 @@ async function restart(key: string, session: Session, link: Link) {
   settleRun(key);
 }
 
-/** The mode a session starts in: the one it ran in, when the user chose
-    one the agent offers, and otherwise the agent's safe one, which asks
-    before it acts. The agent's own configuration never decides it. */
-export function startMode(session: Session, link: Link): string {
+/** The mode a session starts in: the one it last ran in, where the window
+    knows it and the agent offers it. Otherwise none is named, and the
+    agent decides as it does in a terminal: by the mode a resumed
+    conversation last ran in, where the agent keeps that, else by the
+    user's own settings. A mode from those settings that the agent does
+    not offer is left to them again rather than replaced. */
+export function startMode(session: Session, link: Link): string | undefined {
   const mode = link.conversation.settings.mode;
-  const offered = link.conversation.ready?.modes.some((known) => known.value === mode) ?? false;
-  return mode !== null && offered ? mode : agentProfile(session.agent).safeMode;
+  if (mode !== null) {
+    if (!offers(link, mode)) return undefined;
+    // A new conversation nothing has been said in starts again as a new
+    // one would, unless the user chose its mode.
+    return unspoken(session) && !link.modeChosen ? undefined : mode;
+  }
+  return session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined);
+}
+
+/** Whether the agent behind the link offers a mode to switch to. */
+function offers(link: Link, mode: string): boolean {
+  return link.conversation.ready?.modes.some((known) => known.value === mode) ?? false;
+}
+
+/** Keeps the mode the conversation runs in now, for the next time it
+    starts. */
+function keepRunMode(session: Session, link: Link) {
+  const mode = link.conversation.settings.mode;
+  if (session.id !== null) keepMode(session.id, mode, mode !== null && offers(link, mode));
 }
 
 /** The user trusts the folder: recorded where the agent's own question
@@ -1030,6 +1061,17 @@ export function reply(key: string, request: string, answers: string[][] | null) 
 export async function configure(key: string, change: Change) {
   const link = links.get(key);
   if (link === undefined) return;
+  if (change.mode !== undefined) link.modeChosen = true;
+  // A run a reopen is stopping takes nothing more: a mode chosen meanwhile
+  // is the one the next run starts in, the other way.
+  if (reopeningRow(key)) {
+    const id = byKey(key)?.id ?? null;
+    if (change.mode !== undefined && id !== null && offers(link, change.mode)) {
+      keepMode(id, change.mode, true);
+      link.conversation.settings = { ...link.conversation.settings, mode: change.mode };
+    }
+    return;
+  }
   const handle = link.handle;
   if (handle === null) {
     // Made on the new run once it is up.
@@ -1065,6 +1107,30 @@ function stop(session: Session) {
 }
 
 onIntegratedClose(stop);
+
+/** The row's agent is stopped and the row kept: its run ends as any run
+    does, its end told by the core. */
+function halt(session: Session) {
+  const link = links.get(session.key);
+  if (link === undefined || link.handle === null) {
+    runEnded(session.key);
+    return;
+  }
+  // A mode asked of the run and not answered yet is the user's last choice,
+  // which the next run starts in.
+  const asked: Change = Object.assign({}, ...link.unanswered);
+  if (asked.mode !== undefined && session.id !== null && offers(link, asked.mode))
+    keepMode(session.id, asked.mode, true);
+  const handle = link.handle;
+  core()
+    .integratedStop(handle)
+    .catch(() => {
+      // Gone already: no end will be told of it.
+      if (link.handle === handle) ended(session, link, null, true);
+    });
+}
+
+onIntegratedHalt(halt);
 
 function message(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);

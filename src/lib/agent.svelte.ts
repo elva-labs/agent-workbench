@@ -13,18 +13,15 @@ export const AGENTS: AgentId[] = ["claude-code", "codex"];
 /** What the window says of an agent, in one place: what it is called as a
     product and as the one speaking in a conversation, how the user signs
     in to it in a terminal, the variable that names its account's
-    directory, the mode a session of it starts in unless the user picks
-    another, the one that asks before it acts, whether it lists slash
-    commands once ready, and whether its record of a conversation names
-    the model each turn ran on. A run of an agent whose record does not
-    goes under the agent's name, live or read back, so that a reload
-    draws it under the same name. */
+    directory, whether it lists slash commands once ready, and whether its
+    record of a conversation names the model each turn ran on. A run of an
+    agent whose record does not goes under the agent's name, live or read
+    back, so that a reload draws it under the same name. */
 export interface AgentProfile {
   product: string;
   name: string;
   signIn: string;
   configVar: string;
-  safeMode: string;
   commands: boolean;
   turnModels: boolean;
   /** What sending waiting messages now does: interrupt the turn, after
@@ -39,7 +36,6 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     name: "Claude",
     signIn: "claude",
     configVar: "CLAUDE_CONFIG_DIR",
-    safeMode: "default",
     commands: true,
     turnModels: true,
     sendNow: "interrupts",
@@ -49,7 +45,6 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     name: "Codex",
     signIn: "codex login",
     configVar: "CODEX_HOME",
-    safeMode: "read-only",
     commands: false,
     turnModels: false,
     sendNow: "steers",

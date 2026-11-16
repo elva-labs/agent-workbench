@@ -134,6 +134,12 @@ const MODES: &[Mode] = &[
     },
 ];
 
+/// The approval policy and the sandbox a mode is made of, as Codex's
+/// command line names them.
+pub(crate) fn mode_flags(value: &str) -> Option<(&'static str, &'static str)> {
+    mode(value).map(|mode| (mode.approval, mode.sandbox))
+}
+
 fn mode(value: &str) -> Option<&'static Mode> {
     MODES.iter().find(|mode| mode.value == value)
 }

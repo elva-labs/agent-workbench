@@ -58,6 +58,21 @@ const MODES: &[(&str, &str)] = &[
     ("dontAsk", "Don't ask"),
 ];
 
+/// Whether a mode is one a session can switch to, by the name the agent
+/// takes.
+pub(crate) fn offers_mode(mode: &str) -> bool {
+    MODES.iter().any(|(value, _)| *value == mode)
+}
+
+/// What a mode is called: by the name the modes offered give it, else as
+/// the agent spells it.
+fn mode_name(mode: &str) -> &str {
+    MODES
+        .iter()
+        .find(|(value, _)| *value == mode)
+        .map_or(mode, |(_, name)| name)
+}
+
 /// The tool that asks the user questions, answered with a reply rather
 /// than a permission.
 const ASK_TOOL: &str = "AskUserQuestion";
@@ -229,6 +244,26 @@ impl Protocol for ClaudeStream {
             launch.mode,
             launch.effort,
         ))
+    }
+
+    /// The agent's terminal resumes a conversation in the mode it last
+    /// recorded, where its stream starts one in the mode a new conversation
+    /// would. Bypassing permissions is not restored, as the terminal does
+    /// not restore it either.
+    fn resumed_mode(
+        &self,
+        home: &Path,
+        config_dir: Option<&Path>,
+        env: &HashMap<String, String>,
+        folder: &Path,
+        session: &str,
+    ) -> Option<String> {
+        let dir = match config_dir {
+            Some(dir) => dir.to_path_buf(),
+            None => crate::account::claude_dir(home, None, env),
+        };
+        let transcript = crate::claude_history::find(&dir, folder, None, session)?;
+        crate::claude_history::last_mode(&transcript).filter(|mode| offers_mode(mode))
     }
 
     fn trusted(
@@ -441,6 +476,9 @@ struct Stream {
     session: String,
     model: Option<String>,
     mode: Option<String>,
+    /// The mode the session was started in on the command line, which the
+    /// agent may not run in where it is not available.
+    asked_mode: Option<String>,
     effort: Option<String>,
     /// The models the agent offers, with the name it resolves each to.
     models: Vec<(ModelInfo, Option<String>)>,
@@ -891,6 +929,7 @@ impl Stream {
             session: session.to_string(),
             model: model.map(str::to_string),
             mode: mode.map(str::to_string),
+            asked_mode: mode.map(str::to_string),
             effort: effort.map(str::to_string),
             models: Vec::new(),
             introduced: None,
@@ -1085,6 +1124,21 @@ impl Stream {
                 kind: ErrorKind::NotLoggedIn,
                 message: NOT_LOGGED_IN.to_string(),
             });
+        }
+        // A mode the agent cannot run in here, such as auto on a model or
+        // an account that has none, starts it in another of its own
+        // choosing, which is said rather than passed over.
+        if let (Some(asked), Some(mode)) = (&self.asked_mode, &self.mode) {
+            if asked != mode {
+                out.events.push(Event::Notice {
+                    level: NoticeLevel::Warning,
+                    message: format!(
+                        "{} mode is not available here, so the session runs in {} mode.",
+                        mode_name(asked),
+                        mode_name(mode)
+                    ),
+                });
+            }
         }
         self.ask_usage(out);
     }
@@ -3707,6 +3761,72 @@ mod tests {
         assert!(!modes.iter().any(|mode| mode.value == "bypassPermissions"));
         assert_eq!(commands[0].hint, None);
         assert_eq!(out.len(), 1, "signed in: {out:?}");
+    }
+
+    #[test]
+    fn a_mode_the_agent_did_not_start_in_is_said_after_ready() {
+        // Asked for auto, which the agent has not got here: it starts in
+        // its default, and the session says so in a line of its own.
+        let mut stream = Stream::new("s-1", None, Some("auto"), None);
+        let out = opened(&mut stream, json!({"apiProvider":"firstParty"}), json!({}));
+        assert!(
+            matches!(&out[0], Event::Ready { mode, .. } if mode.as_deref() == Some("default")),
+            "{out:?}"
+        );
+        assert!(
+            matches!(&out[1], Event::Notice { level: NoticeLevel::Warning, message }
+                if message == "Auto mode is not available here, so the session runs in Default mode."),
+            "{out:?}"
+        );
+        // Asked for the mode it starts in, nothing more is said; nor where
+        // no mode was asked for and the agent chose by its own settings.
+        for asked in [Some("default"), None] {
+            let mut stream = Stream::new("s-1", None, asked, None);
+            let out = opened(&mut stream, json!({"apiProvider":"firstParty"}), json!({}));
+            assert_eq!(out.len(), 1, "{asked:?}: {out:?}");
+        }
+    }
+
+    #[test]
+    fn a_resumed_conversation_starts_in_the_mode_its_transcript_last_ran_in() {
+        use crate::scratch::Scratch;
+        use crate::transcripts::directory_for;
+        let home = Scratch::new("claude-stream-resumed-mode");
+        let config = home.join("account");
+        let folder = Path::new("/projects/demo");
+        let dir = directory_for(&config, folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |session: &str, mode: &str| {
+            std::fs::write(
+                dir.join(format!("{session}.jsonl")),
+                format!("{{\"type\":\"permission-mode\",\"permissionMode\":\"{mode}\"}}\n"),
+            )
+            .unwrap();
+        };
+        write("plain", "acceptEdits");
+        write("bypass", "bypassPermissions");
+        write("odd", "everything");
+        let env = HashMap::new();
+        let resumed =
+            |session: &str| CLAUDE_STREAM.resumed_mode(&home, Some(&config), &env, folder, session);
+        assert_eq!(resumed("plain").as_deref(), Some("acceptEdits"));
+        // Bypassing permissions is not taken back up, nor a mode no session
+        // can switch to: the agent's own settings decide.
+        assert_eq!(resumed("bypass"), None);
+        assert_eq!(resumed("odd"), None);
+        assert_eq!(resumed("missing"), None);
+        // Under no account, the configuration directory the environment
+        // names is the one read.
+        let env = HashMap::from([(
+            CLAUDE_CONFIG_VAR.to_string(),
+            config.to_string_lossy().to_string(),
+        )]);
+        assert_eq!(
+            CLAUDE_STREAM
+                .resumed_mode(&home, None, &env, folder, "plain")
+                .as_deref(),
+            Some("acceptEdits")
+        );
     }
 
     /// The commands a stream is ready with, after an initialize listing
