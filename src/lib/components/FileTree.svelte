@@ -140,8 +140,12 @@
       held = { rows: now, at };
       if (was === null || was.rows === now || was.at !== at) return;
       let next = at;
-      if (at >= was.rows.length) next = now.length + (at - was.rows.length);
-      else {
+      if (at >= was.rows.length) {
+        // Over an empty tree a cursor nobody has put anywhere is the first
+        // row's to be, not one of the sections'.
+        if (was.rows.length === 0 && !touched) return;
+        next = now.length + (at - was.rows.length);
+      } else {
         const path = was.rows[at].node.path;
         const found = now.findIndex((row) => row.node.path === path);
         if (found !== -1) next = found;
