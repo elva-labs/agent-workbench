@@ -1,3 +1,27 @@
+<script module lang="ts">
+  import { paintOf } from "$lib/background";
+
+  /** The pad drawn once for each appearance and size, for as long as the
+      window is open: every pixel of it is a colour worked out on the way. */
+  const drawn = new Map<string, ImageData>();
+
+  /** What a background paints, as the guard works it out, kept for the
+      last few backgrounds asked about: the small windows and the word on
+      the cards ask about the same ones, each time the picker opens. */
+  const worked = new Map<string, ReturnType<typeof paintOf>>();
+
+  function paintedOf(...args: Parameters<typeof paintOf>): ReturnType<typeof paintOf> {
+    const key = JSON.stringify(args);
+    let found = worked.get(key);
+    if (found === undefined) {
+      found = paintOf(...args);
+      worked.set(key, found);
+      if (worked.size > 16) worked.delete(worked.keys().next().value!);
+    }
+    return found;
+  }
+</script>
+
 <script lang="ts">
   import { onDestroy, tick } from "svelte";
   import {
@@ -14,7 +38,6 @@
     moveDot,
     padColour,
     padPixels,
-    paintOf,
     readyMadeOf,
     removeDot,
     rgbToHex,
@@ -109,7 +132,7 @@
   let through = $derived(
     shown === null || cards === 0 || setAside
       ? null
-      : paintOf(shown, theme.look, coloursOf(theme.palette, appearance, theme.themes), cards).cards,
+      : paintedOf(shown, theme.look, coloursOf(theme.palette, appearance, theme.themes), cards).cards,
   );
   let held = $derived(through !== null && through.held < cards - 1e-9 ? through.held : null);
   /** Where the hold applies: the appearance on screen, which the guard
@@ -126,9 +149,6 @@
     }
     endPreview();
   });
-
-  /** The pad drawn once for each appearance and size. */
-  const drawn = new Map<string, ImageData>();
 
   $effect(() => {
     if (canvas === undefined) return;
@@ -353,7 +373,7 @@
     if (background === null) {
       return { colours, grounds: null, gradient: null, text: colours, card: null, cardText: colours };
     }
-    const painted = paintOf(background, look, colours, setAside ? 0 : share);
+    const painted = paintedOf(background, look, colours, setAside ? 0 : share);
     const tones = painted.colours.map((lab) => rgbToHex(labToRgb(lab)));
     const gradient = tones.length === 1 ? tones[0] : `linear-gradient(160deg, ${tones.join(", ")})`;
     const card = painted.cards !== null && painted.cards.amount > 0 ? painted.cards.card : null;
