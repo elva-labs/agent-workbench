@@ -69,9 +69,9 @@ function save() {
   }
 }
 
-/** The session the request is for, by its agent's id: the one whose token
-    the request names, anywhere in the window, or whose id a plugin names;
-    else the project itself. A session whose id is not known yet cannot own
+/** The session the request is for, by its agent's id: the running one
+    whose token the request names, anywhere in the window; else the project
+    itself. A session whose id is not known yet cannot own
     anything, since the id is what the list is kept by. */
 export function ownerFor(request: PresentRequest, project: string): string {
   return sessionFor(request)?.id ?? `project:${project}`;
