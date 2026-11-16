@@ -224,6 +224,14 @@ export async function installFakeCore(
       // does: once the process has gone, through onSessionEnded.
       const agentPtys = new Set<string>();
       const endedHandlers = new Set<(event: { id: string; code: number | null; clean: boolean }) => void>();
+      const quitPresses = new Map<string, number>();
+      // An agent's process goes, and says so once it has.
+      const endAgent = (id: string) => {
+        if (!agentPtys.delete(id)) return;
+        setTimeout(() => {
+          for (const handler of endedHandlers) handler({ id, code: 0, clean: true });
+        }, 0);
+      };
 
       // The past sessions the core finds in a folder: the test's for the
       // first project and for the orchestrator folder, none elsewhere.
@@ -742,6 +750,13 @@ export async function installFakeCore(
         write: async (id: string, data: string) => {
           const w = window as unknown as { __written?: [string, string][] };
           (w.__written ??= []).push([id, data]);
+          // An agent quits on a second Ctrl+C at its prompt, as Claude Code
+          // does.
+          if (data === "\x03" && agentPtys.has(id)) {
+            const presses = (quitPresses.get(id) ?? 0) + 1;
+            quitPresses.set(id, presses);
+            if (presses === 2) endAgent(id);
+          }
         },
         // Every size a pty is told, for a test to count the layouts its
         // terminal was measured in: a fit that changes nothing sends nothing.
@@ -752,10 +767,9 @@ export async function installFakeCore(
           (w.__resizes ??= []).push({ id, cols, rows });
         },
         kill: async (id: string) => {
-          if (!agentPtys.delete(id)) return;
-          setTimeout(() => {
-            for (const handler of endedHandlers) handler({ id, code: 0, clean: true });
-          }, 0);
+          const w = window as unknown as { __killed?: string[] };
+          if (agentPtys.has(id)) (w.__killed ??= []).push(id);
+          endAgent(id);
         },
         // Where a session's process is working, when a test has said so in
         // __cwds by pty id; the changes pane follows it into a worktree.
