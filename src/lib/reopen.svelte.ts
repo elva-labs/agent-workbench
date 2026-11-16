@@ -49,6 +49,11 @@ interface Open {
   /** The core's id for an integrated session while it ran, which a window
       reloaded while the core still runs it takes it up by. */
   handle?: string | null;
+  /** The token that run was started with, which its tools name it by
+      until it stops. A record from before has none: that run's token is
+      the one kept for the session, or for a session from before there
+      were tokens its id. */
+  token?: string;
   /** Whether the session had been spoken to, so a session taken up again
       says it has earlier messages only when it has. A record from before
       says nothing, which reads as spoken to. */
@@ -67,10 +72,8 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind, handle, spoken } = entry as Record<
-    string,
-    unknown
-  >;
+  const { project, id, agent, startIn, model, account, kind, handle, spoken, token } =
+    entry as Record<string, unknown>;
   return (
     typeof project === "string" &&
     typeof id === "string" &&
@@ -80,7 +83,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     (account === undefined || account === null || typeof account === "string") &&
     (kind === undefined || kind === "terminal" || kind === "integrated") &&
     (handle === undefined || handle === null || typeof handle === "string") &&
-    (spoken === undefined || typeof spoken === "boolean")
+    (spoken === undefined || typeof spoken === "boolean") &&
+    (token === undefined || (typeof token === "string" && token !== ""))
   );
 }
 
@@ -149,6 +153,13 @@ export function reopen(
   const bring = (entry: Open) => {
     if (!here(entry.project)) return;
     if (sessions.all.some((session) => session.id === entry.id)) return;
+    // A run the core may still be running is taken up under the token it
+    // was started with; anything else starts afresh, under a token the
+    // row is given now.
+    const running =
+      entry.kind === "integrated" && entry.handle
+        ? (entry.token ?? sessions.tokens[entry.id]?.token ?? entry.id)
+        : null;
     const row = reopened(
       entry.project,
       entry.id,
@@ -157,6 +168,9 @@ export function reopen(
       entry.model,
       entry.account ?? null,
       entry.kind ?? "terminal",
+      null,
+      true,
+      running,
     );
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
@@ -229,7 +243,9 @@ export function reopen(
             model: session.model,
             account: session.account,
             kind: session.kind,
-            ...(session.kind === "integrated" ? { handle: handleOf(session.key), spoken: session.engaged } : {}),
+            ...(session.kind === "integrated"
+              ? { handle: handleOf(session.key), spoken: session.engaged, token: session.token }
+              : {}),
           })),
           ...held,
         ],

@@ -2283,13 +2283,16 @@ impl Inner {
                 if line.is_empty() {
                     return;
                 }
+                // The plugin names the session by the agent's own id, as
+                // the session events give it; the window knows a session
+                // only by its token, so the line names that, or none.
                 crate::events::emit(
                     &self.sink,
                     NOTIFY_REQUEST,
                     &NotifyRequest {
                         text: line,
                         cwd: project,
-                        session: text("session"),
+                        session: text("session").and_then(|id| self.token_of(&id)),
                     },
                 );
             }
@@ -2373,6 +2376,19 @@ impl Inner {
             .values()
             .find(|pty| pty.token.as_deref() == Some(token))
             .and_then(|pty| pty.session.clone())
+    }
+
+    /// The token the tools of the session with this agent id name it by,
+    /// when a session this core started has both. An id two running
+    /// sessions were given different tokens under names neither.
+    fn token_of(&self, session: &str) -> Option<String> {
+        let ptys = self.ptys.lock().expect("plugins lock");
+        let mut tokens = ptys
+            .values()
+            .filter(|pty| pty.session.as_deref() == Some(session))
+            .filter_map(|pty| pty.token.clone());
+        let token = tokens.next()?;
+        tokens.all(|other| other == token).then_some(token)
     }
 
     fn session_started(
@@ -3166,6 +3182,8 @@ sections = ["Pull request"]
         .unwrap();
         let recorder = Arc::new(Recorder::default());
         let plugins = plugins_at(&home, recorder.clone());
+        // The session the plugin names in its line, by the agent's id.
+        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), &here);
         let added = plugins.add(&here, None).unwrap();
         plugins.enable(&added.id, "board", true).unwrap();
 
@@ -3228,10 +3246,11 @@ sections = ["Pull request"]
         assert_eq!(show["note"], "here");
         assert_eq!(show["session"], serde_json::Value::Null);
 
+        // The window is given the session's token, never the agent's id.
         let notify = wait(NOTIFY_REQUEST, &any);
         assert_eq!(notify["text"], "needs a key");
         assert_eq!(notify["cwd"], here);
-        assert_eq!(notify["session"], "s-1");
+        assert_eq!(notify["session"], "t-1");
 
         plugins
             .action(
@@ -3960,5 +3979,28 @@ run = ["sh", "main.sh"]
         assert_eq!(sessions[6]["project"], "/three");
 
         plugins.enable(&added.id, "ears", false).unwrap();
+    }
+
+    #[test]
+    fn names_a_session_to_the_window_by_its_token_never_its_id() {
+        let home = Scratch::absent("plugins-token-of-home");
+        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
+        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/p");
+        plugins.session_started("pty-2", None, Some("t-2"), "/p");
+        assert_eq!(plugins.inner.token_of("s-1").as_deref(), Some("t-1"));
+        // An id the core has not learned yet, or never ran, names none,
+        // and neither does a token passed off as an id.
+        assert_eq!(plugins.inner.token_of("s-2"), None);
+        assert_eq!(plugins.inner.token_of("t-1"), None);
+        plugins.session_identified("pty-2", "s-2");
+        assert_eq!(plugins.inner.token_of("s-2").as_deref(), Some("t-2"));
+        // Two running sessions found to have one id name neither.
+        plugins.session_started("pty-3", Some("s-1"), Some("t-3"), "/p");
+        assert_eq!(plugins.inner.token_of("s-1"), None);
+        plugins.session_ended("pty-3");
+        assert_eq!(plugins.inner.token_of("s-1").as_deref(), Some("t-1"));
+        // A session that has ended names none.
+        plugins.session_ended("pty-1");
+        assert_eq!(plugins.inner.token_of("s-1"), None);
     }
 }
