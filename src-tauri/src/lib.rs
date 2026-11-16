@@ -109,6 +109,7 @@ async fn pty_spawn(
     token: Option<String>,
     prompt: Option<String>,
     model: Option<String>,
+    mode: Option<String>,
     config_dir: Option<String>,
     instructions: Option<String>,
     start_only: Option<bool>,
@@ -135,6 +136,7 @@ async fn pty_spawn(
                 token.as_deref(),
                 prompt.as_deref(),
                 model.as_deref(),
+                mode.as_deref(),
                 config_dir.as_deref(),
                 instructions.as_deref(),
                 start_only.unwrap_or(false),
@@ -149,7 +151,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));

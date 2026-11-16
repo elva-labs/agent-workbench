@@ -39,6 +39,19 @@ export function modelChoices(conversation: Conversation): Choice[] {
   }));
 }
 
+/** A mode as the chip and the menu name it: by the agent's own name for a
+    mode it offers, and in plain words for one it runs in from its own
+    settings, such as `bypassPermissions`, Bypass permissions. */
+export function modeName(conversation: Conversation, mode: string): string {
+  const offered = conversation.ready?.modes.find((known) => known.value === mode);
+  if (offered !== undefined) return offered.name;
+  const words = mode
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[-_]+/g, " ")
+    .toLowerCase();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 /** The modes the agent offers, after one it runs in from its own
     configuration, which it does not offer and which is not to be come back
     to once left. */
@@ -50,8 +63,8 @@ export function modeChoices(conversation: Conversation): Choice[] {
       ? [
           {
             value: mode,
-            name: mode,
-            about: "From the agent's own configuration. Once another mode is chosen, this one cannot be chosen again here.",
+            name: modeName(conversation, mode),
+            about: "From the agent's own settings. Once another is chosen, it comes back only in a new session.",
             on: true,
           },
         ]

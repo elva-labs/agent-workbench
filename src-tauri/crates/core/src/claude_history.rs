@@ -97,6 +97,45 @@ pub fn find(
         .map(|(_, path)| path)
 }
 
+/// The most of a transcript's end read for the mode it last ran in.
+#[cfg(not(test))]
+const MODE_KEEP: u64 = 8 * 1024 * 1024;
+#[cfg(test)]
+const MODE_KEEP: u64 = 4 * 1024;
+
+/// The permission mode a transcript last records, as the agent's terminal
+/// reads it to resume a session in: its last mode entry, which the
+/// terminal writes as the mode changes. Only the end of the transcript is
+/// read. None where no mode is recorded there.
+pub fn last_mode(path: &Path) -> Option<String> {
+    let length = std::fs::metadata(path).ok()?.len();
+    let span = Span {
+        start: length.saturating_sub(MODE_KEEP),
+        end: length,
+    };
+    let mut mode = None;
+    lines(path, Some(span), |line| {
+        if !line
+            .windows(MODE_ENTRY.len())
+            .any(|window| window == MODE_ENTRY)
+        {
+            return;
+        }
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if entry["type"] == "permission-mode" {
+            if let Some(named) = entry["permissionMode"].as_str() {
+                mode = Some(named.to_string());
+            }
+        }
+    });
+    mode
+}
+
+/// What a line that records a mode holds, to pass over the rest unread.
+const MODE_ENTRY: &[u8] = b"permission-mode";
+
 /// What one transcript says was said and done. The first reading finds
 /// which lines make up the conversation from their ids alone; the second
 /// reads those lines, each made into its events and let go before the next.
