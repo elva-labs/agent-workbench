@@ -1023,6 +1023,17 @@
       untrack(() => (asked = null));
   });
 
+  // A question opened in the section is brought whole into its share of
+  // the column, which may be scrolled to show only a row or two.
+  $effect(() => {
+    if (asked === null) return;
+    void tick().then(() =>
+      document
+        .querySelector("section[data-pane='changes'] [data-testid='board-section'] .board-ask")
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  });
+
   /** Which section an entry is in. */
   function sectionOfEntry(entry: Entry): string {
     switch (entry.kind) {
