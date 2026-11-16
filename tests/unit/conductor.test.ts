@@ -5486,6 +5486,26 @@ describe("what a starter is told of a session its hooks report", () => {
 
   // Recorded: after one report, three waits in a row answered at once
   // with the same session in the same words while others still worked.
+  // A permission granted and a second asked in the same turn: the second
+  // is news, while another session works on.
+  it("tells each permission a session asks for within one turn", async () => {
+    const row = hooked("pty-1", "sid-1");
+    hooked("pty-2", "sid-2");
+    exact("sid-1", "permission");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 is asking for permission. It has left no line.");
+    // Granted: the prompt closes and the agent goes on.
+    output(row.key, WORK_BYTES * 2);
+    flushSync();
+    expect(row.working).toBe(true);
+    exact("sid-1", "permission");
+    flushSync();
+    expect(await waitsOut()).toBe("Session sid-1 is asking for permission. It has left no line.");
+    exact("sid-1", "stop", "Done");
+    flushSync();
+    expect(await waitsOut()).toBe('Session sid-1 stopped working. Its last line: "Done"');
+  });
+
   it("tells a stop once, and the next wait waits for the next turn's end", async () => {
     const row = hooked("pty-1", "sid-1");
     hooked("pty-2", "sid-2");

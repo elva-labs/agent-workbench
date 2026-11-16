@@ -1352,7 +1352,10 @@ function observe(session: Session) {
   else if (session.working) {
     mark.worked = true;
     mark.rest = null;
-    if (!session.exact) mark.told = null;
+    // At work again after a permission it was told of, the ask is over and
+    // the next one is news. Only the same quiet rest within one turn is
+    // not news twice.
+    if (!session.exact || mark.told !== "quiet") mark.told = null;
   } else mark.rest = mark.worked ? "quiet" : null;
   if (mark.rest === null) mark.seen = true;
   if (unheardMark(mark) !== before) moved();

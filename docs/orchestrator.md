@@ -115,9 +115,10 @@ usual. The next wait after a stop waits for the next thing that happens.
 For a session whose hooks report its turns, a stop is news again only once
 another turn of its own has begun, though it began and ended between two
 looks, or once it comes to rest another way, such as asking for
-permission; being seen at work again within the turn it was told of, as
-when a permission it asked for is granted, does not make the same stop
-news twice. A wait over all
+permission; being seen at work again within the turn it was told of does
+not make the same stop news twice. Each ask for a permission is news of
+its own: one granted and followed by another ask in the same turn is told
+again. A wait over all
 of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
 only when none of the others is still running. A wait naming a session the
