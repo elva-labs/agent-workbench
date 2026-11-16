@@ -413,7 +413,8 @@ remembered, and the open ones share the height.
 **Media** is what the agent has presented for the session on screen, one
 row per set of files under its caption, opening in the viewer. **Sessions
 it started** follows it while the session on screen has started sessions
-of its own, or may start more without being asked: a row for each, with
+of its own, may start more without being asked, or has worktrees its
+starts left behind: a row for each session, with
 what the orchestrator's board offers; the
 [orchestrator](orchestrator.md#in-the-panes) says what they are. It stands
 open until folded, and opens by itself when one of them asks for a
@@ -439,9 +440,14 @@ in the viewer, goes to a started session, or folds and unfolds a header,
 is in as they close and open a folder, and <kbd>End</kbd> is the last row of
 the column. Under the started sessions, <kbd>Enter</kbd> on a project they
 may be started in takes that back, and on the worktrees left behind asks to
-clean them up; a question or a line to send opened there takes the
-keyboard, and gives it back to the tree when it goes. The rows are not tab
-stops, and a click on one keeps the keyboard on the tree.
+clean them up. On a started session <kbd>Shift</kbd>+<kbd>Enter</kbd> opens
+the line to send it and <kbd>Delete</kbd> asks before stopping it, and
+<kbd>Delete</kbd> on the section's header asks before stopping them all; a
+question or a line to send opened there takes the keyboard, and gives it
+back to the tree when it goes. The cursor stays on its row while rows come
+and go around it, and a row that goes leaves it on the one that took its
+place in the same section. The rows are not tab stops, and a click on one
+keeps the keyboard on the tree.
 
 ## Inside the viewer
 
