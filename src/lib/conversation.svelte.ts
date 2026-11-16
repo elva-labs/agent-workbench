@@ -518,6 +518,8 @@ export class Conversation {
     const turn = this.turns[id];
     if (turn === undefined) return;
     turn.endedAt = turn.endedAt ?? turn.startedAt;
+    // It ended once the last of what was read of it was over.
+    let last = turn.endedAt ?? Number.NEGATIVE_INFINITY;
     for (const entry of this.entries) {
       if (entry.kind !== "agent" || entry.turn !== id) continue;
       for (const part of entry.parts) {
@@ -528,8 +530,10 @@ export class Conversation {
           part.result = part.output;
           part.inputDone = true;
         }
+        last = Math.max(last, part.until);
       }
     }
+    if (last > (this.turnEnded ?? Number.NEGATIVE_INFINITY)) this.turnEnded = last;
   }
 
   /** Every event of the session, in the order it came, at the time it
@@ -595,7 +599,10 @@ export class Conversation {
           at: now,
           until: now,
         });
-        this.#calls.set(event.call, parts[parts.length - 1] as ToolCall);
+        const made = parts[parts.length - 1] as ToolCall;
+        this.#calls.set(event.call, made);
+        // A task heard of before its call, from a snapshot, is the call's.
+        for (const task of this.tasks) if (task.call === event.call) made.tasks.push(task);
         break;
       }
       case "toolInput": {
@@ -849,6 +856,9 @@ export class Conversation {
       if (request.state === "open" && !open.has(request.request))
         this.#withdraw(request.request, now);
     for (const asked of snapshot.requests) this.#asked(asked, null);
+    // The subagents still at work, which no transcript holds: one whose
+    // call is not heard of yet joins it when it comes.
+    for (const started of snapshot.tasks ?? []) this.apply(started, now);
     for (const told of snapshot.messages) {
       const known = this.messages[told.message];
       if (known === undefined) {

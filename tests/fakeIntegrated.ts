@@ -288,6 +288,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     tasks: Map<string, Task>;
     /** Subagents at work, with the call that started each. */
     subagents: Map<string, string | null>;
+    /** The start of each subagent at work, as it went out. */
+    starts: Map<string, Extract<IntegratedEventBody, { type: "taskStarted" }>>;
     /** Open tool calls, with the subagent call each belongs to. */
     open: Map<string, string | null>;
     /** How much of each open call's input and output has streamed. */
@@ -464,6 +466,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         asked: new Map(),
         tasks: new Map(),
         subagents: new Map(),
+        starts: new Map(),
         open: new Map(),
         streamed: new Map(),
         reporting: false,
@@ -640,6 +643,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         }),
         limits: session.limits,
         resumedAt: session.resumedAt,
+        tasks: [...session.starts.values()],
       };
     },
 
@@ -817,10 +821,14 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
             background: body.background,
             ambient: body.ambient,
           });
-          if (body.kind === "agent" && !body.ambient) session.subagents.set(body.task, body.call);
+          if (body.kind === "agent" && !body.ambient) {
+            session.subagents.set(body.task, body.call);
+            session.starts.set(body.task, body);
+          }
           break;
         case "taskFinished":
           session.tasks.delete(body.task);
+          session.starts.delete(body.task);
           if (body.reports && !session.turn && body.status !== "lost") session.reporting = true;
           if (session.subagents.has(body.task)) {
             const call = session.subagents.get(body.task) ?? null;
