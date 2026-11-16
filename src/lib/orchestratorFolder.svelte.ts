@@ -71,6 +71,16 @@ export function folderShown(onScreen: string | null): string | null {
   return historyFor(dir).length > 0 || onScreen === dir ? dir : null;
 }
 
+/** The folder while its past sessions are read: until it is closed, and
+    after that while a session of it has a row, which lists it again and
+    needs its past sessions to be drawn among the projects. Null
+    otherwise. */
+export function folderToRead(): string | null {
+  const dir = orchestratorFolder.dir;
+  if (dir === null) return null;
+  return !orchestratorFolder.closed || forProject(dir).length > 0 ? dir : null;
+}
+
 /** The user closed the folder: it leaves the pane for good. */
 export function closeFolder() {
   orchestratorFolder.closed = true;

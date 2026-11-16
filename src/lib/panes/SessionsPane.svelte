@@ -52,7 +52,7 @@
     workspace,
   } from "$lib/workspace.svelte";
   import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
-  import { folderShown, orchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
+  import { folderShown, folderToRead, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
     placeTextOf,
     startedFor,
@@ -1230,8 +1230,8 @@
   // when this window does.
   $effect(() => {
     const wanted = workspace.open.map((project) => project.path);
-    const dir = orchestratorFolder.dir;
-    if (dir !== null && !orchestratorFolder.closed) wanted.push(dir);
+    const dir = folderToRead();
+    if (dir !== null) wanted.push(dir);
     void loadMissingHistories(wanted);
   });
 

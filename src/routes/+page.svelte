@@ -28,7 +28,7 @@
   } from "$lib/conductor.svelte";
   import { handle as browserRequested } from "$lib/browserTools.svelte";
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
-  import { load as loadOrchestratorFolder, orchestratorFolder } from "$lib/orchestratorFolder.svelte";
+  import { folderToRead, load as loadOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import { core } from "$lib/core";
   import { ensure as ensureHooks } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
@@ -307,7 +307,7 @@
     offs.push(followCwd());
     offs.push(
       followHistory(() => {
-        const dir = orchestratorFolder.closed ? null : orchestratorFolder.dir;
+        const dir = folderToRead();
         const open = workspace.open.map((project) => project.path);
         const due = untrack(() => historyDue(open, workspace.active));
         return dir === null ? due : [...due, dir];

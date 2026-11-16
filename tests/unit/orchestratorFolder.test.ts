@@ -39,6 +39,7 @@ vi.mock("$lib/core", () => ({
 import {
   closeFolder,
   folderShown,
+  folderToRead,
   isOrchestratorFolder,
   load,
   orchestratorFolder,
@@ -172,6 +173,19 @@ describe("the orchestrator folder", () => {
     expect(workspace.open.map((project) => project.path)).toEqual([A]);
     expect(workspace.active).toBe(DIR);
     expect(JSON.parse(localStorage.getItem("workbench.workspace")!)).toEqual({ open: [A], active: DIR });
+  });
+
+  // Its past sessions are what draw it among the projects, so they are
+  // read while it is listed: until it is closed, and after that while a
+  // session of it has a row.
+  it("has its past sessions read while it may be listed", () => {
+    expect(folderToRead()).toBe(DIR);
+    closeFolder();
+    expect(folderToRead()).toBeNull();
+    create(DIR, "old-1", "claude-code", null);
+    expect(folderToRead()).toBe(DIR);
+    resetFolder();
+    expect(folderToRead()).toBeNull();
   });
 
   it("reads the close back on the next start", async () => {

@@ -787,6 +787,35 @@ test.describe("the orchestrator folder", () => {
     await expect(page.getByTestId("project-head")).toHaveCount(1);
     await expect(folder(page)).toHaveCount(0);
   });
+
+  // A session left open there at the last quit comes back as a row, the
+  // folder listed with it, whether or not it was closed since and however
+  // long ago it was last used, as after a run of the version before.
+  for (const closed of [false, true]) {
+    test(`comes back with a session left open there at the last quit${closed ? ", closed since" : ""}`, async ({ page }) => {
+      await page.addInitScript(
+        ({ dir, closed }) => {
+          if (localStorage.getItem("workbench.open") !== null) return;
+          localStorage.setItem(
+            "workbench.open",
+            JSON.stringify({
+              open: [{ project: dir, id: "old-plan", agent: "claude-code", startIn: null, model: null }],
+              active: "old-plan",
+            }),
+          );
+          if (closed) localStorage.setItem("workbench.orchestratorFolder", JSON.stringify({ closed: true }));
+        },
+        { dir: ORCHESTRATOR_FOLDER, closed },
+      );
+      await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST, used: { [PROJECT]: 0 } });
+      await page.goto("/");
+      await expect(folder(page)).toBeVisible();
+      const section = page.locator("section.proj").filter({ has: folder(page) });
+      await expect(section.getByTestId("session-row")).toHaveCount(1);
+      await expect(section.getByTestId("session-row")).toContainText("was open, starts when selected");
+      await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+    });
+  }
 });
 
 test.describe("a started session in a project of its own", () => {
