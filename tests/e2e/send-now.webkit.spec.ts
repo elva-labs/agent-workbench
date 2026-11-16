@@ -436,13 +436,19 @@ test("says Codex's messages are on their way until Codex takes them", async ({ p
 
 for (const look of ["modern", "terminal"] as const) {
   test(`keeps Send now and Take back together when the line wraps, in the ${look} look`, async ({ page }) => {
-    await page.setViewportSize({ width: 900, height: 720 });
     await open(page, { look });
     await busy(page, "first", "second");
-    await agent(page, `f.ask("${H}", "Bash", { command: "ls" });`);
-    await agent(page, `f.answer("${H}", f.events.findLast((e) => e.type === "permissionAsked").request, "allow");`);
     const lastLine = page.getByTestId("message-waiting").last();
-    // The line is too long for one row at this width.
+    // Narrowed to end just past Send now, whatever the font, so the line
+    // has to break before Take back.
+    await lastLine.evaluate((line) => {
+      const send = line.querySelector("[data-testid='send-now']")!.getBoundingClientRect();
+      const words = document.createRange();
+      words.selectNodeContents([...line.childNodes].find((node) => node.nodeType === Node.TEXT_NODE && node.textContent!.trim() !== "")!);
+      line.style.boxSizing = "content-box";
+      line.style.marginLeft = "auto";
+      line.style.width = `${send.right - words.getBoundingClientRect().left + 2}px`;
+    });
     const rows = await lastLine.evaluate((line) => line.getBoundingClientRect().height / parseFloat(getComputedStyle(line).lineHeight));
     expect(rows).toBeGreaterThan(1.5);
     const send = (await lastLine.getByTestId("send-now").boundingBox())!;
