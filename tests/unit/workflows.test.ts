@@ -91,7 +91,8 @@ describe("a fresh window", () => {
     expect(direct.steps).toEqual([{ kind: "work", name: "Work", models: [], parallel: 8 }]);
     expect(startsOnly(direct)).toBe(true);
     expect(workflowProblem(direct)).toBeNull();
-    expect(workflowGist(direct)).toBe("Fable directs, Any model works");
+    expect(workflowGist(direct)).toBe("Fable directs, any model works");
+    expect(stepsGist(direct)).toBe("any model works");
   });
 
   it("takes the core's workflows, and drops a choice that names one it does not hold", () => {

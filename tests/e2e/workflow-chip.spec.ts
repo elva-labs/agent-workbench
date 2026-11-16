@@ -96,7 +96,7 @@ test("offers the shipped workflows on a fresh install, Direct among them", async
   await expect(options(page).locator(".about")).toHaveText([
     "Claude works alone, on the model you pick",
     "Fable directs, Sonnet works, Opus reviews",
-    "Fable directs, Any model works",
+    "Fable directs, any model works",
   ]);
 
   // Picked, the session starts again as Direct's orchestrator, told it.

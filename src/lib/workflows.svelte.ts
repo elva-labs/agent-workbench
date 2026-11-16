@@ -292,7 +292,7 @@ function stepGists(workflow: Workflow): string[] {
 }
 
 function gistModel(model: WorkflowModel | undefined): string {
-  return model === undefined ? "Any model" : modelLabel(model.agent, model.model);
+  return model === undefined ? "any model" : modelLabel(model.agent, model.model);
 }
 
 /** A workflow in a few words: the model each part runs on first, and what
