@@ -1934,12 +1934,14 @@ for (const linux of [false, true]) {
       const pane = (await box(page, AGENT))!;
       expect(Math.round(pane.width)).toBe(420 + (await controlsRoom(page)));
       // Nothing past the pane's edges but what scrolls inside it, the code,
-      // and the window's own controls, which stand in the window's corner.
+      // the window's own controls, which stand in the window's corner, and
+      // what is there for a screen reader alone and draws nothing.
       const outside = await page.evaluate((AGENT) => {
         const edge = document.querySelector(AGENT)!.getBoundingClientRect();
         return [...document.querySelectorAll<HTMLElement>(`${AGENT} *`)]
           .filter((el) => el.closest("pre") === null)
           .filter((el) => el.closest("[data-testid='window-controls']") === null)
+          .filter((el) => getComputedStyle(el).clipPath !== "inset(50%)")
           .filter((el) => {
             const box = el.getBoundingClientRect();
             return box.width > 0 && (box.right > edge.right + 0.5 || box.left < edge.left - 0.5);
