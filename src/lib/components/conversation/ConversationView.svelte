@@ -306,10 +306,10 @@
   }
 
   /* The thread and the composer span the pane, with a gutter that grows a
-     little with it; inside the pane's container, so the gutter follows
-     the pane's own width. */
+     little with it: a fortieth of the pane's own width, as the view
+     measures it. */
   .conv > :global(*) {
-    --conv-gutter: clamp(24px, 2.5cqi, 48px);
+    --conv-gutter: clamp(24px, calc(var(--conv-width, 100vw) / 40), 48px);
   }
 
   .conv.narrow .foot {
