@@ -5,7 +5,7 @@
  *
  * Both follow the moment a session's row goes unread, and only while the
  * window does not have focus: in a focused window the row, the status bar
- * and the agent pane already say it. A session an orchestrator started
+ * and the agent pane already say it. A session another session started
  * goes unread only for a permission, so only that reaches the user this
  * way. Whether either is on is the user's to say, in the settings, and
  * not an agent's.
@@ -13,7 +13,6 @@
 
 import { attention } from "$lib/attention.svelte";
 import { core, type Settings } from "$lib/core";
-import { isConductor, LABEL } from "$lib/orchestrator.svelte";
 import { persist } from "$lib/persist";
 import { label, type Session } from "$lib/sessions.svelte";
 import { projectLabel } from "$lib/workspace.svelte";
@@ -51,7 +50,7 @@ export function setChime(on: boolean) {
 
 /** The notification's title: the project, then the session's name. */
 export function titleFor(session: Session): string {
-  const project = isConductor(session) ? LABEL : projectLabel(session.project);
+  const project = projectLabel(session.project);
   return `${project} · ${label(session)}`;
 }
 

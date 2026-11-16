@@ -140,8 +140,8 @@ export function settleWhen(restored: Promise<unknown>): Promise<void> {
  */
 export function reopen(
   arriving: ReadonlyMap<string, Promise<void>> = new Map(),
-  /** The orchestrator's directory once it is known: its sessions are on
-      record like any project's, though it is never an open project. */
+  /** The orchestrator folder once it is known: its sessions are on record
+      like any project's, though it is never an open project. */
   conductor: Promise<string | null> | null = null,
 ): () => void {
   const { open, active } = read();
@@ -195,9 +195,9 @@ export function reopen(
     restoredInFront();
   };
 
-  // A session in a folder that is not open may be the orchestrator's, which
-  // is known only once the core says where it is: it stays on record until
-  // then.
+  // A session in a folder that is not open may be in the orchestrator
+  // folder, which is known only once the core says where it is: it stays
+  // on record until then.
   const waiting = open.filter(
     (entry) => !isOpen(entry.project) && (arriving.has(entry.project) || conductor !== null),
   );

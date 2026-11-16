@@ -37,9 +37,9 @@ session on a remote machine runs under directories on that machine.
 
 Every session is given a token the workbench chose, in its environment as
 `WORKBENCH_SESSION`, with `WORKBENCH_ROLE` beside it for a session that
-directs the others. The tool server and the hooks read both, and every call
-they make names the session by its token; see [who is
-calling](orchestrator.md#who-is-calling). Claude Code passes its whole
+follows a workflow, which directs the others. The tool server and the hooks
+read both, and every call they make names the session by its token; see
+[who is calling](orchestrator.md#who-is-calling). Claude Code passes its whole
 environment to the servers it starts. Codex passes a server only the
 variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the

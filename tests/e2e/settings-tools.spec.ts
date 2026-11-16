@@ -241,6 +241,7 @@ test.describe("workflows", () => {
     await page.getByTestId("settings-allow").click();
     await expect.poll(async () => (await file(page)).workflows.list.map((w: { name: string }) => w.name)).toEqual([
       "Build and review",
+      "Direct",
       "Quick fix",
     ]);
     await expect.poll(() => answerTo(page, "w-2")).not.toBeNull();

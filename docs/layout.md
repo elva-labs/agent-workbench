@@ -227,9 +227,12 @@ keeps every row where it stands when open: each project's name, cut at the
 column's edge and without the part of the path that tells two projects of
 one name apart, and under it the dots of its sessions, each in its own row,
 on macOS with the start of the session's name beside its dot, fading out
-at the column's edge. The rest of the rows keep their height and show
-nothing, so the dots stay with their heading and nothing moves when the
-pane opens again. Its header row is part of the band of ground the headers
+at the column's edge. A session's subagents are not rows there but a small
+dot each, packed beside its rail where their rows stand, the first always
+clear of the fading edge, and told apart by shape as well as colour; see
+[subagents on the rail](sessions.md#subagents-on-the-rail). The rest of
+the rows keep their height and show nothing, so the dots stay with their
+heading and nothing moves when the pane opens again. Its header row is part of the band of ground the headers
 lie on, with no rule under it in the modern look, and on Windows and Linux
 the menu button stands in it. Between the column and the pane beside it is
 the plain gap: there is nothing to drag.
@@ -488,8 +491,8 @@ remembered, and the open ones share the height.
 row per set of files under its caption, opening in the viewer. **Sessions
 it started** follows it while the session on screen has started sessions
 of its own, may start more without being asked, or has worktrees its
-starts left behind: a row for each session, with
-what the orchestrator's board offers; the
+starts left behind: a row for each session, with the controls to stop
+them, send them a line and clean up after them; the
 [orchestrator](orchestrator.md#in-the-panes) says what they are. It stands
 open until folded, and opens by itself when one of them asks for a
 permission. **Processes** is

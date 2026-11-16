@@ -272,6 +272,12 @@ export function stepTitle(
   }
 }
 
+/** A call's input as far as it is known: whole, or the fields that have
+    closed while it streams. */
+export function callInput(call: ToolCall): unknown {
+  return call.inputDone ? call.input : partialInput(call.inputText);
+}
+
 /** The fields of an input still streaming as JSON, as far as they parse. */
 function partialInput(text: string): unknown {
   if (text === "") return null;

@@ -28,8 +28,8 @@ let unwatch = () => {};
 const answers: { id: string; content: string | null; error: string | null }[] = [];
 let calls = 0;
 
-/** The orchestrator's own directory, where the caller runs. */
-const C = "/home/ada/.agent-workbench/orchestrator";
+/** The project the caller runs in. */
+const C = "/home/ada/dev/lead";
 
 /** The session the calls come from unless a test says otherwise, made
     when the first call is: a terminal session named Planner, whose tools

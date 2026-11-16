@@ -44,6 +44,7 @@
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
+  import { startsIn } from "$lib/orchestratorFolder.svelte";
   import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
 
@@ -329,6 +330,12 @@
       <div class="overlay" data-testid="agent-status">
         <p class="message">Open a project to start a session.</p>
       </div>
+    {:else if current === null && !startsIn(workspace.active)}
+      <!-- The orchestrator folder: its sessions are there to read and
+           resume, and nothing new starts in it. -->
+      <div class="overlay" data-testid="agent-status">
+        <p class="message">No session open. Resume a past one from the list.</p>
+      </div>
     {:else if current === null}
       <div class="overlay" data-testid="agent-status">
         <p class="message">No session open. Resume a past one from the list, or start a new one.</p>
@@ -346,7 +353,7 @@
             >Resume without a workflow</button
           >
         {/if}
-        {#if current.status !== "starting"}
+        {#if current.status !== "starting" && startsIn(current.project)}
           {@render starters()}
         {/if}
       </div>

@@ -114,6 +114,7 @@ vi.mock("$lib/workspace.svelte", async (original) => {
   return { ...actual, startSession: vi.fn(actual.startSession) };
 });
 import { workspace, reset as resetWorkspace, startSession } from "$lib/workspace.svelte";
+import { resetFolder } from "$lib/orchestratorFolder.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import {
   reset as resetSessions,
@@ -1780,6 +1781,24 @@ describe("ChangesPane without git", () => {
     workspace.active = "/repo";
     await renderChanges();
     expect(screen.queryByTestId("not-git")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("folder-notice")).not.toBeInTheDocument();
+  });
+
+  // The orchestrator folder is no open project, so the pane has nothing
+  // of it to watch, and says why rather than an empty tree alone.
+  it("says the orchestrator folder is no project to show changes for", async () => {
+    const folder = "/home/ada/.agent-workbench/orchestrator";
+    resetFolder(folder);
+    try {
+      workspace.active = folder;
+      render(ChangesPane);
+      expect(await screen.findByTestId("folder-notice")).toHaveTextContent(
+        "This folder holds sessions to resume. It is not a project, so there are no changes to show.",
+      );
+      expect(screen.queryByTestId("not-git")).not.toBeInTheDocument();
+    } finally {
+      resetFolder();
+    }
   });
 });
 

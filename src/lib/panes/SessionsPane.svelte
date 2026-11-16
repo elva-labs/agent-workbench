@@ -51,16 +51,8 @@
     startSession,
     workspace,
   } from "$lib/workspace.svelte";
-  import {
-    LABEL,
-    childrenOf,
-    conducting,
-    conductors,
-    isAsking,
-    orchestrator,
-    ownFor,
-    parentOf,
-  } from "$lib/orchestrator.svelte";
+  import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
+  import { folderShown, folderToRead, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
     placeTextOf,
     startedFor,
@@ -97,6 +89,11 @@
   import { flip } from "svelte/animate";
   import { rowFade, rowMove } from "$lib/motion";
   import { overrideOf, workflowOf } from "$lib/workflows.svelte";
+  import { linkOf } from "$lib/integrated.svelte";
+  import { subagentNote, subagentSaid, subagentWords, subagentsOf, type Subagent } from "$lib/subagents";
+  import { showCall } from "$lib/callShown.svelte";
+  import Plain from "$lib/components/conversation/Plain.svelte";
+  import Icon from "$lib/components/conversation/Icon.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -116,6 +113,7 @@
       opens under the project's name, the cursor on the agent the project
       used last and the account the project runs under. */
   function offer(path: string) {
+    if (!startsIn(path)) return;
     if (!choosable) {
       startSession(path);
       return;
@@ -224,16 +222,22 @@
       is not drawn as on screen while its starter's is. */
   let screenProject = $derived(onScreen());
 
-  /** The projects under the orchestrator's own: opening the directory it
-      runs in is opening the project already pinned above them, and it is
-      drawn once. They are split into the ones in use and the ones folded
-      under Inactive, each in the order the sort menu says. The project on
-      screen is in use, and while the session on screen hangs under its
-      starter in another project, that is the starter's. */
+  /** The orchestrator folder, while it is listed: a project like the ones
+      you opened, though nothing new starts in it. */
+  let folder = $derived.by((): ProjectInfo | null => {
+    const dir = folderShown(screenProject);
+    if (dir === null) return null;
+    return { path: dir, name: lastSegment(dir), repository: null, isGit: true };
+  });
+
+  /** The projects, the orchestrator folder among them while it is listed,
+      split into the ones in use and the ones folded under Inactive, each
+      in the order the sort menu says. The project on screen is in use, and
+      while the session on screen hangs under its starter in another
+      project, that is the starter's. */
   let split = $derived.by(() => {
-    const byPath = new Map(
-      workspace.open.filter((project) => project.path !== orchestrator.dir).map((project) => [project.path, project]),
-    );
+    const byPath = new Map(workspace.open.map((project) => [project.path, project]));
+    if (folder !== null && !byPath.has(folder.path)) byPath.set(folder.path, folder);
     const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
@@ -331,8 +335,8 @@
   }
 
   /** The menu beside the sort on the title's row: the ways to open a
-      project, to start an orchestrator, and the settings. Its keyboard
-      cursor walks the items while it is open. */
+      project, and the settings. Its keyboard cursor walks the items while
+      it is open. */
   let menuOpen = $state(false);
   let menuAt = $state(0);
 
@@ -359,12 +363,6 @@
       run: openRemote,
     },
     {
-      id: "menu-orchestrator",
-      label: "New orchestrator session",
-      disabled: orchestrator.dir === null || !isReady(),
-      run: startOrchestrator,
-    },
-    {
       id: "menu-settings",
       label: "Settings…",
       chord: describe(chordFor("settings")),
@@ -384,9 +382,11 @@
     if (projectMenu === null) return [];
     const path = projectMenu.path;
     const agent = defaultAgent(path);
-    const other = otherWay(path);
+    const other = startsIn(path) ? otherWay(path) : null;
     return [
-      { id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) },
+      ...(startsIn(path)
+        ? [{ id: "project-menu-new", label: "New session", disabled: !isReady(), run: () => startIn(path) }]
+        : []),
       // One session the other way from New session, alone.
       ...(other === null
         ? []
@@ -480,28 +480,6 @@
     hasAccounts() && activeSession() !== null ? accountLabel(activeSession()?.account ?? null) : null,
   );
 
-  /** A session in the orchestrator's own project, from the menu: the project
-      comes forward, and a session starts there as its header's + would. */
-  function startOrchestrator() {
-    const dir = orchestrator.dir;
-    if (dir === null) return;
-    bringForward(dir);
-    offer(dir);
-  }
-
-  /** The orchestrator's own project, while it has something to show: a
-      session of its own, or one to resume there. With neither it is not
-      drawn, and the menu is the way to the first one. */
-  let pinned = $derived.by(() => {
-    const dir = orchestrator.dir;
-    if (dir === null) return null;
-    // Active counts too: choosing the agent for the first one happens
-    // under the project's own row, which has to be there to hold it.
-    const shows =
-      conductors().length > 0 || historyFor(dir).length > 0 || screenProject === dir;
-    return shows ? dir : null;
-  });
-
   /** The sessions whose started sessions are folded into dots on their
       own row rather than hanging under it. Open is how a parent starts,
       and nothing about it is remembered. */
@@ -534,10 +512,7 @@
   function newsTitle(starter: Session, news: Session[]): string {
     const what = (kid: Session) =>
       !isLive(kid) ? "ended" : kid.needs === "permission" ? "is asking" : "stopped";
-    const told =
-      starter.kind === "integrated" ||
-      isInstalled(starter.project) ||
-      starter.project === orchestrator.dir;
+    const told = starter.kind === "integrated" || isInstalled(starter.project);
     const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
     const woken = wakesSpent(starter)
       ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
@@ -654,7 +629,6 @@
           : { entries, hidden },
       );
     };
-    if (pinned !== null) keep(pinned);
     for (const project of split.active) keep(project.path);
     shownBodies = out;
     return out;
@@ -701,7 +675,8 @@
     run: () => void;
   }
 
-  let rows = $derived.by(() => {
+  /** Every row but the subagents', in the order the pane shows them. */
+  let walk = $derived.by(() => {
     const out: Row[] = [
       { id: "sort", run: openSort },
       { id: "menu", run: openMenu },
@@ -709,11 +684,6 @@
       { id: "new", run: newFromHead },
     ];
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
-    const dir = pinned;
-    if (dir !== null) {
-      out.push({ id: `project:${dir}`, run: () => bringForward(dir) });
-      out.push(...body(dir));
-    }
     for (const project of split.active) {
       const path = project.path;
       out.push({ id: `project:${path}`, run: () => bringForward(path) });
@@ -731,6 +701,161 @@
     }
     return out;
   });
+
+  /** Every row, a session's subagents right under it. */
+  let rows = $derived.by(() => {
+    const out: Row[] = [];
+    for (const row of walk) {
+      out.push(row);
+      if (!row.id.startsWith("session:")) continue;
+      const key = row.id.slice("session:".length);
+      for (const one of subGroups.get(key) ?? []) out.push({ id: subId(key, one.call), run: () => openSubagent(key, one.call) });
+    }
+    return out;
+  });
+
+  /** A subagent's row id: its session's key and the call that started it. */
+  function subId(key: string, call: string): string {
+    return `sub:${key}\n${call}`;
+  }
+
+  /** The session a subagent's row hangs under, by its row id. */
+  function subOwner(id: string): string | null {
+    if (!id.startsWith("sub:")) return null;
+    const cut = id.indexOf("\n");
+    return cut === -1 ? null : id.slice("sub:".length, cut);
+  }
+
+  /** A session's subagents as its conversation has them. Only an
+      integrated Claude Code session's are known: Codex's run as threads
+      of their own that the window does not follow, and a terminal's hooks
+      do not say enough. */
+  function liveSubagents(session: Session): Subagent[] {
+    if (session.kind !== "integrated" || session.agent !== "claude-code" || !isLive(session)) return [];
+    const link = linkOf(session.key);
+    return link === null ? [] : subagentsOf(link.conversation);
+  }
+
+  /** The row the pointer is on, by its row id, while it is in the pane. */
+  let pointed = $state<string | null>(null);
+
+  function onPointerover(e: PointerEvent) {
+    pointed = (e.target as HTMLElement).closest<HTMLElement>("[data-row]")?.dataset.row ?? null;
+  }
+
+  /** The subagents each session's rows show last drawn, by its key. */
+  const shownSubs = new Map<string, Subagent[]>();
+
+  /** Where the pointer and the keyboard are in the order of the rows: a
+      subagent's row counts as just under its session's. */
+  function anchors(): number[] {
+    const at = (id: string | null): number | null => {
+      if (id === null) return null;
+      const owner = subOwner(id);
+      const index = walk.findIndex((row) => row.id === (owner === null ? id : `session:${owner}`));
+      return index === -1 ? null : owner === null ? index : index + 0.5;
+    };
+    const keys = walking ? (cursor ?? (sessions.active === null ? null : `session:${sessions.active}`)) : null;
+    return [at(keys), pointerIn ? at(pointed) : null].filter((index) => index !== null);
+  }
+
+  /**
+   * The subagents each session's rows show, by its key. They come and go
+   * as the conversations say, except where that would move the row under
+   * the pointer or the keyboard's place: a session's rows above either
+   * keep what they show until both have moved off or away. Kept, a row
+   * that has gone stays, its subagent as done, and one that has come
+   * waits, while each row kept shows its subagent as it now stands.
+   */
+  let subGroups = $derived.by(() => {
+    const held = anchors();
+    const out = new Map<string, Subagent[]>();
+    for (const [index, row] of walk.entries()) {
+      if (!row.id.startsWith("session:")) continue;
+      const key = row.id.slice("session:".length);
+      const session = byKey(key);
+      const live = session === null ? [] : liveSubagents(session);
+      const before = shownSubs.get(key) ?? [];
+      const drawn = held.some((at) => at > index) ? kept(before, live) : live;
+      if (drawn.length > 0) out.set(key, drawn);
+    }
+    shownSubs.clear();
+    for (const [key, drawn] of out) shownSubs.set(key, drawn);
+    return out;
+  });
+
+  /** The rows drawn before, each with its subagent as it now stands, or
+      as done once it has gone. */
+  function kept(before: Subagent[], live: Subagent[]): Subagent[] {
+    const now = new Map(live.map((one) => [one.call, one]));
+    return before.map(
+      (one) => now.get(one.call) ?? (one.state === "running" || one.state === "asking" ? { ...one, state: "done" } : one),
+    );
+  }
+
+  /** Picking a subagent's row opens its session at the call that started
+      it, the call open and marked. */
+  function openSubagent(key: string, call: string) {
+    if (!goTo(key)) return;
+    showCall(key, call);
+    focusPane("agent");
+  }
+
+  /** What a screen reader is told of subagents as they start, politely:
+      each session's starts gathered over a moment and said in one line,
+      each subagent once, and none whose call was made before the pane
+      came, as those read from what a conversation said before were. */
+  let subagentSaidNow = $state("");
+  const toldOf = new Set<string>();
+  const cameAt = Date.now();
+  /** How long starts are gathered before they are said. */
+  const GATHER_MS = 1500;
+  /** The starts gathered, by session, with the session's name and what
+      each was asked. */
+  let gathered = new Map<string, { name: string; about: (string | null)[] }>();
+  let gathering: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    for (const session of sessions.all)
+      for (const one of liveSubagents(session)) {
+        if (toldOf.has(one.call)) continue;
+        if (one.began < cameAt) {
+          toldOf.add(one.call);
+          continue;
+        }
+        // What it was asked is said once the call says it.
+        if (one.about === null && one.state === "running") continue;
+        toldOf.add(one.call);
+        if (one.state === "running" || one.state === "asking") untrack(() => gather(session, one.about));
+      }
+  });
+
+  $effect(() => () => {
+    if (gathering !== null) clearTimeout(gathering);
+  });
+
+  function gather(session: Session, about: string | null) {
+    const held = gathered.get(session.key) ?? { name: label(session), about: [] };
+    held.about.push(about === null ? null : shown(about));
+    gathered.set(session.key, held);
+    gathering ??= setTimeout(sayGathered, GATHER_MS);
+  }
+
+  function sayGathered() {
+    gathering = null;
+    const lines = [...gathered.values()].map(({ name, about }) =>
+      about.length === 1
+        ? `${name} started a subagent${about[0] === null ? "" : ` for ${about[0]}`}.`
+        : `${name} started ${about.length} subagents.`,
+    );
+    gathered = new Map();
+    const text = lines.join(" ");
+    if (subagentSaidNow !== text) subagentSaidNow = text;
+    else {
+      subagentSaidNow = "";
+      queueMicrotask(() => (subagentSaidNow = text));
+    }
+  }
 
   /** A project's rows in the order drawn: its sessions, each with the
       sessions it started under it, the quiet rows and the fold of the
@@ -755,7 +880,7 @@
     const more = `more:${path}`;
     if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
     if (screenProject !== path) return out;
-    if (path !== orchestrator.dir && outsideFor(path).length > 0) {
+    if (outsideFor(path).length > 0) {
       out.push({ id: `earlier:${path}`, run: () => openResume(path) });
     }
     return out;
@@ -797,10 +922,7 @@
     if (id.startsWith("idle:")) {
       void closeProjectAsking(id.slice("idle:".length));
     } else if (id.startsWith("project:")) {
-      // The orchestrator's own project has no close button, and nothing
-      // here closes it either.
-      const path = id.slice("project:".length);
-      if (path !== orchestrator.dir) void closeProjectAsking(path);
+      void closeProjectAsking(id.slice("project:".length));
     } else if (id.startsWith("session:")) {
       // A session another started hangs quietly on its rail: the cursor
       // walks through those rows, and a key pressed on the way past is no
@@ -1004,10 +1126,16 @@
   }
 
   /** Left and Right on a session that started others fold its started
-      sessions into dots and let them out again; Left on one of those
-      climbs to the session that started it. False when the row under the
-      cursor is neither. */
+      sessions into dots and let them out again; Left on one of those, or
+      on a subagent's row, climbs to the session it hangs under. False
+      when the row under the cursor is none of these. */
   function onRail(left: boolean): boolean {
+    const owner = current === null ? null : subOwner(current);
+    if (owner !== null) {
+      if (!left) return false;
+      cursor = `session:${owner}`;
+      return true;
+    }
     const session = current?.startsWith("session:") ? byKey(current.slice("session:".length)) : null;
     if (session === null) return false;
     const parent = parentOf(session);
@@ -1102,7 +1230,7 @@
   // when this window does.
   $effect(() => {
     const wanted = workspace.open.map((project) => project.path);
-    const dir = orchestrator.dir;
+    const dir = folderToRead();
     if (dir !== null) wanted.push(dir);
     void loadMissingHistories(wanted);
   });
@@ -1187,6 +1315,7 @@
     };
     const leave = () => {
       pointerIn = false;
+      pointed = null;
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
@@ -1227,9 +1356,16 @@
   {@const news = unheard(session)}
   {@const woken = wokenBy(session)}
   {@const folded = kids.length > 0 && collapsed[session.key] === true}
+  {@const drawnSubs = subGroups.get(session.key) ?? []}
+  <!-- Said of the rows drawn, so the line and the rows agree while they
+       hold still. -->
+  {@const subsSaid =
+    folded || session.note !== null || kids.length > 0 || news.length > 0 || drawnSubs.length === 0
+      ? null
+      : subagentWords(drawnSubs)}
   {@const line = folded
     ? startedWords(kids)
-    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : null))}
+    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : subsSaid))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"
@@ -1267,11 +1403,15 @@
         <span class="second">
           <span
             class="note"
-            class:asking={owned ? session.needs === "permission" : kids.some(isAsking)}
+            class:asking={owned
+              ? session.needs === "permission"
+              : subsSaid !== null
+                ? drawnSubs.some((one) => one.state === "asking")
+                : kids.some(isAsking)}
             class:first-say={news.length > 0}
             class:shares={!folded && news.length === 0 && woken !== null}
             title={line}
-            data-testid={owned ? "session-note" : "orchestrator-summary"}>{line}</span
+            data-testid={owned ? "session-note" : subsSaid !== null ? "subagent-summary" : "orchestrator-summary"}>{line}</span
           >
           {#if news.length > 0}
             <!-- What it has not heard from the sessions it started, while it
@@ -1345,6 +1485,83 @@
   </div>
 {/snippet}
 
+<!-- A session's subagents, hanging under it on a rail of their own while
+     they run, one line each: the state, the agent's glyph, what it was
+     asked, which is the agent's text and drawn as it is, its kind while it
+     runs or its state in a word after, asking in the accent, and when that
+     last changed. A started session's hang one step further in, under its
+     own row. One done stays greyed until its session's turn ends. A
+     subagent is a run inside its session, not a session: it has no × and
+     cannot be typed into, and its row opens the session at the call that
+     started it. Folded to the narrow column, the rows keep their height
+     and show only a dot for each, packed together. -->
+{#snippet subagents(owner: Session, deep: boolean, pass: boolean, more: boolean)}
+  {@const subs = subGroups.get(owner.key) ?? []}
+  {#if subs.length > 0}
+    <div class="subs" class:deep data-testid="subagent-rail">
+      {#if pass}<span class="rail-pass" aria-hidden="true"></span>{/if}
+      {#if more}<span class="rail-through" aria-hidden="true"></span>{/if}
+      <span class="sub-dots" aria-hidden="true" data-testid="subagent-dots"
+        >{#each subs as one (one.call)}<span
+            class="dot mini"
+            class:live={one.state === "running" || one.state === "asking"}
+            class:working={one.state === "running"}
+            class:permission={one.state === "asking"}
+            class:over={one.state === "done" || one.state === "stopped"}
+            class:bad={one.state === "failed"}
+          ></span>{/each}</span
+      >
+      {#each subs as one, index (one.call)}
+        {@const id = subId(owner.key, one.call)}
+        {@const note = subagentNote(one)}
+        {@const over = one.state !== "running" && one.state !== "asking"}
+        <div
+          class="session sub"
+          class:first={index === 0}
+          class:over
+          class:cursor={current === id}
+          data-row={id}
+          in:rowFade|local
+          out:rowFade|local
+        >
+          <span class="rail-in" aria-hidden="true"></span>
+          {#if index < subs.length - 1 || more}<span class="rail-on" aria-hidden="true"></span>{/if}
+          <button
+            class="row sub-row"
+            tabindex="-1"
+            onclick={() => openSubagent(owner.key, one.call)}
+            title={one.about === null ? undefined : shown(one.about)}
+            aria-label={subagentSaid(one)}
+            data-testid="subagent-row"
+            data-state={one.state}
+          >
+            <span
+              class="dot"
+              class:live={!over}
+              class:working={one.state === "running"}
+              class:permission={one.state === "asking"}
+              class:bad={one.state === "failed"}
+            ></span>
+            <span class="sub-glyph"><Icon name="agent" size={11} /></span>
+            <span class="label sub-label" data-testid="subagent-about"
+              >{#if one.about === null}Subagent{:else}<Plain text={one.about} />{/if}</span
+            >
+            {#if note !== null}
+              <span
+                class="sub-note"
+                class:asking={one.state === "asking"}
+                class:bad={one.state === "failed"}
+                data-testid="subagent-note">{#if one.state === "running"}<Plain text={note} />{:else}{note}{/if}</span
+              >
+            {/if}
+            <span class="when">{since(one.at, now)}</span>
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+{/snippet}
+
 <!-- The sessions a session started, hanging under it on a rail from its
      dot, one line each: the state, the name, the account it runs under
      when that is not its project's, the project it runs in when that is
@@ -1358,7 +1575,7 @@
   {@const kids = childrenOf(parent)}
   {@const news = unheard(parent)}
   {#if kids.length > 0 && !collapsed[parent.key]}
-    <div class="kids" data-testid="started-rail">
+    <div class="kids" class:after-subs={subGroups.has(parent.key)} data-testid="started-rail">
       {#each kids as kid, index (kid.key)}
         <!-- A session started for a step of its starter's workflow shows
              its step and round where another shows its model, "Review, 2
@@ -1430,6 +1647,7 @@
             >
           </span>
         </div>
+        {@render subagents(kid, true, index < kids.length - 1, false)}
       {/each}
     </div>
   {/if}
@@ -1514,7 +1732,7 @@
     aria-haspopup="menu"
     aria-expanded={projectMenu?.path === path}
     aria-label="More for {projectLabel(path)}"
-    title="New session, close"
+    title={startsIn(path) ? "New session, close" : "Close"}
     data-testid="project-more"
     ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
       ><circle cx="3.5" cy="8" r=".9" /><circle cx="8" cy="8" r=".9" /><circle cx="12.5" cy="8" r=".9" /></svg
@@ -1551,41 +1769,18 @@
       {#if !project.isGit}<span class="flag" title="Not a git repository">no git</span>{/if}
     </button>
     {@render moreButton(project.path)}
-    <button
-      class="add-here"
-      tabindex="-1"
-      onclick={() => newIn(project.path)}
-      disabled={!isReady()}
-      aria-label="New session in {projectLabel(project.path)}"
-      title="New session"
-      data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
-    >
+    {#if startsIn(project.path)}
+      <button
+        class="add-here"
+        tabindex="-1"
+        onclick={() => newIn(project.path)}
+        disabled={!isReady()}
+        aria-label="New session in {projectLabel(project.path)}"
+        title="New session"
+        data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
+      >
+    {/if}
     {@render projectMenuFor(project.path)}
-  </div>
-{/snippet}
-
-<!-- The orchestrator's own project: nothing closes it, and its button
-     starts an orchestrator. -->
-{#snippet pinnedRow(dir: string)}
-  <div
-    class="project"
-    class:on={screenProject === dir}
-    class:cursor={current === `project:${dir}`}
-    data-row="project:{dir}"
-    data-testid="project-head"
-  >
-    <button class="row project-row" tabindex="-1" onclick={() => bringForward(dir)} title={dir} data-testid="orchestrator-project">
-      <span class="name">{LABEL}</span>
-    </button>
-    <button
-      class="add-here"
-      tabindex="-1"
-      onclick={() => newIn(dir)}
-      disabled={!isReady()}
-      aria-label="New orchestrator session"
-      title="New orchestrator session"
-      data-testid="project-new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
-    >
   </div>
 {/snippet}
 
@@ -1600,6 +1795,7 @@
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
       {#if entry.kind === "session"}
         {@render sessionRow(entry.session)}
+        {@render subagents(entry.session, false, false, childrenOf(entry.session).length > 0 && !collapsed[entry.session.key])}
         {@render rail(entry.session)}
       {:else}
         {@render pastRow(path, entry.transcript)}
@@ -1626,23 +1822,21 @@
          opens the dialog to resume from. It opens something else rather
          than opening here, so it has a glyph of its own, not the chevron,
          and ends in an ellipsis. -->
-    {#if path !== orchestrator.dir}
+    {#if outsideFor(path).length > 0}
       {@const earlier = outsideFor(path).length}
-      {#if earlier > 0}
-        <button
-          class="fold tail"
-          class:cursor={current === `earlier:${path}`}
-          tabindex="-1"
-          onclick={() => openResume(path)}
-          data-row="earlier:{path}"
-          data-testid="earlier-sessions"
+      <button
+        class="fold tail"
+        class:cursor={current === `earlier:${path}`}
+        tabindex="-1"
+        onclick={() => openResume(path)}
+        data-row="earlier:{path}"
+        data-testid="earlier-sessions"
+      >
+        <svg class="chev history" viewBox="0 0 16 16" aria-hidden="true"
+          ><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7" /><path d="M2.6 2.6v2.6h2.6" /><path d="M8 5.2V8l1.9 1.2" /></svg
         >
-          <svg class="chev history" viewBox="0 0 16 16" aria-hidden="true"
-            ><path d="M2.8 8a5.2 5.2 0 1 0 1.5-3.7" /><path d="M2.6 2.6v2.6h2.6" /><path d="M8 5.2V8l1.9 1.2" /></svg
-          >
-          <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
-        </button>
-      {/if}
+        <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
+      </button>
     {/if}
   {/if}
 {/snippet}
@@ -1760,7 +1954,7 @@
       aria-haspopup="menu"
       aria-expanded={menuOpen}
       aria-label="More"
-      title="Open a project, start an orchestrator, or the settings"
+      title="Open a project, or the settings"
       data-row="menu"
       data-testid="sessions-menu"
       ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
@@ -1861,6 +2055,7 @@
     bind:this={nav}
     onkeydown={onKeydown}
     onpointerdown={onPointerdown}
+    onpointerover={onPointerover}
     onfocusin={onFocusin}
     onfocusout={onFocusout}
     data-testid="sessions-nav"
@@ -1901,16 +2096,6 @@
         >
       </div>
     {/if}
-      <!-- The orchestrator's own project, above the ones you opened: a session
-           that directs others runs here, and starts here like any other. -->
-      {#if pinned !== null}
-        {@const dir = pinned}
-        <section class="proj" data-testid="project-section">
-          {@render pinnedRow(dir)}
-          {@render projectBody(dir)}
-        </section>
-      {/if}
-
       {#each split.active as project (project.path)}
         <section class="proj" data-testid="project-section">
           {@render projectRow(project)}
@@ -2003,6 +2188,9 @@
     </div>
   {/if}
   </div>
+  <!-- Subagents as they start, said once each, outside the rows, which
+       are inert while the pane is folded. -->
+  <p class="state told" aria-live="polite" data-testid="subagent-said">{subagentSaidNow}</p>
 </Pane>
 
 <style>
@@ -3160,6 +3348,174 @@
   .rail-on {
     top: 50%;
     bottom: 0;
+  }
+
+  /* Rows hang right under a session's subagents and carry on the rail
+     theirs come down, across the gap below them. */
+  .kids.after-subs .kid.first .rail-in {
+    top: -1px;
+    height: calc(50% + 1px);
+  }
+
+  /* A session's subagents hang under it on a rail of their own, a little
+     smaller than the sessions it started; a started session's hang from
+     its own dot, one step further in. */
+  .subs {
+    --rail-x: calc(var(--row-pad-x) + var(--dot) / 2 - 0.5px);
+    --rail-reach: calc(var(--row-pad-y) + var(--label-size) * 1.35 + 1px + var(--row-size) * 0.75 - var(--dot) / 2);
+    position: relative;
+    margin-bottom: 1px;
+  }
+
+  .subs.deep {
+    --rail-x: calc(var(--row-pad-x) + var(--dot) + 14px);
+    --rail-reach: calc(3px + var(--fold-size) * 0.75 - var(--dot) / 2);
+  }
+
+  .sub.first .rail-in {
+    top: calc(-1 * var(--rail-reach));
+    height: calc(50% + var(--rail-reach));
+  }
+
+  /* The rail of the sessions their starter started goes on past a
+     started session's subagents to the next of them. */
+  .rail-pass {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--row-inset) + var(--row-pad-x) + var(--dot) / 2 - 0.5px);
+    border-left: 1px solid var(--rule-strong);
+    pointer-events: none;
+  }
+
+  .sub-row {
+    gap: 0;
+    padding: 2px var(--row-pad-x) 2px calc(var(--rail-x) + 15px);
+    font-size: calc(var(--fold-size) - 0.5px);
+  }
+
+  .sub-row .dot {
+    width: calc(var(--dot) - 1px);
+    height: calc(var(--dot) - 1px);
+    margin-right: 8px;
+  }
+
+  .dot.bad {
+    background: var(--del);
+    border-color: var(--del);
+  }
+
+  .sub-glyph {
+    flex: none;
+    margin-right: 7px;
+    color: var(--ink-3);
+  }
+
+  .sub-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-2);
+  }
+
+  .sub.over .sub-label {
+    color: var(--ink-3);
+  }
+
+  .sub-note {
+    flex: none;
+    max-width: 12ch;
+    margin-left: auto;
+    padding-left: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--label-size);
+    color: var(--ink-3);
+  }
+
+  .sub-note.asking {
+    color: var(--accent);
+  }
+
+  .sub-note.bad {
+    color: var(--del);
+  }
+
+  .sub-note + .when {
+    margin-left: 0;
+  }
+
+  /* A subagent's row has no button of its own to give its time up to. */
+  .session.sub:hover > .row .when {
+    visibility: visible;
+  }
+
+  /* Folded to the narrow column, a session's subagents are a dot each,
+     packed beside its rail to the column's edge, where their rows stand,
+     and the rail runs straight past them to the sessions it started. */
+  .sub-dots,
+  .rail-through {
+    display: none;
+  }
+
+  /* Never so far in that the column's fading edge takes the first. */
+  .nav.folded .sub-dots {
+    --dots-x: min(calc(var(--row-inset) + var(--rail-x) + 6px), calc(var(--folded) - 20px));
+    position: absolute;
+    top: 4px;
+    left: var(--dots-x);
+    width: max(var(--dot), calc(var(--folded) - 8px - var(--dots-x)));
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+
+  .nav.folded .rail-through {
+    display: block;
+    position: absolute;
+    top: calc(-1 * var(--rail-reach));
+    bottom: 0;
+    left: calc(var(--row-inset) + var(--rail-x));
+    border-left: 1px solid var(--rule-strong);
+    pointer-events: none;
+  }
+
+  .nav.folded .sub {
+    visibility: hidden;
+  }
+
+  /* With no words beside them, the dots differ in shape as well as
+     colour: running is filled, asking a ring with a halo, done a plain
+     hollow ring, failed a cross. */
+  .sub-dots .dot.over {
+    background: none;
+  }
+
+  .sub-dots .dot.bad {
+    position: relative;
+    border-color: transparent;
+    background: none;
+  }
+
+  .sub-dots .dot.bad::before,
+  .sub-dots .dot.bad::after {
+    content: "";
+    position: absolute;
+    top: -1.5px;
+    bottom: -1.5px;
+    left: 50%;
+    width: 1.5px;
+    margin-left: -0.75px;
+    border-radius: 1px;
+    background: var(--del);
+    transform: rotate(45deg);
+  }
+
+  .sub-dots .dot.bad::after {
+    transform: rotate(-45deg);
   }
 
   /* A started session on one line. */

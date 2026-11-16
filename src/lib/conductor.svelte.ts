@@ -52,7 +52,7 @@ import { agentLabel } from "$lib/agent.svelte";
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 
-import { core, type ConductRequest } from "$lib/core";
+import { core, type ConductRequest, type ProjectInfo } from "$lib/core";
 import {
   nameTaken,
   named as nameRow,
@@ -110,6 +110,7 @@ import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
+import { startsIn } from "$lib/orchestratorFolder.svelte";
 
 /** How many sessions one caller may have running at a time. */
 export const CAP = 8;
@@ -1230,14 +1231,28 @@ export function workName(caller: string, id: string): string {
   return row !== null && row.resumedFrom === null ? label(row) : "the work it checks";
 }
 
+/** The open projects a session may be started in: every one but the
+    orchestrator folder, should a version that let it be opened as a
+    project have left it among them. */
+function startable(): ProjectInfo[] {
+  return workspace.open.filter((project) => startsIn(project.path));
+}
+
+/** Whether a session may be started in a project: it is open, and it is
+    not the orchestrator folder. */
+function isStartable(project: string): boolean {
+  return startable().some((open) => open.path === project);
+}
+
 /** The open projects, the caller's own marked. */
 function projectLines(request: Placed): string {
-  if (workspace.open.length === 0)
+  const open = startable();
+  if (open.length === 0)
     return "No projects are open in the workbench.";
   const here = projectOf(request.cwd);
   // The name is the one the pane shows: the folder's, with as much of the
   // path above it as tells it from another open project called the same.
-  return workspace.open
+  return open
     .map((project) =>
       [
         project.path,
@@ -1253,7 +1268,7 @@ function projectLines(request: Placed): string {
 /** The open project a directory is in: the deepest one it lies under. */
 function projectOf(cwd: string): string | null {
   return (
-    workspace.open
+    startable()
       .map((project) => project.path)
       .filter((path) => within(cwd, path))
       .sort((a, b) => b.length - a.length)[0] ?? null
@@ -1797,7 +1812,7 @@ async function startSession(request: Placed): Promise<Answered> {
     return refused(
       "A start that names a model names the agent too, claude-code or codex: the model's name is the agent's to read.",
     );
-  if (!workspace.open.some((open) => open.path === project))
+  if (!isStartable(project))
     return refused(`No project at ${project} is open in the workbench.`);
   // An account is one the user named in the settings.
   const wanted = text(request, "account");
@@ -2336,7 +2351,7 @@ async function resumeSession(
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
   const { project, worktree, agent } = entry;
-  if (!workspace.open.some((open) => open.path === project))
+  if (!isStartable(project))
     return refused(
       `Session ${id} ran in ${project}, which is not open in the workbench.`,
     );

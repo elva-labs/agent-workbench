@@ -24,7 +24,7 @@ import { showRefusal } from "$lib/refusal.svelte";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
 import { adoptUserStylesSetting, followStyles, userStyles } from "$lib/userStyles.svelte";
 import { adoptUnread, unread } from "$lib/unread.svelte";
-import { workspace } from "$lib/workspace.svelte";
+import { hookedProjects } from "$lib/workspace.svelte";
 
 /** The settings as the window has them now. */
 export function currentSettings(): Settings {
@@ -63,10 +63,7 @@ export function adopt(settings: Settings) {
   // writes into every account's agent state.
   adoptAccounts(settings.accounts);
   adoptWorkflows(settings.workflows);
-  adoptHooks(
-    settings.hooks ?? { everywhere: false, overrides: {} },
-    workspace.open.map((project) => project.path),
-  );
+  adoptHooks(settings.hooks ?? { everywhere: false, overrides: {} }, hookedProjects());
 }
 
 /** The settings the window holds, as it hands them over to a file that is
