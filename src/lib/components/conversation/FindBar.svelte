@@ -16,12 +16,12 @@
    * Find in the conversation: a bar over the top of the thread that looks
    * for words in all of it, drawn or not, folded work included. It says
    * how many matches there are and which is the current one; every match
-   * drawn is tinted and the current one filled. Enter and Shift+Enter, the
-   * find chord's G, and the two arrows step through them, wrapping at the
-   * ends, and the thread brings each into the middle of the view, opening
-   * the folds that hold it until find moves on. Escape or the close button
-   * puts the bar away, closes what it opened, and gives the keyboard back
-   * where it was.
+   * drawn is tinted and the current one filled. Enter and Shift+Enter, Cmd+G
+   * and Shift+Cmd+G (Ctrl off macOS), and the two arrows step through them,
+   * wrapping at the ends, and the thread brings each into the middle of the
+   * view, opening the folds that hold it until find moves on. Escape or the
+   * close button puts the bar away, closes what it opened, and gives the
+   * keyboard back where it was.
    */
   interface Props {
     conversation: Conversation;
@@ -141,7 +141,7 @@
       await thread.reveal(hit.held.entry);
       range = paint();
     }
-    if (range !== null) thread?.center(range);
+    if (range !== null) await thread?.center(() => (finder.hit()?.key === hit.key ? paint() : null));
   }
 
   const frames = (count: number) =>
@@ -214,7 +214,7 @@
 
   $effect(() => () => {
     if (timer !== null) clearTimeout(timer);
-    clearMatches();
+    if (active) clearMatches();
     giveBack(conversation.opened);
   });
 
@@ -238,8 +238,8 @@
     return () => clearTimeout(wait);
   });
 
-  /** The find chord's G, which steps as Enter does: with Cmd on macOS and
-      Ctrl elsewhere, and only while no action holds it. */
+  /** Cmd+G, Ctrl+G off macOS, which steps as Enter does, while no action
+      holds the chord. */
   function stepKey(e: KeyboardEvent): boolean {
     if (e.key.toLowerCase() !== "g" || e.altKey) return false;
     if (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) return false;
@@ -263,7 +263,7 @@
     }
   }
 
-  /** The G chord steps from anywhere in the view while the bar is open. */
+  /** Cmd+G steps from anywhere in the view while the bar is open. */
   function onWindowKey(e: KeyboardEvent) {
     if (!open || !active || e.defaultPrevented || e.isComposing || !stepKey(e)) return;
     if (!(host?.contains(document.activeElement) ?? false)) return;
@@ -458,12 +458,7 @@
   @container conversation (max-width: 520px) {
     .bar {
       right: 14px;
-      left: 14px;
-      max-width: none;
-    }
-
-    .field {
-      flex: 1 1 auto;
+      max-width: calc(100% - 28px);
     }
   }
 

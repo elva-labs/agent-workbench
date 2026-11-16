@@ -374,6 +374,7 @@
 
   function toFoot() {
     if (scroller === null) return;
+    moves += 1;
     pinned = true;
     behind = false;
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
@@ -733,6 +734,7 @@
   export async function reveal(key: string, block: ScrollLogicalPosition = "nearest"): Promise<HTMLElement | null> {
     const at = rowAt.get(key);
     if (at === undefined || scroller === null || box === null) return null;
+    moves += 1;
     if (at < rows.length - 1) pinned = false;
     const find = () => box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(key)}"]`) ?? null;
     sought = key;
@@ -788,22 +790,42 @@
    * Puts what find found in the middle of the view, and into view across
    * a block that scrolls sideways. It glides there from near, and is there
    * at once from further than a screen away or where the system asks for
-   * less motion. The thread stops following its foot.
+   * less motion. Rows drawn on the way can cut a glide short, so once the
+   * thread is still the match is put in the middle at once if it is not
+   * there, unless the user has scrolled since. `range` gives the match as
+   * it is drawn then. The thread stops following its foot.
    */
-  export function center(range: Range) {
-    if (scroller === null) return;
+  export async function center(range: () => Range | null) {
+    const first = range();
+    if (first === null || scroller === null) return;
+    const began = performance.now();
+    const mine = ++moves;
+    if (!place(first, true)) return;
+    await still();
+    if (scroller === null || scrolledBy > began || moves !== mine) return;
+    const again = range();
+    if (again === null) return;
+    const at = again.getBoundingClientRect();
+    const view = scroller.getBoundingClientRect();
+    if (Math.abs(at.top + at.height / 2 - (view.top + view.height / 2)) > view.height / 4) place(again, false);
+  }
+
+  /** Scrolls a range to the middle of the view; answers whether it
+      glides there. */
+  function place(range: Range, glides: boolean): boolean {
+    if (scroller === null) return false;
     const at = range.getBoundingClientRect();
-    if (at.width === 0 && at.height === 0) return;
+    if (at.width === 0 && at.height === 0) return false;
     const view = scroller.getBoundingClientRect();
     const by = at.top + at.height / 2 - (view.top + view.height / 2);
-    const glide = !reduced() && Math.abs(by) <= scroller.clientHeight;
+    const glide = glides && !reduced() && Math.abs(by) <= scroller.clientHeight;
     const across = range.startContainer.parentElement?.closest<HTMLElement>("pre, [data-testid='diff']") ?? null;
     if (across !== null && across.scrollWidth > across.clientWidth) {
       const side = across.getBoundingClientRect();
       if (at.left < side.left || at.right > side.right)
         across.scrollTo({ left: across.scrollLeft + at.left - side.left - side.width / 3, behavior: glide ? "smooth" : "instant" });
     }
-    if (Math.abs(by) < 1) return;
+    if (Math.abs(by) < 1) return false;
     pinned = false;
     const top = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, scroller.scrollTop + by));
     ownTop = top;
@@ -812,7 +834,31 @@
     // stops the glide.
     if (glide) glided = performance.now();
     scroller.scrollTo({ top, behavior: glide ? "smooth" : "instant" });
+    return glide;
   }
+
+  /** Waits until the thread has not moved for a few frames, or a second
+      and a half has gone. */
+  function still(): Promise<void> {
+    return new Promise((resolve) => {
+      let last = scroller?.scrollTop ?? 0;
+      let same = 0;
+      let left = 90;
+      const check = () => {
+        const now = scroller?.scrollTop ?? 0;
+        same = now === last ? same + 1 : 0;
+        last = now;
+        left -= 1;
+        if (same >= 3 || left <= 0) resolve();
+        else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    });
+  }
+
+  /** How many times the thread was sent somewhere on purpose: to a match,
+      to an entry, or to its foot. */
+  let moves = 0;
 
   /** When find last set the thread gliding. */
   let glided = Number.NEGATIVE_INFINITY;

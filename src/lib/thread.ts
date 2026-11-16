@@ -10,6 +10,7 @@ import type {
 } from "$lib/core";
 import type {
   Conversation,
+  Entry,
   Message,
   Part,
   PlanPart,
@@ -903,22 +904,40 @@ export interface HeldOptions {
     character as its marker, and the labels the thread puts around it left
     out. */
 export function held(conversation: Conversation, options: HeldOptions = {}): Held[] {
+  const ended = endedWith(conversation);
+  return [
+    ...conversation.entries.flatMap((entry) => (entry.key === ended ? [] : heldIn(conversation, entry, options))),
+    ...heldWaiting(conversation, options),
+  ];
+}
+
+/** The error a session ended with, which is said where it offers to
+    resume, not in the thread: the key of its note, or null. */
+export function endedWith(conversation: Conversation): string | null {
+  const last = conversation.entries[conversation.entries.length - 1];
+  return conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
+}
+
+const plainWords = (message: Message) => spoken(message.text, true).text;
+
+/** What one entry of the thread holds, as `held` gives it. */
+export function heldIn(conversation: Conversation, entry: Entry, options: HeldOptions = {}): Held[] {
   const root = options.root ?? null;
-  const words = options.words ?? ((message: Message) => spoken(message.text, true).text);
+  const words = options.words ?? plainWords;
   const out: Held[] = [];
-  const add = (id: string, entry: string | null, folds: string[], text: string, markdown: string | null = null, key = id) =>
-    out.push({ id, key, entry, folds, text, markdown });
+  const add = (id: string, folds: string[], text: string, markdown: string | null = null, key = id) =>
+    out.push({ id, key, entry: entry.key, folds, text, markdown });
   const lines = (pieces: (string | null | undefined)[]) =>
     pieces
       .filter((piece): piece is string => typeof piece === "string" && piece !== "")
       .map(shown)
       .join("\n");
-  const walk = (parts: Part[], entry: string, around: string[]) => {
+  const walk = (parts: Part[], around: string[]) => {
     for (const segment of segments(parts)) {
-      if (segment.kind === "text") add(segment.part.block, entry, around, "", segment.part.text);
+      if (segment.kind === "text") add(segment.part.block, around, "", segment.part.text);
       else if (segment.kind === "plan") {
         const plan = segment.part;
-        add(`plan-${plan.at}`, entry, around, lines(plan.steps.map((step) => step.text)), plan.text);
+        add(`plan-${plan.at}`, around, lines(plan.steps.map((step) => step.text)), plan.text);
       } else if (segment.kind === "question") {
         const asked = segment.part;
         const answered = asked.outcome === "answered";
@@ -926,43 +945,79 @@ export function held(conversation: Conversation, options: HeldOptions = {}): Hel
           question.question,
           answered ? asked.answers?.[at]?.join(", ") : null,
         ]);
-        add(asked.request, entry, around, lines(pieces));
+        add(asked.request, around, lines(pieces));
       } else {
         const work = [...around, foldKey("work", segment.parts[0])];
         for (const part of segment.parts) {
           const step = [...work, foldKey("step", part)];
           if (part.kind !== "tool") {
-            add(part.block, entry, step, "", part.text);
+            add(part.block, step, "", part.text);
             continue;
           }
-          add(part.call, entry, work, lines([stepTitle(part, root).object]));
+          add(part.call, work, lines([stepTitle(part, root).object]));
           // A subagent's run is drawn before the output of the call that
           // started it.
-          const shows = () => add(part.call, entry, step, lines(stepShows(part, root)), null, `${part.call}:shows`);
+          const shows = () => add(part.call, step, lines(stepShows(part, root)), null, `${part.call}:shows`);
           if (part.tool === "agent") {
-            walk(part.parts, entry, step);
+            walk(part.parts, step);
             shows();
           } else {
             shows();
-            walk(part.parts, entry, step);
+            walk(part.parts, step);
           }
         }
       }
     }
   };
-  const entries = conversation.entries;
-  const last = entries[entries.length - 1];
-  // The error a session ended with is said where it offers to resume, not
-  // in the thread.
-  const endedWith = conversation.ended !== null && last?.kind === "note" && last.tone === "error" ? last.key : null;
-  for (const entry of entries) {
-    if (entry.kind === "user") {
-      const message = conversation.messages[entry.message];
-      if (message !== undefined) add(message.id, entry.key, [], shown(words(message)));
-    } else if (entry.kind === "agent") walk(entry.parts, entry.key, []);
-    else if (entry.kind === "note" && entry.key !== endedWith) add(entry.key, entry.key, [], shown(entry.text));
-  }
-  for (const message of conversation.waiting) add(message.id, null, [], shown(words(message)));
+  if (entry.kind === "user") {
+    const message = conversation.messages[entry.message];
+    if (message !== undefined) add(message.id, [], shown(words(message)));
+  } else if (entry.kind === "agent") walk(entry.parts, []);
+  else if (entry.kind === "note") add(entry.key, [], shown(entry.text));
+  return out;
+}
+
+/** The messages waiting under the thread, as `held` gives them. */
+export function heldWaiting(conversation: Conversation, options: HeldOptions = {}): Held[] {
+  const words = options.words ?? plainWords;
+  return conversation.waiting.map((message) => ({
+    id: message.id,
+    key: message.id,
+    entry: null,
+    folds: [],
+    text: shown(words(message)),
+    markdown: null,
+  }));
+}
+
+/**
+ * What an entry is made of that what it holds is read from, as a list of
+ * values: two prints with the same values, compared one by one, hold the
+ * same. Cheap to take, so what was read from an entry can be kept until
+ * its print changes.
+ */
+export function entryPrint(conversation: Conversation, entry: Entry): unknown[] {
+  const out: unknown[] = [entry.kind];
+  const parts = (list: Part[]) => {
+    out.push(list.length);
+    for (const part of list) {
+      out.push(part.kind);
+      if (part.kind === "text" || part.kind === "thinking") out.push(part.block, part.text);
+      else if (part.kind === "tool")
+        out.push(part.call, part.tool, part.plan, part.input, part.inputText, part.inputDone);
+      if (part.kind === "tool") out.push(part.output, part.result, part.done, part.changes, part.changes.length);
+      else if (part.kind === "plan") {
+        out.push(part.at, part.text, part.steps.length);
+        for (const step of part.steps) out.push(step.text);
+      } else if (part.kind === "question") out.push(part.request, part.outcome, part.questions, part.answers);
+      if (part.kind === "tool") parts(part.parts);
+    }
+  };
+  if (entry.kind === "user") {
+    const message = conversation.messages[entry.message];
+    out.push(message, message?.text);
+  } else if (entry.kind === "agent") parts(entry.parts);
+  else if (entry.kind === "note") out.push(entry.text);
   return out;
 }
 

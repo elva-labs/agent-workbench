@@ -32,7 +32,7 @@ default preset:
 | <kbd>Cmd</kbd><kbd>D</kbd>                                              | Open or close the file viewer, in agent mode                |
 | <kbd>Cmd</kbd><kbd>E</kbd>                                              | Diff, whole file or rendered; in the editor, Edit, Diff or Preview |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>A</kbd>                              | Changed files or all files                                  |
-| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it |
+| <kbd>Cmd</kbd><kbd>F</kbd>                                              | Filter files, when a list pane has focus; find in the file, when the editor has it; find in the conversation, in an integrated session's pane |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>F</kbd>                              | Search in files                                             |
 | <kbd>Cmd</kbd><kbd>N</kbd>                                              | A new untitled file in the editor, from either mode         |
 | <kbd>Alt</kbd><kbd>Cmd</kbd><kbd>N</kbd>                                | A new file in the tree, in editor mode                      |
@@ -343,6 +343,10 @@ reached.
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>Cmd</kbd><kbd>F</kbd> | Opens find over the thread with the keyboard in its field; with find open, selects the words in it |
+| <kbd>Enter</kbd> / <kbd>Shift</kbd><kbd>Enter</kbd> in find | The next match, or the one before, coming round at the ends |
+| <kbd>Cmd</kbd><kbd>G</kbd> / <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>G</kbd> | The same, from anywhere in the session's pane while find is open, unless an action holds the chord |
+| <kbd>Esc</kbd> in find | Closes it and gives the keyboard back where it was; it stops nothing |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
@@ -385,7 +389,19 @@ starting, <kbd>Enter</kbd> sends nothing, so a command is not sent as text
 before the agent can take it.
 
 Every chord the app claims works from the composer as from anywhere else.
-<kbd>Cmd</kbd><kbd>F</kbd> stays the page's, as it is a terminal's.
+The find chord is find in the conversation there: it is the same chord
+that filters the files from a list pane and finds in the file from the
+editor, and each takes it only while it has the keyboard, so none takes
+another's. In a terminal session's pane it stays the terminal's.
+
+Find's bar comes before the thread for <kbd>Tab</kbd>: its field, then
+the previous and the next match, which are passed over while nothing
+matches, then its close, each a stop of its own. Its arrows and close
+leave the keyboard in the field when clicked. While the bar is open the
+keyboard can go anywhere in the pane and the bar stays; closing it gives
+the keyboard back where it was before it came to the bar, or to the
+composer, but only when the bar had it. A screen reader hears the count
+once it settles, once for each change, and the field names it.
 
 ## A page in the browser
 

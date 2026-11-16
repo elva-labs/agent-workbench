@@ -150,13 +150,15 @@ test.describe("find in the conversation", () => {
     const ran = page.getByTestId("step-row").filter({ hasText: "Ran" });
     await expect(ran).toHaveAttribute("aria-expanded", "true");
     await expect(page.getByTestId("step-output")).toBeVisible();
-    await expect.poll(async () => (await painted(page)).current).toEqual(["cache"]);
-    expect(
-      await page.evaluate(() => {
-        const [range] = [...CSS.highlights.get("find-current")!] as Range[];
-        return range.startContainer.parentElement!.closest("[data-testid='step-output']") !== null;
-      }),
-    ).toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const [range] = [...(CSS.highlights.get("find-current") ?? [])] as Range[];
+          return range?.startContainer.parentElement?.closest("[data-testid='step-output']") != null;
+        }),
+      )
+      .toBe(true);
+    expect((await painted(page)).current).toEqual(["cache"]);
     await expect.poll(() => currentInView(page)).toBe(true);
     // Moving on closes what find opened.
     await page.keyboard.press("Enter");
@@ -271,56 +273,57 @@ test.describe("find in the conversation", () => {
     await page.getByTestId("find-input").fill("cache");
     await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
     const thread = page.getByTestId("thread");
-    await thread.evaluate((node) =>
-      node.addEventListener("scroll", () => (node.dataset.scrolls = String(Number(node.dataset.scrolls ?? 0) + 1))),
-    );
-    /** Waits until the thread has not moved for a few frames. */
-    const still = () =>
+    // How the thread is asked to scroll, each time.
+    await thread.evaluate((node) => {
+      const asked: string[] = [];
+      (node as HTMLElement & { asked?: string[] }).asked = asked;
+      const scrollTo = node.scrollTo.bind(node) as (options: ScrollToOptions) => void;
+      node.scrollTo = ((options: ScrollToOptions) => {
+        asked.push(options.behavior ?? "auto");
+        scrollTo(options);
+      }) as typeof node.scrollTo;
+    });
+    const asked = () => thread.evaluate((node) => (node as HTMLElement & { asked: string[] }).asked.splice(0));
+    /** Waits until the thread has not moved for a few frames, then puts
+        the last reply most of a screen under the middle of the view. */
+    const ready = () =>
       thread.evaluate(
         (node) =>
-          new Promise<void>((resolve) => {
+          new Promise<number>((resolve) => {
             let last = node.scrollTop;
             let same = 0;
             const check = () => {
               same = node.scrollTop === last ? same + 1 : 0;
               last = node.scrollTop;
-              if (same >= 5) resolve();
-              else requestAnimationFrame(check);
+              if (same < 5) {
+                requestAnimationFrame(check);
+                return;
+              }
+              const text = [...node.querySelectorAll("[data-testid='agent-text']")].pop()!;
+              const top = text.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop;
+              node.scrollTop = top - node.clientHeight * 1.1;
+              resolve(node.scrollTop);
             };
             requestAnimationFrame(check);
           }),
       );
-    /** Puts the last reply most of a screen under the middle of the view,
-        and counts the scrolls from there. */
-    const ready = async () => {
-      await still();
-      const top = await thread.evaluate((node) => {
-        const text = [...node.querySelectorAll("[data-testid='agent-text']")].pop()!;
-        const top = text.getBoundingClientRect().top - node.getBoundingClientRect().top + node.scrollTop;
-        node.scrollTop = top - node.clientHeight * 1.1;
-        return node.scrollTop;
-      });
-      await still();
-      await thread.evaluate((node) => (node.dataset.scrolls = "0"));
-      return top;
-    };
-    const scrolls = () => thread.evaluate((node) => Number(node.dataset.scrolls));
-    // Back past the first is the last, in the last reply.
     expect(await ready()).toBeGreaterThan(0);
+    await asked();
+    // Back past the first is the last, in the last reply.
     await page.keyboard.press("Shift+Enter");
     await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
     await expect.poll(() => currentInView(page)).toBe(true);
-    await still();
-    expect(await scrolls()).toBeGreaterThan(2);
+    expect((await asked())[0]).toBe("smooth");
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    await expect.poll(() => currentInView(page)).toBe(true);
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect(await ready()).toBeGreaterThan(0);
+    await asked();
     await page.keyboard.press("Shift+Enter");
     await expect(page.getByTestId("find-count")).toHaveText("5 of 5");
     await expect.poll(() => currentInView(page)).toBe(true);
-    await still();
-    expect(await scrolls()).toBe(1);
+    expect(await asked()).toEqual(["instant"]);
   });
 });
 

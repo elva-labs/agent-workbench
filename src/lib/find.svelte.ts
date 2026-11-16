@@ -1,6 +1,6 @@
 import type { Conversation } from "$lib/conversation.svelte";
 import { saidBlocks } from "$lib/media.svelte";
-import { held, type Held, type HeldOptions } from "$lib/thread";
+import { endedWith, entryPrint, heldIn, heldWaiting, type Held, type HeldOptions } from "$lib/thread";
 
 /**
  * Find in a conversation.
@@ -177,6 +177,12 @@ interface Seen {
   lowered: string | null;
 }
 
+function samePrint(a: unknown[], b: unknown[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let at = 0; at < a.length; at++) if (a[at] !== b[at]) return false;
+  return true;
+}
+
 /** How long a slice of counting runs before the window gets a turn, in
     milliseconds. */
 const SLICE = 8;
@@ -203,6 +209,10 @@ export class Finder {
   #conversation: () => Conversation;
   #options: () => HeldOptions;
   #seen = new Map<string, Seen>();
+  /** What each entry held when last read, by its key, with its print. */
+  #entries = new Map<string, { print: unknown[]; items: Held[] }>();
+  /** Everything the thread held when last read, and what it was read at. */
+  #read: { conversation: Conversation; root: string | null; revision: number; items: Held[] } | null = null;
   #run = 0;
 
   constructor(conversation: () => Conversation, options: () => HeldOptions = () => ({})) {
@@ -265,16 +275,21 @@ export class Finder {
     const cased = caseCounts(query);
     const needle = cased ? query : lower(query);
     const conversation = this.#conversation();
-    const items = held(conversation, this.#options());
-    const counts: number[] = new Array(items.length);
     let started = performance.now();
+    /** Lets the window have a turn once a slice has run; false when a
+        later count was asked for meanwhile. */
+    const breathe = async (): Promise<boolean> => {
+      if (performance.now() - started <= SLICE) return true;
+      if (from !== null) this.total = null;
+      await pause();
+      started = performance.now();
+      return run === this.#run;
+    };
+    const items = await this.#held(conversation, breathe);
+    if (items === null) return false;
+    const counts: number[] = new Array(items.length);
     for (let at = 0; at < items.length; at++) {
-      if (performance.now() - started > SLICE) {
-        if (from !== null) this.total = null;
-        await pause();
-        if (run !== this.#run) return false;
-        started = performance.now();
-      }
+      if (!(await breathe())) return false;
       counts[at] = countIn(this.#text(items[at], cased), needle);
     }
     const was = from === null ? this.hit() : null;
@@ -311,6 +326,43 @@ export class Finder {
     this.total = total;
     this.current = total === 0 ? -1 : current;
     return true;
+  }
+
+  /**
+   * Everything the thread holds, read again only where it changed: as
+   * it was while the conversation has not changed since, and otherwise
+   * each entry as it was while its print is the same. Answers null when a
+   * later count was asked for on the way.
+   */
+  async #held(conversation: Conversation, breathe: () => Promise<boolean>): Promise<Held[] | null> {
+    const options = this.#options();
+    const root = options.root ?? null;
+    const revision = conversation.revision;
+    const read = this.#read;
+    if (read !== null && read.conversation === conversation && read.root === root && read.revision === revision)
+      return read.items;
+    if (read !== null && (read.conversation !== conversation || read.root !== root)) this.#entries.clear();
+    const ended = endedWith(conversation);
+    const items: Held[] = [];
+    const keys = new Set<string>();
+    for (const entry of [...conversation.entries]) {
+      if (!(await breathe())) return null;
+      keys.add(entry.key);
+      if (entry.key === ended) continue;
+      const print = entryPrint(conversation, entry);
+      const kept = this.#entries.get(entry.key);
+      if (kept !== undefined && samePrint(kept.print, print)) {
+        for (const item of kept.items) items.push(item);
+        continue;
+      }
+      const fresh = heldIn(conversation, entry, options);
+      this.#entries.set(entry.key, { print, items: fresh });
+      for (const item of fresh) items.push(item);
+    }
+    for (const item of heldWaiting(conversation, options)) items.push(item);
+    for (const key of this.#entries.keys()) if (!keys.has(key)) this.#entries.delete(key);
+    this.#read = { conversation, root, revision, items };
+    return items;
   }
 
   /** Stops any count on its way. */
