@@ -273,6 +273,8 @@ export class Conversation {
   opened = new SvelteSet<string>();
   /** A model chosen while a turn ran, which the turn after it runs on. */
   nextModel = $state<{ model: string | null; turn: number } | null>(null);
+  /** When the latest turn to end ended; null before any has. */
+  turnEnded = $state<number | null>(null);
   /** Goes up whenever what the thread holds may change, so what follows
       it, find among them, knows when to read it again without reading all
       of it to tell. */
@@ -951,6 +953,7 @@ export class Conversation {
     if (turn === null) return;
     turn.endedAt = now;
     turn.retrying = null;
+    if (this.turnEnded === null || now > this.turnEnded) this.turnEnded = now;
     // No run of a turn numbered before this one stands after this one's
     // first run, so the walk back from the end stops at such a run.
     for (let at = this.entries.length - 1; at >= 0; at--) {
