@@ -259,6 +259,9 @@ export class Conversation {
       way, laid in the thread, or not read, for an agent whose history is
       not read here or a read that failed. */
   earlier = $state<"loading" | "read" | "unread" | null>(null);
+  /** Why what was said before could not be read, where the read failed
+      and said why. */
+  earlierWhy = $state<string | null>(null);
   /** What was read leaves out the start of the conversation, it being
       too long to hold. */
   earlierCut = $state(false);
@@ -403,23 +406,23 @@ export class Conversation {
     this.began = { after: null, at };
   }
 
-  /** What was said before was not read: no line stands for it. */
-  unread() {
+  /** What was said before was not read, and `why` where the read said:
+      no line stands for it. */
+  unread(why: string | null = null) {
     this.earlier = "unread";
+    this.earlierWhy = why;
     if (this.began?.after === null) this.began = null;
   }
 
   /**
    * Lays what the conversation said and did before above what the thread
-   * holds, each event at the time it happened and each turn under the
-   * model the record names for it, or none where it names none, and marks
-   * where `run` began: before the first of the main thread's events from
-   * its `since` on, or after all of it, where a line already stands at the
-   * top or the run has a time. A turn left open by what was read is this
-   * run's, which the session's own events and snapshot settle, unless all
-   * of it is from before, or the thread already has a turn running: then
-   * it is over, and with all of it from before its calls with no finish
-   * failed.
+   * holds, each event at the time it happened, and marks where `run`
+   * began: before the first of the main thread's events from its `since`
+   * on, or after all of it, where a line already stands at the top or the
+   * run has a time. A turn left open by what was read is this run's,
+   * which the session's own events and snapshot settle, unless all of it
+   * is from before, or the thread already has a turn running: then it is
+   * over, and with all of it from before its calls with no finish failed.
    */
   lay(history: IntegratedHistory, run: Run | null) {
     this.#changed();
@@ -433,9 +436,9 @@ export class Conversation {
       if (after === undefined && run !== null && run.since !== null && main && item.at >= run.since)
         after = this.entries[this.entries.length - 1]?.key ?? null;
       this.apply(item.event, item.at);
-      if (item.event.type === "turnStarted") {
+      if (item.event.type === "turnStarted" && item.model !== undefined) {
         const turn = this.turn;
-        if (turn !== null) turn.model = item.model ?? null;
+        if (turn !== null) turn.model = item.model;
       }
     }
     if (after === undefined) after = this.entries[this.entries.length - 1]?.key ?? null;
@@ -455,6 +458,7 @@ export class Conversation {
     }
     this.earlierCut = history.cut;
     this.earlier = "read";
+    this.earlierWhy = null;
     this.late = false;
   }
 

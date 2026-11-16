@@ -9,6 +9,7 @@ import {
   foldKey,
   held,
   locate,
+  notRead,
   stamps,
   choiceLabel,
   choiceMeans,
@@ -474,6 +475,18 @@ describe("a Codex-shaped call", () => {
     const c = new Conversation(() => 0);
     expect(speaker(c, null, "Codex")).toBe("Codex");
     expect(speaker(c, "gpt-5-codex", "Codex")).toBe("gpt-5-codex");
+  });
+
+  it("says earlier messages could not be read and why, on one short line, or only that they are not shown", () => {
+    expect(notRead("Codex does not have this conversation")).toBe(
+      "could not be read: Codex does not have this conversation.",
+    );
+    expect(notRead("codex is not on your PATH.\nmore")).toBe("could not be read: codex is not on your PATH.");
+    const long = notRead("x".repeat(400));
+    expect(long.length).toBeLessThan(200);
+    expect(long.endsWith("….")).toBe(true);
+    expect(notRead(null)).toBe("are not shown here.");
+    expect(notRead("  ")).toBe("are not shown here.");
   });
 });
 

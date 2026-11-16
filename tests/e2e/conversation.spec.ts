@@ -1803,6 +1803,10 @@ test.describe("a resumed conversation", () => {
       await page.keyboard.press("Enter");
       await agent(page, `f.turn("${H}", "Four of them pass.");`);
       await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+      // This run's turn goes under the agent's name too, as it will once
+      // read back after a reload.
+      await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Codex");
+      await expect(page.getByTestId("agent-run").last().locator("header")).not.toContainText("gpt-5-codex");
       const line = await box(page, "run-began", 0);
       expect(line.y + line.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
 
@@ -1812,6 +1816,7 @@ test.describe("a resumed conversation", () => {
       await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
       await expect(page.getByTestId("user-message")).toHaveCount(3);
       await expect(page.getByTestId("agent-text")).toHaveCount(3);
+      await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Codex");
       await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
       const after = await box(page, "run-began", 0);
       expect((await box(page, "user-message", 1)).y).toBeLessThan(after.y);
@@ -1822,7 +1827,7 @@ test.describe("a resumed conversation", () => {
       await withThread(page, false);
       await page.getByTestId("past-session").click();
       await expect(page.getByTestId("thread-intro")).toHaveText(
-        "This session was resumed. Its earlier messages are in its transcript and are not shown here.",
+        "This session was resumed. Its earlier messages could not be read: Codex does not have this conversation.",
       );
       await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
       await expect(page.getByTestId("composer-input")).toBeEditable();

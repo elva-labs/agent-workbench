@@ -42,7 +42,7 @@ test("the fake core runs a scripted integrated session behind the seam", async (
   ]);
   expect(heard.history?.items[0].event).toMatchObject({ message: heard.message, text: "hello" });
   expect(heard.history?.items.every((item) => typeof item.at === "number")).toBe(true);
-  expect(heard.codex).toContain("thread not loaded");
+  expect(heard.codex).toContain("Codex does not have this conversation");
   expect(heard.snapshot).toMatchObject({ state: "idle", turn: false, messages: [] });
   expect(heard.snapshot.ready?.type).toBe("ready");
   const types = heard.events.map((event) => event.type);

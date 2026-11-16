@@ -112,8 +112,8 @@ export interface FakeIntegrated {
       back: the messages it took, its turns with the model each ran on,
       and what it said and did in whole, each with when; nothing of what
       only streamed. Codex names no model on a turn and keeps no plan's
-      steps, and a thread it does not have is an error, as Codex says;
-      Claude Code has nothing of a conversation it did not write. */
+      steps, and a thread it does not have is an error, in the core's
+      words; Claude Code has nothing of a conversation it did not write. */
   history(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
@@ -654,7 +654,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       // Read when asked; a held read only answers late.
       const items = JSON.parse(JSON.stringify(own ? (transcripts.get(historyOptions.session) ?? []) : [])) as Written[];
       if (historyHeld !== null) await historyHeld.wait;
-      if (codex && !own) throw new Error(`thread not loaded: ${historyOptions.session}`);
+      if (codex && !own) throw new Error("Codex does not have this conversation");
       return { items, cut: false };
     },
 
