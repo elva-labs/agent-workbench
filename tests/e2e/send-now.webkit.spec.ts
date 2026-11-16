@@ -398,6 +398,19 @@ test("sends what is written now, with what waits, on the chord", async ({ page }
   expect((await calls(page)).filter((call) => call.method === "sendNow")).toHaveLength(1);
 });
 
+test("leaves a message sent later with Enter waiting after a command sent on the chord", async ({ page }) => {
+  await open(page);
+  await busy(page, "first");
+  // A command is no message: nothing is sent now for it.
+  await input(page).fill("/compact keep it short");
+  await page.keyboard.press(SEND_NOW);
+  await expect.poll(async () => (await calls(page)).filter((call) => call.method === "compact").length).toBe(1);
+  await say(page, "later, on Enter");
+  await expect(page.getByTestId("user-message").filter({ hasText: "later, on Enter" })).toHaveAttribute("data-state", "queued");
+  expect((await calls(page)).filter((call) => call.method === "sendNow")).toHaveLength(0);
+  await expect(queued(page)).toHaveCount(2);
+});
+
 test("puts the words back though the answer to taking them back is lost", async ({ page }) => {
   await open(page);
   await busy(page, "a thought to finish");

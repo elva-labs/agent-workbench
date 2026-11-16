@@ -507,16 +507,19 @@
     if (digit !== null && link.draft.trim() !== digit) digit = null;
   });
 
-  function submit() {
-    if (!ready || !hasWords || unlisted) return;
+  /** Sends what is written, or holds it to send once the session can take
+      it; says whether a message goes. A command, such as compact, is no
+      message. */
+  function submit(): boolean {
+    if (!ready || !hasWords || unlisted) return false;
     if (reading > 0 || link.restarting) {
       held = true;
-      return;
+      return true;
     }
     const lone = link.draft.trim();
     if (answers && link.images.length === 0 && /^[0-9]$/.test(lone) && digit !== lone) {
       digit = lone;
-      return;
+      return false;
     }
     digit = null;
     const asked =
@@ -530,7 +533,7 @@
       void compact(sessionKey, asked.rest).then((done) => {
         if (!done && held.draft === "") held.draft = typed;
       });
-      return;
+      return false;
     }
     const sent = outgoing(
       link.draft,
@@ -538,13 +541,14 @@
       link.files.map((file) => file.path),
     );
     const id = send(sessionKey, sent.text, link.images, null, sent.mentions);
-    if (id === null) return;
+    if (id === null) return false;
     notice = null;
     link.draft = "";
     link.images = [];
     link.mentions = [];
     link.files = [];
     void tick().then(grow);
+    return true;
   }
 
   function stop() {
@@ -563,9 +567,10 @@
     e.preventDefault();
     if (e.shiftKey) onTakeBack?.();
     else if (hasWords) {
-      // Sent as Enter sends it, to go now as soon as it waits.
-      onSendNow?.(true);
-      submit();
+      // Sent as Enter sends it, to go now as soon as it waits. What sends
+      // no message, such as a command, leaves nothing to go now.
+      const now = onSendNow?.(true) ?? false;
+      if (!submit() && now) link.nowOnQueue = false;
     } else onSendNow?.(false);
     return true;
   }
