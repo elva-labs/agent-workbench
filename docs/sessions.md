@@ -453,13 +453,14 @@ the field that opens go to, where it asks before closing busy shells. A
 row left from the last quit only changes the way it will start.
 
 A terminal Claude Code session is quit as the user would quit it, with
-Ctrl+C a press at a time, since Claude Code writes down the mode it runs
-in only as it shuts down, and a kill on Windows would leave it no time to;
-one the presses do not end is hung up on, and any other agent's terminal
-session is hung up on at once. A run that has not ended within twenty
-seconds is left as it was, and the pane says the session was not reopened.
-A mode chosen on the chip while the session is being reopened is the one
-it goes on in.
+Ctrl+C a press at a time. Claude Code writes down the mode it resumed a
+conversation in as it starts, and the mode it ran in only as it shuts
+down, on a quit or a hang-up, and a kill on Windows would leave it no time
+to. One the presses do not end is hung up on, and any other agent's
+terminal session is hung up on at once. A run that has not ended within
+twenty seconds is left as it was, and the pane says the session was not
+reopened. A mode chosen on the chip while the session is being reopened
+is the one it goes on in.
 
 The session starts in the mode the agent resumes it in that way, as for
 any resume, except that a conversation whose last run was integrated goes

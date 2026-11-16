@@ -29,7 +29,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
-import { forgetMode, modeOf } from "$lib/sessionModes";
+import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 
 /**
@@ -1674,8 +1674,10 @@ export async function launch(
         token: session.token,
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
-        // A conversation whose last run was integrated goes on in the mode
-        // it ran in there, which its agent's terminal has no record of.
+        // A conversation goes on in the mode the window keeps for it: the
+        // one its last integrated run ran in, which its agent's terminal
+        // has no record of, or the one a terminal run was killed in before
+        // it could write its own down.
         mode: session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined),
         configDir: dirFor(session.account, session.agent),
         ...told,
@@ -1718,8 +1720,9 @@ export function started(
   changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
-    // The mode a terminal runs in is the terminal's own to keep.
-    forgetMode(sessionId);
+    // A run in the mode kept for the conversation holds that record until
+    // it ends.
+    holdMode(sessionId);
     keepToken(session);
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
@@ -1742,20 +1745,43 @@ export function failed(key: string, error: string) {
   changed(session);
 }
 
+/** The conversation each closed row's run had, by its pty, until that run
+    is heard to end. */
+const closedRuns = new Map<string, string>();
+
+/** The exit of an agent that shut down on a hang-up, as Claude Code does:
+    128 and the signal's number. */
+const HUNG_UP = 129;
+
+/** Whether a terminal run ended by a shutdown of its own, on a quit or a
+    hang-up, rather than killed: only then has its agent written down the
+    mode it ran in. */
+function shutDown(event: SessionEnded): boolean {
+  return event.clean || event.code === HUNG_UP;
+}
+
 /**
  * A session ended on its own. Anything but a clean zero reads as a crash, and
  * nothing restarts by itself: a broken install would otherwise become a loop
  * that burns CPU and hides the actual error.
  *
- * False when no row here has that pty: the exit is someone else's, or the
- * spawn result has not landed yet.
+ * False when no row here has or had that pty: the exit is someone else's,
+ * or the spawn result has not landed yet.
  */
 export function ended(event: SessionEnded): boolean {
   const session = sessions.all.find(
     (candidate) => candidate.ptyId === event.id,
   );
-  if (session === undefined) return false;
+  if (session === undefined) {
+    // The run of a row closed while it went on.
+    const id = closedRuns.get(event.id);
+    if (id === undefined) return false;
+    closedRuns.delete(event.id);
+    terminalEnded(id, shutDown(event));
+    return true;
+  }
   session.ptyId = null;
+  if (session.id !== null) terminalEnded(session.id, shutDown(event));
   // A run a reopen stopped goes on the other way, and its row never ends.
   if (runEnded(session.key)) return true;
   session.exitCode = event.code;
@@ -1985,10 +2011,14 @@ export function close(key: string, keepShells = false) {
   if (session.kind === "integrated") stopIntegrated(session);
 
   if (session.ptyId !== null) {
+    const ptyId = session.ptyId;
+    // Its end, heard once the row has gone, still says whether the agent
+    // wrote down the mode it ran in.
+    if (session.id !== null) closedRuns.set(ptyId, session.id);
     // A kill that fails is a process that is already gone.
     core()
-      .kill(session.ptyId)
-      .catch(() => {});
+      .kill(ptyId)
+      .catch(() => closedRuns.delete(ptyId));
     // Cleared before the row goes, so the terminal's own teardown does not
     // kill the same pty a second time on its way out. That teardown still
     // matters for the case it is there for: the whole pane going away with
@@ -2694,6 +2724,7 @@ export function reset() {
   pendingActivity.clear();
   reopening.clear();
   endings.clear();
+  closedRuns.clear();
   pressed.clear();
   lastKeys.clear();
   for (const key of Object.keys(drafts)) delete drafts[key];

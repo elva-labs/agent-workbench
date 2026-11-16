@@ -161,8 +161,15 @@ conversation's id, only while it is one the agent offers to switch to. A
 terminal session that resumes the conversation starts in that mode, as
 Claude Code's permission mode or Codex's approval policy and sandbox,
 since the agent's own record of a conversation holds only what its
-terminal wrote; from then on the mode is the terminal's, the window lets
-its record go, and the agent's own record of that run decides the next.
+terminal wrote. The window cannot see a terminal's mode, and Claude Code
+writes down the mode its terminal ran in only as it shuts down, on a quit
+or a hang-up, having written the one it resumed in as it started. So the
+window keeps its record while that terminal runs, and lets it go once the
+run has shut down by itself: the agent's own record of that run decides
+the next start. A run that was killed, as a stop on Windows or a crash
+ends one, wrote nothing down, and the window's record decides the next
+start. A record still held by a terminal run when the window starts is
+let go, since the app's quit hung up on that run.
 A mode is the conversation's own: a new session, one another session
 starts among them, names none, and no conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept

@@ -932,7 +932,7 @@ describe("the mode a session starts in", () => {
     expect((starts().at(-1) as { options: { mode?: string } }).options.mode).toBeUndefined();
   });
 
-  it("is let go when a mode the agent does not offer replaces it, and when the conversation runs in a terminal", async () => {
+  it("is let go when a mode the agent does not offer replaces it, and once a terminal run of the conversation has shut down", async () => {
     const { session } = await started();
     const id = session.id!;
     await configure(session.key, { mode: "plan" });
@@ -941,9 +941,12 @@ describe("the mode a session starts in", () => {
     expect(modeOf(id)).toBeNull();
     await configure(session.key, { mode: "plan" });
     expect(modeOf(id)).toBe("plan");
-    // A terminal run of it: its mode is the terminal's own to keep.
+    // A terminal run of it holds the record until it ends; shut down by
+    // itself, it has written its own mode down.
     const terminal = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
     startedTerminal(terminal.key, "pty-1", id);
+    expect(modeOf(id)).toBe("plan");
+    endedTerminal({ id: "pty-1", code: 0, clean: true });
     expect(modeOf(id)).toBeNull();
   });
 });
@@ -963,6 +966,8 @@ describe("an interrupt with no turn running", () => {
 
 describe("a session reopened the other way", () => {
   beforeEach(() => {
+    localStorage.removeItem("workbench.modes");
+    resetModes();
     resetShells();
     resetConductor();
     applyDetect(
@@ -1097,8 +1102,8 @@ describe("a session reopened the other way", () => {
     await reopenOtherWay(key);
     await launchTerminal(key, 80, 24, () => {});
     expect(pty.spawned.at(-1)).toMatchObject({ session: session.id, mode: "default" });
-    // The terminal's own record of its mode decides from here.
-    expect(modeOf(session.id!)).toBeNull();
+    // The terminal run holds the record until it ends.
+    expect(modeOf(session.id!)).toBe("default");
     // A run in a mode from the agent's own settings that it offers no
     // switch to names none: the terminal's settings decide again.
     const other = await started();
@@ -1106,6 +1111,81 @@ describe("a session reopened the other way", () => {
     await reopenOtherWay(other.key);
     await launchTerminal(other.key, 80, 24, () => {});
     expect(pty.spawned.at(-1)!.mode).toBeUndefined();
+  });
+
+  /** The integrated start the fake core was last asked for. */
+  const lastStart = () =>
+    (fake.calls.filter((call) => call.method === "start").at(-1) as { options: { mode?: string } }).options;
+
+  it("keeps the mode the user last chose through a terminal run that is killed, and leaves it to the agent once one shuts down", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    const { session, key } = await started();
+    const id = session.id!;
+    await configure(key, { mode: "default" });
+    await reopenOtherWay(key);
+    await launchTerminal(key, 80, 24, () => {});
+    // Killed, as a stop on Windows or a crash ends it, the terminal wrote
+    // no mode down: the conversation goes on in the user's last choice.
+    endedTerminal({ id: byKey(key)!.ptyId!, code: 1, clean: false });
+    expect(byKey(key)!.status).toBe("crashed");
+    expect(modeOf(id)).toBe("default");
+    await reopenOtherWay(key);
+    await launch(key);
+    expect(lastStart().mode).toBe("default");
+    // Shut down by a quit or a hang-up, it wrote its own: the agent's
+    // record of that run decides.
+    for (const shutdown of [
+      { code: 0, clean: true },
+      { code: 129, clean: false },
+    ]) {
+      await configure(key, { mode: "default" });
+      await reopenOtherWay(key);
+      await launchTerminal(key, 80, 24, () => {});
+      expect(modeOf(id)).toBe("default");
+      const pid = byKey(key)!.ptyId!;
+      pty.onWrite = (on) => {
+        if (on === pid && pty.written.filter(([at, data]) => at === pid && data === "\x03").length === 2)
+          endedTerminal({ id: pid, ...shutdown });
+      };
+      expect(await reopenOtherWay(key)).toBe(true);
+      expect(modeOf(id)).toBeNull();
+      await launch(key);
+      expect(lastStart().mode).toBeUndefined();
+    }
+  });
+
+  it("lets the end of a closed row's terminal run decide, and lets go at the window's start of a mode a run still held", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    for (const [end, kept] of [
+      [{ code: 1, clean: false }, "plan"],
+      [{ code: 0, clean: true }, null],
+    ] as const) {
+      const { session, key } = await started();
+      const id = session.id!;
+      await configure(key, { mode: "plan" });
+      await reopenOtherWay(key);
+      await launchTerminal(key, 80, 24, () => {});
+      const ptyId = byKey(key)!.ptyId!;
+      close(key);
+      expect(modeOf(id)).toBe("plan");
+      expect(endedTerminal({ id: ptyId, ...end })).toBe(true);
+      expect(modeOf(id)).toBe(kept);
+    }
+    // A terminal run still up when the window goes, as at a quit, which
+    // hangs up on it: its agent writes its own down.
+    const { session, key } = await started();
+    const id = session.id!;
+    await configure(key, { mode: "acceptEdits" });
+    const other = await started();
+    await configure(other.key, { mode: "plan" });
+    await reopenOtherWay(key);
+    await launchTerminal(key, 80, 24, () => {});
+    resetModes();
+    expect(modeOf(id)).toBeNull();
+    // A record no terminal run held is kept.
+    expect(modeOf(other.session.id!)).toBe("plan");
   });
 
   it("goes on in the mode chosen while it is being reopened, or asked just before and not answered", async () => {
