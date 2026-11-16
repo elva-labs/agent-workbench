@@ -524,6 +524,41 @@ export function choiceMeans(offer: PermissionOffer): string {
   }
 }
 
+/** The words the core ends what a choice keeps with, said of the session
+    that asks, and the same said of a session named before them. */
+const KEPT_FOR: [string, string][] = [
+  [" for the rest of this session", " for the rest of that session"],
+  [" for the rest of this turn", " for the rest of its turn"],
+  [" in this project's uncommitted local settings", " in its project's uncommitted local settings"],
+];
+
+/** What a choice keeps, said of the session named before it. Only the end
+    the core adds is said again; what the agent asked to keep stays as it
+    wrote it. */
+function keptFor(remembers: string): string {
+  for (const [own, named] of KEPT_FOR)
+    if (remembers.endsWith(own)) return `${remembers.slice(0, -own.length)}${named}`;
+  return remembers;
+}
+
+/** What a choice does and keeps, for a request of another session answered
+    from the dock of the session that started it: the session's name is
+    the middle piece, so the call and what the choice keeps read as that
+    session's and never as the one on screen. */
+export function choiceMeansIn(offer: PermissionOffer, name: string): [string, string, string] {
+  switch (offer.choice) {
+    case "allow":
+      return ["Allows this call in ", name, " and remembers nothing."];
+    case "allowSession":
+    case "allowAlways":
+      return ["Allows this call in ", name, ` and remembers ${offer.remembers === null ? "it" : keptFor(offer.remembers)}.`];
+    case "deny":
+      return ["Refuses this call in ", name, offer.message ? " and its turn goes on. You can tell it why." : " and its turn goes on."];
+    case "cancel":
+      return ["Refuses this call and stops ", name, "'s turn."];
+  }
+}
+
 /** How a settled permission went, for the step that asked it. */
 export function answered(choice: PermissionChoice): string {
   switch (choice) {

@@ -1,18 +1,40 @@
 <script lang="ts">
-  import { tick, untrack } from "svelte";
-  import type { Conversation, Request } from "$lib/conversation.svelte";
+  import { onDestroy, tick, untrack } from "svelte";
+  import type { Request } from "$lib/conversation.svelte";
   import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
+  import { accountWords, answerRound, roundQuestion, type Ask } from "$lib/conductor.svelte";
+  import { askerOf, dockedFor, folderOf, type Docked } from "$lib/docked.svelte";
   import { answer, reply } from "$lib/integrated.svelte";
-  import { address, asks, choiceLabel, choiceMeans, place, requestCwd, requestPaths, shown as markers, type Piece } from "$lib/thread";
+  import { focusPane } from "$lib/layout.svelte";
+  import { goTo } from "$lib/workspace.svelte";
+  import {
+    address,
+    asks,
+    choiceLabel,
+    choiceMeans,
+    choiceMeansIn,
+    place,
+    requestCwd,
+    requestPaths,
+    shown as markers,
+    type Piece,
+  } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
 
   /**
-   * What the agent waits on the user for, docked over the composer rather
-   * than in the thread: a permission, said in words, with the choices the
-   * core offers, each saying what it keeps; or a question, with its options
-   * and, where it takes them, room for the user's own words, a secret one
-   * typed hidden. One at a time, the oldest first.
+   * What waits on the user, docked over the composer rather than in the
+   * thread: a permission, said in words, with the choices the core offers,
+   * each saying what it keeps; or a question, with its options and, where
+   * it takes them, room for the user's own words, a secret one typed
+   * hidden. The session's own come first, then those of the sessions it
+   * started, each named by its session and answered as it would be there,
+   * with the way to it; a session that runs in a terminal is answered
+   * there, so its request offers only the way. A round of review past the
+   * workflow's limit that this session asked for docks with its own. One
+   * at a time: the one shown stays until it is answered or goes, whatever
+   * comes in meanwhile, and one that takes the place of another takes no
+   * answer for a moment, so nothing meant for the last one answers it.
    *
    * The choices are one stop for the keyboard: the arrows move between
    * them, a digit picks one, and the first is the one that remembers
@@ -20,46 +42,112 @@
    * for something else answers it; Up from an empty composer reaches it.
    */
   interface Props {
-    conversation: Conversation;
     sessionKey: string;
+    /** The session's agent, by the name it speaks under. */
     agent: string;
-    root: string | null;
+    /** The session is the one on screen. */
+    active: boolean;
     /** Called once an answer is on its way, for the keyboard to go back. */
     onAnswered?: () => void;
   }
 
-  let { conversation, sessionKey, agent, root, onAnswered }: Props = $props();
+  let { sessionKey, agent, active, onAnswered }: Props = $props();
 
   type Permission = Extract<IntegratedEventBody, { type: "permissionAsked" }>;
   type Question = Extract<IntegratedEventBody, { type: "questionAsked" }>;
 
-  let request = $derived<Request | null>(conversation.open[0] ?? null);
-  let more = $derived(Math.max(0, conversation.open.length - 1));
+  let entries = $derived(dockedFor(sessionKey));
+
+  /** The entry on screen, which stays while it waits: what arrives later
+      waits behind it, so what is shown never changes under the user. */
+  let kept = $state<string | null>(null);
+  let entry = $derived<Docked | null>(entries.find((each) => each.id === kept) ?? entries[0] ?? null);
+  $effect(() => {
+    const id = entry?.id ?? null;
+    // Off screen nobody is looking, and the order alone decides.
+    kept = active ? id : null;
+  });
+
+  let request = $derived<Request | null>(entry?.kind === "request" ? entry.request : null);
+  let conversation = $derived(entry?.kind === "request" ? entry.conversation : null);
+  /** The started session that asks, by name and step; null for this
+      session's own. */
+  let who = $derived(entry === null ? null : askerOf(entry));
+  /** The folder the asking session works in. */
+  let root = $derived(entry === null ? null : folderOf(entry));
+  /** Who the choices speak of: the agent of this session, or the session
+      that asks. */
+  let named = $derived(who === null ? agent : who.name);
+
+  let others = $derived(entries.filter((each) => each.id !== entry?.id));
+  /** Who waits after the one shown, when all of it is one session's and
+      not only this session's own. */
+  let next = $derived.by(() => {
+    if (others.length === 0 || entries.every((each) => each.own)) return null;
+    const keys = new Set(others.map((each) => each.key));
+    if (keys.size > 1) return null;
+    const first = askerOf(others[0]);
+    return first === null ? agent : first.name;
+  });
 
   let dock = $state<HTMLDivElement | null>(null);
+
+  /** How long an entry that took another's place takes no answer. */
+  const SETTLE = 500;
+  /** Whether the entry shown takes an answer yet. */
+  let armed = $state(true);
+  let last: string | null = null;
+  let settling: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    const id = entry?.id ?? null;
+    untrack(() => {
+      if (last !== null && id !== null && id !== last) {
+        armed = false;
+        if (settling !== null) clearTimeout(settling);
+        settling = setTimeout(() => {
+          settling = null;
+          armed = true;
+        }, SETTLE);
+      }
+      last = id;
+    });
+  });
+  onDestroy(() => {
+    if (settling !== null) clearTimeout(settling);
+  });
 
   /** Who asks: the agent, or a subagent of it, by what it was asked to do,
       which is the agent's text and drawn as it is. */
   function asker(parent: string | null): Piece[] {
     if (parent === null) return [agent];
-    const call = conversation.call(parent);
+    const call = conversation?.call(parent);
     const input = call?.input as Record<string, unknown> | null | undefined;
     const description = typeof input?.description === "string" ? input.description : null;
+    if (who !== null)
+      return description === null ? ["A subagent"] : ["The subagent for “", { name: cut(description) }, "”"];
     return description === null ? [`A subagent of ${agent}'s`] : ["The subagent for “", { name: cut(description) }, "”"];
   }
 
   /** What a subagent that asks was asked to do, as it wrote it. */
   function askerDescription(parent: string | null): string {
     if (parent === null) return "";
-    const input = conversation.call(parent)?.input as Record<string, unknown> | null | undefined;
+    const input = conversation?.call(parent)?.input as Record<string, unknown> | null | undefined;
     return typeof input?.description === "string" ? input.description : "";
   }
 
   /** Who asks, as a label, with what cannot be seen in it written out. */
   function askerLabel(parent: string | null): string {
-    return asker(parent)
-      .map((piece) => (typeof piece === "string" ? piece : markers(piece.name)))
-      .join("");
+    const lead = who === null || parent !== null ? asker(parent) : [];
+    const said = lead.map((piece) => (typeof piece === "string" ? piece : markers(piece.name))).join("");
+    if (who === null) return said;
+    return parent === null ? who.name : `${said} in ${who.name}`;
+  }
+
+  /** Goes to the session that asks, with the keyboard. It answers nothing,
+      so it waits on nothing. */
+  function open() {
+    if (entry === null) return;
+    if (goTo(entry.key)) focusPane("agent");
   }
 
   // The dock going away by itself, a question that settled itself or a
@@ -67,13 +155,13 @@
   // when the dock had it.
   let held = false;
   $effect.pre(() => {
-    request;
+    entry?.id;
     untrack(() => {
       held = dock !== null && dock.contains(document.activeElement);
     });
   });
   $effect(() => {
-    request;
+    entry?.id;
     untrack(() => {
       if (!held) return;
       held = false;
@@ -92,6 +180,7 @@
   let words = $state("");
 
   $effect(() => {
+    entry?.id;
     const asked = request?.asked;
     // A command of several lines is shown whole from the start, so no line
     // of it is out of sight when the choice is made.
@@ -108,15 +197,35 @@
     own = [];
   });
 
+  /** What a choice does, said of the session the request is in. */
+  function means(offer: PermissionOffer): string {
+    return who === null ? choiceMeans(offer) : choiceMeansIn(offer, who.name).join("");
+  }
+
   function choose(offer: PermissionOffer) {
-    if (request === null || request.answering) return;
+    if (entry === null || request === null || request.answering || !armed) return;
     if (offer.message && offer.choice === "deny" && denying === null) {
       denying = offer;
       void tick().then(() => dock?.querySelector<HTMLInputElement>("[data-testid='deny-words']")?.focus());
       return;
     }
-    answer(sessionKey, request.request, offer.choice, offer.choice === "deny" ? words : undefined);
+    answer(entry.key, request.request, offer.choice, offer.choice === "deny" ? words : undefined);
     onAnswered?.();
+  }
+
+  /** The round past the limit, allowed this once or not. */
+  function round(ask: Ask, allowed: boolean) {
+    if (!armed) return;
+    if (answerRound(ask, allowed)) onAnswered?.();
+  }
+
+  function onRoundKey(e: KeyboardEvent, ask: Ask) {
+    if (/^[12]$/.test(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault();
+      round(ask, e.key === "1");
+      return;
+    }
+    onChoicesKey(e, []);
   }
 
   function onChoicesKey(e: KeyboardEvent, offers: PermissionOffer[]) {
@@ -294,8 +403,8 @@
 
   function pick(at: number, label: string, multiple: boolean, questions: Question["questions"]) {
     if (direct(questions)) {
-      if (request === null || request.answering) return;
-      reply(sessionKey, request.request, [[label]]);
+      if (entry === null || request === null || request.answering || !armed) return;
+      reply(entry.key, request.request, [[label]]);
       onAnswered?.();
       return;
     }
@@ -316,16 +425,16 @@
   }
 
   function send(questions: Question["questions"]) {
-    if (request === null || request.answering) return;
+    if (entry === null || request === null || request.answering || !armed) return;
     const given = answers(questions);
     if (given === null) return;
-    reply(sessionKey, request.request, given);
+    reply(entry.key, request.request, given);
     onAnswered?.();
   }
 
   function decline() {
-    if (request === null || request.answering) return;
-    reply(sessionKey, request.request, null);
+    if (entry === null || request === null || request.answering || !armed) return;
+    reply(entry.key, request.request, null);
     onAnswered?.();
   }
 
@@ -361,14 +470,84 @@
   }
 </script>
 
-{#if request !== null}
-  {@const asked = request.asked}
+{#if entry !== null}
+  {#key entry.id}
+  {#if entry.kind === "terminal"}
+    <!-- A started session in a terminal: only its terminal answers it, so
+         the dock offers the way there, and lets go once it stops asking. -->
+    <div
+      class="dock"
+      bind:this={dock}
+      role="group"
+      aria-label="{named} is waiting for you in its terminal"
+      data-testid="terminal-dock"
+    >
+      <div class="what">
+        <span class="ring"></span>
+        <p>{@render asking(null)} asks for a permission in its terminal</p>
+        {@render waiting()}
+      </div>
+      <div class="choices">
+        <button class="choice primary plain" tabindex="0" data-choice="open" onclick={open} data-testid="dock-open-terminal"
+          ><span class="label">Open <Plain text={named} /></span></button
+        >
+      </div>
+      <p class="means">It runs in a terminal, so it is answered there.</p>
+    </div>
+  {:else if entry.kind === "round"}
+    {@const ask = entry.ask}
+    {@const beyond = ask.round!}
+    <!-- A round of review past the workflow's limit, which this session's
+         start waits on: the user's yes lets this one round through. -->
+    <div class="dock" bind:this={dock} role="group" aria-label="{agent} asks for another round of {beyond.step}" data-testid="round-dock">
+      <div class="what">
+        <span class="ring"></span>
+        <p><b>{agent}</b> asks for another round of <Plain text={beyond.step} /></p>
+        {@render waiting()}
+      </div>
+      <div class="body">
+        <p class="description" data-testid="conduct-round"><Plain text={roundQuestion(beyond)} /></p>
+        <p class="description">
+          In <Plain text={ask.project} />{ask.worktree ? ", in a worktree of its own" : ""}.{#if ask.named !== null}{" "}<span
+              data-testid="conduct-account">{accountWords(ask.named)}</span
+            >{/if}
+        </p>
+        {#if ask.prompt !== ""}<p class="prompt"><Plain text={ask.prompt} /></p>{/if}
+      </div>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="choices" class:settling={!armed} onkeydown={(e) => onRoundKey(e, ask)}>
+        {#each [true, false] as allowed, at (at)}
+          <button
+            class="choice"
+            class:primary={allowed}
+            tabindex={at === pointed ? 0 : -1}
+            aria-disabled={armed ? undefined : "true"}
+            aria-describedby="means-{sessionKey}"
+            data-choice={allowed ? "round-allow" : "round-stop"}
+            data-testid={allowed ? "conduct-allow-round" : "conduct-no"}
+            onclick={() => round(ask, allowed)}
+            onfocus={() => (pointed = at)}
+            onpointerenter={() => (pointed = at)}
+            ><span class="key">{at + 1}</span>{allowed ? "Allow one more round" : "Stop at the limit"}</button
+          >
+        {/each}
+      </div>
+      <p class="means" id="means-{sessionKey}" data-testid="choice-means">
+        {pointed === 0
+          ? "Starts this one round. A round after it is asked about again."
+          : `Refuses the start, and ${agent} is told to ask you how to go on.`}
+      </p>
+    </div>
+  {:else}
+  {@const asked = entry.request.asked}
+  {@const conversation = entry.conversation}
   <div
     class="dock"
     bind:this={dock}
     role="group"
     aria-label="{askerLabel(asked.parent)} is waiting for you"
     data-testid={asked.type === "permissionAsked" ? "permission-dock" : "question-dock"}
+    data-asker={who === null ? "own" : "started"}
   >
     {#if asked.type === "permissionAsked"}
       {@const what = asks(asked, asked.call === null ? null : conversation.call(asked.call))}
@@ -381,7 +560,7 @@
       <div class="what">
         <span class="ring"></span>
         <p>
-          <b>{@render pieces(asker(asked.parent))}</b>{@render cutOff(askerDescription(asked.parent))} asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
+          {@render asking(asked.parent)} asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
                 class="exact"><Plain text={cut(parts.first)} /></code
               >{@render cutOff(parts.first)}{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
@@ -396,7 +575,7 @@
                   >. The request is longer than the workbench can show, and its end is hidden</span
                 >{/if}
         </p>
-        {#if more > 0}<span class="more">{more} more waiting</span>{/if}
+        {@render waiting()}
       </div>
       <!-- What the request holds scrolls under its line; the line and the
            choices stay in sight whatever it holds. -->
@@ -473,7 +652,7 @@
           <input
             bind:value={words}
             onkeydown={onWordsKey}
-            placeholder="Tell {agent} why, or what to do instead (optional)"
+            placeholder="Tell {named} why, or what to do instead (optional)"
             aria-label="Why the call is denied"
             data-testid="deny-words"
           />
@@ -481,16 +660,17 @@
         </div>
       {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="choices" onkeydown={(e) => onChoicesKey(e, asked.choices)}>
+        <div class="choices" class:settling={!armed} onkeydown={(e) => onChoicesKey(e, asked.choices)}>
           {#each asked.choices as offer, at (offer.choice)}
             <button
               class="choice"
               class:primary={at === 0}
               tabindex={at === pointed ? 0 : -1}
-              disabled={request.answering}
+              disabled={entry.request.answering}
+              aria-disabled={armed ? undefined : "true"}
               data-choice={offer.choice}
               data-testid="choice-{offer.choice}"
-              title={choiceMeans(offer)}
+              title={means(offer)}
               aria-describedby="means-{sessionKey}"
               onclick={() => choose(offer)}
               onfocus={() => (pointed = at)}
@@ -498,19 +678,22 @@
             >
           {/each}
         </div>
+        {@const offer = asked.choices[pointed] ?? asked.choices[0]}
         <p class="means" id="means-{sessionKey}" data-testid="choice-means">
-          {choiceMeans(asked.choices[pointed] ?? asked.choices[0])}
+          {#if who === null}{choiceMeans(offer)}{:else}{@const said = choiceMeansIn(offer, who.name)}{said[0]}<Plain
+              text={said[1]}
+            />{said[2]}{/if}
         </p>
       {/if}
     {:else}
       {@const questions = asked.questions}
       <div class="what">
         <span class="ring"></span>
-        <p><b>{@render pieces(asker(asked.parent))}</b>{@render cutOff(askerDescription(asked.parent))} asks you</p>
-        {#if more > 0}<span class="more">{more} more waiting</span>{/if}
+        <p>{@render asking(asked.parent)} asks you</p>
+        {@render waiting()}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="questions" onkeydown={(e) => onQuestionKey(e, questions)}>
+      <div class="questions" class:settling={!armed} onkeydown={(e) => onQuestionKey(e, questions)}>
         <div class="body">
         {#each questions as question, at (at)}
           <div class="question" data-testid="question">
@@ -534,7 +717,7 @@
                     <button
                       class="option answer"
                       tabindex={index === 0 ? 0 : -1}
-                      disabled={request.answering}
+                      disabled={entry.request.answering}
                       data-option
                       data-testid="question-option"
                       onclick={() => pick(at, option.label, false, questions)}
@@ -550,7 +733,7 @@
                       role={question.multiple ? "checkbox" : "radio"}
                       aria-checked={on}
                       tabindex={index === 0 ? 0 : -1}
-                      disabled={request.answering}
+                      disabled={entry.request.answering}
                       data-option
                       data-testid="question-option"
                       onclick={() => pick(at, option.label, question.multiple, questions)}
@@ -589,21 +772,23 @@
             <button
               class="choice primary"
               tabindex="0"
-              disabled={request.answering || answers(questions) === null}
+              disabled={entry.request.answering || answers(questions) === null}
               onclick={() => send(questions)}
               data-testid="question-send">{direct(questions) ? "Send your answer" : "Answer"}</button
             >
           {/if}
-          <button class="choice quiet" tabindex="0" disabled={request.answering} onclick={decline} data-testid="question-decline"
+          <button class="choice quiet" tabindex="0" disabled={entry.request.answering} onclick={decline} data-testid="question-decline"
             >Don't answer</button
           >
         </div>
       </div>
     {/if}
-    {#if request.error !== null}
-      <p class="error" data-testid="dock-error"><Plain text={request.error} /></p>
+    {#if entry.request.error !== null}
+      <p class="error" data-testid="dock-error"><Plain text={entry.request.error} /></p>
     {/if}
   </div>
+  {/if}
+  {/key}
 {/if}
 
 <!-- Where an address leads: the host it goes to, said on its own since its
@@ -626,6 +811,24 @@
       data-testid="permission-away-count"
       >{#if out > 0}, with {out} {out === 1 ? "path" : "paths"} outside the project{/if}{#if unsure > 0}{out > 0 ? " and" : ", with"}
         {unsure} not plainly in it{/if}</span
+    >{/if}{/snippet}
+
+<!-- Who asks: this session's agent or a subagent of it, by its words; or a
+     session it started, by its step and its name, and a subagent inside
+     it by both. -->
+{#snippet asking(parent: string | null)}{#if who === null}<b>{@render pieces(asker(parent))}</b>{@render cutOff(
+      askerDescription(parent),
+    )}{:else}{#if who.step !== null}<span class="steptag" data-testid="dock-step"><Plain text={who.step} /></span
+      >{/if}{#if parent !== null}<b>{@render pieces(asker(parent))}</b>{@render cutOff(askerDescription(parent))}{" "}in{" "}{/if}<b
+      data-testid="dock-session"><Plain text={who.name} /></b
+    >{/if}{/snippet}
+
+<!-- How many more wait, and from whom when it is one session; and, for a
+     session this one started, the way to it. -->
+{#snippet waiting()}{#if others.length > 0}<span class="more" data-testid="dock-more"
+      >{others.length} more waiting{#if next !== null}, from <Plain text={next} />{/if}</span
+    >{/if}{#if who !== null && entry?.kind !== "terminal"}<button class="go" tabindex="0" onclick={open} data-testid="dock-open"
+      >Open</button
     >{/if}{/snippet}
 
 <!-- What a cut leaves out, counted on the line. -->
@@ -708,9 +911,84 @@
   }
 
   .more {
-    flex: none;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: var(--conv-fine);
     color: var(--accent);
+  }
+
+  /* The way to the session that asks, quiet beside what it asks. */
+  .go {
+    flex: none;
+    margin: -1px 0;
+    padding: 1px 7px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    font: inherit;
+    font-size: var(--conv-meta);
+    color: var(--accent);
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .go:hover {
+    background: var(--accent-soft);
+  }
+
+  .go:active {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+
+  /* The step a started session runs for, before its name. */
+  .steptag {
+    display: inline-block;
+    margin-right: 7px;
+    padding: 0 6px;
+    border-radius: var(--radius-tag);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--label-size);
+    line-height: 17px;
+    vertical-align: 1px;
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
+  }
+
+  /* The prompt a round would start with, as the agent wrote it. */
+  .prompt {
+    margin: -2px 0 0 calc(var(--dot) + 9px);
+    padding: 4px 8px;
+    border-left: 2px solid var(--rule);
+    background: var(--surface-2);
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+
+  /* A request that took another's place takes no answer for a moment, and
+     its choices say so by fading in. */
+  .settling {
+    opacity: 0.55;
+  }
+
+  .choices,
+  .questions {
+    transition: opacity 0.2s;
+  }
+
+  .choice.plain {
+    padding: 0 12px;
+    max-width: 100%;
+  }
+
+  .choice .label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   code {
@@ -1069,7 +1347,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .chev {
+    .chev,
+    .choices,
+    .questions {
       transition: none;
     }
   }

@@ -2569,6 +2569,15 @@ export function refuse() {
   answerAsk("no");
 }
 
+/** Answers a round past a review's limit, for this one round or not,
+    when it is still the question on screen: an answer given to a question
+    that has gone reaches no other. True when it was answered. */
+export function answerRound(ask: Ask, allowed: boolean): boolean {
+  if (conductor.asking !== ask || ask.round === null) return false;
+  answerAsk(allowed ? "once" : "no");
+  return true;
+}
+
 /** The projects a caller may start sessions in without being asked. */
 export function allowedProjects(callerId: string): string[] {
   const projects: string[] = [];
