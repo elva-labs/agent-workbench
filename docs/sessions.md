@@ -232,10 +232,10 @@ writes a recap of the conversation while you are away and compacts a long
 one before its cache expires, each under a spinner for seconds. Once you
 have read a session at rest, output nobody sent it a line for counts as
 work only when it draws the bullet Claude Code puts before what it says or
-does in a turn, which a recap and a compaction never draw. The dot says it on the row, with the words on hover and
-for a screen reader; the agent pane's header spells the state out. A
-session that goes quiet, ends, or rings for
-attention while nobody is looking at it is **unread**: the accent dot, the
+does in a turn, which a recap and a compaction never draw. The dot says
+it on the row, with the words on hover and for a screen reader; the agent
+pane's header spells the state out. A session that goes quiet, ends, or
+rings for attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
 while a session asks for a permission, `waiting for you` in the agent pane,
 a count in the status bar,
@@ -765,8 +765,8 @@ hooks still fire for it and are left alone. When it stops working or asking
 while nobody looks, the line under its name is the first line of what the
 agent last said, unless the agent left a line of its own. A spell of work
 that was only a compaction the agent did by itself, with nothing said,
-marks nothing. A row with no name
-yet takes the first line of its first message.
+marks nothing. A row with no name yet takes the first line of its first
+message.
 
 Before a session can run it may need the user. In a folder the agent has
 not been told to trust, the pane asks whether to trust it, and on a yes the
