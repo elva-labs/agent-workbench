@@ -125,7 +125,7 @@
     ownerOnScreen as shellOwner,
     terminals,
   } from "$lib/terminals.svelte";
-  import { goTo, hookedProjects, workspace } from "$lib/workspace.svelte";
+  import { goTo, hookedProjects, settleFolder, workspace } from "$lib/workspace.svelte";
   import {
     CONTROLS_INSET,
     DEFAULT,
@@ -303,7 +303,7 @@
         workspace.error = `${closed.host}: ${closed.reason}`;
       })
       .then((unlisten) => offs.push(unlisten));
-    void loadOrchestratorFolder();
+    void loadOrchestratorFolder().then(settleFolder);
     offs.push(followCwd());
     offs.push(
       followHistory(() => {

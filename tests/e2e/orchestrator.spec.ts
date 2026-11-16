@@ -707,6 +707,34 @@ test.describe("the orchestrator folder", () => {
     await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
   });
 
+  // A version that let the folder be opened as a project may have it on
+  // record among the open ones, and the user may open it again: either
+  // way it is the folder, listed in the pane, and no project an agent may
+  // start a session in.
+  test("is the folder when opened by hand, not a project to start in", async ({ page }) => {
+    await installFakeCore(page, {
+      settings: NO_WORKFLOW,
+      open: [PROJECT, ORCHESTRATOR_FOLDER],
+      opened: [ORCHESTRATOR_FOLDER],
+    });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    await expect(folder(page)).toHaveClass(/\bon\b/);
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+    await expect(page.getByTestId("project-head")).toHaveCount(2);
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("workbench.workspace")!).open))
+      .toEqual([PROJECT]);
+
+    await push(page, { id: "h-projects", tool: "projects" });
+    await expect.poll(() => answerTo(page, "h-projects")).not.toBeNull();
+    expect((await answerTo(page, "h-projects"))!.content).toBe(`${PROJECT}  demo  (this one)`);
+    await push(page, { id: "h-start", tool: "start", arguments: { project: ORCHESTRATOR_FOLDER, prompt: "Plan it" } });
+    await expect.poll(() => answerTo(page, "h-start")).not.toBeNull();
+    expect((await answerTo(page, "h-start"))!.error).toBe(`No project at ${ORCHESTRATOR_FOLDER} is open in the workbench.`);
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  });
+
   // The folder takes the hooks answer as any project does, and may have a
   // word of its own: with hooks off everywhere, it is the one way to give
   // a session resumed there the workbench's tools.

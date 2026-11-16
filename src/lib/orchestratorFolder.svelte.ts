@@ -81,6 +81,17 @@ export function closeFolder() {
   }
 }
 
+/** The user opened the folder: it is listed again, as it was before it
+    was closed. */
+export function reopenFolder() {
+  orchestratorFolder.closed = false;
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // Non-fatal: the folder stays listed for this run.
+  }
+}
+
 /** Test seam. */
 export function resetFolder(dir: string | null = null, closed = false) {
   orchestratorFolder.dir = dir;

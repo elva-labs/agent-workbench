@@ -1463,7 +1463,8 @@ export interface Core {
     name: string,
     accounts: AccountDirs[],
   ): Promise<string>;
-  /** Where an orchestrator session runs, made if it is not there yet. */
+  /** The `orchestrator` folder under the workbench's home, which the
+      sessions pane lists while it holds past sessions. Nothing makes it. */
   orchestratorDir(): Promise<string>;
   /** The worktrees the app made under a project, with what is in them. */
   worktrees(project: string): Promise<Worktree[]>;

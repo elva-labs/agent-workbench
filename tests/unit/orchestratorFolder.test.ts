@@ -15,6 +15,12 @@ vi.mock("$lib/core", () => ({
           if (fake.dir === null) throw new Error("no core");
           return fake.dir;
         },
+        // A path through a link to the folder is the folder, as the core
+        // says once it resolves it.
+        async projectInfo(path: string) {
+          const resolved = path === LINKED ? DIR : path;
+          return { path: resolved, name: resolved.split("/").at(-1)!, repository: resolved, isGit: true };
+        },
       },
       {
         get(target, name: string) {
@@ -40,10 +46,20 @@ import {
   startsIn,
 } from "$lib/orchestratorFolder.svelte";
 import { create, forProject, reset as resetSessions, sessions, type HistoryEntry } from "$lib/sessions.svelte";
-import { close, hookedProjects, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import {
+  close,
+  hookedProjects,
+  openPath,
+  reset as resetWorkspace,
+  settleFolder,
+  startSession,
+  workspace,
+} from "$lib/workspace.svelte";
 
 const DIR = "/home/ada/.agent-workbench/orchestrator";
 const A = "/home/ada/dev/one";
+/** A link to the folder from elsewhere. */
+const LINKED = "/home/ada/notes/orchestrator";
 
 /** A past session the agent's own index lists. */
 const past = (id: string): HistoryEntry => ({
@@ -127,6 +143,35 @@ describe("the orchestrator folder", () => {
     // A row of it, as when the version before ran it since, shows it.
     create(DIR, "old-1", "claude-code", null);
     expect(folderShown(A)).toBe(DIR);
+  });
+
+  // Opened as a project, by its path or through a link, it is listed as
+  // the folder, in front, and never joins the open projects, where an
+  // agent could start sessions in it.
+  it("is listed again when opened, and never joins the open projects", async () => {
+    closeFolder();
+    expect(await openPath(DIR)).toBe(true);
+    expect(workspace.open.map((project) => project.path)).toEqual([A]);
+    expect(orchestratorFolder.closed).toBe(false);
+    expect(localStorage.getItem("workbench.orchestratorFolder")).toBeNull();
+    expect(workspace.active).toBe(DIR);
+    expect(folderShown(DIR)).toBe(DIR);
+
+    workspace.active = A;
+    closeFolder();
+    expect(await openPath(LINKED)).toBe(true);
+    expect(workspace.open.map((project) => project.path)).toEqual([A]);
+    expect(orchestratorFolder.closed).toBe(false);
+    expect(workspace.active).toBe(DIR);
+  });
+
+  it("leaves the open projects once the core says where it is", () => {
+    workspace.open.push({ path: DIR, name: "orchestrator", repository: null, isGit: false });
+    workspace.active = DIR;
+    settleFolder();
+    expect(workspace.open.map((project) => project.path)).toEqual([A]);
+    expect(workspace.active).toBe(DIR);
+    expect(JSON.parse(localStorage.getItem("workbench.workspace")!)).toEqual({ open: [A], active: DIR });
   });
 
   it("reads the close back on the next start", async () => {

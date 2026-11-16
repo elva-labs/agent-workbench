@@ -18,7 +18,13 @@ import {
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells } from "$lib/terminals.svelte";
 import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
-import { closeFolder, folderShown, isOrchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
+import {
+  closeFolder,
+  folderShown,
+  isOrchestratorFolder,
+  reopenFolder,
+  startsIn,
+} from "$lib/orchestratorFolder.svelte";
 
 /**
  * The projects this window has open.
@@ -123,6 +129,7 @@ export function isOpen(path: string): boolean {
  */
 export async function openPath(path: string): Promise<boolean> {
   workspace.error = null;
+  if (isOrchestratorFolder(path)) return showFolder(path);
 
   const already = workspace.open.find((project) => project.path === path);
   if (already !== undefined) {
@@ -132,6 +139,7 @@ export async function openPath(path: string): Promise<boolean> {
 
   try {
     const info = await core().projectInfo(path);
+    if (isOrchestratorFolder(info.path)) return showFolder(info.path);
     if (!isOpen(info.path)) workspace.open.push(info);
     bringForward(info.path);
     return true;
@@ -139,6 +147,25 @@ export async function openPath(path: string): Promise<boolean> {
     workspace.error = String(error);
     return false;
   }
+}
+
+/** The orchestrator folder is never one of the open projects, where an
+    agent could start sessions in it: opening it lists it again in the
+    pane, in front, closed or not. */
+function showFolder(path: string): boolean {
+  reopenFolder();
+  bringForward(path);
+  return true;
+}
+
+/** Takes the orchestrator folder out of the open projects once the core
+    has said where it is, should a version that let it be opened as a
+    project have left it on record among them. It is listed as the folder
+    from then on, in front if it was. */
+export function settleFolder() {
+  if (!workspace.open.some((project) => isOrchestratorFolder(project.path))) return;
+  workspace.open = workspace.open.filter((project) => !isOrchestratorFolder(project.path));
+  save();
 }
 
 export function activate(path: string) {
@@ -482,7 +509,7 @@ export async function restore(): Promise<Map<string, Promise<void>>> {
   }));
 
   const insert = (info: ProjectInfo) => {
-    if (isOpen(info.path)) return;
+    if (isOpen(info.path) || isOrchestratorFolder(info.path)) return;
     const open = workspace.open.map((project) => project.path);
     workspace.open.splice(placeAmong(open, info.path, paths), 0, info);
   };

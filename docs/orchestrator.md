@@ -41,7 +41,9 @@ remembered](#what-is-remembered) describes. Nothing new starts in the
 folder: it has no new-session button, its menu holds only Close project,
 and neither the agent pane nor the palette offers a new session there.
 Closing it closes its sessions and takes it out of the pane for good; it
-comes back only when a session of it returns from the last quit. Nothing
+comes back only when a session of it returns from the last quit, or when
+you open the folder again, which lists it in front. It is never one of the
+open projects: `projects` does not list it and `start` refuses it. Nothing
 in the folder is moved or deleted.
 
 ## The tools

@@ -91,6 +91,7 @@ import { render } from "@testing-library/svelte";
 import ConductAsk from "$lib/components/ConductAsk.svelte";
 import Started from "$lib/components/conversation/Started.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
+import { resetFolder } from "$lib/orchestratorFolder.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { BOUNDED, BOUNDED_TYPED, FORGED } from "../forgedName";
@@ -394,6 +395,24 @@ describe("the projects tool", () => {
     await handle(call("projects", {}, { cwd: `${A}/packages/ui/src` }));
     expect(last().content).toContain(`${A}/packages/ui  ui  (this one)`);
     expect(last().content).not.toContain(`${A}  one  (this one)`);
+  });
+
+  // A version that let the orchestrator folder be opened as a project may
+  // have left it among the open ones: it is no project to start in.
+  it("leaves out the orchestrator folder, even among the open projects", async () => {
+    const folder = "/home/ada/.agent-workbench/orchestrator";
+    resetFolder(folder);
+    workspace.open.push(repo(folder));
+    try {
+      await handle(call("projects", {}, { cwd: folder }));
+      expect(last().content).toBe(`${A}  one\n${B}  two`);
+      await handle(call("start", { project: folder, prompt: "Fix it" }));
+      expect(last().error).toBe(`No project at ${folder} is open in the workbench.`);
+      expect(conductor.asking).toBeNull();
+      expect(forProject(folder)).toHaveLength(0);
+    } finally {
+      resetFolder();
+    }
   });
 
   it("says so when nothing is open", async () => {
