@@ -192,7 +192,7 @@ the same way.
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
-| Send now | Sends every message that waits for a turn now, in the order sent, as described under [sending now](#sending-now). Fails saying why while a request waits for an answer, while the conversation is being compacted, when no turn runs, or when nothing waits. |
+| Send now | Sends every message that waits for a turn now, in the order sent, as described under [sending now](#sending-now), and answers whether the turn was stopped for them, takes them in, or found none waiting. Fails saying why while a request waits for an answer, while the conversation is being compacted, when no turn runs, or when nothing waits. |
 | Withdraw | Takes back a message the agent has not taken yet, which then ends as withdrawn. Fails once the agent has taken it. |
 | Compact | Compacts the conversation, the way the agent does it, with what the summary should keep where the agent takes that. Claude Code is sent a compact command as a message of its own, with those words after it, and Codex is asked to compact its thread, refusing words since it takes none; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
@@ -403,36 +403,6 @@ that compacts. A turn that starts before the answer comes names no message
 at first; the answer then names the message as taken into it. A message
 Codex refuses is dropped with Codex's own words for why.
 
-### Sending now
-
-A message that waits can be sent now, without waiting for the turn to
-end. Each agent takes it its own way:
-
-- **Claude Code** takes a message sent during a turn into that turn by
-  itself, once the step it is on is done, such as a command that runs. So
-  sending now interrupts the turn: the turn ends as interrupted, and the
-  agent then takes every message that waited into a turn of its own at
-  once, in the order sent.
-- **Codex** is given each held message in the turn it runs, in the order
-  sent, which it reads at its next step without the turn stopping; its
-  settings wait for the next message's turn. Codex names each as taken
-  when it answers. One it will not take, such as in a turn that compacts,
-  or because the turn has ended, is held again, ahead of those sent since,
-  with a warning notice in Codex's words, and goes once the turn ends.
-
-Sending now is refused while a permission or a question waits for an
-answer, since the turn waits on the user then; while the conversation is
-being compacted; when no turn runs, since the agent takes the message
-next anyway; and when nothing waits.
-
-A message is withdrawn before the agent takes it. Claude Code is asked to
-cancel it, and answers whether it did: one it took first stays as it is,
-and the command fails saying so. A message held for Codex is taken out of
-what the core holds, and one already handed over or given to the running
-turn cannot be withdrawn. A message the user withdrew is withdrawn for
-every window; the window that withdrew it puts its words back in the
-composer.
-
 The state a session's row shows comes from the same events, never from
 timing or hooks:
 
@@ -460,6 +430,55 @@ A tool call the agent leaves without a finish is finished by the core, as
 failed with no output: those of the main conversation when the turn ends,
 a subagent's when the subagent ends, and all of them when the session
 does.
+
+### Sending now
+
+A message that waits can be sent now, without waiting for the turn to
+end. Each agent takes it its own way, and the command answers how it went:
+stopped, when the running turn was stopped for the messages; delivering,
+when the running turn takes them in; or nothing waiting, when the agent
+had none waiting by then.
+
+- **Claude Code** takes a message sent during a turn into that turn by
+  itself, once the step it is on is done, such as a command that runs.
+  Where it lists `interrupt_send_now_v1` among its capabilities when a
+  turn starts, sending now is its own send now: an interrupt that asks
+  for it and names the last message that waits. The agent then decides:
+  it moves what the turn waits on to the background so that the turn
+  takes the messages in, or stops the turn as an interrupt does, after
+  which it takes every message that waited into a turn of its own at
+  once, in the order sent; with none waiting, or with the turn already
+  taking them, it does nothing. So an interrupt that reaches the agent
+  just as the turn ends by itself does not stop the turn that answers the
+  messages. Only a turn the agent stopped ends as interrupted. The request
+  and its answer are marked internal in the agent's own description, and
+  the agent defines what an agent without them does: it takes the request
+  as a plain interrupt, which is what the workbench sends to one that
+  does not list it.
+- **Codex** is given each held message in the turn it runs, in the order
+  sent, which it reads at its next step without the turn stopping; its
+  settings wait for the next message's turn. Codex names each as taken
+  when it answers. One it will not take, such as in a turn that compacts,
+  or because the turn has ended, is said to wait again and held again,
+  ahead of those sent since, with a warning notice in Codex's words, and
+  goes once the turn ends. One Codex does not answer in the time a
+  message handed over has is dropped, as that one is.
+
+Sending now is refused while a permission or a question waits for an
+answer, since the turn waits on the user then; while the conversation is
+being compacted; when no turn runs, since the agent takes the message
+next anyway; and when nothing waits.
+
+A message is withdrawn before the agent takes it. Claude Code is asked to
+cancel it, and answers whether it did: one it took first stays as it is,
+and the command fails saying so. It can let go of a message and still
+answer that it did not, when the message was one of several it had
+already joined for a turn; the message is withdrawn all the same. A
+message held for Codex is taken out of what the core holds, and one
+already handed over or given to the running turn cannot be withdrawn. A
+message the user withdrew is withdrawn for every window; the window that
+withdrew it puts its words back in the composer when the withdrawn event
+comes, whatever the command answers.
 
 ## Account limits
 

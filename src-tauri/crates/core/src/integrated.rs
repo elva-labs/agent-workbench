@@ -974,6 +974,16 @@ pub trait Driver: Send {
         Err("the agent takes no message into a running turn".into())
     }
 
+    /// For an agent that takes messages into a running turn, how sending
+    /// the waiting messages now goes, `last` being the last of them. By
+    /// default an interrupt, after which the agent takes them all. The
+    /// reply says `sendNow`: `stopped` when the turn was stopped for them,
+    /// `delivering` when the running turn takes them in, and
+    /// `nothingWaiting` when the agent had none waiting.
+    fn send_now(&mut self, _last: &str) -> Result<Sending, String> {
+        self.control(&Control::Interrupt)
+    }
+
     /// The line that answers a permission request.
     fn answer(
         &mut self,
@@ -1833,6 +1843,14 @@ impl Live {
             {
                 Ok(line) => {
                     went = Some(self.enqueue(line)?);
+                    // Given the time a message handed over has to be named,
+                    // so that one the agent never answers holds up nothing.
+                    if let Some(handovers) = &machine.handovers {
+                        let _ = handovers.send((
+                            held.message.clone(),
+                            Instant::now() + self.deadlines.handover,
+                        ));
+                    }
                     machine.steered.push(held);
                 }
                 Err(error) => {
@@ -1864,6 +1882,10 @@ impl Live {
             {
                 let held = machine.steered.remove(at);
                 if machine.tracker.pending.contains(&held.message) {
+                    machine.tracker.observe(
+                        Event::message(&held.message, MessageState::Queued, None),
+                        out,
+                    );
                     machine.held.push_front(held);
                     why.get_or_insert(said);
                 }
@@ -1925,17 +1947,25 @@ impl Live {
         }
     }
 
-    /// Gives up on a message handed over that the agent has not named in
-    /// time: it is dropped, and the next one held goes.
+    /// Gives up on a message handed over, or steered into the running
+    /// turn, that the agent has not named in time: it is dropped, and the
+    /// next one held goes.
     fn overdue(&self, message: &str) {
         let mut machine = self.machine.lock().expect("machine lock");
-        if machine.ended
-            || self.stopping.load(Ordering::SeqCst)
-            || machine.handed.as_deref() != Some(message)
-        {
+        if machine.ended || self.stopping.load(Ordering::SeqCst) {
             return;
         }
-        machine.handed = None;
+        let steered = machine
+            .steered
+            .iter()
+            .position(|held| held.message == message);
+        match steered {
+            Some(at) => {
+                machine.steered.remove(at);
+            }
+            None if machine.handed.as_deref() == Some(message) => machine.handed = None,
+            None => return,
+        }
         let mut out = Vec::new();
         if machine.tracker.pending.iter().any(|m| m == message) {
             machine.tracker.observe(
@@ -2680,7 +2710,13 @@ fn settle(
 /// Sends a control request and waits for the agent's reply.
 pub fn control(sessions: &Sessions, id: &str, control: &Control) -> Result<Value, String> {
     let by = std::time::Instant::now() + sessions.get(id)?.deadlines.control;
-    request(sessions, id, control, by)
+    let reply = request(sessions, id, control, by)?;
+    // An agent that says nothing of how it sent them now stopped the turn
+    // for them, as an interrupt does.
+    if *control == Control::SendNow && !reply["sendNow"].is_string() {
+        return Ok(serde_json::json!({ "sendNow": "stopped" }));
+    }
+    Ok(reply)
 }
 
 /// Sends a control request and waits for the agent's reply, for as long
@@ -2704,7 +2740,8 @@ fn request(
                     return Err(why.into());
                 }
                 if machine.driver.takes_while_busy() {
-                    machine.driver.control(control)?
+                    let last = machine.tracker.pending.last().cloned().unwrap_or_default();
+                    machine.driver.send_now(&last)?
                 } else {
                     // Steered here rather than by the driver, since the
                     // messages are held here.
@@ -2713,7 +2750,9 @@ fn request(
                     machine.tracker.push_state(&mut out);
                     live.emit(&out);
                     drop(machine);
-                    return live.written(went).map(|()| Value::Null);
+                    return live
+                        .written(went)
+                        .map(|()| serde_json::json!({ "sendNow": "delivering" }));
                 }
             }
             Control::Withdraw(message) => {
@@ -3705,6 +3744,38 @@ mod tests {
     }
 
     #[test]
+    fn a_steered_message_the_agent_never_answers_is_dropped_in_time() {
+        let bench = Bench::keeping(
+            fake(),
+            Deadlines {
+                handover: Duration::from_millis(300),
+                ..Deadlines::default()
+            },
+        );
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        bench.send(M2, "two");
+        let reply = control(&bench.sessions, "int-bench", &Control::SendNow).unwrap();
+        assert_eq!(reply["sendNow"], "delivering");
+        assert!(bench.next().is_some());
+        // The agent never answers the steer.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let events = bench.events();
+            if last_state(&events, M2).as_deref() == Some("dropped") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "{events:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(snapshot(&bench.sessions, "int-bench")
+            .unwrap()
+            .messages
+            .is_empty());
+    }
+
+    #[test]
     fn a_message_the_agent_would_not_steer_in_waits_for_the_turn_again() {
         let bench = two_held();
         control(&bench.sessions, "int-bench", &Control::SendNow).unwrap();
@@ -3713,7 +3784,12 @@ mod tests {
         bench.live.take(&format!("took {M2}"));
         bench.live.take(&format!("unsteer {M3}"));
         let events = bench.events();
-        assert_eq!(last_state(&events, M3).as_deref(), Some("queued"));
+        // Said to wait again, after it was first said to wait.
+        let queued = events
+            .iter()
+            .filter(|e| e["type"] == "message" && e["message"] == M3 && e["state"] == "queued")
+            .count();
+        assert_eq!(queued, 2, "{events:?}");
         assert!(events.iter().any(|e| e["type"] == "notice"
             && e["message"]
                 .as_str()

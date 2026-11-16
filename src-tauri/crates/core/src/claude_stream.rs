@@ -62,6 +62,12 @@ const MODES: &[(&str, &str)] = &[
 /// than a permission.
 const ASK_TOOL: &str = "AskUserQuestion";
 
+/// What the agent lists among its capabilities when it sends the waiting
+/// messages now itself on an interrupt that asks it to: it stops the turn
+/// only where the turn cannot take them in, and does nothing when none
+/// waits. An agent without it takes the request as a plain interrupt.
+const SEND_NOW: &str = "interrupt_send_now_v1";
+
 /// The tool that ends plan mode by asking to go ahead with a plan.
 pub(crate) const PLAN_TOOL: &str = "ExitPlanMode";
 
@@ -292,6 +298,8 @@ enum Sent {
     Interrupt,
     /// A message taken back, which the agent may already have taken.
     Withdraw(String),
+    /// The waiting messages sent now, which the agent answers with how.
+    SendNow,
     Model,
     Mode,
     Effort(String),
@@ -481,6 +489,9 @@ struct Stream {
     /// Messages the user asked to take back, until the agent says whether
     /// it let go of each.
     withdrawing: HashSet<String>,
+    /// The agent says on starting a turn that it sends waiting messages
+    /// now itself, when an interrupt asks it to.
+    sends_now: bool,
     interrupting: bool,
     minted: u64,
     /// What passed of a line too long to read: the end of the last piece,
@@ -905,6 +916,7 @@ impl Stream {
             ours: HashSet::new(),
             taken: HashSet::new(),
             withdrawing: HashSet::new(),
+            sends_now: false,
             interrupting: false,
             minted: 0,
             skipped_tail: Vec::new(),
@@ -1495,6 +1507,9 @@ impl Stream {
             // Every turn opens with the agent describing itself.
             Some("init") => {
                 self.begin(out);
+                if let Some(capabilities) = line["capabilities"].as_array() {
+                    self.sends_now = capabilities.iter().any(|c| c == SEND_NOW);
+                }
                 self.configure(
                     text(&line["model"]),
                     text(&line["permissionMode"]),
@@ -1970,6 +1985,24 @@ impl Stream {
                     self.interrupting = false;
                 }
             }
+            Sent::SendNow => {
+                let how = body
+                    .and_then(|b| b["send_now"].as_str())
+                    .unwrap_or("stopped");
+                // Its result follows a stop, which ends the turn as
+                // interrupted; a turn that takes the messages in goes on.
+                if how == "stopped" {
+                    self.interrupting = self.turn;
+                }
+                if reply.is_ok() {
+                    let how = match how {
+                        "delivering" => "delivering",
+                        "nothing_waiting" => "nothingWaiting",
+                        _ => "stopped",
+                    };
+                    reply = Ok(json!({ "sendNow": how }));
+                }
+            }
             Sent::Withdraw(message) => {
                 let cancelled = body.is_some_and(|b| b["cancelled"] == true);
                 if cancelled {
@@ -2162,6 +2195,24 @@ impl Driver for Stream {
         .to_string())
     }
 
+    /// The agent's own send now, on an interrupt naming the last message
+    /// that waits, where it says it has one: it stops the turn only where
+    /// the turn cannot take the messages in, and does nothing when none
+    /// waits, so an interrupt that comes as the turn ends does not stop the
+    /// turn that answers them. Otherwise a plain interrupt, after which the
+    /// agent takes them all.
+    fn send_now(&mut self, last: &str) -> Result<Sending, String> {
+        if !self.sends_now {
+            return self.control(&Control::Interrupt);
+        }
+        let mut request = json!({ "subtype": "interrupt", "send_now": true });
+        if !last.is_empty() {
+            request["message_uuid"] = json!(last);
+        }
+        let (line, key) = self.request(Sent::SendNow, request);
+        Ok(Sending::Request { line, key })
+    }
+
     fn control(&mut self, control: &Control) -> Result<Sending, String> {
         let (line, key) = match control {
             // The agent compacts when told so in a message of its own, which
@@ -2181,10 +2232,8 @@ impl Driver for Stream {
                     line: line.to_string(),
                 });
             }
-            // The agent takes every message that waits into a turn of its
-            // own straight after an interrupt, so sending them now is
-            // interrupting the turn.
-            Control::Interrupt | Control::SendNow => {
+            Control::SendNow => return self.send_now(""),
+            Control::Interrupt => {
                 // An interrupt with no turn running ends nothing, so the
                 // next failure is not taken for one.
                 self.interrupting = self.turn;
@@ -3274,6 +3323,105 @@ mod tests {
             panic!("an interrupt asks the agent");
         };
         key
+    }
+
+    /// A turn of `M1` running, `M2` and `M3` waiting, on an agent that says
+    /// it sends now itself.
+    fn sending_now_agent() -> Stream {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        events(
+            &mut stream,
+            &[
+                lifecycle(M1, "started"),
+                json!({"type":"system","subtype":"init","model":"haiku","permissionMode":"default",
+                       "capabilities":["interrupt_receipt_v1","interrupt_send_now_v1"]}),
+            ],
+        );
+        sent(&mut stream, M2);
+        sent(&mut stream, M3);
+        stream
+    }
+
+    fn send_now(stream: &mut Stream, last: &str) -> (Value, String) {
+        let Sending::Request { line, key } = stream.send_now(last).unwrap() else {
+            panic!("sending now asks the agent");
+        };
+        (serde_json::from_str(&line).unwrap(), key)
+    }
+
+    #[test]
+    fn the_agent_s_own_send_now_names_the_last_waiting_message() {
+        let mut stream = sending_now_agent();
+        let (line, key) = send_now(&mut stream, M3);
+        assert_eq!(
+            line["request"],
+            json!({"subtype": "interrupt", "send_now": true, "message_uuid": M3})
+        );
+        // As the real agent answers it for a command in the foreground:
+        // the turn stops, and both start the next together.
+        let reading = readings(
+            &mut stream,
+            &[
+                json!({"type":"control_response","response":{"subtype":"success","request_id":key,
+                       "response":{"still_queued":[M2, M3],"send_now":"stopped"}}}),
+                json!({"type":"result","subtype":"error_during_execution","is_error":false}),
+                lifecycle(M2, "started"),
+                lifecycle(M3, "started"),
+                init(),
+            ],
+        );
+        assert_eq!(
+            reading.replies,
+            vec![(key, Ok(json!({"sendNow": "stopped"})))]
+        );
+        assert!(
+            reading.events.iter().any(|e| matches!(
+                e,
+                Event::TurnEnded {
+                    outcome: Outcome::Interrupted,
+                    ..
+                }
+            )),
+            "{:?}",
+            reading.events
+        );
+        assert_eq!(
+            started(&reading.events),
+            vec![vec![M2.to_string(), M3.to_string()]]
+        );
+    }
+
+    #[test]
+    fn a_send_now_the_turn_takes_in_or_finds_nothing_for_stops_nothing() {
+        for (said, told) in [
+            ("delivering", "delivering"),
+            ("nothing_waiting", "nothingWaiting"),
+        ] {
+            let mut stream = sending_now_agent();
+            let (_, key) = send_now(&mut stream, M3);
+            let reading = readings(
+                &mut stream,
+                &[
+                    json!({"type":"control_response","response":{"subtype":"success","request_id":key,
+                           "response":{"still_queued":[M2, M3],"send_now":said}}}),
+                    // A turn that then fails is not taken for one stopped.
+                    json!({"type":"result","subtype":"error_during_execution","is_error":true,"errors":["the API failed"]}),
+                ],
+            );
+            assert_eq!(reading.replies, vec![(key, Ok(json!({"sendNow": told})))]);
+            assert!(
+                reading.events.iter().any(|e| matches!(
+                    e,
+                    Event::TurnEnded {
+                        outcome: Outcome::Failed,
+                        ..
+                    }
+                )),
+                "{said}: {:?}",
+                reading.events
+            );
+        }
     }
 
     #[test]
