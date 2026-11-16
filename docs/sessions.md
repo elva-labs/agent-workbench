@@ -412,6 +412,20 @@ driven through the core in messages, as [integrated](integrated.md)
 describes, and is a row like any other: it is listed, stopped with its ×,
 brought back after a restart and resumed the same way.
 
+A session's row has a menu, opened with a right click on the row, or with
+the menu key or Shift+F10 on the row under the pane's cursor. Its arrows
+walk it, Enter picks and Escape puts it away. It holds Stop, or Close for a
+row with nothing running, and for a session whose agent runs both ways and
+whose conversation's id is known, Reopen as a conversation for a terminal
+session and Reopen in a terminal for an integrated one. Reopening stops the
+session and, once its process has ended, resumes the same conversation the
+other way in the same row, with its name, its token and its place, so the
+tools of the session and those of a session that started it go on naming
+it. In the middle of a turn the pane asks first, under the list, as it does
+before closing busy shells. A row left from the last quit only changes the
+way it will start. The session starts in the mode the agent resumes it in
+that way, as for any resume.
+
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
 asking the user or waiting for a permission. Short of room the project and
@@ -641,11 +655,15 @@ the agent has said which model that is, and a model chosen during a turn is
 said to be used from the next. A session that follows a workflow shows its
 orchestrator's model and holds it, saying the workflow sets it, and so does
 the status bar. Both name the model the run says it is on, and the
-workflow's own name for it until the run has said. It shows the mode the session runs in, which
-a click changes among the modes the agent offers; a session starts in the
-agent's safe mode, which asks before it acts, whatever the agent's own
-configuration says, and a mode taken from that configuration is shown as it
-is. It shows how much of the context window the conversation takes. While
+workflow's own name for it until the run has said. It shows the mode the
+session runs in, as the agent says it does, which a click changes at once
+among the modes the agent offers. A session starts in the mode a terminal
+session would, as [integrated](integrated.md#the-mode-a-session-starts-in)
+describes: the one the user's own agent settings name, and for a session
+that starts again or is resumed, the one it last ran in. A mode from those
+settings that the agent offers no switch to, such as bypassing permissions,
+is shown in plain words and comes back only in a new session once another
+is chosen. It shows how much of the context window the conversation takes. While
 the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
 takes it. While the dock holds a request the user answers there, the

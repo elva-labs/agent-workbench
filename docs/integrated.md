@@ -125,6 +125,48 @@ A Codex older than the oldest version the workbench speaks to, one that
 refuses the introduction, and a thread that cannot start or resume each
 end the session with an error that says which.
 
+## The mode a session starts in
+
+A session starts in the mode a terminal session of its agent would start
+in, chosen by the agent from the user's own settings, and the window shows
+the mode the agent says it runs in. The workbench names a mode at the start
+in two cases only. A session that starts again, or a conversation resumed
+or reopened integrated, names the mode it last ran in integrated, which the
+window keeps for each conversation. A Claude Code conversation resumed with
+no such mode names the one its transcript last records, the way Claude
+Code's terminal resumes a conversation, since its stream would start one as
+a new conversation. Neither is ever bypassing permissions, nor any mode a
+session cannot be switched to; those are left to the agent's own settings.
+Nothing else names a mode, so a start never grants more than those
+settings would in a terminal, and every tool call that asks is answered in
+the window by the user.
+
+For Claude Code that is the `permissions.defaultMode` of its settings,
+which a stream session takes from the same files as the terminal, with
+the same rule that a project's own files cannot grant auto or bypassing
+permissions. Where no setting names a mode, the terminal of a recent
+version starts in auto for an account that may use it, and the stream in
+Default, so such a session asks where a terminal one would not. The rules
+the user allows in those settings apply before anything is asked of the
+window. A Codex session takes the approval policy and the sandbox of the
+user's configuration.
+
+The window keeps the mode each conversation last ran in by the
+conversation's id, only while it is one the agent offers to switch to, and
+lets it go when the conversation runs in a terminal, whose mode the window
+cannot see; the agent's own record of that run decides the next. A mode is
+the conversation's own: a new session, one another session starts among
+them, names none, and no conversation takes another's. Changing the mode
+on the composer's chip changes it at once and is kept the same way.
+
+A mode the agent was asked to start in and did not, such as auto where the
+account or the model has none, is said in a notice, and the session runs in
+the one the agent chose. A mode from the agent's own settings that it does
+not offer to switch to, such as bypassing permissions or a Codex approval
+policy and sandbox that make none of its modes, is shown on the chip in
+plain words, and once another is chosen it comes back only in a new
+session.
+
 ## Trust
 
 Print mode skips the agent's own question of whether a folder's files are
