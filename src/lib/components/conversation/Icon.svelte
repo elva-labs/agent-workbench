@@ -11,6 +11,7 @@
   const PATHS: Record<string, string> = {
     chev: "m6 4 4 4-4 4",
     down: "m4 6 4 4 4-4",
+    "chev-up": "m4 10 4-4 4 4",
     up: "M8 13V3M4 7l4-4 4 4",
     stop: "M5 5h6v6H5z",
     clip: "M13 7.5 8 12.4a3 3 0 0 1-4.2-4.2l5.4-5.4a2 2 0 0 1 2.8 2.8L6.7 10.9a1 1 0 0 1-1.4-1.4L10 4.8",

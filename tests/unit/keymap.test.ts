@@ -248,10 +248,23 @@ describe("Escape", () => {
     ).toBeNull();
   });
 
-  it("leaves the find chord free in an integrated session", () => {
+  it("finds in the conversation on the find chord in an integrated session, and leaves it to a terminal", () => {
     expect(
       resolveAction({ key: "f", metaKey: true }, { focus: "agent", reviewing: false, integrated: true, mac: true }),
+    ).toEqual({ type: "findInThread" });
+    expect(
+      resolveAction({ key: "f", ctrlKey: true }, { focus: "agent", reviewing: false, integrated: true, mac: false }),
+    ).toEqual({ type: "findInThread" });
+    // A terminal session's pane and a shell keep it, Ctrl+F most of all.
+    expect(resolveAction({ key: "f", metaKey: true }, { focus: "agent", reviewing: false, mac: true })).toBeNull();
+    expect(resolveAction({ key: "f", ctrlKey: true }, { focus: "agent", reviewing: false, mac: false })).toBeNull();
+    expect(
+      resolveAction({ key: "f", ctrlKey: true }, { focus: "terminal", reviewing: false, integrated: true, mac: false }),
     ).toBeNull();
+    // A list pane still filters the files.
+    expect(
+      resolveAction({ key: "f", metaKey: true }, { focus: "changes", reviewing: false, integrated: true, mac: true }),
+    ).toEqual({ type: "find", mode: "files" });
   });
 });
 
@@ -338,8 +351,9 @@ describe("editor mode", () => {
       expect(resolveAction(mod("s"), { focus: "agent", integrated: true })).toBeNull();
     });
 
-    it("leaves the find chord free in the composer, and flips the mode from it", () => {
-      expect(resolveAction(mod("f"), composer)).toBeNull();
+    it("finds in the conversation from the composer, finds in the file from the editor, and flips the mode", () => {
+      expect(resolveAction(mod("f"), composer)).toEqual({ type: "findInThread" });
+      expect(resolveAction(mod("f"), { ...editor, integrated: true })).toEqual({ type: "findInFile" });
       expect(resolveAction(mod("e", { shiftKey: true }), composer)).toEqual({ type: "toggleMode" });
     });
   });

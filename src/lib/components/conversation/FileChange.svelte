@@ -2,7 +2,7 @@
   import Plain from "./Plain.svelte";
   import { shown } from "$lib/unseen";
   import type { IntegratedFileChange } from "$lib/core";
-  import { shortPath } from "$lib/thread";
+  import { changeLines, shortPath } from "$lib/thread";
 
   /** One file a tool call changed, as a diff: its hunks, or the whole of a
       new file as added lines. The changes pane is where the change is
@@ -14,30 +14,7 @@
 
   let { change, root }: Props = $props();
 
-  type Line = { kind: "add" | "del" | "ctx" | "hunk"; text: string };
-
-  let lines = $derived.by((): Line[] => {
-    if (change.kind === "create" && change.content !== null)
-      return change.content
-        .replace(/\n$/, "")
-        .split("\n")
-        .map((text) => ({ kind: "add", text }));
-    const out: Line[] = [];
-    for (const hunk of change.hunks) {
-      out.push({
-        kind: "hunk",
-        text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`,
-      });
-      for (const line of hunk.lines) {
-        const mark = line.charAt(0);
-        out.push({
-          kind: mark === "+" ? "add" : mark === "-" ? "del" : "ctx",
-          text: line.slice(1),
-        });
-      }
-    }
-    return out;
-  });
+  let lines = $derived(changeLines(change));
 
   let added = $derived(lines.filter((line) => line.kind === "add").length);
   let removed = $derived(lines.filter((line) => line.kind === "del").length);
@@ -47,13 +24,13 @@
 
 <div class="change" data-testid="file-change">
   <div class="head">
-    <span class="verb">{VERB[change.kind]}</span>
+    <span class="verb" data-find-skip>{VERB[change.kind]}</span>
     <span class="path" title={shown(change.path)}><Plain text={shortPath(change.path, root)} /></span>
     {#if change.to !== null}
-      <span class="verb">to</span>
+      <span class="verb" data-find-skip>to</span>
       <span class="path" title={shown(change.to)}><Plain text={shortPath(change.to, root)} /></span>
     {/if}
-    <span class="count">
+    <span class="count" data-find-skip>
       {#if added > 0}<span class="add">+{added}</span>{/if}
       {#if removed > 0}<span class="del">−{removed}</span>{/if}
     </span>
@@ -61,14 +38,14 @@
   {#if lines.length > 0}
     <div class="lines" data-testid="diff">
       {#each lines as line, at (at)}
-        <div class="line {line.kind}"><span class="mark"
+        <div class="line {line.kind}" data-find-skip={line.kind === "hunk" ? "" : undefined}><span class="mark" data-find-skip
             >{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span
           ><Plain text={line.text} /></div>
       {/each}
     </div>
   {/if}
   {#if change.truncated}
-    <p class="cut">The rest of this change was cut short on its way to the window.</p>
+    <p class="cut" data-find-skip>The rest of this change was cut short on its way to the window.</p>
   {/if}
 </div>
 
