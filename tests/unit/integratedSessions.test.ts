@@ -31,6 +31,7 @@ import {
   runningByToken,
   reset as resetSessions,
   sessions,
+  viewed,
   wake,
 } from "$lib/sessions.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
@@ -219,6 +220,36 @@ describe("an integrated session behind its row", () => {
     send(session.key, "go");
     fake.turn(handle, "ok");
     expect(session.unread).toBe(false);
+  });
+
+  // Claude Code compacts a long conversation by itself before its cache
+  // expires, in a turn of its own with nothing said: housekeeping, which
+  // leaves a read row read and puts no old line back under its name.
+  it("takes a compaction the agent does by itself while idle for nothing new", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
+    attention.focused = true;
+    sessions.active = session.key;
+    viewed(session.key);
+    attention.focused = false;
+
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.compaction(handle);
+    fake.endTurn(handle);
+    expect(session.working).toBe(false);
+    expect(session.unread).toBe(false);
+    expect(session.note).toBeNull();
+
+    // A turn of its own that says something is news.
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "text", block: "r", parent: null, text: "The review is back.", done: true });
+    fake.endTurn(handle);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("The review is back.");
   });
 
   it("names an untitled row after the first line of its first message, and a new message clears the line", async () => {

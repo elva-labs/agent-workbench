@@ -100,6 +100,11 @@ export class Link {
   /** A compaction was asked for while a turn ran, and waits for it to
       end. */
   compactAsked = $state(false);
+  /** The agent has said or done something of its own since it last came
+      to rest: answered a message, written, thought, called a tool, asked,
+      or failed. A spell of work that was only a compaction leaves it
+      false. */
+  worked = false;
   /** Events heard while a snapshot is on its way. */
   held: IntegratedEventBody[] | null = null;
   /** An attach on its way, for a start to wait on. */
@@ -214,9 +219,31 @@ function claim(id: string): IntegratedEventBody[] {
   return kept;
 }
 
+/** Whether an event is the agent's own work rather than its keeping house:
+    a turn that answers a message, and anything the agent says, does or
+    asks. */
+function isWork(body: IntegratedEventBody): boolean {
+  switch (body.type) {
+    case "turnStarted":
+      return body.messages.length > 0;
+    case "text":
+    case "thinking":
+    case "toolStarted":
+    case "plan":
+    case "taskStarted":
+    case "permissionAsked":
+    case "questionAsked":
+    case "error":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const before = link.conversation.state;
   link.conversation.apply(body);
+  if (isWork(body)) link.worked = true;
   if (
     body.type === "compacting" ||
     body.type === "compacted" ||
@@ -270,7 +297,9 @@ function identify(session: Session, id: string) {
 
 /** The row says what the session's events say it is doing. A session that
     stops working or asking while nobody looks is unread, with the first
-    line of what the agent last said unless it left a line of its own. */
+    line of what the agent last said unless it left a line of its own, when
+    the agent did something of its own meanwhile: a compaction the agent
+    does by itself while idle is housekeeping, and marks nothing. */
 function settle(
   session: Session,
   state: IntegratedState,
@@ -285,6 +314,9 @@ function settle(
   if (changed) session.changedAt = Date.now();
   if (asking && before !== "asking") rang(session.key);
   else if (state === "idle" && before !== null && before !== "idle") {
+    const worked = link.worked;
+    link.worked = false;
+    if (!worked) return;
     const line = lastWords(link.conversation.entries);
     if (session.note === null && line !== null) noted(session.key, line);
     else rang(session.key);
