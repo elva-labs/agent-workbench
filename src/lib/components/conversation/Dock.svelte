@@ -6,7 +6,7 @@
   import { askerOf, dockedFor, folderOf, type Docked } from "$lib/docked.svelte";
   import { answer, reply } from "$lib/integrated.svelte";
   import { focusPane } from "$lib/layout.svelte";
-  import { goTo } from "$lib/workspace.svelte";
+  import { goTo, projectLabel } from "$lib/workspace.svelte";
   import {
     address,
     asks,
@@ -32,9 +32,10 @@
    * with the way to it; a session that runs in a terminal is answered
    * there, so its request offers only the way. A round of review past the
    * workflow's limit that this session asked for docks with its own. One
-   * at a time: the one shown stays until it is answered or goes, whatever
-   * comes in meanwhile, and one that takes the place of another takes no
-   * answer for a moment, so nothing meant for the last one answers it.
+   * at a time: while the user is at the dock the one shown stays until it
+   * is answered or goes, whatever comes in meanwhile, and one that takes
+   * the place of another takes no answer for a moment, so nothing meant
+   * for the last one answers it.
    *
    * The choices are one stop for the keyboard: the arrows move between
    * them, a digit picks one, and the first is the one that remembers
@@ -58,15 +59,28 @@
 
   let entries = $derived(dockedFor(sessionKey));
 
-  /** The entry on screen, which stays while it waits: what arrives later
-      waits behind it, so what is shown never changes under the user. */
+  /** The pointer is over the dock, or the keyboard in it. */
+  let hovering = $state(false);
+  let focused = $state(false);
+  let hold = $state<HTMLDivElement | null>(null);
+
+  /** The entry on screen. The order decides it, except while the user is
+      at the dock: then it stays while it waits, and what arrives meanwhile
+      waits behind it, so nothing changes under the pointer or the keys. */
   let kept = $state<string | null>(null);
   let entry = $derived<Docked | null>(entries.find((each) => each.id === kept) ?? entries[0] ?? null);
   $effect(() => {
     const id = entry?.id ?? null;
-    // Off screen nobody is looking, and the order alone decides.
-    kept = active ? id : null;
+    kept = active && (hovering || focused) ? id : null;
   });
+
+  function onFocus() {
+    focused = hold !== null && hold.contains(document.activeElement);
+  }
+
+  function onPointerOut(e: PointerEvent) {
+    if (!(e.relatedTarget instanceof Node) || !hold?.contains(e.relatedTarget)) hovering = false;
+  }
 
   let request = $derived<Request | null>(entry?.kind === "request" ? entry.request : null);
   let conversation = $derived(entry?.kind === "request" ? entry.conversation : null);
@@ -161,8 +175,12 @@
     });
   });
   $effect(() => {
-    entry?.id;
+    const id = entry?.id ?? null;
     untrack(() => {
+      // What was under the pointer or the keys may have gone with the
+      // entry, and no event says so.
+      onFocus();
+      if (id === null) hovering = false;
       if (!held) return;
       held = false;
       const owner = document.activeElement;
@@ -470,6 +488,17 @@
   }
 </script>
 
+<svelte:window onfocusin={onFocus} />
+
+<!-- Holds whichever entry is shown, and says while the user is at it. -->
+<div
+  class="hold"
+  bind:this={hold}
+  onpointerover={() => (hovering = true)}
+  onpointerout={onPointerOut}
+  onfocusout={() => queueMicrotask(onFocus)}
+  role="presentation"
+>
 {#if entry !== null}
   {#key entry.id}
   {#if entry.kind === "terminal"}
@@ -508,7 +537,7 @@
       <div class="body">
         <p class="description" data-testid="conduct-round"><Plain text={roundQuestion(beyond)} /></p>
         <p class="description">
-          In <Plain text={ask.project} />{ask.worktree ? ", in a worktree of its own" : ""}.{#if ask.named !== null}{" "}<span
+          In <Plain text={projectLabel(ask.project)} />{ask.worktree ? ", in a worktree of its own" : ""}.{#if ask.named !== null}{" "}<span
               data-testid="conduct-account">{accountWords(ask.named)}</span
             >{/if}
         </p>
@@ -790,6 +819,7 @@
   {/if}
   {/key}
 {/if}
+</div>
 
 <!-- Where an address leads: the host it goes to, said on its own since its
      start can look like another; the host another reader of it would go to
@@ -825,7 +855,10 @@
 
 <!-- How many more wait, and from whom when it is one session; and, for a
      session this one started, the way to it. -->
-{#snippet waiting()}{#if others.length > 0}<span class="more" data-testid="dock-more"
+{#snippet waiting()}{#if others.length > 0}<span
+      class="more"
+      title="{others.length} more waiting{next === null ? '' : `, from ${next}`}"
+      data-testid="dock-more"
       >{others.length} more waiting{#if next !== null}, from <Plain text={next} />{/if}</span
     >{/if}{#if who !== null && entry?.kind !== "terminal"}<button class="go" tabindex="0" onclick={open} data-testid="dock-open"
       >Open</button
@@ -843,6 +876,10 @@
       >{/if}{/each}{/snippet}
 
 <style>
+  .hold {
+    display: contents;
+  }
+
   .dock {
     max-width: 740px;
     margin: 0 auto 8px;

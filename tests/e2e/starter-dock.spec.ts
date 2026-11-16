@@ -171,15 +171,34 @@ test.describe("a started session's request in the starter's dock", () => {
     await expect(dock).toHaveAttribute("aria-label", "The subagent for “Check every link” in Fix the cache is waiting for you");
   });
 
-  test("takes its own requests first, keeps the one shown, and goes to the session with Open", async ({ page }) => {
+  test("takes its own requests first, keeps the one shown while the user is at it, and goes there with Open", async ({ page }) => {
     const starter = await starterWithStarted(page);
-    const theirs = await asks(page, "cargo test");
+    await asks(page, "cargo test");
     const dock = shown(page).getByTestId("permission-dock");
     await expect(dock.getByTestId("dock-session")).toHaveText("Fix the cache");
-    // The starter's own agent asks meanwhile: it waits behind the one shown.
-    await agent(page, `f.startTurn("${STARTER}"); f.ask("${STARTER}", "Edit", { file_path: "${PROJECT}/src/lib/sessions.svelte.ts" });`);
+    // The starter's own agent asks while the pointer is elsewhere: its own
+    // goes first, and the started session's waits behind it.
+    await page.mouse.move(5, 5);
+    const edit = `f.startTurn("${STARTER}"); f.ask("${STARTER}", "Edit", { file_path: "${PROJECT}/src/lib/sessions.svelte.ts" });`;
+    await agent(page, edit);
+    await expect(dock).toContainText("Claude asks to use Edit on src/lib/sessions.svelte.ts");
+    await expect(dock.getByTestId("dock-more")).toHaveText("1 more waiting, from Fix the cache");
+    await dock.getByTestId("choice-allow").click();
+    await expect(dock.getByTestId("dock-session")).toHaveText("Fix the cache");
+    const theirs = (await calls(page)).filter((call) => call.method === "answer").length;
+    expect(theirs).toBe(1);
+
+    // With the pointer on the dock, the one shown stays whatever arrives.
+    await dock.hover();
+    await agent(page, edit);
     await expect(dock.getByTestId("dock-more")).toHaveText("1 more waiting, from Claude");
     await expect(dock.getByTestId("dock-session")).toHaveText("Fix the cache");
+    const request = await page.evaluate(
+      () =>
+        (window as unknown as { __integrated: { events: { id: string; type: string; request?: string }[] } }).__integrated.events.findLast(
+          (event) => event.id === "int-2" && event.type === "permissionAsked",
+        )!.request,
+    );
 
     // Open goes to the started session, whose own dock holds the same request.
     await dock.getByTestId("dock-open").click();
@@ -187,9 +206,9 @@ test.describe("a started session's request in the starter's dock", () => {
     const there = shown(page).getByTestId("permission-dock");
     await expect(there).toContainText("Claude asks to run cargo test");
     await there.getByTestId("choice-allow").click();
-    expect((await calls(page)).filter((call) => call.method === "answer")).toEqual([
-      { method: "answer", id: STARTED, request: theirs, choice: "allow", message: null },
-    ]);
+    expect((await calls(page)).filter((call) => call.method === "answer").at(-1)).toEqual(
+      { method: "answer", id: STARTED, request, choice: "allow", message: null },
+    );
 
     // Back in the starter, the request answered there has gone, and its own is shown.
     await goToRow(page, starter);

@@ -268,12 +268,27 @@ describe("the dock of a session that started others", () => {
     );
   });
 
-  it("keeps the request shown while the session's own arrives, and says who waits next", async () => {
+  it("takes its own request first while the user is not at the dock, and says who waits next", async () => {
+    const { starter, cache } = await setup();
+    fake.startTurn(handleOf(cache.key)!);
+    fake.startTurn(handleOf(starter.key)!);
+    command(handleOf(cache.key)!, "cargo test");
+    flushSync();
+    expect(screen.getByTestId("dock-session")).toHaveTextContent("Fix the cache");
+    command(handleOf(starter.key)!, "rm -rf build");
+    flushSync();
+    expect(screen.queryByTestId("dock-session")).toBeNull();
+    expect(screen.getByTestId("permission-dock")).toHaveTextContent("Claude asks to run rm -rf build");
+    expect(screen.getByTestId("dock-more")).toHaveTextContent("1 more waiting, from Fix the cache");
+  });
+
+  it("keeps the request shown while the user is at the dock, whatever arrives", async () => {
     const { starter, cache } = await setup();
     fake.startTurn(handleOf(cache.key)!);
     fake.startTurn(handleOf(starter.key)!);
     const theirs = command(handleOf(cache.key)!, "cargo test");
     flushSync();
+    await fireEvent.pointerOver(screen.getByTestId("choice-allow"));
     command(handleOf(starter.key)!, "rm -rf build");
     flushSync();
     expect(screen.getByTestId("dock-session")).toHaveTextContent("Fix the cache");
@@ -286,11 +301,30 @@ describe("the dock of a session that started others", () => {
     expect(screen.getByTestId("permission-dock")).toHaveTextContent("Claude asks to run rm -rf build");
   });
 
+  it("keeps the request shown while the keyboard is in the dock", async () => {
+    const { starter, cache } = await setup();
+    fake.startTurn(handleOf(cache.key)!);
+    command(handleOf(cache.key)!, "cargo test");
+    flushSync();
+    screen.getByTestId("choice-allow").focus();
+    flushSync();
+    fake.startTurn(handleOf(starter.key)!);
+    command(handleOf(starter.key)!, "rm -rf build");
+    flushSync();
+    expect(screen.getByTestId("dock-session")).toHaveTextContent("Fix the cache");
+    screen.getByTestId("choice-allow").blur();
+    await settle();
+    flushSync();
+    expect(screen.getByTestId("permission-dock")).toHaveTextContent("Claude asks to run rm -rf build");
+  });
+
   it("takes no answer for a moment from a request that took another's place", async () => {
     const { starter, cache } = await setup();
     const handle = handleOf(cache.key)!;
     const first = fake.ask(handle, "Bash", { command: "ls" });
     flushSync();
+    // The user is at the dock, so what arrives waits behind what is shown.
+    await fireEvent.pointerOver(screen.getByTestId("choice-allow"));
     // The same id in two sessions, as Codex numbers its requests.
     fake.emit(handleOf(starter.key)!, {
       type: "permissionAsked",
