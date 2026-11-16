@@ -20,7 +20,7 @@ import {
 } from "$lib/workflows.svelte";
 import { persist } from "$lib/persist";
 import { identifiedZoom } from "$lib/zoom.svelte";
-import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
+import { AGENTS, agentLabel, agentProfile, installed } from "$lib/agent.svelte";
 import { attention } from "$lib/attention.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import { closeOwner } from "$lib/browser.svelte";
@@ -1031,12 +1031,24 @@ export function label(session: Session): string {
   return `session ${session.ordinal}`;
 }
 
+/** Whether a name reads as an agent's own, as the window names an agent
+    that speaks or asks: Claude, Claude Code or Codex. A session never
+    takes one, so no request of a session another started can read as the
+    request of the agent on screen. */
+export function readsAsAgent(name: string): boolean {
+  // Its letters and digits alone, so no mark between the words gets past.
+  const letters = (text: string) => bareName(text).replace(/[^\p{L}\p{N}]/gu, "");
+  const bare = letters(name);
+  return AGENTS.some((id) => letters(agentProfile(id).name) === bare || letters(agentLabel(id)) === bare);
+}
+
 /** Whether a name reads as the name of another live session, `except`
-    aside, or as the workbench's own, or mixes scripts, as a name made to
-    pass for another's often does: a session never takes one, so no
-    message or row can pass for another session's or the workbench's. */
+    aside, as the workbench's own or an agent's, or mixes scripts, as a
+    name made to pass for another's often does: a session never takes one,
+    so no message, row or request can pass for another session's, the
+    workbench's or an agent's. */
 export function nameTaken(name: string, except: string | null = null): boolean {
-  if (mixesScripts(name) || readsAsWorkbench(name)) return true;
+  if (mixesScripts(name) || readsAsWorkbench(name) || readsAsAgent(name)) return true;
   const bare = bareName(name);
   return sessions.all.some(
     (session) => session.key !== except && isLive(session) && bareName(label(session)) === bare,

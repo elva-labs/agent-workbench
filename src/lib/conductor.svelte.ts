@@ -55,6 +55,8 @@ import { SvelteSet } from "svelte/reactivity";
 import { core, type ConductRequest } from "$lib/core";
 import {
   nameTaken,
+  named as nameRow,
+  readsAsAgent,
   byKey,
   byToken,
   close,
@@ -1721,6 +1723,16 @@ async function startSession(request: Placed): Promise<Answered> {
   }
 }
 
+/** How many characters a name a caller gives a session keeps: as many as
+    a row's name taken from a first message. */
+export const NAME_MOST = 60;
+
+/** A name cut to what a row's name holds, marked where it was cut. */
+function nameCut(name: string): string {
+  const chars = Array.from(name);
+  return chars.length > NAME_MOST ? `${chars.slice(0, NAME_MOST - 1).join("")}…` : name;
+}
+
 /** The rest of a start, once it has been held to the caller's workflow:
     the account it runs under, which turns on the agent the step chose, the
     question, and the session itself. */
@@ -1804,12 +1816,13 @@ async function startFitted(
     // The row holds its place in the step from here.
     fit.hold();
   }
-  // The name the caller gave is the row's, until the agent names it. One
-  // that reads as "You" is the user's alone, one that reads as "Workbench"
-  // the workbench's, and one another live session has is that session's:
-  // none is taken, and the row is named by the prompt instead.
+  // The name the caller gave is the row's, until the agent names it, cut
+  // to what a row's name holds. One that reads as "You" is the user's
+  // alone, one that reads as "Workbench" the workbench's, one that reads as
+  // an agent's that agent's, and one another live session has is that
+  // session's: none is taken, and the row is named by the prompt instead.
   // Weighed as it would be stored.
-  const candidate = name === null ? null : oneLine(name);
+  const candidate = name === null ? null : nameCut(oneLine(name));
   const you = candidate !== null && readsAsYou(candidate);
   const taken = candidate !== null && !you && nameTaken(candidate, session.key);
   const called = candidate !== null && !you && !taken ? candidate : null;
@@ -1833,6 +1846,9 @@ async function startFitted(
     name: called,
     account,
   });
+  // Kept by the session's id as well, as any name is, so the row is called
+  // so after a restart; unless the agent named it meanwhile.
+  if (called !== null && byKey(session.key)?.title === called) nameRow(session.key, called);
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   const notCalled = you
     ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
@@ -1841,8 +1857,12 @@ async function startFitted(
         ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
         : readsAsWorkbench(candidate!)
           ? ` It is not called ${oneLine(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
-          : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
-      : "";
+          : readsAsAgent(candidate!)
+            ? ` It is not called ${oneLine(name!)}: a conversation shows an agent's own words and requests under that name, so the session is named by its prompt.`
+            : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+      : called !== null && called !== oneLine(name!)
+        ? ` Its name is cut to ${NAME_MOST} characters: ${called}.`
+        : "";
   if (fit === null)
     return said(
       `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
@@ -2898,6 +2918,15 @@ export function once() {
 /** No session, and the caller hears it as a refusal. */
 export function refuse() {
   answerAsk("no");
+}
+
+/** Answers a round past a review's limit, for this one round or not,
+    when it is still the question on screen: an answer given to a question
+    that has gone reaches no other. True when it was answered. */
+export function answerRound(ask: Ask, allowed: boolean): boolean {
+  if (conductor.asking !== ask || ask.round === null) return false;
+  answerAsk(allowed ? "once" : "no");
+  return true;
 }
 
 /** The projects a caller may start sessions in without being asked. */

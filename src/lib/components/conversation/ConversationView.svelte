@@ -9,6 +9,7 @@
   import { mentionOpener } from "$lib/show.svelte";
   import { unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
+  import { answerable, dockedFor } from "$lib/docked.svelte";
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
@@ -40,6 +41,9 @@
   let folder = $derived(session.startIn ?? session.project);
 
   let dock = $state<Dock | null>(null);
+  /** What waits in the dock: the session's own requests and those of the
+      sessions it started. */
+  let docked = $derived(dockedFor(session.key));
   /** The agent's own name, as the one who speaks and asks. */
   let name = $derived(profile.name);
 
@@ -62,7 +66,7 @@
 
   /** The keyboard on the dock, when something waits there. */
   function toDock(): boolean {
-    if (conversation.open.length === 0 || dock === null) return false;
+    if (docked.length === 0 || dock === null) return false;
     dock.focus();
     return true;
   }
@@ -73,7 +77,7 @@
       const field = document.querySelector<HTMLTextAreaElement>(
         `[data-session="${session.key}"] [data-testid="composer-input"]`,
       );
-      if (conversation.open.length > 0) dock?.focus();
+      if (docked.length > 0) dock?.focus();
       else field?.focus();
     });
   }
@@ -201,7 +205,7 @@
           {/if}
         </div>
       {:else}
-        <Dock bind:this={dock} {conversation} sessionKey={session.key} agent={name} root={folder} onAnswered={answered} />
+        <Dock bind:this={dock} sessionKey={session.key} agent={name} {active} onAnswered={answered} />
         <Composer
           sessionKey={session.key}
           {conversation}
@@ -209,6 +213,7 @@
           ready={session.status === "running" && link.handle !== null}
           {active}
           onDock={toDock}
+          answers={docked.some(answerable)}
           defaultModel={session.model === null}
           slash={profile.commands}
           root={sessionRoot(session)}

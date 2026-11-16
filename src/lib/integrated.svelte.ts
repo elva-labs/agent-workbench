@@ -134,6 +134,11 @@ export function conversationOf(key: string): Conversation {
   return linkFor(key).conversation;
 }
 
+/** The row's link, when one was made for it; never makes one. */
+export function linkOf(key: string): Link | null {
+  return links.get(key) ?? null;
+}
+
 /** The core's id for a row's session, while it runs. */
 export function handleOf(key: string): string | null {
   return links.get(key)?.handle ?? null;

@@ -34,6 +34,7 @@ import {
   resetConductor,
   revoke,
   roundQuestion,
+  NAME_MOST,
   mayChangeModel,
   startedBy,
   startedFor,
@@ -541,6 +542,19 @@ describe("starting a session", () => {
     }
   });
 
+  it("does not call a session by an agent's name, in any case or spacing, and says so", async () => {
+    for (const name of ["Claude", "claude", " CLAUDE\u200b", "Claude Code", "claude-code", "Codex"]) {
+      const row = await startAllowed(
+        call("start", { project: A, prompt: "Fix the flaky test", name }, { session: "caller-1" }),
+        "pty-1",
+        "sid-new",
+      );
+      expect(row.title).toBeNull();
+      expect(last().content).toContain("a conversation shows an agent's own words and requests under that name");
+      close(row.key);
+    }
+  });
+
   it("does not call a session Workbench, which the workbench's own messages show under, and says so", async () => {
     for (const name of ["Workbench", "workbench", " WORKBENCH\u200b"]) {
       const row = await startAllowed(
@@ -552,6 +566,20 @@ describe("starting a session", () => {
       expect(last().content).toContain("a conversation shows the workbench's own messages under that name");
       close(row.key);
     }
+  });
+
+  it("cuts a long name to what a row's name holds, says so, and keeps it by the session's id", async () => {
+    const long = `Fix the cache ${"and more ".repeat(500)}`;
+    const row = await startAllowed(
+      call("start", { project: A, prompt: "Fix the flaky test", name: long }, { session: "caller-1" }),
+      "pty-1",
+      "sid-new",
+    );
+    expect(Array.from(row.title!)).toHaveLength(NAME_MOST);
+    expect(row.title!.startsWith("Fix the cache and more")).toBe(true);
+    expect(row.title!.endsWith("…")).toBe(true);
+    expect(last().content).toContain(`Its name is cut to ${NAME_MOST} characters: ${row.title}.`);
+    expect(sessions.names["sid-new"]).toBe(row.title);
   });
 
   it("does not give a session the name another live session has, and says so", async () => {

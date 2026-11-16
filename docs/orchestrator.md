@@ -91,6 +91,9 @@ message, the answer says, with the way to start it again.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
+The row takes the name cut to 60 characters, and not at all when it would
+pass for the user, the workbench, an agent or another session (see
+[sessions](sessions.md#integrated-sessions)); the answer says which.
 A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
@@ -439,7 +442,13 @@ review past a workflow's limit is asked about every time, however the
 project was allowed. It says the project the round runs in, then names the
 review and the work by the names the user sees, "Review has run twice on
 Fix the cache, as many times as the workflow allows. Allow another round?",
-with Allow one more round or Stop at the limit. An allowed caller is
+with Allow one more round or Stop at the limit. For a caller that runs
+integrated, the round docks over its composer while its conversation is on
+screen, with the same two choices taken as the dock takes any request (see
+[sessions](sessions.md#integrated-sessions)), so it never covers the
+header that says where the run stands; anywhere else it is put over the
+agent pane as above, and it moves into the dock once the caller is on
+screen. An allowed caller is
 remembered for that project and what the session ran on, for as long as the
 app runs: the account, and the agent too where the account keeps no
 directory for it, since that agent then runs on its own. A later start
@@ -571,7 +580,10 @@ first, then the model is left out and the project with it, then the
 account, and the name is cut last; the time, the step and asking always
 stand. The line speaks
 up in the accent, `asking` where the model stands, when the session needs
-a permission, which only you can grant. Everything else they wait on, the
+a permission, which only you can grant. A starter that runs integrated
+also holds that request in its dock, to be answered there for that session,
+or for one in a terminal with the way to it (see
+[sessions](sessions.md#integrated-sessions)). Everything else they wait on, the
 starter hears, so the place to go is still the starter and not the
 session it started. A session whose starter the window no longer has
 stands in its own project like any other.
