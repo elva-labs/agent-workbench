@@ -255,6 +255,11 @@ export interface PermissionOffer {
     an answer; `idle` otherwise. */
 export type IntegratedState = "working" | "asking" | "idle";
 
+/** How the waiting messages were sent now, as `integratedSendNow` says. */
+export interface IntegratedSentNow {
+  sendNow: "stopped" | "delivering" | "nothingWaiting";
+}
+
 /** What the session runs on, as `integratedConfigure` answers it. */
 export interface IntegratedSettings {
   model: string | null;
@@ -390,13 +395,14 @@ export type IntegratedEventBody =
     }
   /** Where a sent message stands before the turn that answers it: sent
       to the agent with nothing ahead of it, waiting behind a running turn,
-      taken into the running turn, or dropped. The first event for a
-      message, `sent` or `queued`, carries its text and images as they were
-      sent, so any window can draw it; the others carry neither. */
+      taken into the running turn, dropped, or withdrawn: taken back by the
+      user before the agent took it. The first event for a message, `sent`
+      or `queued`, carries its text and images as they were sent, so any
+      window can draw it; the others carry neither. */
   | {
       type: "message";
       message: string;
-      state: "sent" | "queued" | "taken" | "dropped";
+      state: "sent" | "queued" | "taken" | "dropped" | "withdrawn";
       error: string | null;
       text: string | null;
       images: IntegratedImage[];
@@ -1322,6 +1328,15 @@ export interface Core {
   /** Stops the running turn. Queued messages stay queued. The turn's end
       arrives as an event afterwards. */
   integratedInterrupt(id: string): Promise<void>;
+  /** Sends the messages that wait for a turn now, in the order sent, and
+      says how: `stopped` when the running turn was stopped for them, after
+      which the agent takes them all at once; `delivering` when the running
+      turn takes them in; `nothingWaiting` when the agent had none waiting
+      by then. Fails saying why when they cannot go now. */
+  integratedSendNow(id: string): Promise<IntegratedSentNow>;
+  /** Takes back a message the agent has not taken yet; it comes back as
+      withdrawn. Fails once the agent has taken it. */
+  integratedWithdraw(id: string, message: string): Promise<void>;
   /** Compacts the conversation, in the agent's own way, with what the
       summary should keep where the agent takes that. Resolves once asked;
       `compacting` and `compacted` follow. */
@@ -1823,6 +1838,8 @@ const tauriCore: Core = {
   integratedSend: (id, message, text, images) =>
     invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
+  integratedSendNow: (id) => invoke<IntegratedSentNow>("integrated_send_now", { id }),
+  integratedWithdraw: (id, message) => invoke<void>("integrated_withdraw", { id, message }),
   integratedCompact: (id, instructions) =>
     invoke<void>("integrated_compact", { id, instructions: instructions ?? null }),
   integratedAnswer: (id, request, choice, message) =>
@@ -2173,6 +2190,12 @@ const detachedCore: Core = {
     throw new Error("not connected to the workbench core");
   },
   async integratedInterrupt() {},
+  async integratedSendNow(): Promise<IntegratedSentNow> {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedWithdraw() {
+    throw new Error("not connected to the workbench core");
+  },
   async integratedCompact() {},
   async integratedAnswer() {},
   async integratedReply() {},

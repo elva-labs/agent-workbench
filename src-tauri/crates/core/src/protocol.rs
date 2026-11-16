@@ -193,6 +193,12 @@ struct IntegratedSendParams {
 }
 
 #[derive(Deserialize)]
+struct IntegratedWithdrawParams {
+    id: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
 struct IntegratedCompactParams {
     id: String,
     #[serde(default)]
@@ -515,6 +521,16 @@ pub fn dispatch(
         "integrated_interrupt" => {
             let p: IdParams = parse(params)?;
             core.integrated_interrupt(&p.id)?;
+            Ok(Value::Null)
+        }
+        "integrated_send_now" => {
+            let p: IdParams = parse(params)?;
+            core.integrated_send_now(&p.id)?;
+            Ok(Value::Null)
+        }
+        "integrated_withdraw" => {
+            let p: IntegratedWithdrawParams = parse(params)?;
+            core.integrated_withdraw(&p.id, &p.message)?;
             Ok(Value::Null)
         }
         "integrated_compact" => {
@@ -1310,6 +1326,11 @@ mod tests {
                 json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111", "text": "hi" }),
             ),
             ("integrated_interrupt", json!({ "id": "int-none" })),
+            ("integrated_send_now", json!({ "id": "int-none" })),
+            (
+                "integrated_withdraw",
+                json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111" }),
+            ),
             ("integrated_compact", json!({ "id": "int-none" })),
             (
                 "integrated_answer",
