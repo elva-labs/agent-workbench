@@ -1560,17 +1560,27 @@ mod tests {
         dir
     }
 
-    /// Every tool the server offers of its own is on one of the two lists,
-    /// so a new tool is never run without asking for want of a decision;
-    /// what the lists name besides is the workbench's own plugins' tools,
-    /// and a plugin's tool on neither asks.
+    /// Every tool the server lists of its own, with no plugin running, is
+    /// on one of the two lists, so a new tool is never run without asking
+    /// for want of a decision; what the lists name besides is the
+    /// workbench's own plugins' tools, and a plugin's tool on neither asks.
+    /// Each name is one bare key, so neither the command line's dotted path
+    /// nor the entry's TOML can split or quote it.
     #[test]
     fn every_tool_of_the_server_runs_unasked_or_asks_on_purpose() {
-        let own: Vec<String> = tools()
+        let own: Vec<String> = all_tools(&home("lists"))
             .into_iter()
-            .chain(conductor_tools())
             .map(|tool| tool["name"].as_str().unwrap().to_string())
             .collect();
+        for name in RUN_UNASKED.iter().chain(ASK_AS_POLICY_SAYS) {
+            assert!(
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{name}: not a bare key"
+            );
+        }
         for name in &own {
             let unasked = RUN_UNASKED.contains(&name.as_str());
             let asks = ASK_AS_POLICY_SAYS.contains(&name.as_str());
