@@ -1456,6 +1456,59 @@ fn a_retry_is_told_and_an_unauthorized_one_says_signed_out_once() {
 }
 
 #[test]
+fn a_thread_s_system_error_in_a_turn_is_left_to_the_turn_s_end() {
+    let system_error = notification(
+        "thread/status/changed",
+        json!({"threadId": THREAD, "status": {"type": "systemError"}}),
+    );
+    let failed = |error: Value| {
+        notification(
+            "turn/completed",
+            json!({"threadId": THREAD, "turn": {"id": "turn-1", "status": "failed",
+                   "items": [], "itemsView": "notLoaded", "error": error, "durationMs": 16075}}),
+        )
+    };
+    // As Codex ends a turn whose request failed for good: the thread's
+    // status, the error, then the turn with the same error.
+    let mut driver = ready();
+    turn(&mut driver, M1);
+    let why = "unexpected status 500 Internal Server Error, url: https://api.example/v1/responses";
+    let out = events(
+        &mut driver,
+        &[
+            system_error.clone(),
+            notification(
+                "error",
+                json!({"threadId": THREAD, "turnId": "turn-1", "willRetry": false,
+                       "error": {"message": why, "additionalDetails": null,
+                                 "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 500}}}}),
+            ),
+            failed(json!({"message": why, "additionalDetails": null,
+                          "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 500}}})),
+        ],
+    );
+    assert!(
+        matches!(&out[..], [Event::TurnEnded { outcome: Outcome::Failed, error: Some(e), .. }] if e == why),
+        "{out:?}"
+    );
+
+    // A turn that fails with nothing more to say says that much.
+    turn(&mut driver, M2);
+    let out = events(&mut driver, &[system_error.clone(), failed(Value::Null)]);
+    assert!(
+        matches!(&out[..], [Event::TurnEnded { error: Some(e), .. }] if e == SYSTEM_ERROR),
+        "{out:?}"
+    );
+
+    // Outside a turn there is no end to say it, so it is told.
+    let out = events(&mut driver, &[system_error]);
+    assert!(
+        matches!(&out[..], [Event::Error { kind: ErrorKind::Agent, message }] if message == SYSTEM_ERROR),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn an_interrupt_names_the_turn_or_waits_for_it() {
     let mut driver = ready();
     // No turn: nothing to stop.

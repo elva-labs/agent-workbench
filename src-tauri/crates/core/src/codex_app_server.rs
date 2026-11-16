@@ -249,6 +249,9 @@ fn config_file(home: &Path, config_dir: Option<&Path>, env: &HashMap<String, Str
 const NOT_LOGGED_IN: &str =
     "This account is not signed in to Codex. Run codex login in a terminal and sign in.";
 
+/// What a thread Codex marks as failed by an error of its own says.
+const SYSTEM_ERROR: &str = "Codex reported an error of its own on the thread";
+
 /// A request this side sent, by what its answer means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
@@ -2088,10 +2091,16 @@ impl AppServer {
             }
             "thread/status/changed" => {
                 if params["status"]["type"] == "systemError" {
-                    out.events.push(Event::Error {
-                        kind: ErrorKind::Agent,
-                        message: "Codex reported an error of its own on the thread".into(),
-                    });
+                    // Codex says so just before a turn fails, and the turn's
+                    // end says why; outside a turn, nothing else will.
+                    if self.turn.is_some() {
+                        self.failure.get_or_insert_with(|| SYSTEM_ERROR.into());
+                    } else {
+                        out.events.push(Event::Error {
+                            kind: ErrorKind::Agent,
+                            message: SYSTEM_ERROR.into(),
+                        });
+                    }
                 }
             }
             "serverRequest/resolved" => {

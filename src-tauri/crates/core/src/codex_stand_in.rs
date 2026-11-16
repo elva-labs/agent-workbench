@@ -937,6 +937,9 @@ fn a_turn_that_fails_says_why() {
     let scenario = [
         ready_scenario(),
         take("turn-1"),
+        // Codex marks the thread before it says why, as it does for any turn
+        // that fails for good.
+        notify("thread/status/changed", &format!(r#"{{"threadId":"{THREAD}","status":{{"type":"systemError"}}}}"#)),
         notify("error", r#"{"turnId":"turn-1","willRetry":false,"error":{"message":"You've hit your usage limit.","codexErrorInfo":"usageLimitExceeded"}}"#),
         notify("turn/completed", r#"{"turn":{"id":"turn-1","status":"failed","error":null}}"#),
         "drain".into(),
