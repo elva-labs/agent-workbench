@@ -29,9 +29,9 @@
 const FULL_SCREEN: &str = "full_screen";
 
 /// Where the close button's left edge goes, in points from the window's
-/// left edge: past the frame's padding and the pane's border, with the same
-/// gap to the border as the buttons have to the header's top and bottom.
-/// The other two follow at AppKit's spacing.
+/// left edge. The buttons sit in the sessions pane's header row, open or
+/// folded, and the folded column is wide enough to hold them with even
+/// room on either side. The other two follow at AppKit's spacing.
 #[cfg(target_os = "macos")]
 const CONTROLS_X: f64 = 18.0;
 
