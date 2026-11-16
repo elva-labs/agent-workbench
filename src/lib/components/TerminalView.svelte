@@ -14,11 +14,11 @@
   import {
     GridFit,
     WriteQueue,
-    buildTheme,
     colorReply,
     domRendererChosen,
+    pageColours,
+    sameTheme,
     softwareGl,
-    tokenReader,
   } from "$lib/terminal";
   import { cardsThrough, theme } from "$lib/theme.svelte";
   import { DEFAULT_SIZE } from "$lib/zoom.svelte";
@@ -76,30 +76,17 @@
   }: Props = $props();
 
   /** The colours the terminal draws in: the theme's, on the well's ground
-      where it is drawn a step toward the ground. The well is a mix, so it is
-      read as the page paints it. The ground stays the card's own tone while
-      the cards let a background through, so what xterm works out from it,
-      an inverse cell's text, stays right; the page clears it there. */
+      where it is drawn a step toward the ground. The ground stays the
+      card's own tone while the cards let a background through, so what
+      xterm works out from it, an inverse cell's text, stays right; the page
+      clears it there. */
   function colours() {
-    const built = buildTheme(tokenReader(document.documentElement));
-    if (!dim) return built;
-    const probe = document.createElement("span");
-    probe.style.color = "var(--well)";
-    document.body.appendChild(probe);
-    const well = asRgb(getComputedStyle(probe).color);
-    probe.remove();
-    return well === null ? built : { ...built, background: well, cursorAccent: well };
+    return pageColours(theme.painted, dim);
   }
 
-  /** A colour as the page reports it, `rgb()` or `color(srgb ...)` for a
-      mix, as the `rgb()` xterm reads. */
-  function asRgb(colour: string): string | null {
-    if (colour.startsWith("rgb")) return colour;
-    const srgb = /^color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(colour);
-    if (srgb === null) return null;
-    const [r, g, b] = srgb.slice(1, 4).map((channel) => Math.round(Number(channel) * 255));
-    return `rgb(${r}, ${g}, ${b})`;
-  }
+  /** Whether the cards let a background through, which the renderer
+      follows: a share moving within it changes nothing here. */
+  let through = $derived(cardsThrough());
 
   /** What WebGL here draws with, unmasked where the browser allows. */
   function glRenderer(): string | null {
@@ -384,14 +371,18 @@
 
   // Live setter: the TUI recolours without a respawn, and its ground
   // clears or fills as the cards start or stop letting a background through.
+  // A repaint that leaves its colours as they were leaves it as it is.
   $effect(() => {
     theme.painted;
     void dim;
+    void through;
     if (!terminal) return;
     untrack(() => {
       useRenderer();
-      terminal!.options.theme = colours();
-      host.style.setProperty("--term-selection", terminal!.options.theme.selectionBackground ?? null);
+      const next = colours();
+      if (sameTheme(terminal!.options.theme, next)) return;
+      terminal!.options.theme = next;
+      host.style.setProperty("--term-selection", next.selectionBackground ?? null);
     });
   });
 
