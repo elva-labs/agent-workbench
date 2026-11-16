@@ -30,8 +30,8 @@ terminal wakes it; it is read again as it leaves Inactive.
 
 The pane's title row carries two small buttons at its end: the order the
 projects are listed in, and a menu with Open project, Open remote project,
-for a folder on another machine, New orchestrator session and Settings; see
-[remote](remote.md) and [orchestrator](orchestrator.md). Under it sits a
+for a folder on another machine, and Settings; see [remote](remote.md).
+Under it sits a
 field, `Go to session or project` with the chord of go to, which opens
 [go to](focus-model.md#the-palettes), and beside it a button in the accent
 that asks for a new session in the palette, which project first when more
@@ -48,7 +48,11 @@ running in it. The header stays in view while the project's rows
 scroll under it, until the next project's pushes it out, and a hairline
 separates one project from the next. With more than one agent installed, a
 new session from a project's own button or menu opens the choice in place
-under the project's name, a row per agent; see [agents](adapters.md).
+under the project's name, a row per agent; see [agents](adapters.md). The
+`orchestrator` folder an earlier version kept sessions in is listed among
+the projects while it holds past sessions, with no button for a new
+session and Close project alone in its menu; see
+[orchestrator](orchestrator.md).
 
 Once there are accounts to tell apart, the foot of the pane names the one
 the session on screen runs under, with a button that opens the settings
@@ -177,8 +181,10 @@ starts at once, through the agent's resume command, and each of the others
 starts when it is selected. Bringing a project forward selects its most
 recent session, so that one starts too. A session closed by hand before the
 quit stays closed, a session whose project did not open again is left out,
-and a session an orchestrator started stays with the orchestrator; see
-[orchestrator](orchestrator.md).
+and a session another session started stays with its starter; see
+[orchestrator](orchestrator.md). A session left open in the `orchestrator`
+folder of an earlier version comes back too, and lists that folder again;
+see [orchestrator](orchestrator.md).
 
 The yellow is the terminal's, so a theme that sets its yellow sets this dot
 too. In the amber palette, whose accent is a yellow, it is a lemon instead,

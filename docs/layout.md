@@ -491,8 +491,8 @@ remembered, and the open ones share the height.
 row per set of files under its caption, opening in the viewer. **Sessions
 it started** follows it while the session on screen has started sessions
 of its own, may start more without being asked, or has worktrees its
-starts left behind: a row for each session, with
-what the orchestrator's board offers; the
+starts left behind: a row for each session, with the controls to stop
+them, send them a line and clean up after them; the
 [orchestrator](orchestrator.md#in-the-panes) says what they are. It stands
 open until folded, and opens by itself when one of them asks for a
 permission. **Processes** is

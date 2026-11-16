@@ -1,44 +1,56 @@
 # The orchestrator
 
 An orchestrator is a session that starts and steers other sessions. It is a
-session like any other, in a terminal or integrated, and you talk to it
-the way you talk to any agent. What it has that the others
-do not is a set of tools for the sessions around it: it can see the open
-projects, start a session in one of them with a prompt, send a running
-session a line, wait until one of them stops or asks for something, read
-what one has on screen, and stop them.
+session like any other, in a terminal or integrated, in any project, and
+you talk to it the way you talk to any agent. Every session has a set of
+tools for the sessions around it: it can see the open projects, start a
+session in one of them with a prompt, send a running session a line, wait
+until one of them stops or asks for something, read what one has on
+screen, and stop them. So any session becomes an orchestrator by being
+asked to start others.
 
-It runs in a project of its own, `orchestrator` under the workbench's home.
-The first one starts from New orchestrator session, in the menu on the
-sessions pane's title row; from then on the project sits above the ones
-you opened, with its sessions and the past ones to resume, and a session
-started there is an orchestrator. Its header's button starts another, and
-with more than one agent installed it opens the choice of agent, as any
-project's does. Nothing else about it differs,
-except what it is told: an orchestrator is told to direct work rather than
-do it, to start a session per piece in the project it belongs to, on a
-worktree of its own when pieces touch the same files, to wait on them rather
-than ask after them in a loop, to put the user's whole task in the prompt it
-starts a session with and none of its own housekeeping, and to leave a line
-on its own row when it stops, whether to relay a question or to report.
-A session that follows a workflow is an orchestrator as well, in whatever
-project it runs: it is told the same, and the workflow besides, as
-[following a workflow](#following-a-workflow) describes. Every other
-session has the same tools and none of the nudge. Every session, the
-orchestrator included, is told that once it has started sessions it keeps
-calling `wait` until all of them are done, and does not hand its turn back
-while any is running unless it needs the user, and that a message from the
-workbench, not the user, is what those sessions did while it was idle.
+To have a session direct the work rather than do it, start it under a
+workflow, from the workflow chip in a new conversation's composer, from
+the palette or from a project's new-session choice, as
+[following a workflow](#following-a-workflow) describes. The session that
+follows a workflow is its orchestrator, and is told to direct work rather
+than do it, to start a session per piece in the project it belongs to, on a
+worktree of its own when pieces touch the same files, to wait on them
+rather than ask after them in a loop, to put the user's whole task in the
+prompt it starts a session with and none of its own housekeeping, and to
+leave a line on its own row when it stops, whether to relay a question or
+to report, as well as the workflow's own steps. A fresh install has a
+workflow for exactly that, Direct: one step of work, on any model, with as
+many sessions at once as a session may run (see
+[settings](settings.md#workflows)). A session that follows no workflow is
+told none of this. Every session, an orchestrator included, is told that
+once it has started sessions it keeps calling `wait` until all of them are
+done, and does not hand its turn back while any is running unless it needs
+the user, and that a message from the workbench, not the user, is what
+those sessions did while it was idle.
+
+Earlier versions of the workbench ran such sessions in a project of their
+own, the folder `orchestrator` under the workbench's home. While
+that folder holds past sessions the sessions pane lists it as a project,
+under its name, so they can be read and resumed. A session resumed there is
+a session like any other: it is told nothing of directing, has the tools
+and hooks any project has under the [hooks](hooks.md) setting, and keeps
+its token and what it started, as [what is
+remembered](#what-is-remembered) describes. Nothing new starts in the
+folder: it has no new-session button, its menu holds only Close project,
+and neither the agent pane nor the palette offers a new session there.
+Closing it closes its sessions and takes it out of the pane for good; it
+comes back only when a session of it returns from the last quit. Nothing
+in the folder is moved or deleted.
 
 ## The tools
 
 The seven tools reach the workbench through the same tool server the app's
-own tools use. The orchestrator's own directory carries them whatever the
-projects were told about live updates, and so does a session that follows a
-workflow, which is pointed at the server when it starts where its
-project's configuration does not point at it already; any other session has
-them where its project's hooks are on. See [hooks](hooks.md) and
-[agents](adapters.md#under-a-workflow).
+own tools use. A session that follows a workflow has them whatever the
+projects were told about live updates: it is pointed at the server when it
+starts where its project's configuration does not point at it already. Any
+other session has them where its project's hooks are on. See
+[hooks](hooks.md) and [agents](adapters.md#under-a-workflow).
 
 `projects` lists the open projects, the caller's own marked, so a session
 names a project the app actually has. `sessions` lists the sessions the
@@ -268,8 +280,8 @@ the starter is idle, the workbench wakes it: it sends the starter what a
 wait would have answered, a line for each session in the same words, then
 the ones still at work by their ids, and the starter goes on as it would
 after a wait. Sessions that come to rest within three seconds of the first
-go in the same message. The orchestrator and a plain session that started
-others are woken alike, and there is no setting for it.
+go in the same message. A starter under a workflow and one under none are
+woken alike, and there is no setting for it.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal
@@ -674,22 +686,12 @@ line says what they are doing whatever the agent left, with a small dot for
 each where the model stands otherwise. Left on a started session moves the
 cursor up to its starter. Nothing about the fold is remembered.
 
-The orchestrator's changes pane, headed Orchestrator, shows the sessions it
-started instead
-of a file tree: each with its project, its worktree, what it is doing, how
-long it has been at it and the line it left, with Stop all on the section's
-header. Each row can be stopped on its own, or sent a line without leaving the
-orchestrator. Under the list, the projects the orchestrator has been allowed
-to start sessions in, each with a way to take that back, and the worktrees its
-starts have left behind, with Clean up for the ones whose work is merged and
-whose trees are clean; the rest say why they stay.
-
-![An orchestrator on screen with the sessions it started, and the board in the changes pane with a row for each, what it is doing, and the project it may start in.](orchestrator-board.png)
-
-Any other session that started sessions has the same controls in a
-section at the foot of its changes pane, under the tree and beside
-Processes and Browser, headed Sessions it started with how many (see
-[layout](layout.md#under-the-tree)). It is there while the session on
+A session that started sessions has the board for them in a section at
+the foot of its changes pane, under the tree and beside Processes and
+Browser, headed Sessions it started with how many (see
+[layout](layout.md#under-the-tree)): stop one or all, send one a line, take
+back a project it may start in without asking, and clean up the worktrees
+its starts left behind. It is there while the session on
 screen has sessions it started, may start more in a project without being
 asked, or has worktrees its starts left behind, so that can still be taken
 back and those cleaned up once they are gone. Each row
@@ -707,6 +709,8 @@ and Clean up ask first, the one saying how many of them still run and how
 many of those wait on you or are at work, the other naming each worktree
 that goes with its branch. The section is open until you fold it, the fold is
 remembered, and it opens by itself when one of them asks for a permission.
+
+![A session on screen with the sessions it started on the rail under it, and the board at the foot of the changes pane with a row for each, its step, what it is doing, and the project it may start in.](orchestrator-board.png)
 
 The sessions it started keep out of the keyboard's way too: Delete on one
 of them in the sessions pane does nothing. Its own × stops it, Delete on its

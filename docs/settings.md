@@ -276,13 +276,18 @@ one word of forty characters at most, and a step lists a model once and
 sixteen at most. The window holds a change to the same rules the settings
 file is kept by, so a change it shows is one that is kept.
 
-A fresh install has one workflow, Build and review. Its orchestrator is on
-Claude's most capable model alias, its Work step is on Sonnet, and its
+A fresh install has two workflows. In Build and review the orchestrator is
+on Claude's most capable model alias, the Work step is on Sonnet, and the
 Review step is on Opus, passes when the reviewer approves and the
 orchestrator agrees, and goes back to Work up to three times before it asks.
-A settings file from before workflows existed gets the same one. New
-sessions follow none until the user turns a workflow on, in this tab or by
-picking one when starting a session.
+Direct is for directing work with no review: its orchestrator is on the
+same model, and its one step, Work, runs on any model, eight sessions at
+once at most, which is as many as a session may run. Its orchestrator hands
+each piece to a session of its own and does none itself, as
+[orchestrator](orchestrator.md) describes. A settings file from before
+workflows existed gets the same two. They are ordinary workflows, changed,
+renamed or deleted like any other. New sessions follow none until the user
+turns a workflow on, in this tab or by picking one when starting a session.
 
 A workflow in the file that does not read or keep the rules is not used, and
 neither is a default or a project choice that names it. It is not dropped:
