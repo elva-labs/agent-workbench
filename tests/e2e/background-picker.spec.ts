@@ -117,9 +117,19 @@ test("adds and removes a colour, and the last one taken away leaves none", async
   await page.getByTestId("background-add").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(1);
   await page.getByTestId("background-add").click();
+  await expect.poll(() => kept(page).then((bg) => bg?.harmony)).toBe("complementary");
   await page.getByTestId("background-add").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(3);
   await expect(page.getByTestId("background-add")).toBeDisabled();
+  // Three colours that belong together: close either side of the first,
+  // which the pad draws larger.
+  await expect.poll(() => kept(page).then((bg) => bg?.harmony)).toBe("analogous");
+  await expect(page.getByTestId("harmony-analogous")).toHaveAttribute("aria-checked", "true");
+  const hues = (await kept(page)).dots.map((dot: { hue: number }) => dot.hue);
+  const apart = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
+  expect([apart(hues[1], hues[0]), apart(hues[2], hues[0])]).toEqual([50, 50]);
+  const size = (at: number) => page.getByTestId("background-dot").nth(at).evaluate((dot) => dot.getBoundingClientRect().width);
+  expect(await size(0)).toBeGreaterThan(await size(1));
   // The one the minus takes is marked on the pad and named by the minus.
   await expect(page.getByTestId("background-dot").nth(2)).toHaveClass(/chosen/);
   await expect(page.getByTestId("background-remove")).toHaveAccessibleName("Remove colour 3");
@@ -137,7 +147,7 @@ test("chooses a ready-made background keeping the strength, and None takes it aw
   await page.getByTestId("ready-aurora").click();
   await expect(page.getByTestId("ready-aurora")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("background-dot")).toHaveCount(3);
-  await expect.poll(() => kept(page)).toMatchObject({ harmony: "triad", strength: 0.3, grain: 0 });
+  await expect.poll(() => kept(page)).toMatchObject({ harmony: "analogous", strength: 0.3, grain: 0 });
   await page.getByTestId("ready-none").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(0);
   await expect(page.getByTestId("background-strength")).toBeDisabled();
@@ -190,8 +200,10 @@ test.describe("cards", () => {
     await expect(cards).toHaveValue("0");
     await expect(page.getByTestId("background-cards-value")).toHaveText("None");
     expect(await cardPainted(page)).toBe(false);
+    // The slider keeps hundredths of the strength up to a quarter, and reads
+    // as how far along its range it is.
     await cards.fill("20");
-    await expect(page.getByTestId("background-cards-value")).toHaveText("20%");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("80%");
     await expect.poll(() => file(page).then((f) => f.cards)).toEqual({ teal: 0.2 });
     // Kept beside the background, never inside it.
     expect(Object.keys(await kept(page)).sort()).toEqual(["dots", "grain", "harmony", "strength"]);
@@ -212,27 +224,40 @@ test.describe("cards", () => {
       backgrounds: { mono: { ...LAGOON, dots: [{ hue: 185, chroma: 0.85 }, { hue: 305, chroma: 0.85 }, { hue: 65, chroma: 0.85 }], harmony: "triad", strength: 1 } },
       cards: { mono: 0.25 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("25%, held at 14% in light");
-    await expect(page.getByTestId("background-cards")).toHaveAttribute(
-      "aria-valuetext",
-      "25% of the strength, held at 14% in light",
-    );
+    await expect(page.getByTestId("background-cards-value")).toHaveText("100%, held at 48% in light");
+    await expect(page.getByTestId("background-cards")).toHaveAttribute("aria-valuetext", "100%, held at 48% in light");
     await expect(page.getByTestId("background-note")).toContainText(
-      "Held at 14% in light, since more would leave a terminal colour hard to read.",
+      "Held at 48% in light, since more would leave a terminal colour hard to read.",
     );
   });
 
   test("says when in dark the cards would melt into the ground", async ({ page }) => {
+    // At full strength the ground is the background itself, so a card that
+    // let all of it through would be the ground.
     await open(page, {
       appearance: "dark",
-      backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 } },
-      cards: { teal: 0.2 },
+      backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 1, grain: 0.25 } },
+      cards: { teal: 0.25 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("20%, none in dark");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("100%, held at 96% in dark");
     await expect(page.getByTestId("background-note")).toContainText(
-      "None shows through in dark, since any would melt the cards into the ground.",
+      "Held at 96% in dark, since more would melt the cards into the ground.",
     );
-    // Held at none, the window is as it is with none asked.
+  });
+
+  test("says when none shows through, and leaves the window as with none asked", async ({ page }) => {
+    // A theme whose terminal blue holds 4.5:1 on its light card by a hair.
+    await open(page, {
+      appearance: "light",
+      themes: { tight: { label: "Tight", light: { "ansi-blue": "#717879" }, dark: {}, shape: {} } },
+      palette: "tight",
+      backgrounds: { tight: LAGOON },
+      cards: { tight: 0.2 },
+    });
+    await expect(page.getByTestId("background-cards-value")).toHaveText("80%, none in light");
+    await expect(page.getByTestId("background-note")).toContainText(
+      "None shows through in light, since any would leave a terminal colour hard to read.",
+    );
     await expect(page.locator("html")).not.toHaveAttribute("data-cards", "");
     expect(await cardPainted(page)).toBe(false);
   });

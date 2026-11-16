@@ -117,7 +117,7 @@ export const theme = $state<{
   /** The background each palette or theme keeps, by its name. */
   backgrounds: Record<string, Background>;
   /** How much of its background each palette or theme lets through the
-      cards, as a share of the strength, by its name. */
+      cards, from none at 0 to the most at MOST_CARDS, by its name. */
   cards: Record<string, number>;
   /** A background and a share being picked, painted in place of the ones
       kept until they are let go; null while nothing is being picked. */

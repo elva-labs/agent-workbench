@@ -29,6 +29,7 @@ import { noteSent } from "$lib/persist";
 import {
   checkBackground,
   describeBackground,
+  MOST_CARDS,
   rounded,
   swatchOf,
   type Background,
@@ -271,7 +272,7 @@ export function describeSettings(): string {
     )
       .map(([token, most]) => `${token} up to ${most}px`)
       .join(", ")}. A token left out keeps the default palette's value. Its background argument keeps a background with it.`,
-    "A background tints the chrome behind the sessions pane, the headers and the status bar: one to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim, a harmony (single, complementary, analogous, triad, or free), a strength from 0.1 to 1 and grain from 0 to 1. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable.",
+    "A background tints the chrome behind the sessions pane, the headers and the status bar: one to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim, a harmony (single, complementary, analogous, triad, or free; colours close in hue, about 50 degrees apart as analogous places them, belong together and mix cleanly), a strength from 0.1 to 1 and grain from 0 to 1. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable.",
     "",
     ...describeWorkflows(),
     "",
@@ -291,12 +292,12 @@ export function describeSettings(): string {
     through now where the guard holds it back. */
 function describeCards(): string {
   const asked = Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
-  const percent = (share: number) => `${Math.round(share * 100)}%`;
+  const percent = (share: number) => `${Math.round((share / MOST_CARDS) * 100)}%`;
   const now =
     asked > 0 && theme.cardsHeld < asked
       ? `; ${percent(theme.cardsHeld)} shows through now, where the window keeps text readable`
       : "";
-  return `cards: ${percent(asked)} (how much of the background shows through the panes as well, as a share of its strength from 0 to 25%; the user's to change, in the settings${now})`;
+  return `cards: ${percent(asked)} (how much of the background shows through the panes as well, from none to 100%, where a pane shows as much of it as the window around it; the user's to change, in the settings${now})`;
 }
 
 /** A palette's background as the agent reads it: as it is kept, or none. */

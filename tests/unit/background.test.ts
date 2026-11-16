@@ -173,7 +173,7 @@ describe("moving the dots", () => {
       { hue: 350, chroma: 0.7 },
       { hue: 170, chroma: 0.7 },
     ]);
-    expect(withHarmony(one, "analogous").dots.map((dot) => dot.hue)).toEqual([350, 30, 310]);
+    expect(withHarmony(one, "analogous").dots.map((dot) => dot.hue)).toEqual([350, 40, 300]);
     expect(withHarmony(one, "triad").dots.map((dot) => dot.hue)).toEqual([350, 110, 230]);
   });
 
@@ -192,23 +192,75 @@ describe("moving the dots", () => {
     expect(freed.dots[0]).toEqual({ hue: 30, chroma: 0.5 });
   });
 
+  it("carries a kept background's own turns with the first, never re-placing them", () => {
+    // Kept with the closer turns analogous once had.
+    const kept = background([[140, 0.8], [180, 0.8], [100, 0.8]], { harmony: "analogous" });
+    const turned = moveDot(kept, 0, { hue: 150, chroma: 0.6 });
+    expect(turned.harmony).toBe("analogous");
+    expect(turned.dots).toEqual([
+      { hue: 150, chroma: 0.6 },
+      { hue: 190, chroma: 0.6 },
+      { hue: 110, chroma: 0.6 },
+    ]);
+    // Painting it is painting the dots as they are kept.
+    const colours = coloursOf("teal", "dark");
+    expect(paintOf(kept, "modern", colours)).toEqual(paintOf({ ...kept, harmony: "free" }, "modern", colours));
+  });
+
   it("adds a dot up to three, and takes the last one away with the background", () => {
     const one = background([[100, 0.6]]);
     const two = addDot(one);
     expect(two.harmony).toBe("complementary");
+    // A third makes three close colours around the first, never three
+    // spread round the wheel.
     const three = addDot(two);
-    expect(three.harmony).toBe("triad");
+    expect(three.harmony).toBe("analogous");
+    expect(three.dots.map((dot) => dot.hue)).toEqual([100, 150, 50]);
+    expect(three.dots.every((dot) => dot.chroma === 0.6)).toBe(true);
     expect(addDot(three)).toBe(three);
+    // A free pair keeps both and gains one close to the first, away from
+    // the second.
     const freePair = background([[0, 0.5], [90, 1]]);
     const added = addDot(freePair);
     expect(added.harmony).toBe("free");
-    expect(added.dots[2]).toEqual({ hue: 225, chroma: 0.5 });
+    expect(added.dots.slice(0, 2)).toEqual(freePair.dots);
+    expect(added.dots[2]).toEqual({ hue: 310, chroma: 0.5 });
+    expect(addDot(background([[0, 0.5], [300, 1]])).dots[2]).toEqual({ hue: 50, chroma: 0.5 });
 
     const fewer = removeDot(three, 1)!;
-    expect(fewer.dots.map((dot) => dot.hue)).toEqual([100, 340]);
+    expect(fewer.dots.map((dot) => dot.hue)).toEqual([100, 50]);
     expect(fewer.harmony).toBe("free");
     expect(removeDot(fewer, 0)!.harmony).toBe("single");
     expect(removeDot(one, 0)).toBeNull();
+  });
+});
+
+describe("the ready-made backgrounds", () => {
+  it("hold colours that belong together: none spread wider than a third of a turn from the first", () => {
+    for (const ready of READY_MADE) {
+      for (const dot of ready.dots.slice(1)) {
+        const apart = Math.abs(((dot.hue - ready.dots[0].hue + 540) % 360) - 180);
+        expect(apart, ready.name).toBeLessThanOrEqual(70);
+      }
+    }
+  });
+
+  it("never grey out on the way from one colour to the next", () => {
+    for (const tone of ["light", "dark"] as const) {
+      for (const ready of READY_MADE) {
+        if (ready.dots.length === 1) continue;
+        const colours = ready.dots.map((dot) => dotColour(dot, tone));
+        const chroma = (lab: number[]) => Math.hypot(lab[1], lab[2]);
+        const least = Math.min(...colours.map(chroma));
+        const at = field(colours);
+        // Along the window, the middle as much as the ends.
+        for (let step = 0; step <= 20; step++) {
+          const lab = at(step / 20, step / 20);
+          expect(chroma(lab), `${ready.name} in ${tone} at ${step / 20}`).toBeGreaterThanOrEqual(least * 0.9);
+          expect(lab[0]).toBeCloseTo(colours[0][0], 6);
+        }
+      }
+    }
   });
 });
 

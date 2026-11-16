@@ -118,7 +118,8 @@
 
 /* The sessions pane is part of the ground rather than a card: it holds no
    card, its header carries the rule over its list, and while it has the
-   focus the header carries the mark. */
+   focus the mark runs where that rule does, on the line the other panes'
+   cards carry theirs. */
 :root[data-look="modern"] [data-pane="sessions"] {
   --pane-bg: var(--ground);
   --card-bg: transparent;
@@ -126,7 +127,13 @@
   --card-shadow: none;
   --card-mark: 0px;
   --card-edge: transparent;
-  --head-mark-on: inset 0 2px 0 var(--accent);
+  --head-mark-on: 0 2px 0 var(--accent);
+}
+
+:root[data-look="modern"] [data-pane="sessions"].focused > header {
+  position: relative;
+  z-index: 1;
+  border-bottom-color: transparent;
 }
 
 /* A header over a card lies on the ground with no rule: the card's top

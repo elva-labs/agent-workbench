@@ -112,10 +112,13 @@
  *                     grain blurred into a flat veil, so a card shows its
  *                     piece of the picture soft rather than speckled;
  *   --tint-card, --tint-well
- *                     the surface and the well let through by the strength
- *                     times the cards' share, which the guard holds back
- *                     where a terminal colour would fall under 4.5:1 or, in
- *                     dark, where cards would stop standing off the ground;
+ *                     the card's and the well's own tone, with the grey at
+ *                     the background's lightness taken out, laid over it
+ *                     so the card keeps its lightness and takes on the
+ *                     background's colour by the cards' share, which the
+ *                     guard holds back where a terminal colour would fall
+ *                     under 4.5:1 or, in dark, where cards would stop
+ *                     standing off the ground;
  *   --tint-card-ink and the other text tokens
  *                     each text on a card a step stronger where it needs it.
  *
