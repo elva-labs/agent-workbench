@@ -169,7 +169,7 @@ describe("what a session's dock holds", () => {
       project: "one",
       prompt: "Look once more",
       worktree: false,
-      round: { step: "Review", work: "w", name: "Fix the cache", done: 4, limit: 3 },
+      round: { step: "Review", work: "w", piece: "w", name: "Fix the cache", done: 4, limit: 3 },
       login: null,
       named: null,
     };
