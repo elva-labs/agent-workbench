@@ -1463,10 +1463,17 @@ async function wakeUp(key: string) {
   }
 }
 
+/** Marks that read as the bar between sessions, once a line is in its
+    compatibility form, where a fullwidth bar is a plain one: vertical lines
+    of every kind, from box drawing, mathematics and other scripts. */
+const BAR_LIKE =
+  /[|\u01c0\u05c0\u0964\u0965\u2016\u2223\u2225\u23b8\u23b9\u23d0\u2502\u2503\u2506\u2507\u250a\u250b\u254e\u254f\u2551\u2575\u2577\u2579\u257b\u2758-\u275a]/g;
+
 /** A line of a wake typed into a terminal, where a bar keeps the sessions
-    apart: any bar of its own, in a session's name or last line, is another
-    mark, so nothing in it reads as the start of another session's line. */
-const barless = (line: string) => line.replaceAll("|", "\u00a6");
+    apart: any bar of its own, or anything that reads as one, in a session's
+    name or last line, is another mark, so nothing in it reads as the start
+    of another session's line. */
+const barless = (line: string) => line.normalize("NFKC").replace(BAR_LIKE, "\u00a6");
 
 /**
  * Sends a starter what the sessions it is woken for did, in the words a
@@ -2717,12 +2724,20 @@ function lastLine(session: Session): string {
   return line === null ? "It has left no line." : `Its last line: ${line}`;
 }
 
+/** Marks that read as a double quote, once a line is in its compatibility
+    form, where a fullwidth quote is a plain one: the quotation marks that
+    open and close, the low ones, primes, and the double marks of other
+    scripts. */
+const QUOTE_LIKE =
+  /["\p{Pi}\p{Pf}\u201a\u201e\u02ba\u02dd\u02ee\u05f3\u05f4\u2032-\u2037\u2e42\u275b-\u2760\u3003\u301d-\u301f]/gu;
+
 /** A session's own words as an answer quotes them: on one line, cut
-    short, and in double quotes, any quote mark of their own turned
-    single, so nothing in them closes the quote and reads as a line of the
-    answer's own, the workbench's or the user's. Null for no words. */
+    short, and in double quotes, any quote mark of their own, or anything
+    that reads as one, turned single, so nothing in them closes the quote
+    and reads as a line of the answer's own, the workbench's or the
+    user's. Null for no words. */
 function quotedLine(note: string | null): string | null {
-  const line = note === null ? "" : oneLine(note).replace(/["\u201c\u201d\u201e\u201f]/g, "'");
+  const line = note === null ? "" : oneLine(note.normalize("NFKC")).replace(QUOTE_LIKE, "'");
   if (line === "") return null;
   const chars = [...line];
   return `"${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}"`;
