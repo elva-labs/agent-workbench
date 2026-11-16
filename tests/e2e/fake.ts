@@ -129,6 +129,9 @@ export async function installFakeCore(
     integrable?: string[];
     /** Keeps the integrated sessions across a reload, as the core does. */
     keepIntegrated?: boolean;
+    /** The mode the user's own agent settings start an integrated session
+        in when the start names none. */
+    defaultMode?: string;
     /** Past sessions the core reports for the first project, each Claude
         Code's unless it names another agent, and from the agent's own
         directory unless it names an account's. */
@@ -164,8 +167,12 @@ export async function installFakeCore(
 ) {
   // The scripted integrated session, as `window.__integrated`, for a test
   // to drive with `page.evaluate`.
+  const integratedOptions = {
+    ...(options.keepIntegrated ? { keep: "fake.integrated" } : {}),
+    ...(options.defaultMode === undefined ? {} : { defaultMode: options.defaultMode }),
+  };
   await page.addInitScript(
-    `window.__integrated = (${fakeIntegrated.toString()})(${options.keepIntegrated ? '{ keep: "fake.integrated" }' : ""});`,
+    `window.__integrated = (${fakeIntegrated.toString()})(${JSON.stringify(integratedOptions)});`,
   );
   await page.addInitScript(
     ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable, active, used, held, buildAndReview, direct, orchestratorFolder, orchestratorTranscripts }) => {
@@ -213,6 +220,18 @@ export async function installFakeCore(
       }
 
       let ptyCount = 0;
+      // The agents spawned in a pty, which a kill ends as the core says it
+      // does: once the process has gone, through onSessionEnded.
+      const agentPtys = new Set<string>();
+      const endedHandlers = new Set<(event: { id: string; code: number | null; clean: boolean }) => void>();
+      const quitPresses = new Map<string, number>();
+      // An agent's process goes, and says so once it has.
+      const endAgent = (id: string) => {
+        if (!agentPtys.delete(id)) return;
+        setTimeout(() => {
+          for (const handler of endedHandlers) handler({ id, code: 0, clean: true });
+        }, 0);
+      };
 
       // The past sessions the core finds in a folder: the test's for the
       // first project and for the orchestrator folder, none elsewhere.
@@ -714,6 +733,7 @@ export async function installFakeCore(
           onOutput: (bytes: Uint8Array) => void,
         ) => {
           const ptyId = `pty-${++ptyCount}`;
+          agentPtys.add(ptyId);
           const sessionId = spawnOptions.session ?? `session-${ptyCount}`;
           if (spawnOptions.token !== undefined) tokens[sessionId] = spawnOptions.token;
           // What each spawn asked for, and a way for a test to put bytes on
@@ -741,6 +761,13 @@ export async function installFakeCore(
         write: async (id: string, data: string) => {
           const w = window as unknown as { __written?: [string, string][] };
           (w.__written ??= []).push([id, data]);
+          // An agent quits on a second Ctrl+C at its prompt, as Claude Code
+          // does.
+          if (data === "\x03" && agentPtys.has(id)) {
+            const presses = (quitPresses.get(id) ?? 0) + 1;
+            quitPresses.set(id, presses);
+            if (presses === 2) endAgent(id);
+          }
         },
         // Every size a pty is told, for a test to count the layouts its
         // terminal was measured in: a fit that changes nothing sends nothing.
@@ -750,7 +777,11 @@ export async function installFakeCore(
           };
           (w.__resizes ??= []).push({ id, cols, rows });
         },
-        kill: async () => {},
+        kill: async (id: string) => {
+          const w = window as unknown as { __killed?: string[] };
+          if (agentPtys.has(id)) (w.__killed ??= []).push(id);
+          endAgent(id);
+        },
         // Where a session's process is working, when a test has said so in
         // __cwds by pty id; the changes pane follows it into a worktree.
         ptyCwd: async (id: string) => {
@@ -921,7 +952,10 @@ export async function installFakeCore(
           if (w.__processes?.[id])
             w.__processes[id] = w.__processes[id].filter((p) => p.pid !== pid);
         },
-        onSessionEnded: async () => () => {},
+        onSessionEnded: async (handler: (event: { id: string; code: number | null; clean: boolean }) => void) => {
+          endedHandlers.add(handler);
+          return () => endedHandlers.delete(handler);
+        },
         onSessionIdentified: async () => () => {},
         onSessionEvent: async (
           handler: (event: { sessionId: string; kind: string }) => void,

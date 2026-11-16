@@ -31,9 +31,23 @@ import {
   runningByToken,
   reset as resetSessions,
   sessions,
+  started as startedTerminal,
+  ended as endedTerminal,
+  label,
+  midTurn,
+  otherWayFor,
+  reopenOtherWay,
+  reopeningRow,
+  byToken,
+  launch as launchTerminal,
   viewed,
+  exact,
+  belled,
   wake,
 } from "$lib/sessions.svelte";
+import { modeOf, resetModes } from "$lib/sessionModes";
+import { create as createShell, forOwner, reset as resetShells } from "$lib/terminals.svelte";
+import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
@@ -44,6 +58,14 @@ import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from 
 const PROJECT = "/home/ada/dev/demo";
 
 let fake: FakeIntegrated;
+
+/** The terminal side of the fake core, made new for each test. */
+const pty = {
+  spawned: [] as { session?: string; mode?: string; agent?: string }[],
+  written: [] as [string, string][],
+  killed: [] as string[],
+  onWrite: (_id: string, _data: string) => {},
+};
 let stopListening = () => {};
 
 /** The fake core behind the seam, its integrated sessions scripted. */
@@ -69,7 +91,19 @@ async function install(options: FakeIntegratedOptions = {}) {
       fake.subscribe(handler),
     projectInfo: async (path: string) => ({ path, name: "demo", repository: path, isGit: true }),
     transcriptsMany: async (projects: string[]) => projects.map(() => []),
-    kill: async () => {},
+    // A terminal session: what each spawn asked for, what was typed to a
+    // pty, and which were killed.
+    spawn: async (options: { session?: string }) => {
+      pty.spawned.push(options);
+      return { ptyId: `pty-${100 + pty.spawned.length}`, sessionId: options.session ?? null };
+    },
+    write: async (id: string, data: string) => {
+      pty.written.push([id, data]);
+      pty.onWrite(id, data);
+    },
+    kill: async (id: string) => {
+      pty.killed.push(id);
+    },
   };
   stopListening = await listenIntegrated();
 }
@@ -150,6 +184,10 @@ beforeEach(async () => {
   // The window has the workflows, so a resumed row finds out what it
   // follows as it starts.
   resetWorkflows();
+  pty.spawned = [];
+  pty.written = [];
+  pty.killed = [];
+  pty.onWrite = () => {};
   await install();
 });
 
@@ -837,24 +875,79 @@ describe("the last words of a run", () => {
 });
 
 describe("the mode a session starts in", () => {
-  it("is the agent's safe one, never left to its own configuration", async () => {
-    const { session } = await started();
-    expect(fake.calls[0]).toMatchObject({ method: "start", options: { mode: "default" } });
-    const codex = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
-    await launch(codex.key);
-    expect(fake.calls.filter((call) => call.method === "start")[1]).toMatchObject({ options: { agent: "codex", mode: "read-only" } });
-    expect(session.kind).toBe("integrated");
+  const starts = () => fake.calls.filter((call) => call.method === "start");
+
+  beforeEach(async () => {
+    localStorage.removeItem("workbench.modes");
+    resetModes();
+    stopListening();
+    await install({ defaultMode: "auto" });
   });
 
-  it("is the one the user chose when the session starts again, and the safe one for a mode the agent does not offer", async () => {
+  it("is named by none for a new session, so the agent's own settings decide as in a terminal", async () => {
+    const { session } = await started();
+    expect(starts()[0]).toMatchObject({ method: "start" });
+    expect((starts()[0] as { options: { mode?: string } }).options.mode).toBeUndefined();
+    // The agent says the mode its settings start it in, and the session
+    // runs in it.
+    expect(conversationOf(session.key).settings.mode).toBe("auto");
+    const codex = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(codex.key);
+    expect((starts()[1] as { options: { agent: string; mode?: string } }).options).toMatchObject({ agent: "codex" });
+    expect((starts()[1] as { options: { mode?: string } }).options.mode).toBeUndefined();
+  });
+
+  it("is the one the session last ran in when it starts again", async () => {
     const { session, handle } = await started();
     await configure(session.key, { mode: "plan" });
     expect(startMode(session, linkFor(session.key))).toBe("plan");
     fake.end(handle, true);
     await resume(session.key);
-    expect(fake.calls.filter((call) => call.method === "start").at(-1)).toMatchObject({ options: { mode: "plan" } });
-    linkFor(session.key).conversation.settings.mode = "untrusted, workspace-write";
-    expect(startMode(session, linkFor(session.key))).toBe("default");
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
+  });
+
+  it("leaves a mode from the agent's own settings that it does not offer to those settings, rather than one that asks", async () => {
+    const { session } = await started();
+    linkFor(session.key).conversation.settings.mode = "bypassPermissions";
+    expect(startMode(session, linkFor(session.key))).toBeUndefined();
+  });
+
+  it("is kept for the conversation across a restart, and goes to no other", async () => {
+    const { session, handle } = await started();
+    const id = session.id!;
+    await configure(session.key, { mode: "acceptEdits" });
+    fake.end(handle, true);
+    close(session.key);
+    // The window starts again: what it keeps in memory is gone.
+    resetModes();
+    resetIntegrated();
+    const again = await started({ resumedFrom: id });
+    expect(starts().at(-1)).toMatchObject({ options: { session: id, mode: "acceptEdits" } });
+    expect(again.session.id).toBe(id);
+    // Another conversation, and a new one another session starts, take
+    // none of it: the agent's settings decide for each.
+    await started({ resumedFrom: "another-conversation" });
+    expect((starts().at(-1) as { options: { mode?: string } }).options.mode).toBeUndefined();
+    await started({ prompt: "Fix the flaky test" });
+    expect((starts().at(-1) as { options: { mode?: string } }).options.mode).toBeUndefined();
+  });
+
+  it("is let go when a mode the agent does not offer replaces it, and once a terminal run of the conversation has shut down", async () => {
+    const { session } = await started();
+    const id = session.id!;
+    await configure(session.key, { mode: "plan" });
+    expect(modeOf(id)).toBe("plan");
+    fake.emit(handleOf(session.key)!, { type: "configured", model: null, mode: "bypassPermissions", effort: null, efforts: [] });
+    expect(modeOf(id)).toBeNull();
+    await configure(session.key, { mode: "plan" });
+    expect(modeOf(id)).toBe("plan");
+    // A terminal run of it holds the record until it ends; shut down by
+    // itself, it has written its own mode down.
+    const terminal = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
+    startedTerminal(terminal.key, "pty-1", id);
+    expect(modeOf(id)).toBe("plan");
+    endedTerminal({ id: "pty-1", code: 0, clean: true });
+    expect(modeOf(id)).toBeNull();
   });
 });
 
@@ -868,6 +961,390 @@ describe("an interrupt with no turn running", () => {
     await settled();
     expect(fake.calls.some((call) => call.method === "interrupt")).toBe(true);
     expect(conversationOf(session.key).interrupting).toBe(false);
+  });
+});
+
+describe("a session reopened the other way", () => {
+  beforeEach(() => {
+    localStorage.removeItem("workbench.modes");
+    resetModes();
+    resetShells();
+    resetConductor();
+    applyDetect(
+      {
+        id: "claude-code",
+        path: "/usr/local/bin/claude-code",
+        caps: { resumable: true, titles: true, acp: false, integrated: true },
+        fromLoginShell: true,
+      },
+      true,
+    );
+  });
+  afterEach(() => {
+    resetAgent();
+    resetConductor();
+    resetShells();
+  });
+
+  /** A terminal row of a conversation, its process up. */
+  function terminalRow(id: string) {
+    const row = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
+    startedTerminal(row.key, "pty-7", id);
+    return byKey(row.key)!;
+  }
+
+  it("goes on with a terminal session as a conversation once its process has ended, in the same row", async () => {
+    const row = terminalRow("conversation-1");
+    const { key, token, ordinal } = row;
+    const name = label(row);
+    expect(otherWayFor(row)).toBe("integrated");
+    const reopening = reopenOtherWay(key);
+    // Its process is asked to end, and nothing starts until it has.
+    await settled();
+    expect(byKey(key)!.kind).toBe("terminal");
+    expect(otherWayFor(byKey(key)!)).toBeNull();
+    endedTerminal({ id: "pty-7", code: 0, clean: true });
+    await reopening;
+    const now = byKey(key)!;
+    expect(now).toMatchObject({ kind: "integrated", status: "starting", resumedFrom: "conversation-1", token, ordinal });
+    expect(label(now)).toBe(name);
+    // Its end was the user's doing, and no news.
+    expect(now.unread).toBe(false);
+    await launch(key);
+    expect(fake.calls.find((call) => call.method === "start")).toMatchObject({
+      options: { session: "conversation-1", token },
+    });
+    expect(sessions.all.filter((one) => one.id === "conversation-1")).toHaveLength(1);
+  });
+
+  it("goes on with a conversation in a terminal once its agent has ended, in the same row", async () => {
+    const { session, key } = await started();
+    const id = session.id!;
+    const token = session.token;
+    await reopenOtherWay(key);
+    const now = byKey(key)!;
+    expect(fake.calls.some((call) => call.method === "stop")).toBe(true);
+    expect(now).toMatchObject({ kind: "terminal", status: "starting", resumedFrom: id, token, ptyId: null });
+    expect(handleOf(key)).toBeNull();
+    expect(now.unread).toBe(false);
+  });
+
+  it("is offered for a session whose conversation is known and whose agent runs both ways", async () => {
+    const { session } = await started();
+    expect(otherWayFor(session)).toBe("terminal");
+    const fresh = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "terminal");
+    expect(otherWayFor(fresh)).toBeNull();
+    resetAgent();
+    expect(otherWayFor(session)).toBeNull();
+  });
+
+  it("asks first while a turn runs", async () => {
+    const { session, handle } = await started();
+    expect(midTurn(session)).toBe(false);
+    send(session.key, "Go");
+    fake.emit(handle, { type: "state", state: "working" });
+    expect(midTurn(byKey(session.key)!)).toBe(true);
+  });
+
+  it("is never seen ended: the row goes from its run straight to the next", async () => {
+    const row = terminalRow("conversation-1");
+    const statuses: string[] = [];
+    const reopening = reopenOtherWay(row.key);
+    await settled();
+    statuses.push(byKey(row.key)!.status);
+    endedTerminal({ id: "pty-7", code: 0, clean: true });
+    // Inside the end itself the row is already the other way.
+    statuses.push(byKey(row.key)!.status);
+    expect(await reopening).toBe(true);
+    expect(statuses).toEqual(["running", "starting"]);
+    expect(reopeningRow(row.key)).toBe(true);
+    // Until the next run is up.
+    await launch(row.key);
+    expect(byKey(row.key)!.status).toBe("running");
+    expect(reopeningRow(row.key)).toBe(false);
+  });
+
+  it("keeps a row read at rest read, there and back, through what each stopped run does and the agent's notice after", async () => {
+    const row = terminalRow("conversation-1");
+    attention.focused = true;
+    sessions.active = row.key;
+    viewed(row.key);
+    attention.focused = false;
+    // On its way out the terminal's hooks say it stopped, and it rings.
+    pty.onWrite = (id) => {
+      if (pty.written.filter(([on, data]) => on === id && data === "\x03").length < 2) return;
+      exact("conversation-1", "stop");
+      belled(row.key);
+      endedTerminal({ id, code: 0, clean: true });
+    };
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    expect(byKey(row.key)!.unread).toBe(false);
+    await launch(row.key);
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    await launchTerminal(row.key, 80, 24, () => {});
+    expect(byKey(row.key)).toMatchObject({ kind: "terminal", status: "running", unread: false });
+    // A minute on, Claude Code says again that it waits, and rings for it.
+    exact("conversation-1", "idle");
+    belled(row.key);
+    expect(byKey(row.key)!.unread).toBe(false);
+    // A turn of its own is news.
+    exact("conversation-1", "prompt");
+    exact("conversation-1", "stop");
+    expect(byKey(row.key)!.unread).toBe(true);
+  });
+
+  it("goes on in a terminal in the mode the user last chose, and in none the agent does not offer", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    const { session, key } = await started();
+    expect(conversationOf(key).settings.mode).toBe("auto");
+    await configure(key, { mode: "default" });
+    await reopenOtherWay(key);
+    await launchTerminal(key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: session.id, mode: "default" });
+    // The terminal run holds the record until it ends.
+    expect(modeOf(session.id!)).toBe("default");
+    // A run in a mode from the agent's own settings that it offers no
+    // switch to names none: the terminal's settings decide again.
+    const other = await started();
+    fake.emit(other.handle, { type: "configured", model: null, mode: "bypassPermissions", effort: null, efforts: [] });
+    await reopenOtherWay(other.key);
+    await launchTerminal(other.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)!.mode).toBeUndefined();
+  });
+
+  /** The integrated start the fake core was last asked for. */
+  const lastStart = () =>
+    (fake.calls.filter((call) => call.method === "start").at(-1) as { options: { mode?: string } }).options;
+
+  it("keeps the mode the user last chose through a terminal run that is killed, and leaves it to the agent once one shuts down", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    const { session, key } = await started();
+    const id = session.id!;
+    await configure(key, { mode: "default" });
+    await reopenOtherWay(key);
+    await launchTerminal(key, 80, 24, () => {});
+    // Killed, as a stop on Windows or a crash ends it, the terminal wrote
+    // no mode down: the conversation goes on in the user's last choice.
+    endedTerminal({ id: byKey(key)!.ptyId!, code: 1, clean: false });
+    expect(byKey(key)!.status).toBe("crashed");
+    expect(modeOf(id)).toBe("default");
+    await reopenOtherWay(key);
+    await launch(key);
+    expect(lastStart().mode).toBe("default");
+    // Shut down by a quit or a hang-up, it wrote its own: the agent's
+    // record of that run decides.
+    for (const shutdown of [
+      { code: 0, clean: true },
+      { code: 129, clean: false },
+    ]) {
+      await configure(key, { mode: "default" });
+      await reopenOtherWay(key);
+      await launchTerminal(key, 80, 24, () => {});
+      expect(modeOf(id)).toBe("default");
+      const pid = byKey(key)!.ptyId!;
+      pty.onWrite = (on) => {
+        if (on === pid && pty.written.filter(([at, data]) => at === pid && data === "\x03").length === 2)
+          endedTerminal({ id: pid, ...shutdown });
+      };
+      expect(await reopenOtherWay(key)).toBe(true);
+      expect(modeOf(id)).toBeNull();
+      await launch(key);
+      expect(lastStart().mode).toBeUndefined();
+    }
+  });
+
+  it("lets the end of a closed row's terminal run decide, and lets go at the window's start of a mode a run still held", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    for (const [end, kept] of [
+      [{ code: 1, clean: false }, "plan"],
+      [{ code: 0, clean: true }, null],
+    ] as const) {
+      const { session, key } = await started();
+      const id = session.id!;
+      await configure(key, { mode: "plan" });
+      await reopenOtherWay(key);
+      await launchTerminal(key, 80, 24, () => {});
+      const ptyId = byKey(key)!.ptyId!;
+      close(key);
+      expect(modeOf(id)).toBe("plan");
+      expect(endedTerminal({ id: ptyId, ...end })).toBe(true);
+      expect(modeOf(id)).toBe(kept);
+    }
+    // A terminal run still up when the window goes, as at a quit, which
+    // hangs up on it: its agent writes its own down.
+    const { session, key } = await started();
+    const id = session.id!;
+    await configure(key, { mode: "acceptEdits" });
+    const other = await started();
+    await configure(other.key, { mode: "plan" });
+    await reopenOtherWay(key);
+    await launchTerminal(key, 80, 24, () => {});
+    resetModes();
+    expect(modeOf(id)).toBeNull();
+    // A record no terminal run held is kept.
+    expect(modeOf(other.session.id!)).toBe("plan");
+  });
+
+  it("goes on in the mode chosen while it is being reopened, or asked just before and not answered", async () => {
+    stopListening();
+    await install({ defaultMode: "auto" });
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__WORKBENCH_CORE__;
+    const stopNow = seam.integratedStop;
+    let release = () => {};
+    seam.integratedStop = (async (handle: string) => {
+      release = () => void stopNow(handle as never);
+    }) as never;
+    const { session, key } = await started();
+    const reopening = reopenOtherWay(key);
+    await settled();
+    // The run is on its way out, and the user turns the chip.
+    const asked = fake.calls.filter((call) => call.method === "configure").length;
+    await configure(key, { mode: "default" });
+    expect(conversationOf(key).settings.mode).toBe("default");
+    expect(fake.calls.filter((call) => call.method === "configure")).toHaveLength(asked);
+    expect(modeOf(session.id!)).toBe("default");
+    release();
+    expect(await reopening).toBe(true);
+    await launchTerminal(key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: session.id, mode: "default" });
+
+    // A change asked of the run that it has not answered when the reopen
+    // stops it.
+    const other = await started();
+    const configureNow = seam.integratedConfigure;
+    seam.integratedConfigure = (() => new Promise(() => {})) as never;
+    void configure(other.key, { mode: "plan" });
+    await settled();
+    const again = reopenOtherWay(other.key);
+    await settled();
+    release();
+    expect(await again).toBe(true);
+    await launchTerminal(other.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: other.session.id, mode: "plan" });
+    seam.integratedConfigure = configureNow;
+    seam.integratedStop = stopNow;
+  });
+
+  it("leaves no line on the row from what the run it stops says on its way out", async () => {
+    const { key, handle } = await started();
+    // Nobody looks at it.
+    attention.focused = false;
+    send(key, "Go");
+    fake.startTurn(handle);
+    fake.emit(handle, { type: "state", state: "working" });
+    fake.emit(handle, { type: "text", block: "b-1", parent: null, text: "Halfway through the fix", done: true });
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__WORKBENCH_CORE__;
+    const stopNow = seam.integratedStop;
+    let release = () => {};
+    seam.integratedStop = (async (id: string) => {
+      release = () => void stopNow(id as never);
+    }) as never;
+    const reopening = reopenOtherWay(key);
+    await settled();
+    // Its turn ends as it goes, and it comes to rest.
+    fake.endTurn(handle, "interrupted");
+    fake.emit(handle, { type: "state", state: "idle" });
+    release();
+    expect(await reopening).toBe(true);
+    seam.integratedStop = stopNow;
+    await launchTerminal(key, 80, 24, () => {});
+    expect(byKey(key)).toMatchObject({ kind: "terminal", note: null, unread: false });
+
+    // A terminal's stop hook on its way out says the same.
+    const row = terminalRow("conversation-1");
+    pty.onWrite = (id) => {
+      if (pty.written.filter(([on, data]) => on === id && data === "\x03").length < 2) return;
+      exact("conversation-1", "stop", "Fixed the flaky test");
+      endedTerminal({ id, code: 0, clean: true });
+    };
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    expect(byKey(row.key)).toMatchObject({ kind: "integrated", note: null, unread: false });
+  });
+
+  it("quits a terminal Claude Code session as the user would, and kills it only if it does not go", async () => {
+    const row = terminalRow("conversation-1");
+    // It quits on the second Ctrl+C, as Claude Code does at its prompt.
+    pty.onWrite = (id) => {
+      if (pty.written.filter(([on, data]) => on === id && data === "\x03").length === 2)
+        endedTerminal({ id, code: 0, clean: true });
+    };
+    expect(await reopenOtherWay(row.key)).toBe(true);
+    expect(pty.written).toEqual([
+      ["pty-7", "\x03"],
+      ["pty-7", "\x03"],
+    ]);
+    expect(pty.killed).toEqual([]);
+    expect(byKey(row.key)!.kind).toBe("integrated");
+  });
+
+  it("hangs up on a terminal session that the presses do not end, and on Codex at once", async () => {
+    applyDetect(
+      { id: "codex", path: "/usr/local/bin/codex", caps: { resumable: true, titles: true, acp: false, integrated: true }, fromLoginShell: true },
+      true,
+    );
+    const codex = create(PROJECT, "thread-1", "codex", null, null, null, null, undefined, "terminal");
+    startedTerminal(codex.key, "pty-8", "thread-1");
+    const reopening = reopenOtherWay(codex.key);
+    await settled();
+    expect(pty.written).toEqual([]);
+    expect(pty.killed).toEqual(["pty-8"]);
+    endedTerminal({ id: "pty-8", code: 0, clean: true });
+    expect(await reopening).toBe(true);
+  });
+
+  it("is given up, leaving the row as it was, when the run does not stop in time", async () => {
+    vi.useFakeTimers();
+    try {
+      const row = terminalRow("conversation-1");
+      const reopening = reopenOtherWay(row.key);
+      await vi.advanceTimersByTimeAsync(25_000);
+      expect(await reopening).toBe(false);
+      // Pressed, then hung up on, and still there.
+      expect(pty.written.length).toBeGreaterThan(0);
+      expect(pty.killed).toEqual(["pty-7"]);
+      expect(byKey(row.key)).toMatchObject({ kind: "terminal", status: "running", ptyId: "pty-7" });
+      expect(reopeningRow(row.key)).toBe(false);
+      expect(otherWayFor(byKey(row.key)!)).toBe("integrated");
+      // An end that comes later is an end like any other.
+      endedTerminal({ id: "pty-7", code: 0, clean: true });
+      expect(byKey(row.key)).toMatchObject({ kind: "terminal", status: "exited" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the shells beside the session and the sessions it started", async () => {
+    const row = terminalRow("conversation-1");
+    const shell = createShell({ project: PROJECT, session: row.key });
+    const kid = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "terminal");
+    conductor.startedBy[kid.key] = row.token;
+    const reopening = reopenOtherWay(row.key);
+    await settled();
+    endedTerminal({ id: "pty-7", code: 0, clean: true });
+    await reopening;
+    expect(forOwner({ project: PROJECT, session: row.key }).map((one) => one.key)).toEqual([shell.key]);
+    expect(startedFor(kid.key)).toBe(byKey(row.key)!.token);
+    expect(byToken(byKey(row.key)!.token)?.key).toBe(row.key);
+    expect(byKey(kid.key)).not.toBeNull();
+  });
+
+  it("reopens a session another started, which stays its starter's", async () => {
+    const starter = terminalRow("conversation-0");
+    const { session, key } = await started({ prompt: "Fix the flaky test" });
+    conductor.startedBy[key] = starter.token;
+    const token = session.token;
+    expect(await reopenOtherWay(key)).toBe(true);
+    expect(byKey(key)).toMatchObject({ kind: "terminal", status: "starting", token });
+    expect(startedFor(key)).toBe(starter.token);
+    // The prompt it was started with is not given again.
+    await launchTerminal(key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: session.id });
+    expect((pty.spawned.at(-1) as { prompt?: string }).prompt).toBeUndefined();
   });
 });
 
@@ -1046,7 +1523,7 @@ describe("a new conversation put under a workflow", () => {
     ]);
   });
 
-  it("keeps the mode chosen with the same agent, and starts another agent in its own safe mode", async () => {
+  it("keeps the mode chosen with the same agent, and starts another agent as its own settings say", async () => {
     const codexFlow = { ...defaultWorkflow(), name: "Codex directs", orchestrator: { agent: "codex" as const, model: "default" } };
     adoptWorkflows({ list: [defaultWorkflow(), codexFlow], default: null, overrides: {} });
     const { key } = await started();
@@ -1056,7 +1533,8 @@ describe("a new conversation put under a workflow", () => {
     expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
     follow(key, "Codex directs");
     await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
-    expect(starts().at(-1)).toMatchObject({ options: { agent: "codex", mode: "read-only", startOnly: true } });
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "codex", startOnly: true } });
+    expect(starts().at(-1)!.options.mode).toBeUndefined();
     expect(byKey(key)!.agent).toBe("codex");
     expect(byKey(key)!.model).toBeNull();
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toEqual(["gpt-5-codex"]);
@@ -1146,7 +1624,8 @@ describe("a new conversation put under a workflow", () => {
     follow(key, null);
     await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
     expect(byKey(key)!.agent).toBe("claude-code");
-    expect(starts().at(-1)).toMatchObject({ options: { agent: "claude-code", mode: "default" } });
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "claude-code" } });
+    expect(starts().at(-1)!.options.mode).toBeUndefined();
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toContain("sonnet");
   });
 

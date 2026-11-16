@@ -125,6 +125,10 @@ export interface SpawnOptions {
   /** The model to run on, by the name the agent takes on its command
       line. The agent's own default when left out. */
   model?: string;
+  /** The mode to start in, by the name the agent's integrated sessions
+      offer it under: the one the conversation last ran in where the window
+      knows it. The agent's own settings decide when left out. */
+  mode?: string;
   /** Where the agent keeps its configuration and login, when the session
       runs under an account of the user's own. The agent's own directory
       when left out. */

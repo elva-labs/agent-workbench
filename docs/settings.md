@@ -238,11 +238,15 @@ or integrated, the conversation drawn by the window, a terminal to begin
 with. An agent the core says it can drive in messages offers the choice,
 and the tab says an agent that runs only in a terminal does. A session
 that follows a workflow runs the way its orchestrator's agent is set, as
-any other does. A session that is running keeps the way it started,
-and a single new one can be started the other way from a project's ⋯ menu,
-the palette or the agent pane. What an integrated session is like is in
-[sessions](sessions.md#integrated-sessions). It is the user's to change,
-and an agent's settings tools refuse it.
+any other does. The tab says under the choice that a change applies to
+sessions started after it, and that one already running is moved with
+Reopen, from a right click on its row. A single new session can be
+started the other way from a project's ⋯ menu, the palette or the agent
+pane. What an integrated session is like is in
+[sessions](sessions.md#integrated-sessions), and the mode it starts in,
+which is the one the agent's own settings name as for a terminal session,
+in [integrated](integrated.md#the-mode-a-session-starts-in). It is the
+user's to change, and an agent's settings tools refuse it.
 
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
