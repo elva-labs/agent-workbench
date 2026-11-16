@@ -356,6 +356,105 @@ describe("the dock of a session that started others", () => {
     expect(answers().map((call) => [call.id, (call as { request: string }).request])).toEqual([[handleOf(starter.key), first]]);
   });
 
+  it("cuts a long name everywhere it says it, and counts what it cuts on the line", async () => {
+    const { starter, cache } = await setup();
+    const long = `Fix the cache ${"x".repeat(4200)}`;
+    cache.title = long;
+    const left = Array.from(long).length - 160;
+    command(handleOf(cache.key)!, "rm -rf ~/.ssh");
+    flushSync();
+    const dock = screen.getByTestId("permission-dock");
+    expect(Array.from(screen.getByTestId("dock-session").textContent!)).toHaveLength(161);
+    expect(dock.querySelector(".what [data-testid='permission-cut']")?.textContent?.trim()).toBe(`and ${left} more characters`);
+    expect(dock).toHaveTextContent("asks to run rm -rf ~/.ssh");
+    expect(screen.getByTestId("choice-means").textContent!.length).toBeLessThan(250);
+    expect(dock.getAttribute("aria-label")!.length).toBeLessThan(200);
+    expect(screen.getByTestId("choice-allow").getAttribute("title")!.length).toBeLessThan(250);
+    // Waiting behind the starter's own, it is named cut in "from".
+    command(handleOf(starter.key)!, "ls");
+    flushSync();
+    expect(screen.getByTestId("dock-more").textContent!.length).toBeLessThan(200);
+    expect(screen.getByTestId("dock-more").getAttribute("title")!.length).toBeLessThan(200);
+  });
+
+  it("cuts a long name on the way to a terminal session too", async () => {
+    const { starter } = await setup();
+    const links = terminalBy(starter, `Fix the links ${"y".repeat(4200)}`);
+    links.needs = "permission";
+    flushSync();
+    expect(screen.getByTestId("dock-open-terminal").textContent!.length).toBeLessThan(200);
+    expect(screen.getByTestId("terminal-dock").getAttribute("aria-label")!.length).toBeLessThan(250);
+  });
+
+  it("takes no answer for a moment from a request that comes just after the dock emptied", async () => {
+    const { starter, cache } = await setup();
+    const palette = await startedBy(starter, "Palette filter");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    command(handleOf(cache.key)!, "cargo test");
+    flushSync();
+    await fireEvent.click(screen.getByTestId("choice-allow"));
+    flushSync();
+    expect(screen.queryByTestId("permission-dock")).toBeNull();
+    // The next comes a moment later, its first choice where the last was.
+    vi.advanceTimersByTime(100);
+    const next = command(handleOf(palette.key)!, "ls");
+    flushSync();
+    expect(screen.getByTestId("dock-session")).toHaveTextContent("Palette filter");
+    expect(screen.getByTestId("choice-allow")).toHaveAttribute("aria-disabled", "true");
+    await fireEvent.click(screen.getByTestId("choice-allow"));
+    expect(answers()).toHaveLength(1);
+    vi.advanceTimersByTime(500);
+    flushSync();
+    await fireEvent.click(screen.getByTestId("choice-allow"));
+    expect(answers().at(-1)).toMatchObject({ id: handleOf(palette.key), request: next });
+  });
+
+  it("takes an answer at once from a request that comes well after the dock emptied", async () => {
+    const { starter, cache } = await setup();
+    const palette = await startedBy(starter, "Palette filter");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    command(handleOf(cache.key)!, "cargo test");
+    flushSync();
+    await fireEvent.click(screen.getByTestId("choice-allow"));
+    flushSync();
+    vi.advanceTimersByTime(600);
+    command(handleOf(palette.key)!, "ls");
+    flushSync();
+    expect(screen.getByTestId("choice-allow")).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("says a rule kept for good is kept in the asking session's folder, for every session there", async () => {
+    const { cache } = await setup();
+    fake.startTurn(handleOf(cache.key)!);
+    command(handleOf(cache.key)!, "cargo test", { always: "Bash(cargo test:*) in this project's uncommitted local settings" });
+    flushSync();
+    await fireEvent.pointerEnter(screen.getByTestId("choice-allowAlways"));
+    expect(screen.getByTestId("choice-means").textContent?.trim()).toBe(
+      "Allows this call in Fix the cache and remembers Bash(cargo test:*) in one's uncommitted local settings, for every session in one.",
+    );
+  });
+
+  it("keeps the keyboard on a request whose answer is on its way", async () => {
+    const { cache } = await setup();
+    fake.holdAnswers();
+    command(handleOf(cache.key)!, "cargo test");
+    flushSync();
+    const allow = screen.getByTestId("choice-allow");
+    allow.focus();
+    await fireEvent.keyDown(allow, { key: "1" });
+    flushSync();
+    // Waiting for the agent: not disabled, so the keyboard stays, and a
+    // second press answers nothing.
+    expect(allow).toHaveAttribute("aria-disabled", "true");
+    expect(allow).not.toHaveAttribute("disabled");
+    expect(document.activeElement).toBe(allow);
+    await fireEvent.keyDown(allow, { key: "1" });
+    expect(answers()).toHaveLength(1);
+    fake.releaseAnswers();
+    flushSync();
+    expect(screen.queryByTestId("permission-dock")).toBeNull();
+  });
+
   it("offers only the way to a started session that runs in a terminal", async () => {
     const { starter } = await setup();
     const links = terminalBy(starter, "Fix the links");

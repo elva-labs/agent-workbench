@@ -63,6 +63,9 @@
   let hovering = $state(false);
   let focused = $state(false);
   let hold = $state<HTMLDivElement | null>(null);
+  /** Where the pointer last was in the window, for telling whether it is
+      over the dock once what is drawn there changed under it. */
+  let point: { x: number; y: number } | null = null;
 
   /** The entry on screen. The order decides it, except while the user is
       at the dock: then it stays while it waits, and what arrives meanwhile
@@ -82,6 +85,30 @@
     if (!(e.relatedTarget instanceof Node) || !hold?.contains(e.relatedTarget)) hovering = false;
   }
 
+  function onPointerMove(e: PointerEvent) {
+    point = { x: e.clientX, y: e.clientY };
+  }
+
+  /** Whether the pointer is over the dock as it is drawn now: the entry
+      under it may have gone, or a smaller one taken its place, with no
+      event to say the pointer left. */
+  function overNow() {
+    if (point === null || hold === null || typeof document.elementFromPoint !== "function") return;
+    const under = document.elementFromPoint(point.x, point.y);
+    hovering = under !== null && hold.contains(under);
+  }
+
+  /** Escape gives the keyboard back to the composer, as it does from the
+      thread. */
+  function onKey(e: KeyboardEvent) {
+    if (e.key !== "Escape" || e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented || e.isComposing) return;
+    const field = hold?.closest("[data-session]")?.querySelector<HTMLElement>("[data-testid='composer-input']");
+    if (!field) return;
+    e.preventDefault();
+    e.stopPropagation();
+    field.focus();
+  }
+
   let request = $derived<Request | null>(entry?.kind === "request" ? entry.request : null);
   let conversation = $derived(entry?.kind === "request" ? entry.conversation : null);
   /** The started session that asks, by name and step; null for this
@@ -89,9 +116,13 @@
   let who = $derived(entry === null ? null : askerOf(entry));
   /** The folder the asking session works in. */
   let root = $derived(entry === null ? null : folderOf(entry));
+  /** The asking session's name as the dock says it: cut like any long
+      text an agent chose, since the starter's agent named it, with how
+      much is cut said on the line. */
+  let whoName = $derived(who === null ? null : cut(who.name));
   /** Who the choices speak of: the agent of this session, or the session
       that asks. */
-  let named = $derived(who === null ? agent : who.name);
+  let named = $derived(whoName ?? agent);
 
   let others = $derived(entries.filter((each) => each.id !== entry?.id));
   /** Who waits after the one shown, when all of it is one session's and
@@ -101,21 +132,26 @@
     const keys = new Set(others.map((each) => each.key));
     if (keys.size > 1) return null;
     const first = askerOf(others[0]);
-    return first === null ? agent : first.name;
+    return first === null ? agent : cut(first.name);
   });
 
   let dock = $state<HTMLDivElement | null>(null);
 
-  /** How long an entry that took another's place takes no answer. */
+  /** How long an entry that took another's place takes no answer: one
+      shown in place of another, or one shown this soon after the last
+      left the dock. */
   const SETTLE = 500;
   /** Whether the entry shown takes an answer yet. */
   let armed = $state(true);
   let last: string | null = null;
+  /** When the dock last emptied. */
+  let leftAt = Number.NEGATIVE_INFINITY;
   let settling: ReturnType<typeof setTimeout> | null = null;
   $effect(() => {
     const id = entry?.id ?? null;
     untrack(() => {
-      if (last !== null && id !== null && id !== last) {
+      const now = Date.now();
+      if (id !== null && id !== last && (last !== null || now - leftAt < SETTLE)) {
         armed = false;
         if (settling !== null) clearTimeout(settling);
         settling = setTimeout(() => {
@@ -123,6 +159,7 @@
           armed = true;
         }, SETTLE);
       }
+      if (id === null && last !== null) leftAt = now;
       last = id;
     });
   });
@@ -153,8 +190,8 @@
   function askerLabel(parent: string | null): string {
     const lead = who === null || parent !== null ? asker(parent) : [];
     const said = lead.map((piece) => (typeof piece === "string" ? piece : markers(piece.name))).join("");
-    if (who === null) return said;
-    return parent === null ? who.name : `${said} in ${who.name}`;
+    if (whoName === null) return said;
+    return parent === null ? whoName : `${said} in ${whoName}`;
   }
 
   /** Goes to the session that asks, with the keyboard. It answers nothing,
@@ -181,6 +218,7 @@
       // entry, and no event says so.
       onFocus();
       if (id === null) hovering = false;
+      else void tick().then(overNow);
       if (!held) return;
       held = false;
       const owner = document.activeElement;
@@ -215,9 +253,17 @@
     own = [];
   });
 
+  /** Whether the request shown takes an answer now: not while one is on its
+      way, nor while it settles in. Its controls say so without being
+      disabled, so the keyboard stays on them until the request goes and
+      can pass on to the next. */
+  function takes(request: Request): boolean {
+    return armed && !request.answering;
+  }
+
   /** What a choice does, said of the session the request is in. */
   function means(offer: PermissionOffer): string {
-    return who === null ? choiceMeans(offer) : choiceMeansIn(offer, who.name).join("");
+    return who === null || whoName === null ? choiceMeans(offer) : choiceMeansIn(offer, whoName, who.where).join("");
   }
 
   function choose(offer: PermissionOffer) {
@@ -488,7 +534,7 @@
   }
 </script>
 
-<svelte:window onfocusin={onFocus} />
+<svelte:window onfocusin={onFocus} onpointermove={onPointerMove} />
 
 <!-- Holds whichever entry is shown, and says while the user is at it. -->
 <div
@@ -497,6 +543,7 @@
   onpointerover={() => (hovering = true)}
   onpointerout={onPointerOut}
   onfocusout={() => queueMicrotask(onFocus)}
+  onkeydown={onKey}
   role="presentation"
 >
 {#if entry !== null}
@@ -544,7 +591,7 @@
         {#if ask.prompt !== ""}<p class="prompt"><Plain text={ask.prompt} /></p>{/if}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="choices" class:settling={!armed} onkeydown={(e) => onRoundKey(e, ask)}>
+      <div class="choices" onkeydown={(e) => onRoundKey(e, ask)}>
         {#each [true, false] as allowed, at (at)}
           <button
             class="choice"
@@ -689,14 +736,13 @@
         </div>
       {:else}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="choices" class:settling={!armed} onkeydown={(e) => onChoicesKey(e, asked.choices)}>
+        <div class="choices" onkeydown={(e) => onChoicesKey(e, asked.choices)}>
           {#each asked.choices as offer, at (offer.choice)}
             <button
               class="choice"
               class:primary={at === 0}
               tabindex={at === pointed ? 0 : -1}
-              disabled={entry.request.answering}
-              aria-disabled={armed ? undefined : "true"}
+              aria-disabled={takes(entry.request) ? undefined : "true"}
               data-choice={offer.choice}
               data-testid="choice-{offer.choice}"
               title={means(offer)}
@@ -709,7 +755,7 @@
         </div>
         {@const offer = asked.choices[pointed] ?? asked.choices[0]}
         <p class="means" id="means-{sessionKey}" data-testid="choice-means">
-          {#if who === null}{choiceMeans(offer)}{:else}{@const said = choiceMeansIn(offer, who.name)}{said[0]}<Plain
+          {#if who === null || whoName === null}{choiceMeans(offer)}{:else}{@const said = choiceMeansIn(offer, whoName, who.where)}{said[0]}<Plain
               text={said[1]}
             />{said[2]}{/if}
         </p>
@@ -722,7 +768,7 @@
         {@render waiting()}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="questions" class:settling={!armed} onkeydown={(e) => onQuestionKey(e, questions)}>
+      <div class="questions" onkeydown={(e) => onQuestionKey(e, questions)}>
         <div class="body">
         {#each questions as question, at (at)}
           <div class="question" data-testid="question">
@@ -746,7 +792,7 @@
                     <button
                       class="option answer"
                       tabindex={index === 0 ? 0 : -1}
-                      disabled={entry.request.answering}
+                      aria-disabled={takes(entry.request) ? undefined : "true"}
                       data-option
                       data-testid="question-option"
                       onclick={() => pick(at, option.label, false, questions)}
@@ -762,7 +808,7 @@
                       role={question.multiple ? "checkbox" : "radio"}
                       aria-checked={on}
                       tabindex={index === 0 ? 0 : -1}
-                      disabled={entry.request.answering}
+                      aria-disabled={takes(entry.request) ? undefined : "true"}
                       data-option
                       data-testid="question-option"
                       onclick={() => pick(at, option.label, question.multiple, questions)}
@@ -801,12 +847,18 @@
             <button
               class="choice primary"
               tabindex="0"
-              disabled={entry.request.answering || answers(questions) === null}
+              disabled={answers(questions) === null}
+              aria-disabled={takes(entry.request) ? undefined : "true"}
               onclick={() => send(questions)}
               data-testid="question-send">{direct(questions) ? "Send your answer" : "Answer"}</button
             >
           {/if}
-          <button class="choice quiet" tabindex="0" disabled={entry.request.answering} onclick={decline} data-testid="question-decline"
+          <button
+            class="choice quiet"
+            tabindex="0"
+            aria-disabled={takes(entry.request) ? undefined : "true"}
+            onclick={decline}
+            data-testid="question-decline"
             >Don't answer</button
           >
         </div>
@@ -850,8 +902,8 @@
       askerDescription(parent),
     )}{:else}{#if who.step !== null}<span class="steptag" data-testid="dock-step"><Plain text={who.step} /></span
       >{/if}{#if parent !== null}<b>{@render pieces(asker(parent))}</b>{@render cutOff(askerDescription(parent))}{" "}in{" "}{/if}<b
-      data-testid="dock-session"><Plain text={who.name} /></b
-    >{/if}{/snippet}
+      data-testid="dock-session"><Plain text={whoName ?? ""} /></b
+    >{@render cutOff(who.name)}{/if}{/snippet}
 
 <!-- How many more wait, and from whom when it is one session; and, for a
      session this one started, the way to it. -->
@@ -1006,15 +1058,17 @@
     overflow-wrap: anywhere;
   }
 
-  /* A request that took another's place takes no answer for a moment, and
-     its choices say so by fading in. */
-  .settling {
-    opacity: 0.55;
+  /* A request that takes no answer yet, settling in or with an answer on
+     its way, says so by its controls fading. */
+  .choice,
+  .option {
+    transition: opacity 0.2s;
   }
 
-  .choices,
-  .questions {
-    transition: opacity 0.2s;
+  .choice[aria-disabled="true"],
+  .option[aria-disabled="true"] {
+    opacity: 0.5;
+    cursor: default;
   }
 
   .choice.plain {
@@ -1204,7 +1258,7 @@
     padding: 0 12px;
   }
 
-  .choice:hover {
+  .choice:hover:not([aria-disabled="true"]) {
     background: var(--surface-2);
   }
 
@@ -1214,7 +1268,7 @@
     color: var(--surface);
   }
 
-  .choice.primary:hover {
+  .choice.primary:hover:not([aria-disabled="true"]) {
     background: color-mix(in srgb, var(--accent) 88%, var(--ink));
   }
 
@@ -1223,12 +1277,12 @@
     color: var(--ink-2);
   }
 
-  .choice:active:not(:disabled) {
+  .choice:active:not(:disabled, [aria-disabled="true"]) {
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--ink-3);
   }
 
-  .choice.primary:active:not(:disabled) {
+  .choice.primary:active:not(:disabled, [aria-disabled="true"]) {
     background: color-mix(in srgb, var(--accent) 78%, var(--ink));
   }
 
@@ -1316,7 +1370,7 @@
     cursor: pointer;
   }
 
-  .option:hover,
+  .option:hover:not([aria-disabled="true"]),
   .option.on {
     background: var(--accent-soft);
   }
@@ -1385,8 +1439,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .chev,
-    .choices,
-    .questions {
+    .choice,
+    .option {
       transition: none;
     }
   }

@@ -218,6 +218,83 @@ test.describe("a started session's request in the starter's dock", () => {
     await expect(own.getByTestId("dock-more")).toHaveCount(0);
   });
 
+  test("keeps the request and its choices in sight whatever the session is called", async ({ page }) => {
+    await starterWithStarted(page, {}, { name: `Fix the cache ${"and more ".repeat(470)}` });
+    await asks(page, "rm -rf ~/.ssh");
+    const dock = shown(page).getByTestId("permission-dock");
+    await expect(dock).toContainText("asks to run rm -rf ~/.ssh");
+    expect(Array.from((await dock.getByTestId("dock-session").textContent())!).length).toBeLessThanOrEqual(60);
+    const pane = (await page.locator("section[data-pane='agent']").boundingBox())!;
+    for (const testid of ["choice-allow", "choice-cancel", "choice-means"]) {
+      const box = (await shown(page).getByTestId(testid).boundingBox())!;
+      expect(box.y).toBeGreaterThanOrEqual(pane.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(pane.y + pane.height);
+    }
+  });
+
+  test("lets the order decide again once the pointer is off a dock that changed under it", async ({ page }) => {
+    await starterWithStarted(page);
+    const tall = await asks(page, Array.from({ length: 8 }, (_, at) => `echo line ${at + 1}`).join("\n"));
+    await asks(page, "ls");
+    const dock = shown(page).getByTestId("permission-dock");
+    await expect(dock).toContainText("and 7 more lines");
+    // The pointer rests near the top of the tall request, which then goes,
+    // and the short one in its place is drawn well below the pointer.
+    const top = (await dock.boundingBox())!;
+    await page.mouse.move(top.x + 40, top.y + 6);
+    await agent(page, `f.expire("${STARTED}", "${tall}");`);
+    await expect(dock).toContainText("Fix the cache asks to run ls");
+    const now = (await dock.boundingBox())!;
+    expect(now.y).toBeGreaterThan(top.y + 6);
+    await page.mouse.move(top.x + 40, top.y - 40);
+    // The starter's own agent asks: off the dock, its own comes first.
+    await agent(page, `f.startTurn("${STARTER}"); f.ask("${STARTER}", "Bash", { command: "pwd" });`);
+    await expect(dock).toContainText("Claude asks to use Bash to run pwd");
+    await expect(dock.getByTestId("dock-more")).toHaveText("1 more waiting, from Fix the cache");
+  });
+
+  test("keeps the keyboard in the dock until a late answer is told, then passes it on", async ({ page }) => {
+    await starterWithStarted(page);
+    await asks(page, "cargo test");
+    await asks(page, "ls");
+    await agent(page, "f.holdAnswers();");
+    await input(page).click();
+    await page.keyboard.press("ArrowUp");
+    const dock = shown(page).getByTestId("permission-dock");
+    await expect(dock.getByTestId("choice-allow")).toBeFocused();
+    await page.keyboard.press("Enter");
+    // The agent has not said yet: the keyboard stays on the request.
+    await expect(dock.getByTestId("choice-allow")).toHaveAttribute("aria-disabled", "true");
+    await expect(dock.getByTestId("choice-allow")).toBeFocused();
+    await agent(page, "f.releaseAnswers();");
+    await expect(dock).toContainText("Fix the cache asks to run ls");
+    await expect(dock.getByTestId("choice-allow")).toBeFocused();
+    // Once it settles in, the last one is answered the same way, and the
+    // keyboard goes back to the composer.
+    await expect(dock.getByTestId("choice-allow")).not.toHaveAttribute("aria-disabled");
+    await agent(page, "f.holdAnswers();");
+    await page.keyboard.press("Enter");
+    await expect(dock.getByTestId("choice-allow")).toHaveAttribute("aria-disabled", "true");
+    await expect(dock.getByTestId("choice-allow")).toBeFocused();
+    await agent(page, "f.releaseAnswers();");
+    await expect(dock).toHaveCount(0);
+    await expect(input(page)).toBeFocused();
+    expect((await calls(page)).filter((call) => call.method === "answer")).toHaveLength(2);
+  });
+
+  test("gives the keyboard back to the composer on Escape, answering nothing", async ({ page }) => {
+    await starterWithStarted(page);
+    await asks(page, "cargo test");
+    await input(page).click();
+    await page.keyboard.press("ArrowUp");
+    const dock = shown(page).getByTestId("permission-dock");
+    await expect(dock.getByTestId("choice-allow")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(input(page)).toBeFocused();
+    await expect(dock).toBeVisible();
+    expect((await calls(page)).filter((call) => call.method === "answer")).toEqual([]);
+  });
+
   test("names the step a session was started for", async ({ page }) => {
     await starterWithStarted(page, WITH_WORKFLOW, { step: "Work" });
     await asks(page, "cargo test --workspace");

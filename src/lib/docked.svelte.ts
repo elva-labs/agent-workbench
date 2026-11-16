@@ -2,7 +2,9 @@ import { conductor, placeOf, startedFor, type Ask } from "$lib/conductor.svelte"
 import type { Conversation, Request } from "$lib/conversation.svelte";
 import { linkOf } from "$lib/integrated.svelte";
 import { agentVisible } from "$lib/layout.svelte";
+import { lastSegment } from "$lib/paths";
 import { byKey, byToken, isLive, label, sessions, type Session } from "$lib/sessions.svelte";
+import { projectLabel } from "$lib/workspace.svelte";
 
 /**
  * What waits on the user in an integrated session's dock.
@@ -100,12 +102,15 @@ export function answerable(entry: Docked): boolean {
 }
 
 /** Who asks, by the name the user knows: null for the dock's own session,
-    whose agent's name stands there; else the started session's name and
-    the step it was started for, when it was. */
-export function askerOf(entry: Docked): { name: string; step: string | null } | null {
+    whose agent's name stands there; else the started session's name, the
+    step it was started for, when it was, and the folder it works in, by
+    the name the user knows that by: its project's, or its worktree's. */
+export function askerOf(entry: Docked): { name: string; step: string | null; where: string } | null {
   if (entry.own) return null;
   const row = byKey(entry.key);
-  return { name: row === null ? "a session it started" : label(row), step: placeOf(entry.key)?.step ?? null };
+  const folder = folderOf(entry);
+  const where = row === null || folder === null ? "its folder" : folder === row.project ? projectLabel(row.project) : lastSegment(folder);
+  return { name: row === null ? "a session it started" : label(row), step: placeOf(entry.key)?.step ?? null, where };
 }
 
 /** The folder the asking session works in, which a path it names is read
