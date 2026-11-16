@@ -1307,6 +1307,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             instructions_file: None,
