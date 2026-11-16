@@ -106,8 +106,9 @@
     if (call === null || where === null || where.entry === null || thread === null) return;
     for (const fold of [...where.folds, foldKey("step", call)]) conversation.opened.add(fold);
     await tick();
-    await thread.reveal(where.entry);
-    view?.querySelector(`[data-call="${CSS.escape(call.call)}"]`)?.scrollIntoView({ block: "center" });
+    // The call's own row in the middle of the view, the thread no longer
+    // following its foot, so what the run goes on to say leaves it there.
+    await thread.reveal(where.entry, "center", `[data-call="${CSS.escape(call.call)}"] > [data-testid='step-head']`);
     markCall(call.call);
   }
 

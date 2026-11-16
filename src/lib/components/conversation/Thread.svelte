@@ -8,6 +8,8 @@
   import { sessionName, timeOf, type Sender } from "$lib/senders.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { shareFolds } from "$lib/folds";
+  import { shareAsking } from "$lib/stepAsking";
+  import { askingOf } from "$lib/subagents";
   import { renderSaid } from "$lib/media.svelte";
   import { goTo } from "$lib/workspace.svelte";
   import { reduced } from "$lib/motion";
@@ -59,6 +61,10 @@
   let { conversation, root, intro, agent, onPutBack, sender, opener, room = 0 }: Props = $props();
 
   shareFolds(() => conversation.opened);
+
+  /** The calls whose subagent asks now, which their steps say. */
+  let asking = $derived(askingOf(conversation));
+  shareAsking(() => asking);
 
   /** The messages whose workbench sentence stands open. */
   let unfolded = $state<Record<string, boolean>>({});
@@ -736,13 +742,23 @@
   /**
    * Brings an entry into view, drawing it if it is not, and gives back
    * what it is drawn as: for find, and for opening the thread at a call.
-   * The thread stops following its foot unless the entry is at it.
+   * The thread stops following its foot unless the entry is at it. With
+   * `inside`, what in the entry matches it is what comes into view, and
+   * the thread stops following its foot wherever the entry is, so what
+   * comes after it in the same run leaves it where it was put.
    */
-  export async function reveal(key: string, block: ScrollLogicalPosition = "nearest"): Promise<HTMLElement | null> {
+  export async function reveal(
+    key: string,
+    block: ScrollLogicalPosition = "nearest",
+    inside: string | null = null,
+  ): Promise<HTMLElement | null> {
     const at = rowAt.get(key);
     if (at === undefined || scroller === null || box === null) return null;
     moves += 1;
-    if (at < rows.length - 1) pinned = false;
+    if (at < rows.length - 1 || inside !== null) {
+      pinned = false;
+      behind = false;
+    }
     const find = () => box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(key)}"]`) ?? null;
     sought = key;
     try {
@@ -755,7 +771,8 @@
         look();
         await tick();
       }
-      find()?.scrollIntoView({ block });
+      const row = find();
+      ((inside === null ? null : row?.querySelector<HTMLElement>(inside)) ?? row)?.scrollIntoView({ block });
       ownTop = scroller.scrollTop;
     } finally {
       sought = null;
