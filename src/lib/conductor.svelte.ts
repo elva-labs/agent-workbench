@@ -106,7 +106,7 @@ import {
 import { lastRun } from "$lib/thread";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { mixesScripts, readsAsWorkbench, readsAsYou } from "$lib/unseen";
+import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -663,7 +663,7 @@ function noRoom(caller: string, step: WorkStep): string | null {
   if (running.length === 0)
     return `The step ${quoted(step.name)} runs ${at} at once, and another start for it is on its way. Wait for it to answer before starting another.`;
   const ids = either(
-    running.map((session) => session.id ?? label(session)),
+    running.map(namedAs),
     "and",
   );
   return `The step ${quoted(step.name)} runs ${at} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Stop one once its work is done, before starting another; a stopped session can be resumed.`;
@@ -1322,12 +1322,11 @@ function reportNote(caller: string, ending: boolean): Note | null {
   if (ending) endWaits([caller], USER_WROTE);
   const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
   const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
-  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
-  const lines = news.map((kid) => restText(kid, name(kid)));
+  const lines = news.map((kid) => restText(kid));
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
     lines.push(
-      `Still at work when the user wrote: ${either(out.map(name), "and")}. Call wait to hear from them once you have answered.`,
+      `Still at work when the user wrote: ${either(out.map(namedAs), "and")}. Call wait to hear from them once you have answered.`,
     );
   if (lines.length === 0) return null;
   return {
@@ -1528,10 +1527,9 @@ const barless = (line: string) => line.normalize("NFKC").replace(BAR_LIKE, "\u00
  */
 async function wake(starter: Session, news: Session[]) {
   const key = starter.key;
-  const name = (kid: Session) => oneLine(kid.id ?? label(kid));
-  const lines = news.map((kid) => restText(kid, name(kid)));
+  const lines = news.map((kid) => restText(kid));
   const out = startedBy(starter.token).filter(atWork);
-  if (out.length > 0) lines.push(atWorkLine(either(out.map(name), "and")));
+  if (out.length > 0) lines.push(atWorkLine(either(out.map(namedAs), "and")));
   const told = news.map((kid) => {
     const mark = stops.get(kid.key)!;
     return { key: kid.key, rest: mark.rest, before: mark.told };
@@ -1659,9 +1657,9 @@ function sessionLines(request: Placed): string {
 }
 
 function describe(session: Session): string {
-  const parts = [session.id ?? "", label(session), session.project];
+  const parts = [idText(session.id!), quotedName(label(session)), session.project];
   const tree = session.worktree ?? session.startIn;
-  if (tree !== null && tree !== session.project) parts.push(`worktree ${tree}`);
+  if (tree !== null && tree !== session.project) parts.push(`worktree ${oneLine(tree)}`);
   parts.push(session.agent);
   const place = placeOf(session.key);
   if (place !== null) parts.push(placeText(place));
@@ -1675,15 +1673,15 @@ function describe(session: Session): string {
 /** A remembered session that is not open as a row, in the same words. */
 function describeGone(owner: string, entry: Started): string {
   const parts = [
-    entry.id,
-    sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8),
+    idText(entry.id),
+    quotedName(sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8)),
     entry.project,
   ];
-  if (entry.worktree !== null) parts.push(`worktree ${entry.worktree}`);
+  if (entry.worktree !== null) parts.push(`worktree ${oneLine(entry.worktree)}`);
   parts.push(entry.agent);
   const at = placed(owner, entry.id);
   if (at !== null) parts.push(placeText(at));
-  parts.push("stopped", `resume it with start, naming session ${entry.id}`);
+  parts.push("stopped", `resume it with start, naming session ${idText(entry.id)}`);
   return parts.join("  ");
 }
 
@@ -1691,7 +1689,7 @@ function describeGone(owner: string, entry: Started): string {
     in: its step, and for a review the round and the work it checks. */
 export function placeText(place: Place): string {
   if (place.kind === "work") return `step "${place.step}"`;
-  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work ?? "unknown"}`;
+  return `step "${place.step}" round ${place.round ?? 1}, reviewing session ${place.work === null ? "unknown" : idText(place.work)}`;
 }
 
 /** What a session is doing, in the words the tools answer in. */
@@ -1892,28 +1890,28 @@ async function startFitted(
   if (called !== null && byKey(session.key)?.title === called) nameRow(session.key, called);
   const where = startIn === null ? project : `${project}, in ${startIn}`;
   const notCalled = you
-    ? ` It is not called ${oneLine(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
+    ? ` It is not called ${quotedName(name!)}: a conversation shows the user's own words under that name, so the session is named by its prompt.`
     : taken
       ? mixesScripts(candidate!)
-        ? ` It is not called ${oneLine(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
+        ? ` It is not called ${quotedName(name!)}: its letters mix scripts, as a name made to pass for another's does, so the session is named by its prompt.`
         : readsAsWorkbench(candidate!)
-          ? ` It is not called ${oneLine(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
+          ? ` It is not called ${quotedName(name!)}: a conversation shows the workbench's own messages under that name, so the session is named by its prompt.`
           : readsAsAgent(candidate!)
-            ? ` It is not called ${oneLine(name!)}: a conversation shows an agent's own words and requests under that name, so the session is named by its prompt.`
-            : ` It is not called ${oneLine(name!)}: another session is called that, so the session is named by its prompt.`
+            ? ` It is not called ${quotedName(name!)}: a conversation shows an agent's own words and requests under that name, so the session is named by its prompt.`
+            : ` It is not called ${quotedName(name!)}: another session is called that, so the session is named by its prompt.`
       : called !== null && called !== oneLine(name!)
-        ? ` Its name is cut to ${NAME_MOST} characters: ${called}.`
+        ? ` Its name is cut to ${NAME_MOST} characters: ${quotedName(called)}.`
         : "";
   if (fit === null)
     return said(
-      `Started session ${id} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${id} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
   );
 }
 
@@ -2160,7 +2158,7 @@ function notAllowed(beyond: Beyond): string {
     beyond.done === most
       ? "as many as the workflow gives a piece"
       : `more than the ${most} the workflow gives a piece`;
-  return `${quoted(beyond.name)}, the work of session ${beyond.work}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
+  return `${quotedName(beyond.name)}, the work of session ${idText(beyond.work)}, has had ${beyond.done} rounds of ${quoted(beyond.step)}, ${against}, and the user did not allow another. Ask the user how to go on.`;
 }
 
 /** The agent and model a step runs a start on: the first the step allows
@@ -2629,7 +2627,7 @@ async function holdWait(
   const names = new Map<string, string>();
   for (const session of watched) {
     worked.set(session.key, session.working || untold(session));
-    names.set(session.key, session.id ?? label(session));
+    names.set(session.key, namedAs(session));
   }
 
   // The calling session's row: a wait held for a session that is no longer
@@ -2673,15 +2671,14 @@ async function holdWait(
       let busy = false;
       let again: { key: string; text: string } | null = null;
       for (const key of worked.keys()) {
-        const name = names.get(key) ?? key;
         const session = byKey(key);
         if (session === null) {
-          settle(`Session ${name} was closed.`);
+          settle(`Session ${names.get(key) ?? key} was closed.`);
           return;
         }
         const resting =
           !isLive(session) || session.needs === "permission"
-            ? restText(session, name)
+            ? restText(session)
             : null;
         if (resting !== null) {
           if (untold(session)) {
@@ -2696,7 +2693,7 @@ async function holdWait(
         if (session.working) worked.set(key, true);
         else if (worked.get(key) === true || untold(session)) {
           reported = key;
-          settle(restText(session, name));
+          settle(restText(session));
           return;
         }
       }
@@ -2763,15 +2760,45 @@ export function oneLine(text: string): string {
 }
 
 /** What a session at rest is doing, in the words a wait answers with: it
-    ended, it is asking for permission, or it stopped working. Its name goes
-    on one line, as its last line does. */
-function restText(session: Session, called: string): string {
-  const name = oneLine(called);
+    ended, it is asking for permission, or it stopped working. */
+function restText(session: Session): string {
+  const name = namedAs(session);
   if (!isLive(session))
     return `Session ${name} ${stateOf(session)}. ${lastLine(session)}`;
   if (session.needs === "permission")
     return `Session ${name} is asking for permission. ${lastLine(session)}`;
   return `Session ${name} stopped working. ${lastLine(session)}`;
+}
+
+/** An id of the shape the agents' own ids have, uuids and the like: the
+    characters a call's id may hold, as the core holds it to, and no more of
+    them. */
+const PLAIN_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/**
+ * A session as a tool's answer, a note or a wake names it to an agent: by
+ * its id, which the agent did not choose and which is what the tools take,
+ * or, while the window does not know the id, by its name as a quote of the
+ * session's own words. A name may be the one a start gave, the agent's
+ * title for its terminal or the first words of its conversation, so it is
+ * bounded as a last line is and never reads as the workbench's words or as
+ * another session's entry.
+ */
+export function namedAs(session: Session): string {
+  return session.id === null ? quotedName(label(session)) : idText(session.id);
+}
+
+/** A session's id in an answer: as it is when it has the plain shape of
+    the agents' own ids, and otherwise quoted as a name is, since some ids
+    are read from where an agent can write. */
+export function idText(id: string): string {
+  return PLAIN_ID.test(id) ? id : quotedName(id);
+}
+
+/** A session's name as an answer gives it: its own words on one line, with
+    its spaces each one, cut as a row's name is and in double quotes. */
+export function quotedName(name: string): string {
+  return `"${nameCut(ownWords(name).replace(/\s+/g, " "))}"`;
 }
 
 /** The most of a session's last line a tool answers with, in characters,
@@ -2792,13 +2819,20 @@ function lastLine(session: Session): string {
 const QUOTE_LIKE =
   /["\p{Pi}\p{Pf}\u201a\u201e\u02ba\u02dd\u02ee\u05f3\u05f4\u2032-\u2037\u2e42\u275b-\u2760\u3003\u301d-\u301f]/gu;
 
-/** A session's own words as an answer quotes them: on one line, cut
-    short, and in double quotes, any quote mark of their own, or anything
-    that reads as one, turned single, so nothing in them closes the quote
-    and reads as a line of the answer's own, the workbench's or the
-    user's. Null for no words. */
+/** A session's own words made safe to quote: on one line, in their
+    compatibility form, anything that would change how they read without
+    being seen written as its marker, and any quote mark of their own, or
+    anything that reads as one, turned single, so nothing in them closes
+    the quote and reads as words of the answer's own, the workbench's or
+    the user's. */
+function ownWords(text: string): string {
+  return shown(oneLine(text.normalize("NFKC"))).replace(QUOTE_LIKE, "'");
+}
+
+/** A session's last line as an answer quotes it: its own words, cut short
+    and in double quotes. Null for no words. */
 function quotedLine(note: string | null): string | null {
-  const line = note === null ? "" : oneLine(note.normalize("NFKC")).replace(QUOTE_LIKE, "'");
+  const line = note === null ? "" : ownWords(note);
   if (line === "") return null;
   const chars = [...line];
   return `"${chars.length > LINE_CAP ? `${chars.slice(0, LINE_CAP - 1).join("")}…` : line}"`;

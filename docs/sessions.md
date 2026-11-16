@@ -531,8 +531,9 @@ pointer is over it whenever what it shows changes, since a smaller request
 can leave the pointer outside without a move. A request that takes the
 place of another, because the one before was answered, withdrawn or put
 behind the session's own, or that comes within half a second of the dock
-emptying, takes no answer for half a second, its choices faded meanwhile,
-so a click or a key meant for the one before never answers it. While an
+emptying, takes no answer for half a second, its choices faded meanwhile
+and whole again the moment they answer, so a click or a key meant for the
+one before never answers it. While an
 answer is on its way to the agent, the request stays with its choices
 faded, and they keep the keyboard until the request goes.
 
