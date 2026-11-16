@@ -723,6 +723,17 @@ export async function installFakeCore(
         integratedSnapshot: async (id: string) => integrated().snapshot(id),
         integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) =>
           integrated().history(options),
+        accountLimits: async (asked: { agent: string; configDir?: string; read: boolean }) => {
+          // A test puts the figures each machine holds in __accountLimits,
+          // by agent and directory, and reads what was asked in
+          // __limitsAsked.
+          const w = window as unknown as {
+            __accountLimits?: Record<string, unknown>;
+            __limitsAsked?: unknown[];
+          };
+          (w.__limitsAsked ??= []).push(asked);
+          return w.__accountLimits?.[`${asked.agent} ${asked.configDir ?? ""}`] ?? null;
+        },
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],

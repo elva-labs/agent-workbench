@@ -286,10 +286,9 @@
   let updated = $derived.by(() => {
     if (age === null) return "";
     if (!age.stale) return `Updated ${age.long}`;
-    const when = age.moved
+    return age.moved
       ? `Some figures are from ${age.newer}, the rest from ${age.long}`
       : `Figures from ${age.long}`;
-    return `${when}. The next turn on this account updates them.`;
   });
 </script>
 

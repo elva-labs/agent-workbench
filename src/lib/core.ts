@@ -647,6 +647,20 @@ export interface IntegratedHistoryOptions {
   configDir?: string;
 }
 
+/** Whose usage limits `accountLimits` asks for: the agent's account whose
+    configuration directory is given, or the agent's own, on the machine
+    `project` is on. With `read` the machine reads them first where a read
+    is due; without, it answers at once with what it holds. */
+export interface AccountLimitsOptions {
+  project: string;
+  agent: AgentId;
+  configDir?: string;
+  read: boolean;
+  /** A session of the account worked since its figures were read, so they
+      are read again sooner. */
+  worked: boolean;
+}
+
 /** A transition reported by an agent hook or session log, by session id:
     `prompt` (the user sent one), `stop` (the turn ended), `permission` (it
     is asking), `idle` (it has been waiting a while). */
@@ -1358,6 +1372,11 @@ export interface Core {
       history the core does not read. Rejects where the agent could not
       read it, as for a thread Codex does not know. */
   integratedHistory(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
+  /** The usage limits of an account, as its machine holds them or has just
+      read them; null where there are none. */
+  accountLimits(
+    options: AccountLimitsOptions,
+  ): Promise<Extract<IntegratedEventBody, { type: "limits" }> | null>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;
   /** Every integrated session's news, each event naming its session. */
@@ -1845,6 +1864,8 @@ const tauriCore: Core = {
   integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
   integratedHistory: (options) =>
     invoke<IntegratedHistory | null>("integrated_history", { ...options }),
+  accountLimits: (options) =>
+    invoke<Extract<IntegratedEventBody, { type: "limits" }> | null>("account_limits", { ...options }),
   integratedStop: (id) => invoke<void>("integrated_stop", { id }),
   async onIntegratedEvent(handler) {
     return listen<IntegratedEvent>("integrated_event", (event) =>
@@ -2188,6 +2209,9 @@ const detachedCore: Core = {
     throw new Error("not connected to the workbench core");
   },
   async integratedHistory() {
+    return null;
+  },
+  async accountLimits() {
     return null;
   },
   async integratedStop() {},

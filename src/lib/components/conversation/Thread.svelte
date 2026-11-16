@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
+  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -192,6 +192,11 @@
     const scrolled = scroller;
     const inner = col;
     const observer = new ResizeObserver((seen) => {
+      // Out of view, the thread has no size to follow. Back in view, the
+      // browser puts the view where it was, and from there it goes on as
+      // for any change of size: to the foot, if it followed its foot.
+      if (!shown()) return;
+      reflowed();
       heard();
       // Which rows to draw is worked out again a frame on: drawing them
       // now would change the size this has just been told of.
@@ -248,16 +253,39 @@
     });
   });
 
-  /** Where the thread last scrolled itself to: a scroll that lands there
-      is its own, and says nothing of where the user wants to be. */
+  /** Where the thread last scrolled itself to, or the browser left it to
+      keep the reader's place across a change of width: a scroll that lands
+      there says nothing of where the user wants to be. */
   let ownTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
+    if (!shown()) return;
     node.scrollTop = node.scrollHeight;
     ownTop = node.scrollTop;
     // The thread has the view now: a scroll that comes after this is the
     // user's only once they scroll again.
     scrolledBy = Number.NEGATIVE_INFINITY;
+  }
+
+  /** The width the thread was last seen at. */
+  let across = 0;
+
+  /** Takes in a change of the thread's width. A thread drawn whole leaves
+      the reader's place to the browser, which scrolls to keep it as the
+      rows reflow: where that leaves the view is not the user's doing. */
+  function reflowed() {
+    if (scroller === null) return;
+    const width = scroller.clientWidth;
+    if (across > 0 && width !== across && !windowed) ownTop = scroller.scrollTop;
+    across = width;
+  }
+
+  /** Whether the thread is laid out. A session not in front is not, so
+      the conversations behind it cost nothing when the window is laid
+      out; its sizes and its scroll position then read as nothing and are
+      left alone. */
+  function shown(): boolean {
+    return scroller !== null && scroller.getClientRects().length > 0;
   }
 
   /** Whether a long thread is at its foot to follow it: it follows, and it
@@ -298,11 +326,12 @@
   /** Takes in where the user has scrolled before the thread moves on its
       own: a browser can tell of a scroll only after more has come. */
   function heard() {
-    if (scroller !== null && scroller.scrollTop !== lastTop) onscroll();
+    if (scroller !== null && shown() && scroller.scrollTop !== lastTop) onscroll();
   }
 
   function onscroll() {
     if (scroller === null) return;
+    reflowed();
     const top = scroller.scrollTop;
     const down = top >= lastTop - 1;
     lastTop = top;
@@ -607,7 +636,7 @@
    * the keyboard leaves a row before it goes.
    */
   function look() {
-    if (scroller === null || box === null || !windowed) return;
+    if (scroller === null || box === null || !windowed || !shown()) return;
     // What moved under the reader since the thread last looked is put back
     // before the place is taken again. A browser tells of a scroll at the
     // frame after it, and rows can move in between: a type size, a font or
@@ -719,7 +748,7 @@
       While the user scrolls, the space above the rows drawn takes the
       change where it can: a scroll set then would stop theirs in WebKit. */
   function keep() {
-    if (scroller === null || anchor === null) return;
+    if (scroller === null || anchor === null || !shown()) return;
     const node = box?.querySelector<HTMLElement>(`:scope > [data-row="${CSS.escape(anchor.key)}"]`);
     if (node === null || node === undefined) return;
     // The block that stood there, or the row it was in when that block has
@@ -970,23 +999,10 @@
 
   function announce() {
     if (!windowed) return;
-    const fresh: string[] = [];
-    const tell = (key: string, at: number | null, text: string) => {
-      if (told.has(key) || at === null || at < opened || text === "") return;
-      told.add(key);
-      fresh.push(text);
-    };
-    const entries = conversation.entries;
-    for (let at = Math.max(0, entries.length - 12); at < entries.length; at++) {
-      const entry = entries[at];
-      if (entry.kind === "user") {
-        const message = conversation.messages[entry.message];
-        if (message !== undefined) tell(`m:${message.id}`, message.at, spoken(message.text, sender?.(message) == null).text);
-      } else if (entry.kind === "agent") {
-        for (const part of entry.parts)
-          if (part.kind === "text" && part.done) tell(`b:${part.block}`, part.at, plain(part.text));
-      } else if (entry.kind === "note") tell(`n:${entry.key}`, entry.at, entry.text);
-    }
+    const fresh = toHear(conversation, told, opened, {
+      message: (message) => spoken(message.text, sender?.(message) == null).text,
+      block: plain,
+    });
     if (fresh.length > 0) said = fresh.join("\n\n");
   }
 
@@ -1299,11 +1315,17 @@
     flex-direction: column;
   }
 
+  /* What is placed inside it, such as the words a Copy button says to a
+     screen reader, scrolls with it and adds nothing to the pane's own
+     size. Its room, less in a narrow pane, comes with the pane's width in
+     the same layout, so a change of width moves the rows once. */
   .thread {
+    position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: calc(22px + var(--room, 0px)) var(--conv-gutter) 12px;
+    padding: calc(max(16px, min(22px, var(--conv-wide))) + var(--room, 0px))
+      max(14px, min(var(--conv-gutter), var(--conv-wide))) max(10px, min(12px, var(--conv-wide)));
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1323,16 +1345,6 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: pre-wrap;
-  }
-
-  @container conversation (max-width: 520px) {
-    .frame .thread {
-      padding: calc(16px + var(--room, 0px)) 14px 10px;
-    }
-
-    .you .bubble {
-      max-width: 92%;
-    }
   }
 
   /* A thread that has earlier messages coming or read sits at the pane's
@@ -1411,8 +1423,11 @@
     align-items: flex-end;
   }
 
+  /* A message of the user's own takes more of a narrow row, one 492px
+     wide or narrower, as every row in a pane of 520px or less is. The row
+     decides, in the same layout as the pane's width. */
   .bubble {
-    max-width: min(82%, var(--conv-measure));
+    max-width: max(min(82%, var(--conv-measure)), min(92%, calc((492.5px - 100%) * 1000)));
     padding: 9px 13px;
     border-radius: calc(var(--radius) * 2) calc(var(--radius) * 2) var(--radius-sm)
       calc(var(--radius) * 2);

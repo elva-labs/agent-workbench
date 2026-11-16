@@ -7,8 +7,12 @@ session has no terminal, and the window draws its conversation instead, as
 many as you start, several
 projects can be open at once, and switching between any of them stops
 nothing. The sessions you are not looking at are hidden rather than
-unmounted, and hidden in a way that keeps their box in layout, so a
-background session's pty is never resized and never reflows. Each
+unmounted. A terminal session is hidden in a way that keeps its box in
+layout, so a background session's pty is never resized and never reflows.
+An integrated session's conversation is taken out of layout while it is
+not in front, so a window holding many costs no more to lay out than one
+holding the conversation on screen; it comes back where it was left, and
+at its foot if it was following it. Each
 terminal takes in what its agent draws as it arrives: on the next frame
 the window paints, or a moment later when the window paints none, as when
 it is minimised or behind other windows. A session that has never been on
@@ -379,10 +383,9 @@ chosen for the starter, else under its project's, as the
 starter names the account when it is not its project's. A session resumed
 runs under the account it ran under. The status bar names the account the
 active session runs under, Default included, as long as there are
-accounts to tell apart, and beside it the account's allowance once an
-integrated session on it has reported one, as the [status
-bar](layout.md#the-status-bar) describes. An account of the same name on
-another machine is another login, with figures of its own.
+accounts to tell apart, and beside it the account's allowance, as the
+[status bar](layout.md#the-status-bar) describes. An account of the same
+name on another machine is another login, with figures of its own.
 
 The past sessions under a project are read from every account's
 directory, so a session started under another account is listed under its

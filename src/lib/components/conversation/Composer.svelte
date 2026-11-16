@@ -599,9 +599,15 @@
 
   /** The field grows with what is written, up to a share of the pane. */
   function grow() {
-    if (field === null) return;
+    // Out of view the field has no size to grow to; it grows when back.
+    if (field === null || field.getClientRects().length === 0) return;
+    // The composer keeps its height while the field is measured, so the
+    // thread above it is never taller for that moment: a browser pulls a
+    // thread at its foot up to fit, and nothing after puts it back.
+    if (box !== null) box.style.minHeight = `${box.offsetHeight}px`;
     field.style.height = "auto";
     field.style.height = `${field.scrollHeight}px`;
+    if (box !== null) box.style.minHeight = "";
     gutter = field.offsetWidth - field.clientWidth;
     scrolled();
   }
@@ -1394,10 +1400,8 @@
   }
 
   /* In a narrow pane the name and what it does keep the room. */
-  @container conversation (max-width: 420px) {
-    .cmd-source {
-      display: none;
-    }
+  :global(.conv.tight) .cmd-source {
+    display: none;
   }
 
   code {
