@@ -6,6 +6,7 @@
   import { askerOf, dockedFor, folderOf, type Docked } from "$lib/docked.svelte";
   import { answer, reply } from "$lib/integrated.svelte";
   import { focusPane } from "$lib/layout.svelte";
+  import { showCall } from "$lib/callShown.svelte";
   import { goTo, projectLabel } from "$lib/workspace.svelte";
   import {
     address,
@@ -194,11 +195,15 @@
     return parent === null ? whoName : `${said} in ${whoName}`;
   }
 
-  /** Goes to the session that asks, with the keyboard. It answers nothing,
-      so it waits on nothing. */
+  /** Goes to the session that asks, with the keyboard, at the call that
+      started the subagent when one asks. It answers nothing, so it waits
+      on nothing. */
   function open() {
     if (entry === null) return;
-    if (goTo(entry.key)) focusPane("agent");
+    if (!goTo(entry.key)) return;
+    const parent = request?.asked.parent ?? null;
+    if (parent !== null) showCall(entry.key, parent);
+    focusPane("agent");
   }
 
   // The dock going away by itself, a question that settled itself or a

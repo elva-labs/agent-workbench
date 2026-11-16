@@ -1007,7 +1007,8 @@ pub struct Settings {
 /// images; `limits` the account's limits as the last limits event told
 /// them, null before one went out; `resumedAt` when this run of a
 /// conversation it resumed began, in milliseconds since the epoch, null for
-/// a conversation it began.
+/// a conversation it began; `tasks` every subagent still at work, in the
+/// order they started, each as its start went out.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -1020,6 +1021,7 @@ pub struct Snapshot {
     pub messages: Vec<Event>,
     pub limits: Option<Event>,
     pub resumed_at: Option<u64>,
+    pub tasks: Vec<Event>,
 }
 
 /// What a conversation said and did before a window took it up, read from
@@ -1145,6 +1147,9 @@ struct Tracker {
     asking: Vec<Event>,
     /// Subagents at work, with the tool call that started each.
     subagents: BTreeMap<String, Option<String>>,
+    /// The start of each subagent at work, as it went out, in the order
+    /// they started: what no transcript holds of them.
+    started: Vec<Event>,
     /// Tool calls started and not finished, with the subagent call each
     /// belongs to.
     calls: BTreeMap<String, Option<String>>,
@@ -1342,6 +1347,8 @@ impl Tracker {
                 ..
             } => {
                 self.subagents.insert(task.clone(), call.clone());
+                self.started.retain(|known| task_of(known) != Some(task));
+                self.started.push(event.clone());
             }
             Event::TaskFinished {
                 task,
@@ -1352,6 +1359,7 @@ impl Tracker {
                 if *reports && !self.turn && *status != TaskStatus::Lost {
                     self.reporting = true;
                 }
+                self.started.retain(|known| task_of(known) != Some(task));
                 if let Some(Some(call)) = self.subagents.remove(task) {
                     let call = Some(call);
                     self.close(out, |parent| *parent == call);
@@ -1410,6 +1418,7 @@ impl Tracker {
                 .collect(),
             limits: self.limits.clone(),
             resumed_at: self.resumed_at,
+            tasks: self.started.clone(),
         }
     }
 
@@ -1464,8 +1473,17 @@ impl Tracker {
             ));
         }
         self.subagents.clear();
+        self.started.clear();
         self.reporting = false;
         self.compacting = false;
+    }
+}
+
+/// The task a task's start names.
+fn task_of(event: &Event) -> Option<&String> {
+    match event {
+        Event::TaskStarted { task, .. } => Some(task),
+        _ => None,
     }
 }
 
@@ -3735,6 +3753,55 @@ mod tests {
                 "name": "review", "description": null, "hint": null,
                 "skill": true, "builtin": false, "source": null,
             }])
+        );
+    }
+
+    #[test]
+    fn the_snapshot_holds_the_subagents_still_at_work_as_they_started() {
+        let start = |task: &str, kind, ambient| Event::TaskStarted {
+            task: task.into(),
+            call: Some(format!("call-{task}")),
+            kind,
+            description: Some(format!("look at {task}")),
+            prompt: None,
+            background: true,
+            ambient,
+        };
+        let finish = |task: &str| Event::TaskFinished {
+            task: task.into(),
+            call: Some(format!("call-{task}")),
+            status: TaskStatus::Completed,
+            summary: None,
+            reports: true,
+        };
+        let (tracker, _) = tracked(vec![
+            turn(&[]),
+            start("one", TaskKind::Agent, false),
+            start("shell", TaskKind::Shell, false),
+            start("chores", TaskKind::Agent, true),
+            start("two", TaskKind::Agent, false),
+            ended(),
+            start("three", TaskKind::Agent, false),
+            finish("one"),
+        ]);
+        assert_eq!(
+            tracker.snapshot().tasks,
+            [
+                start("two", TaskKind::Agent, false),
+                start("three", TaskKind::Agent, false)
+            ],
+            "only subagents, in the order they started, and none that finished"
+        );
+        assert_eq!(
+            serde_json::to_value(tracker.snapshot()).unwrap()["tasks"][0]["type"],
+            "taskStarted"
+        );
+
+        let (mut tracker, _) = tracked(vec![turn(&[]), start("one", TaskKind::Agent, false)]);
+        tracker.end(&mut Vec::new());
+        assert!(
+            tracker.snapshot().tasks.is_empty(),
+            "none once the session ends"
         );
     }
 

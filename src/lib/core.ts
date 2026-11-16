@@ -598,7 +598,9 @@ export type IntegratedEvent = IntegratedEventBody & { id: string };
     last limits event told them, null before one went out; `resumedAt`
     when this run of a conversation it resumed began, in milliseconds
     since the epoch, null for one it began, and absent from a core that
-    does not say. */
+    does not say; `tasks` every subagent still at work, in the order they
+    started, each as its start went out, absent from a core that does not
+    say. */
 export interface IntegratedSnapshot {
   state: IntegratedState;
   turn: boolean;
@@ -609,6 +611,7 @@ export interface IntegratedSnapshot {
   messages: Extract<IntegratedEventBody, { type: "message" }>[];
   limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
   resumedAt?: number | null;
+  tasks?: Extract<IntegratedEventBody, { type: "taskStarted" }>[];
 }
 
 /** What a conversation said and did before a window took it up, read
