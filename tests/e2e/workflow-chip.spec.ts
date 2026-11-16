@@ -134,10 +134,15 @@ test("picking a workflow makes the session its orchestrator, as New session unde
   // The workflow sets the model: shown, held, and saying why.
   const model = page.getByTestId("model-chip");
   await expect(model).toHaveText("Fable");
-  await expect(model).toBeDisabled();
+  await expect(model).toHaveAttribute("aria-disabled", "true");
   await expect(model).toHaveAttribute("title", "Set by Build and review");
   await expect(model).toHaveAccessibleName("Model Fable, set by Build and review");
-  await expect(page.getByTestId("model-readout")).toHaveAttribute("title", "Set by Build and review");
+  // The status bar names it as the composer does, and holds it too.
+  const readout = page.getByTestId("model-readout");
+  await expect(readout).toHaveText("Fable");
+  await expect(readout).toHaveAttribute("title", "Set by Build and review");
+  await model.click();
+  await expect(page.getByTestId("model-menu")).toHaveCount(0);
   // The composer says the workflow; the header's chip waits for the first
   // message.
   await expect(page.getByTestId("run-chip")).toHaveCount(0);
@@ -149,7 +154,7 @@ test("picking a workflow makes the session its orchestrator, as New session unde
   await expect(page.getByTestId("user-message")).toHaveCount(1);
   await expect(chip(page)).toHaveCount(0);
   await expect(page.getByTestId("run-words")).toHaveText("Build and review");
-  await expect(model).toBeDisabled();
+  await expect(model).toHaveAttribute("aria-disabled", "true");
   const sent = (await calls(page)).filter((call) => call.method === "send");
   expect(sent.map((call) => call.id)).toEqual(["int-2"]);
 });
@@ -158,7 +163,7 @@ test("going back to no workflow starts the agent alone, on its own default model
   await open(page);
   await chip(page).click();
   await options(page).filter({ hasText: "Build and review" }).click();
-  await expect(page.getByTestId("model-chip")).toBeDisabled();
+  await expect(page.getByTestId("model-chip")).toHaveAttribute("aria-disabled", "true");
   await chip(page).click();
   await expect(options(page).nth(1)).toHaveAttribute("aria-checked", "true");
   await options(page).filter({ hasText: "No workflow" }).click();
@@ -219,8 +224,15 @@ test("is picked by keyboard alone", async ({ page }) => {
   await expect(page.getByTestId("workflow-menu")).toHaveCount(0);
   await expect(input).toBeFocused();
   await expect(chip(page)).toHaveText("Build and review");
-  // The held model is no stop: from the attach button Tab goes to the mode.
+  // The held model is a stop that says why and opens nothing.
   await page.getByTestId("attach").focus();
+  await page.keyboard.press("Tab");
+  const model = page.getByTestId("model-chip");
+  await expect(model).toBeFocused();
+  await expect(model).toHaveAccessibleName("Model Fable, set by Build and review");
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("model-menu")).toHaveCount(0);
+  await expect(model).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(page.getByTestId("mode-chip")).toBeFocused();
 });

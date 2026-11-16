@@ -18,7 +18,15 @@
   } from "$lib/limits.svelte";
   import { hostOf } from "$lib/remote.svelte";
   import { activeSession, modelLabel, unreadCount } from "$lib/sessions.svelte";
-  import { choose, effortChoices, effortInUse, effortName, modelChoices, modelInUse } from "$lib/settingChoices";
+  import {
+    choose,
+    effortChoices,
+    effortInUse,
+    effortName,
+    heldModel,
+    modelChoices,
+    modelInUse,
+  } from "$lib/settingChoices";
   import ChoiceMenu from "./ChoiceMenu.svelte";
 
   /**
@@ -77,6 +85,9 @@
 
   let model = $derived.by(() => {
     if (session === null) return null;
+    // Under a workflow, named as the composer's held chip names it.
+    if (integrated !== null && integrated.workflow !== null && conversation !== null)
+      return heldModel(conversation, integrated.workflow);
     const named = conversation === null ? null : modelInUse(conversation);
     return named ?? (session.model === null ? null : modelLabel(session.model));
   });

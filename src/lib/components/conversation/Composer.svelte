@@ -1010,11 +1010,12 @@
     <div class="picker">
       {#if workflow !== null && heldName !== null}
         <!-- The workflow sets the orchestrator's model, so it is not a
-             choice here. -->
+             choice here: it is reached like the others, says why, and
+             opens nothing. -->
         <button
           class="chip"
           tabindex="0"
-          disabled
+          aria-disabled="true"
           aria-label="Model {heldName}, set by {workflow.name}"
           title="Set by {workflow.name}"
           data-testid="model-chip"
@@ -1477,12 +1478,13 @@
     cursor: pointer;
   }
 
-  .chip:hover:not(:disabled) {
+  .chip:hover:not(:disabled, [aria-disabled="true"]) {
     color: var(--ink);
     background: var(--surface);
   }
 
-  .chip:disabled {
+  .chip:disabled,
+  .chip[aria-disabled="true"] {
     opacity: 0.6;
     cursor: default;
   }
@@ -1575,7 +1577,7 @@
     transform: scale(0.9);
   }
 
-  .chip:active:not(:disabled) {
+  .chip:active:not(:disabled, [aria-disabled="true"]) {
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--ink-3);
   }

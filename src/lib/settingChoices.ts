@@ -153,10 +153,15 @@ export function workflowChoices(agent: AgentId, name: string, following: Workflo
   ];
 }
 
-/** The model a workflow holds its orchestrator to, as the agent names it
-    where it offers it, else as the workflow's settings name it. */
+/** The model a session under a workflow runs on, as the composer and the
+    status bar both name it: the one its run says it is on, once the run
+    has said, and the workflow's orchestrator's until then. Each is named
+    as the agent names it where it offers it, else by the workflow's own
+    name for it. */
 export function heldModel(conversation: Conversation, workflow: Workflow): string {
   const { agent, model } = workflow.orchestrator;
-  const offered = offeredModel(conversation, model) === null ? null : modelName(conversation, model);
-  return offered ?? modelLabel(agent, model);
+  const said = conversation.sessionId === null ? null : conversation.settings.model;
+  const named = said ?? model;
+  const offered = offeredModel(conversation, named) === null ? null : modelName(conversation, named);
+  return offered ?? modelLabel(agent, named);
 }

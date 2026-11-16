@@ -95,13 +95,14 @@ describe("the workflows a new conversation can follow", () => {
 });
 
 describe("the model a workflow holds its orchestrator to", () => {
-  it("is named as the agent offers it, else as the workflow's settings name it", () => {
-    const offered = ready("claude-fable-5-2", null, [], [
-      ...MODELS,
-      { value: "fable", name: "Fable 5.2 (most capable)", description: null, efforts: [] },
-    ]);
-    expect(heldModel(offered, defaultWorkflow())).toBe("Fable 5.2");
-    expect(heldModel(ready("claude-fable-5-2", null, []), defaultWorkflow())).toBe("Fable");
+  const FABLE = [...MODELS, { value: "fable", name: "Fable 5.2 (most capable)", description: null, efforts: [] }];
+
+  it("is the workflow's until the run says, then the one the run says it is on, named as the agent offers it", () => {
     expect(heldModel(new Conversation(() => 0), defaultWorkflow())).toBe("Fable");
+    expect(heldModel(ready("claude-fable-5-2", null, [], FABLE), defaultWorkflow())).toBe("Fable 5.2");
+    expect(heldModel(ready("fable", null, []), defaultWorkflow())).toBe("Fable");
+    // A run on another model than the workflow's is named by its own.
+    expect(heldModel(ready("claude-sonnet-5-5", null, [], FABLE), defaultWorkflow())).toBe("Sonnet");
+    expect(heldModel(ready("claude-unlisted-9", null, []), defaultWorkflow())).toBe("claude-unlisted-9");
   });
 });

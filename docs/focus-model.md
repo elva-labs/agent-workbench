@@ -354,7 +354,8 @@ dock's choices. The composer's
 controls, attach, the model and the mode, the workflow before the first
 message, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
-of their own in reading order. A model a workflow holds is no stop. The
+of their own in reading order. A model a workflow holds is a stop too,
+which opens nothing and says the workflow sets it. The
 model's, the mode's and the workflow's menus open with
 <kbd>Enter</kbd> on the choice in use, are walked with the arrows,
 <kbd>Home</kbd> and <kbd>End</kbd>, pick with <kbd>Enter</kbd>, and give the

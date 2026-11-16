@@ -492,7 +492,8 @@ session runs on, which a click changes: the agent's default is named once
 the agent has said which model that is, and a model chosen during a turn is
 said to be used from the next. A session that follows a workflow shows its
 orchestrator's model and holds it, saying the workflow sets it, and so does
-the status bar. It shows the mode the session runs in, which
+the status bar. Both name the model the run says it is on, and the
+workflow's own name for it until the run has said. It shows the mode the session runs in, which
 a click changes among the modes the agent offers; a session starts in the
 agent's safe mode, which asks before it acts, whatever the agent's own
 configuration says, and a mode taken from that configuration is shown as it
