@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { BUILD_AND_REVIEW, PROJECT, installFakeCore } from "./fake";
+import { BUILD_AND_REVIEW, PROJECT, backgroundAtRest, installFakeCore } from "./fake";
 
 /**
  * Cards that let the background through: with a background of the user's
@@ -147,6 +147,8 @@ async function open(
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
   await expect(page.locator(":root")).toHaveAttribute("data-cards", /.*/);
+  // The cards' pixels show the background: read them once it is drawn.
+  await backgroundAtRest(page);
 }
 
 /** Runs a script against the scripted integrated session. */
@@ -490,6 +492,9 @@ test("where the guard holds the share at none, the window is exactly as with non
     await page.goto("/");
     await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
     await expect(page.locator(":root")).not.toHaveAttribute("data-cards", /.*/);
+    // Both shots are of the background drawn at rest, never one of them
+    // of the small gradient drawn first.
+    await backgroundAtRest(page);
     await page.locator(TREE).getByText("mod.rs", { exact: true }).click();
     await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "diff");
     // The sessions column folds as the diff opens: shot once it has.
@@ -610,6 +615,7 @@ for (const look of LOOKS)
         await page.goto("/");
         await expect(page.locator(AGENT)).toBeVisible();
         await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
+        await backgroundAtRest(page);
         // An empty stretch of the agent's card, low down where the gradient
         // has turned, and the ground just left of the card beside it.
         const boxes = await page.locator(AGENT).evaluate((pane) => {

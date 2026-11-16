@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, backgroundAtRest, installFakeCore } from "./fake";
 
 /**
  * A background of the user's own: painted behind the chrome from the
@@ -54,6 +54,7 @@ async function open(page: Page, settings: Record<string, unknown>) {
 
 test("tints the chrome with the palette's background and leaves the panes that hold text solid", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
+  await backgroundAtRest(page);
   await page.getByTestId("start-agent").click();
   await expect(page.locator(AGENT)).toContainText("running");
 
@@ -70,6 +71,7 @@ test("tints the chrome with the palette's background and leaves the panes that h
 
 test("in the terminal look tints only the ground between the boxes and the status bar", async ({ page }) => {
   await open(page, { appearance: "light", look: "terminal", backgrounds: { teal: LAGOON } });
+  await backgroundAtRest(page);
   const sessions = (await page.locator(SESSIONS).boundingBox())!;
   const ground = await pixel(page, Math.round(sessions.x + sessions.width + 3), Math.round(sessions.y + sessions.height / 2));
   const inside = await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8)));
@@ -108,14 +110,16 @@ async function gradientSize(page: Page, appearance: "light" | "dark") {
 
 test("paints the gradient from an image fine enough that no steps show, in either appearance", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
-  // A 4K window stretches each of its pixels over five device pixels at
-  // most, where the dither still hides the steps between them.
-  await expect.poll(() => gradientSize(page, "light")).toEqual([768, 480]);
-  await expect.poll(() => gradientSize(page, "dark")).toEqual([768, 480]);
+  await backgroundAtRest(page);
+  // At rest, a 4K window stretches each of its pixels over five device
+  // pixels at most, where the dither still hides the steps between them.
+  expect(await gradientSize(page, "light")).toEqual([768, 480]);
+  expect(await gradientSize(page, "dark")).toEqual([768, 480]);
 });
 
 test("each palette keeps its own background, and one without has the plain chrome", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
+  await backgroundAtRest(page);
   const plain = await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8)));
   expect(blueish(plain)).toBeGreaterThan(8);
   await page.keyboard.press(`${MOD}+,`);
@@ -128,6 +132,7 @@ test("each palette keeps its own background, and one without has the plain chrom
 
 test("comes back on a reload with no frame of the plain chrome", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
+  await backgroundAtRest(page);
   await expect.poll(() => pixel(page, ...[150, 500] as const).then(blueish)).toBeGreaterThan(8);
   // Every frame from the first that draws the sessions pane says whether
   // the background was on it.
@@ -150,6 +155,7 @@ test("comes back on a reload with no frame of the plain chrome", async ({ page }
 
 test("is set aside while the system asks for more contrast or forces its own colours", async ({ page }) => {
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
+  await backgroundAtRest(page);
   const point = await at(page, SESSIONS, 0.5, 0.8);
   const stamped = () => page.evaluate(() => document.documentElement.dataset.background !== undefined);
   expect(blueish(await pixel(page, ...point))).toBeGreaterThan(8);

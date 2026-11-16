@@ -469,22 +469,59 @@ let resting: ReturnType<typeof setTimeout> | null = null;
 
 /** The stylesheet last worked out for a background, by what it was worked
     out from, with the share the guard lets through in each appearance and
-    look, and the appearances whose gradient in it is drawn small: a
-    repaint that changes none of it works nothing out again, unless it is
-    the one that draws one of those at full size. */
-let worked: {
+    look, the appearances whose gradient in it is drawn small, and the
+    images it names: a repaint that changes none of it works nothing out
+    again, unless it is the one that draws one of those at full size. */
+type Worked = {
   from: string;
   css: string;
   held: Partial<Record<string, number>>;
   rough: Appearance[];
-} | null = null;
+  urls: string[];
+};
+let worked: Worked | null = null;
+
+/** The sheet the rested stamp stands for, or is waiting to: it goes on
+    once every image the sheet names has been decoded. */
+let restedFor: Worked | null = null;
+
+/** Settles once the image at `url` can be drawn, or cannot be at all. */
+function decoded(url: string): Promise<void> {
+  const image = new Image();
+  image.src = url;
+  return typeof image.decode === "function" ? image.decode().catch(() => undefined) : Promise.resolve();
+}
+
+/** Stamps the background as drawn at rest for the sheet now in place: at
+    once where it is still drawn small, as not, and otherwise once its
+    images have decoded, unless another sheet has come in the meantime. */
+function stampRested(sheet: Worked | null) {
+  if (sheet === null || sheet.rough.length > 0) {
+    restedFor = null;
+    stamp("backgroundRested", null);
+    return;
+  }
+  if (restedFor === sheet) return;
+  restedFor = sheet;
+  stamp("backgroundRested", null);
+  void Promise.all(sheet.urls.map(decoded)).then(() => {
+    if (restedFor === sheet) stamp("backgroundRested", "");
+  });
+}
 
 /** The stylesheet the background is painted from, worked out from the
     colours the palette or theme paints in each appearance. A gradient not
     yet drawn at full size is drawn small, unless `full` names its
     appearance. Once the background has rested, it is drawn at full size
     one appearance at a time, the one on screen first, so no frame draws
-    two. */
+    two.
+
+    `<html>` carries data-background while a background shows, and
+    data-background-rested once every gradient in its sheet is drawn at
+    full size and every image the sheet names has decoded: from then on
+    its pixels change only when the background, the palette, the
+    appearance or the cards' share does. A test that compares a
+    background's pixels waits for the second. */
 function paintBackground(full: readonly Appearance[] = []) {
   if (resting !== null) clearTimeout(resting);
   resting = null;
@@ -498,6 +535,7 @@ function paintBackground(full: readonly Appearance[] = []) {
   const background = shownBackground();
   if (background === null || moreContrast()) {
     stamp("background", null);
+    stampRested(null);
     stamp("cards", null);
     theme.cardsHeld = 0;
     if (sheet.textContent !== "") sheet.textContent = "";
@@ -520,13 +558,15 @@ function paintBackground(full: readonly Appearance[] = []) {
       full,
     );
     const css = backgroundCss(background, colours, images, only, cards, held);
-    worked = { from, css, held, rough: images.rough ?? [] };
+    const urls = [images.light, images.dark, images.grain].filter((url) => url !== null);
+    worked = { from, css, held, rough: images.rough ?? [], urls };
   }
   const { css, held, rough } = worked;
   if (sheet.textContent !== css) sheet.textContent = css;
   const next = rough.includes(appearance) ? appearance : rough[0];
   if (next !== undefined) resting = setTimeout(() => paintBackground([next]), REST);
   stamp("background", "");
+  stampRested(worked);
   // Where the guard holds the share at none on screen, nothing changes.
   theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
   stamp("cards", theme.cardsHeld > 0 ? "" : null);

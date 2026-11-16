@@ -222,6 +222,32 @@ describe("painting the background the palette keeps", () => {
     expect(images()).toEqual({ light: full, dark: full });
   });
 
+  it("stamps the background as drawn at rest once every gradient is at full size, and not before", async () => {
+    drawSizes();
+    const rested = () => document.documentElement.dataset.backgroundRested;
+    const images = () => [...sheet().matchAll(/--tint-image-(?:light|dark): url\("(\d+x\d+)#/g)].map((found) => found[1]);
+    const full = `${FULL.width}x${FULL.height}`;
+    const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(70) } });
+    expect(rested()).toBeUndefined();
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    expect(images()).toEqual([full, full]);
+    // A dot moved takes it off at once, until the new gradient has rested.
+    previewBackground(moved(80));
+    expect(rested()).toBeUndefined();
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    expect(images()).toEqual([full]);
+    // A repaint with nothing changed leaves it on.
+    previewBackground(moved(80));
+    expect(rested()).toBe("");
+    // A single colour has no gradient to wait for.
+    setBackground({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" });
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    // No background, no stamp.
+    setBackground(null);
+    expect(rested()).toBeUndefined();
+  });
+
   it("paints a palette's background and stamps it, and takes both away with another palette", () => {
     adoptTheme({ palette: "teal", backgrounds: { teal: LAGOON } });
     expect(document.documentElement.dataset.background).toBe("");
