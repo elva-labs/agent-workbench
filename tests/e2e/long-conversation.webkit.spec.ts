@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
 // A conversation of hundreds of turns, in WebKit as well as Chromium:
 // WebKit, the app's webview on macOS, scrolls and clamps its own way, and
@@ -58,6 +58,28 @@ const markedAt = (page: Page) =>
   page
     .getByTestId("thread")
     .evaluate((node) => node.querySelector("[data-mark]")!.getBoundingClientRect().top - node.getBoundingClientRect().top);
+
+/** Switches the look as an edit to the settings file would, and with it
+    the conversation's type size. */
+const switchLook = (page: Page, look: "modern" | "terminal") =>
+  page.evaluate(
+    ({ key, look }) => {
+      const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look };
+      localStorage.setItem(key, JSON.stringify(next));
+      (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
+        appearance: "system",
+        look: "modern",
+        palette: "teal",
+        terminalFont: "system",
+        interfaceFont: "system",
+        keys: {},
+        hooks: { everywhere: true, overrides: {} },
+        themes: {},
+        ...next,
+      });
+    },
+    { key: SETTINGS_FILE, look },
+  );
 
 /** Whether the rows drawn cover the whole view, top to bottom. */
 const covered = (page: Page) =>
@@ -304,23 +326,12 @@ test.describe("a long conversation", () => {
     await openLong(page);
     await wheel(page, -600, 6);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
-    // The first block of text reaching into the view from above.
-    const before = await thread(page).evaluate((node) => {
-      const top = node.getBoundingClientRect().top;
-      const block = [...node.querySelectorAll<HTMLElement>("[data-testid='markdown'] > *")].find(
-        (one) => one.getBoundingClientRect().bottom > top,
-      )!;
-      block.dataset.probe = "";
-      return block.getBoundingClientRect().top - top;
-    });
-    await page.evaluate(() => document.documentElement.style.setProperty("--conv-size", "11px"));
-    await expect
-      .poll(() =>
-        thread(page).evaluate(
-          (node, was) => Math.abs(node.querySelector("[data-probe]")!.getBoundingClientRect().top - node.getBoundingClientRect().top - was),
-          before,
-        ),
-      )
-      .toBeLessThan(2);
+    const rows = page.getByTestId("thread-rows");
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    const before = await markTop(page);
+    // The terminal look sets the conversation's type a size smaller.
+    await switchLook(page, "terminal");
+    await expect(rows).toHaveCSS("font-size", "12.5px");
+    await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
   });
 });
