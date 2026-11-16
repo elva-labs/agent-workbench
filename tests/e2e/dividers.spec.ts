@@ -147,7 +147,8 @@ for (const look of ["modern", "terminal"]) {
   test(`a divider in the ${look} look takes hold over the gap and a little into the panes either side, and no further`, async ({ page }) => {
     await open(page, { look });
     const divider = await box(page, DIVIDER);
-    const reach = look === "modern" ? 4 : 4;
+    // The reach into either pane is 4 pixels in both looks.
+    const reach = 4;
     const y = divider.y + divider.height / 2;
     await page.mouse.move(10, y);
     expect(await heldAt(page, divider.x + divider.width / 2, y)).toBe("col-resize");
@@ -382,4 +383,125 @@ test("over a background of the user's own in dark, the ground under the headers 
   // The header carries no ground of its own: what shows through it is the
   // window's.
   expect(await page.locator(`${AGENT} > header`).evaluate((head) => getComputedStyle(head).backgroundImage)).toBe("none");
+});
+
+test.describe("the focused card's mark", () => {
+  /** How far a colour is from another, channel by channel. */
+  const far = (a: [number, number, number], b: [number, number, number]) =>
+    Math.max(...a.map((value, at) => Math.abs(value - b[at])));
+
+  async function accent(page: Page): Promise<[number, number, number]> {
+    return page.evaluate(() => {
+      const probe = document.createElement("i");
+      probe.style.color = "var(--accent)";
+      document.body.append(probe);
+      const [r, g, b] = getComputedStyle(probe).color.match(/\d+/g)!.map(Number);
+      probe.remove();
+      return [r, g, b] as [number, number, number];
+    });
+  }
+
+  test("lies under an agent's question, which stands over the panes", async ({ page }) => {
+    await open(page);
+    await page.locator(`${AGENT} > .body`).click({ position: { x: 100, y: 200 } });
+    await page.evaluate((project) => {
+      (window as unknown as { __settingsRequest: (call: unknown) => void }).__settingsRequest({
+        id: "c-1",
+        tool: "settings_change",
+        arguments: { palette: "amber", reason: "The user asked for warmer colours." },
+        cwd: project,
+        session: null,
+      });
+    }, PROJECT);
+    const ask = page.getByTestId("settings-ask");
+    await expect(ask).toBeVisible();
+    const question = (await ask.boundingBox())!;
+    const card = await box(page, `${AGENT} > .body`);
+    // The question straddles the card's top edge, where the mark runs.
+    expect(question.y).toBeLessThan(card.y);
+    expect(question.y + question.height).toBeGreaterThan(card.y + 2);
+    const under = await pixel(page, question.x + question.width / 2, card.y + 1);
+    expect(far(under, await accent(page))).toBeGreaterThan(40);
+  });
+
+  for (const contrast of [false, true]) {
+    test(`stands over the editor's find bar${contrast ? ", the outline too under more contrast" : ""}`, async ({ page }) => {
+      await page.setViewportSize({ width: 1728, height: 1000 });
+      if (contrast) await page.emulateMedia({ contrast: "more" });
+      await open(page);
+      await page.getByTestId("mode-editor").click();
+      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await page.getByTestId("file-tree").getByText("README.md").dblclick();
+      await page.locator(".cm-content").click();
+      await page.keyboard.press(`${MOD}+f`);
+      await expect(page.getByTestId("find-field")).toBeFocused();
+      const card = await box(page, `${CHANGES} > .body`);
+      const find = (await page.locator(".cm-panels-top").boundingBox())!;
+      // The find bar runs along the card's top over the editor.
+      expect(find.y).toBeCloseTo(card.y, 0);
+      const colour = await accent(page);
+      for (const x of [find.x + find.width / 2, card.x + card.width - 12]) {
+        expect(far(await pixel(page, x, card.y + 0.5), colour)).toBeLessThan(40);
+      }
+      if (contrast) {
+        // Off the focus mark, at the card's right edge under the find bar,
+        // the outline still shows.
+        await page.locator(`${AGENT} > .body`).click({ position: { x: 100, y: 300 } });
+        const edge = await page.locator(`${CHANGES} > .body`).evaluate((body) => getComputedStyle(body, "::after").borderRightColor);
+        const right = await pixel(page, card.x + card.width - 1, find.y + find.height / 2);
+        const rule = edge.match(/\d+/g)!.slice(0, 3).map(Number) as [number, number, number];
+        expect(far(right, rule)).toBeLessThan(24);
+      }
+    });
+  }
+});
+
+test("the peeked sessions pane stands over the agent's card as a sheet, with a shadow", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("file-tree").getByText("mod.rs").first().click();
+  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await page.keyboard.press(`${MOD}+1`);
+  await expect(page.locator(".sessions-slot.peeking")).toHaveCount(1);
+  const shadow = await page.locator(`.sessions-slot.peeking ${SESSIONS}`).evaluate((pane) => getComputedStyle(pane).boxShadow);
+  expect(shadow).not.toBe("none");
+});
+
+test("the headers' quiet text holds 4.5:1 on the light ground", async ({ page }) => {
+  await open(page);
+  await page.getByTestId("start-agent").click();
+  const meta = page.locator(`${AGENT} > header .meta`);
+  await expect(meta).toHaveText("running");
+  const ratio = await meta.evaluate((text) => {
+    // Read as rgb(), or as color(srgb ...) on a scale of one for a mix.
+    const channels = (colour: string) => {
+      const values = colour.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+      return colour.startsWith("color(") ? values.map((value) => value * 255) : values;
+    };
+    const lum = (colour: string) => {
+      const [r, g, b] = channels(colour).map((value) => {
+        const c = value / 255;
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+    const ground = getComputedStyle(document.querySelector(".frame")!).backgroundColor;
+    const [a, b] = [lum(getComputedStyle(text).color), lum(ground)];
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  });
+  expect(ratio).toBeGreaterThanOrEqual(4.5);
+});
+
+test("the background picker's small window draws the ground with a card standing on it", async ({ page }) => {
+  await open(page);
+  await page.keyboard.press(`${MOD}+,`);
+  await expect(page.getByTestId("background-picker")).toBeVisible();
+  const mini = page.locator("[data-testid='background-picker'] .mini").first();
+  const window = (await mini.boundingBox())!;
+  const card = (await mini.locator(".card").boundingBox())!;
+  // Clear of the sessions column on the left, under the header row, and
+  // in from the right and the foot.
+  expect(card.x - window.x).toBeGreaterThan(window.width / 4);
+  expect(card.y - window.y).toBeGreaterThanOrEqual(8);
+  expect(window.x + window.width - (card.x + card.width)).toBeGreaterThan(1);
+  expect(window.y + window.height - (card.y + card.height)).toBeGreaterThan(4);
 });
