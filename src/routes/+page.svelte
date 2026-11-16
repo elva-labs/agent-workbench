@@ -1191,7 +1191,7 @@
   }
 
   .sessions-slot :global([data-pane="sessions"] > .body > :not([data-testid="unfold-sessions"])) {
-    min-width: calc(var(--sessions-w) - 2px);
+    min-width: calc(var(--sessions-w) - 2 * var(--pane-edge));
   }
 
   /* Folded, the header row is ground with nothing in it but, where the
@@ -1207,7 +1207,7 @@
   }
 
   .sessions-slot.folded :global([data-pane="sessions"] > header > .app-menu) {
-    margin-left: calc((var(--folded) - 2px - 40px) / 2);
+    margin-left: calc((var(--folded) - 2 * var(--pane-edge) - 40px) / 2);
   }
 
   /* Beside the folded column there is nothing to drag: the gap stays, as

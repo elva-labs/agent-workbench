@@ -101,6 +101,7 @@
   /* A pane is a box: its edge, its own ground under the header and what it
      holds, and the focus on its edge. */
   --pane-bg: var(--surface);
+  --pane-edge: 1px;
   --pane-border: var(--rule);
   --pane-border-on: var(--accent);
   --pane-margin: 0px;

@@ -167,6 +167,21 @@ describe("themeCss", () => {
     expect(css).toContain("@media (prefers-color-scheme: dark)");
   });
 
+  it("gives a theme the tones of what its colours are, where they differ from the appearance worn", () => {
+    const night = themeCss({ night: { label: "Night", light: DEFAULTS.dark, dark: DEFAULTS.dark, shape: {} } });
+    const light = tokensIn(night, ':root:root[data-palette="night"]');
+    expect(light.deep).toBe("var(--bg)");
+    expect(light.well).toBe("color-mix(in srgb, var(--surface) 45%, var(--bg))");
+    expect(light["card-cast"]).toBe("none");
+    // Dark colours in the dark appearance need nothing of their own.
+    expect(tokensIn(night, ':root:root[data-palette="night"][data-theme="dark"]').deep).toBeUndefined();
+    const paper = themeCss({ paper: { label: "Paper", light: DEFAULTS.light, dark: DEFAULTS.light, shape: {} } });
+    expect(tokensIn(paper, ':root:root[data-palette="paper"][data-theme="dark"]').deep).toBe(
+      "color-mix(in srgb, var(--bg) 96%, var(--ink) 4%)",
+    );
+    expect(tokensIn(css, ':root:root[data-palette="dusk"]').deep).toBeUndefined();
+  });
+
   it("writes nothing for a theme that does not pass", () => {
     expect(
       themeCss({

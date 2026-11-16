@@ -150,6 +150,7 @@
   style:height="{box?.height ?? 0}px"
   aria-hidden="true"
   data-testid="junction"
+  data-side={side}
   bind:this={element}
   onpointerenter={() => mark(true)}
   onpointerleave={leave}

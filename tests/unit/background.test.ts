@@ -17,6 +17,7 @@ import {
   field,
   gradientPixels,
   grainPixels,
+  deepOf,
   groundsOf,
   hexToRgb,
   labToRgb,
@@ -474,6 +475,32 @@ describe("the guard", () => {
     const modern = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "modern", coloursOf("rose", "dark"));
     expect(modern.strength).toBe(0.9);
     expect(Object.keys(modern.grounds).sort()).toEqual(["side", "status", "surf"]);
+  });
+});
+
+describe("the modern look's ground", () => {
+  it("is the darkest tone: a step below the background in light, the background in dark", () => {
+    const light = coloursOf("teal", "light");
+    const dark = coloursOf("teal", "dark");
+    expect(deepOf(light)).toEqual(mix(hexToRgb(light.bg), hexToRgb(light.ink), 0.04));
+    expect(deepOf(dark)).toEqual(hexToRgb(dark.bg));
+    for (const colours of [light, dark]) {
+      expect(luminance(deepOf(colours))).toBeLessThan(luminance(hexToRgb(colours.surface)));
+    }
+  });
+
+  it("is what the headers, the sessions pane and the status bar lie on", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const colours = coloursOf("teal", appearance);
+      const grounds = groundsOf(colours, "modern");
+      expect(grounds.side).toEqual(deepOf(colours));
+      expect(grounds.status).toEqual(deepOf(colours));
+    }
+  });
+
+  it("follows what a theme's colours are rather than the appearance it is worn in", () => {
+    const night = coloursOf("night", "light", THEMES);
+    expect(deepOf(night)).toEqual(hexToRgb(night.bg));
   });
 });
 

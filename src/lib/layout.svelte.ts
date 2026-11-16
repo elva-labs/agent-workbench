@@ -44,6 +44,10 @@ export type Mode = "working" | "reviewing" | "editing";
     is the modern look's and wider than the terminal look's, so the layout's
     sums hold in either. A divider inside a pane takes none. */
 export const SPLITTER = 8;
+/** The room a divider inside a pane takes, between the tree and what is
+    beside it or between the shells and their list: none, since it lies
+    over the seam. */
+export const INNER = 0;
 /** The frame's padding across the window, the most a look gives it. */
 export const FRAME_PADDING = 20;
 
@@ -69,7 +73,7 @@ export const MIN = {
 } as const;
 
 /** The review pane holds a tree and the content side by side. */
-export const MIN_REVIEW = MIN.tree + SPLITTER + MIN.viewer;
+export const MIN_REVIEW = MIN.tree + INNER + MIN.viewer;
 
 /** The share of the content width the viewer's pane opens at: the file is
     what is being read, the agent is glanced at beside it. */
@@ -414,7 +418,7 @@ function resolveLayout(width: number, height: number) {
     layout.terminal = Math.min(Math.max(layout.terminal, MIN.terminal), room);
   }
   // Inside the panel, the shells keep their minimum and the list gives way.
-  const listRoom = width - SPLITTER - MIN.shells;
+  const listRoom = width - INNER - MIN.shells;
   layout.terminalList = Math.min(
     Math.max(layout.terminalList, MIN.terminalList),
     Math.max(MIN.terminalList, listRoom),
@@ -439,7 +443,7 @@ function resolveLayout(width: number, height: number) {
     );
 
     // Inside the pane, the content keeps its minimum and the tree gives way.
-    const treeRoom = layout.review - SPLITTER - MIN.viewer;
+    const treeRoom = layout.review - INNER - MIN.viewer;
     layout.tree = Math.min(
       Math.max(layout.tree, MIN.tree),
       Math.max(MIN.tree, treeRoom),
@@ -503,11 +507,11 @@ function resolveEditing(width: number) {
     : clamp(layout.editAgent, MIN.agent, beside - SPLITTER - MIN.editor);
   const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
 
-  layout.editTreeForced = beside - agent - SPLITTER - MIN.tree < MIN.editor;
+  layout.editTreeForced = beside - agent - INNER - MIN.tree < MIN.editor;
   layout.editTreeDrawn = layout.editTreeForced
     ? layout.editTree
-    : clamp(layout.editTree, MIN.tree, beside - agent - SPLITTER - MIN.editor);
-  const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + SPLITTER;
+    : clamp(layout.editTree, MIN.tree, beside - agent - INNER - MIN.editor);
+  const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + INNER;
 
   layout.sessionsForced = width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
   layout.sessionsPeek &&= !sessionsVisible() && layout.sessionsForced;
@@ -526,7 +530,7 @@ function sessionsColumn() {
     width the drag ends at is the one chosen. The editor keeps its room
     with the panes as they are: a drag never folds or hides one. */
 export function resizeEditAgent(dx: number) {
-  const tree = editTreeVisible() ? layout.editTreeDrawn + SPLITTER : 0;
+  const tree = editTreeVisible() ? layout.editTreeDrawn + INNER : 0;
   const most = layout.width - sessionsColumn() - tree - SPLITTER - MIN.editor;
   layout.editAgent = clamp(layout.editAgentDrawn - dx, MIN.agent, most);
   layout.editAgentDragged = true;
@@ -536,7 +540,7 @@ export function resizeEditAgent(dx: number) {
 /** Drags the tree column's edge while editing, on the same terms. */
 export function resizeEditTree(dx: number) {
   const agent = agentVisible() ? SPLITTER + layout.editAgentDrawn : 0;
-  const most = layout.width - sessionsColumn() - agent - SPLITTER - MIN.editor;
+  const most = layout.width - sessionsColumn() - agent - INNER - MIN.editor;
   layout.editTree = clamp(layout.editTreeDrawn + dx, MIN.tree, most);
   applyLayout(layout.width);
 }

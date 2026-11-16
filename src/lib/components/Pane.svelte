@@ -141,7 +141,7 @@
     flex-direction: column;
     margin: var(--pane-margin);
     background: var(--pane-bg);
-    border: 1px solid var(--pane-border);
+    border: var(--pane-edge) solid var(--pane-border);
     border-radius: var(--radius-pane);
     box-shadow: var(--pane-shadow);
     overflow: hidden;
@@ -222,13 +222,13 @@
 
   /* The frame's padding and the pane's border are already part of the inset. */
   header.inset {
-    --lead: calc(var(--controls-inset) - var(--frame-pad-left) - 1px);
+    --lead: calc(var(--controls-inset) - var(--frame-pad-left) - var(--pane-edge));
   }
 
   header.inset.beside {
     --lead: max(
       var(--pane-pad),
-      calc(var(--controls-inset) - var(--frame-pad-left) - 1px - var(--sessions-col))
+      calc(var(--controls-inset) - var(--frame-pad-left) - var(--pane-edge) - var(--sessions-col))
     );
   }
 
@@ -359,11 +359,11 @@
     right: 0;
     bottom: auto;
     z-index: 11;
-    height: calc(var(--frame-pad-top) + 1px + var(--head-height));
+    height: calc(var(--frame-pad-top) + var(--pane-edge) + var(--head-height));
   }
 
   :global(:root[data-look="modern"]) header.controlled {
-    padding-right: calc(var(--controls-w) + var(--pane-pad) - var(--frame-pad) - 1px);
+    padding-right: calc(var(--controls-w) + var(--pane-pad) - var(--frame-pad) - var(--pane-edge));
   }
 
   .title,

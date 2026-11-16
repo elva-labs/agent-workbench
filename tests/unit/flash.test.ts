@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FLASH_MS, flash, resetFlash, say } from "$lib/flash.svelte";
+import { FLASH_MS, flash, hold, letGo, resetFlash, say } from "$lib/flash.svelte";
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -34,5 +34,26 @@ describe("a word in the status bar", () => {
     expect(flash.text).toBe("x");
     vi.advanceTimersByTime(FLASH_MS);
     expect(flash.text).toBeNull();
+  });
+});
+
+describe("a word held in the status bar", () => {
+  it("stays until it is let go, and a word in passing does not take it away", () => {
+    hold("Arrows resize");
+    vi.advanceTimersByTime(FLASH_MS * 4);
+    expect(flash.held).toBe("Arrows resize");
+    say("13 px");
+    vi.advanceTimersByTime(FLASH_MS);
+    expect(flash.text).toBeNull();
+    expect(flash.held).toBe("Arrows resize");
+    letGo("Arrows resize");
+    expect(flash.held).toBeNull();
+  });
+
+  it("is let go only by the word that holds it", () => {
+    hold("one");
+    hold("two");
+    letGo("one");
+    expect(flash.held).toBe("two");
   });
 });

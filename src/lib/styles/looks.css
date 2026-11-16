@@ -47,6 +47,7 @@
   --panel-inset: 8px;
 
   --pane-bg: transparent;
+  --pane-edge: 0px;
   --pane-border: transparent;
   --pane-border-on: transparent;
   --pane-margin: 0px;
@@ -109,7 +110,6 @@
    rule again, and the dividers inside a pane draw theirs. */
 @media (prefers-contrast: more), (forced-colors: active) {
   :root[data-look="modern"] {
-    --pane-border: transparent;
     --head-rule: var(--rule-strong);
     --status-rule: var(--rule-strong);
     --card-edge: var(--rule-strong);

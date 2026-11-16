@@ -189,20 +189,20 @@
     left: 100%;
   }
 
-  .horizontal > .before,
-  .horizontal > .after {
+  .splitter.horizontal > i.before,
+  .splitter.horizontal > i.after {
     left: 0;
     right: 0;
     width: auto;
     height: calc((var(--reach) - var(--track)) / 2);
   }
 
-  .horizontal > .before {
+  .splitter.horizontal > i.before {
     top: auto;
     bottom: 100%;
   }
 
-  .horizontal > .after {
+  .splitter.horizontal > i.after {
     top: 100%;
     bottom: auto;
   }
