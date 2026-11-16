@@ -5,6 +5,7 @@
 //! The desktop app runs them on its blocking pool so the window keeps
 //! painting; the daemon gives each request a thread of its own.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -40,6 +41,15 @@ pub struct Spawned {
     /// None for an agent that mints its own: `session_identified` follows
     /// once the agent has written it down.
     pub session_id: Option<String>,
+}
+
+/// What a terminal session is started with, before its process is: the
+/// agent's command, the files of the session's own it is given, and its id
+/// when the workbench knows it.
+struct Prepared {
+    command: portable_pty::CommandBuilder,
+    files: SessionFiles,
+    session_id: Option<String>,
 }
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
@@ -382,95 +392,31 @@ impl Core {
         rows: u16,
         output: impl FnOnce(&str) -> Output,
     ) -> Result<Spawned, String> {
-        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
-        let environment = env::environment();
+        let Prepared {
+            command,
+            files,
+            session_id,
+        } = self.prepare(
+            agent,
+            project,
+            cwd,
+            session,
+            token,
+            prompt,
+            model,
+            config_dir,
+            instructions,
+            start_only,
+            afresh,
+            &env::environment().vars,
+        )?;
         // The project a session belongs to is the one that is open, which
         // is what the plugins know it by, and not the worktree under it
         // the agent may run in.
         let opened = project.to_string_lossy().to_string();
-        let instructions = instructions.filter(|text| !text.trim().is_empty());
         let token = token.filter(|token| !token.trim().is_empty());
-        let orchestrator = instructions.is_some();
-        self.hooks_for(agent, project, cwd, config_dir);
-        let project = cwd.unwrap_or(project);
-
-        // A resumed session's id is known, and a fresh one's when the agent
-        // takes the one the workbench chooses; one it mints is found later.
-        let resumed = session.is_some();
-        let session_id = match session {
-            Some(id) => Some(id),
-            None if adapter.takes_id() => Some(new_session_id()),
-            None => None,
-        };
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
-        let expanded =
-            config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
-        // An account's directory exists before the agent is pointed at it:
-        // Claude Code makes its own, Codex refuses to start without one.
-        if let Some(dir) = &expanded {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-        }
-        // A session that follows a workflow hands its work out with the
-        // workbench's start tool, so it is not started where no tool server
-        // can reach it.
-        // Where the agent's own configuration already points at the server,
-        // an agent that passes its servers only the variables it is told to
-        // is told the server again, with the session's token to pass on.
-        // Nothing else needs to know where the server is.
-        let found = match self.home.as_deref() {
-            Some(home) if instructions.is_some() || adapter.names_server_vars() => Some(
-                hook::tool_server(home, project, agent, config_dir, &environment.vars),
-            ),
-            _ => None,
-        };
-        let server = match (instructions, &found) {
-            (None, _) => None,
-            (Some(_), Some(hook::ToolServer::Configured)) => None,
-            (Some(_), Some(hook::ToolServer::Named(daemon))) => Some(daemon.clone()),
-            (Some(_), Some(hook::ToolServer::Missing) | None) => return Err(NO_TOOLS.into()),
-        };
-        let configured = match (&found, self.home.as_deref()) {
-            (Some(hook::ToolServer::Configured), Some(home)) => Some(hook::daemon_path(home)),
-            _ => None,
-        };
-        // An agent that reads the instructions and the server from files is
-        // given files of the session's own, which go when the session does.
-        let mut files = SessionFiles::default();
-        let mut instructions_file = None;
-        let mut server_file = None;
-        if let (Some(text), Some(home), true) =
-            (instructions, self.home.as_deref(), adapter.reads_files())
-        {
-            instructions_file = Some(files.write(home, "md", text)?);
-            if let Some(daemon) = &server {
-                server_file =
-                    Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
-            }
-        }
-        let ctx = LaunchCtx {
-            project,
-            env: &environment.vars,
-            session: session_id.as_deref(),
-            token,
-            prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
-            model: model.filter(|model| !model.trim().is_empty()),
-            config_dir: expanded.as_deref(),
-            orchestrator,
-            instructions,
-            instructions_file: instructions_file.as_deref(),
-            start_only: instructions.is_some() && start_only,
-            server: server.as_deref(),
-            server_file: server_file.as_deref(),
-            configured: configured.as_deref(),
-            afresh: resumed && afresh,
-        };
-        let surface = match &session_id {
-            Some(id) if resumed => adapter.resume(&ctx, id)?,
-            Some(id) => adapter.launch(&ctx, id)?,
-            None => adapter.launch(&ctx, "")?,
-        };
-        let Surface::Pty(command) = surface;
+        let project = cwd.unwrap_or(project);
 
         let codex_activity = (agent == "codex")
             .then(|| {
@@ -505,6 +451,118 @@ impl Core {
             );
         }
         Ok(Spawned { pty_id, session_id })
+    }
+
+    /// The command a terminal session is started with, the files of its
+    /// own it was given, and its id when the workbench knows it, for
+    /// [`Core::spawn`], in the environment `vars`. Whether the session
+    /// directs the others is whether it follows a workflow, wherever it
+    /// runs.
+    #[allow(clippy::too_many_arguments)]
+    fn prepare(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: Option<String>,
+        token: Option<&str>,
+        prompt: Option<&str>,
+        model: Option<&str>,
+        config_dir: Option<&str>,
+        instructions: Option<&str>,
+        start_only: bool,
+        afresh: bool,
+        vars: &HashMap<String, String>,
+    ) -> Result<Prepared, String> {
+        let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        let instructions = instructions.filter(|text| !text.trim().is_empty());
+        let token = token.filter(|token| !token.trim().is_empty());
+        let orchestrator = instructions.is_some();
+        self.hooks_for(agent, project, cwd, config_dir);
+        let project = cwd.unwrap_or(project);
+
+        // A resumed session's id is known, and a fresh one's when the agent
+        // takes the one the workbench chooses; one it mints is found later.
+        let resumed = session.is_some();
+        let session_id = match session {
+            Some(id) => Some(id),
+            None if adapter.takes_id() => Some(new_session_id()),
+            None => None,
+        };
+        let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
+        let expanded =
+            config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
+        // An account's directory exists before the agent is pointed at it:
+        // Claude Code makes its own, Codex refuses to start without one.
+        if let Some(dir) = &expanded {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        }
+        // A session that follows a workflow hands its work out with the
+        // workbench's start tool, so it is not started where no tool server
+        // can reach it.
+        // Where the agent's own configuration already points at the server,
+        // an agent that passes its servers only the variables it is told to
+        // is told the server again, with the session's token to pass on.
+        // Nothing else needs to know where the server is.
+        let found = match self.home.as_deref() {
+            Some(home) if instructions.is_some() || adapter.names_server_vars() => {
+                Some(hook::tool_server(home, project, agent, config_dir, vars))
+            }
+            _ => None,
+        };
+        let server = match (instructions, &found) {
+            (None, _) => None,
+            (Some(_), Some(hook::ToolServer::Configured)) => None,
+            (Some(_), Some(hook::ToolServer::Named(daemon))) => Some(daemon.clone()),
+            (Some(_), Some(hook::ToolServer::Missing) | None) => return Err(NO_TOOLS.into()),
+        };
+        let configured = match (&found, self.home.as_deref()) {
+            (Some(hook::ToolServer::Configured), Some(home)) => Some(hook::daemon_path(home)),
+            _ => None,
+        };
+        // An agent that reads the instructions and the server from files is
+        // given files of the session's own, which go when the session does.
+        let mut files = SessionFiles::default();
+        let mut instructions_file = None;
+        let mut server_file = None;
+        if let (Some(text), Some(home), true) =
+            (instructions, self.home.as_deref(), adapter.reads_files())
+        {
+            instructions_file = Some(files.write(home, "md", text)?);
+            if let Some(daemon) = &server {
+                server_file =
+                    Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
+            }
+        }
+        let ctx = LaunchCtx {
+            project,
+            env: vars,
+            session: session_id.as_deref(),
+            token,
+            prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
+            model: model.filter(|model| !model.trim().is_empty()),
+            config_dir: expanded.as_deref(),
+            orchestrator,
+            instructions,
+            instructions_file: instructions_file.as_deref(),
+            start_only: instructions.is_some() && start_only,
+            server: server.as_deref(),
+            server_file: server_file.as_deref(),
+            configured: configured.as_deref(),
+            afresh: resumed && afresh,
+        };
+        let surface = match &session_id {
+            Some(id) if resumed => adapter.resume(&ctx, id)?,
+            Some(id) => adapter.launch(&ctx, id)?,
+            None => adapter.launch(&ctx, "")?,
+        };
+        let Surface::Pty(command) = surface;
+        Ok(Prepared {
+            command,
+            files,
+            session_id,
+        })
     }
 
     /// Starts an agent as an integrated session: a process spoken to in
@@ -1459,6 +1517,58 @@ mod tests {
             home.join(".agent-workbench").join("orchestrator")
         );
         assert!(!PathBuf::from(&dir).exists());
+    }
+
+    /// A session resumed in the folder an earlier version ran orchestrators
+    /// in is told nothing of directing, even with the hooks and the tool
+    /// server that version wrote there: only a workflow makes one direct.
+    #[test]
+    fn a_session_in_the_orchestrator_folder_directs_only_under_a_workflow() {
+        let home = Scratch::new("api-folder-role");
+        let folder = PathBuf::from(core_at(&home).orchestrator_dir().unwrap());
+        std::fs::create_dir_all(&folder).unwrap();
+        let bin = home.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("claude"), b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(bin.join("claude"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        let daemon = hook::daemon_path(&home);
+        std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
+        std::fs::write(&daemon, b"").unwrap();
+        let vars = HashMap::from([("PATH".to_string(), bin.to_string_lossy().to_string())]);
+        hook::install(&home, &folder, &[], &vars).unwrap();
+
+        let role = |instructions: Option<&str>| {
+            let prepared = core_at(&home)
+                .prepare(
+                    "claude-code",
+                    &folder,
+                    None,
+                    Some("old-plan".into()),
+                    Some("token-1"),
+                    None,
+                    None,
+                    None,
+                    instructions,
+                    true,
+                    false,
+                    &vars,
+                )
+                .unwrap();
+            prepared
+                .command
+                .get_env(adapter::ROLE_VAR)
+                .map(|value| value.to_string_lossy().to_string())
+        };
+        assert_eq!(role(None), None);
+        assert_eq!(
+            role(Some("1. Direct the work.")),
+            Some(adapter::ORCHESTRATOR_ROLE.to_string())
+        );
     }
 
     #[test]
