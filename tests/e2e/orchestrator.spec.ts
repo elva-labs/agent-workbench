@@ -598,7 +598,7 @@ test.describe("the orchestrator folder", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((dir) => {
       if (localStorage.getItem("workbench.mine") === null)
-        localStorage.setItem("workbench.mine", JSON.stringify({ [dir]: ["old-plan"] }));
+        localStorage.setItem("workbench.mine", JSON.stringify({ [dir]: ["old-plan", "old-docs"] }));
     }, ORCHESTRATOR_FOLDER);
   });
 
@@ -656,6 +656,54 @@ test.describe("the orchestrator folder", () => {
     expect(spawned.instructions ?? null).toBeNull();
     expect(spawned.token).toBeTruthy();
     expect(spawned.token).not.toBe("old-plan");
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+  });
+
+  // A session resumed there runs as its agent is set, integrated here, and
+  // its subagents hang under its row as any session's do, above the past
+  // session still to resume.
+  test("hangs a resumed session's subagents under it, above the past ones", async ({ page }) => {
+    const both = [
+      ...PAST,
+      { id: "old-docs", modified: Math.floor(Date.now() / 1000) - 7200, size: 700, title: "Split the docs work" },
+    ];
+    await installFakeCore(page, {
+      settings: { ...NO_WORKFLOW, integrated: ["claude-code"] },
+      orchestratorTranscripts: both,
+    });
+    await page.goto("/");
+    // Its past sessions are listed while it is the project on screen.
+    await folder(page).locator(".project-row").click();
+    await page.getByTestId("past-session").filter({ hasText: "Plan the release" }).click();
+    const conversation = page.locator("[data-testid='conversation'].active");
+    await expect(conversation.getByTestId("composer-input")).toBeEnabled();
+    await conversation.getByTestId("composer-input").fill("Where did the plan get to?");
+    await conversation.getByTestId("composer-input").press("Enter");
+    await page.evaluate(() => {
+      const f = (window as unknown as { __integrated: Record<string, (...args: unknown[]) => unknown> }).__integrated;
+      f.startTurn("int-1");
+      const call = f.startTool("int-1", "Agent", { description: "Read the old plan", subagent_type: "Explore", prompt: "go" }, { kind: "agent" });
+      f.task("int-1", call, { background: false });
+    });
+    await page.mouse.move(900, 500);
+
+    const section = page.locator("section.proj").filter({ has: folder(page) });
+    const resumed = section.getByTestId("session-row");
+    const sub = section.getByTestId("subagent-row").filter({ hasText: "Read the old plan" });
+    const left = section.getByTestId("past-session");
+    await expect(resumed).toHaveCount(1);
+    await expect(sub).toBeVisible();
+    // The past row of the session resumed fades out and leaves the other.
+    await expect(left).toHaveCount(1);
+    await expect(left).toHaveText(/Split the docs work/);
+    await expect.poll(async () => (await sub.boundingBox())!.y).toBeGreaterThan((await resumed.boundingBox())!.y);
+    const [own, under, after] = await Promise.all([resumed, sub, left].map(async (it) => (await it.boundingBox())!));
+    expect(under.y).toBeGreaterThanOrEqual(own.y + own.height - 1);
+    expect(after.y).toBeGreaterThanOrEqual(under.y + under.height - 1);
+    const ownDot = (await resumed.locator(".dot").boundingBox())!;
+    const subDot = (await sub.locator(".dot").boundingBox())!;
+    expect(subDot.x).toBeGreaterThan(ownDot.x + ownDot.width);
+    // Still nothing new offered there.
     await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
   });
 

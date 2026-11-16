@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { BUILD_AND_REVIEW, DIRECT, PROJECT, installFakeCore } from "./fake";
 
 // An integrated Claude Code session's subagents hang under its row on the
 // rail while they run. The fake's first integrated session is int-1; one it
@@ -383,5 +383,60 @@ test.describe("subagents on the rail", () => {
     expect(await fill(0)).toBe("rgba(0, 0, 0, 0)");
     expect(await cross(1)).toBe('""');
     expect(await fill(2)).not.toBe("rgba(0, 0, 0, 0)");
+  });
+
+  // Under Direct the orchestrator hands each piece to a worker, which keeps
+  // its own subagents: they hang a step in from the worker's row, which
+  // says its step, and nothing on either row is cut to make room.
+  test("hang under a worker of a Direct run, a step in from the worker", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(Navigator.prototype, "platform", { get: () => "Linux x86_64" });
+    });
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { integrated: ["claude-code"], workflows: { list: [BUILD_AND_REVIEW, DIRECT], default: "Direct", overrides: {} } },
+    });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(input(page)).toBeEnabled();
+    await input(page).fill("Fix the flaky cache test");
+    await input(page).press("Enter");
+    await agent(page, `f.startTurn("int-1");`);
+    await page.evaluate(
+      ({ project }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id: "c-start",
+          tool: "start",
+          arguments: { project, prompt: "Fix the flaky cache test", name: "Fix the cache", step: "Work" },
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT },
+    );
+    await page.getByTestId("conduct-allow").click();
+    const worker = page.locator(`${SESSIONS} [data-testid='started-session']`);
+    await expect(worker).toHaveCount(1);
+    await page.mouse.move(900, 500);
+    await agent(page, `f.startTurn("int-2");`);
+    await subagent(page, "Find where the cache is read", { handle: "int-2", kind: "Explore" });
+
+    const sub = row(page, "Find where the cache is read");
+    await expect(sub).toBeVisible();
+    await expect(worker.getByTestId("started-role")).toHaveText("Work");
+    const starter = page.locator(`${SESSIONS} [data-testid='session-row']`);
+    const [starterDot, workerDot, subDot] = await Promise.all(
+      [starter.locator(".dot").first(), worker.locator(".dot"), sub.locator(".dot")].map((dot) => settled(dot)),
+    );
+    expect(workerDot.x).toBeGreaterThan(starterDot.x + starterDot.width);
+    expect(subDot.x).toBeGreaterThan(workerDot.x + workerDot.width);
+    expect(workerDot.y).toBeGreaterThan(starterDot.y);
+    expect(subDot.y).toBeGreaterThan(workerDot.y);
+    // Each row inside the pane, its step and the subagent's line whole.
+    const pane = await box(page.locator(SESSIONS));
+    for (const it of [worker, sub]) {
+      const at = await box(it);
+      expect(at.x + at.width).toBeLessThanOrEqual(pane.x + pane.width + 0.5);
+    }
+    expect(await worker.getByTestId("started-role").evaluate((el) => el.scrollWidth <= el.clientWidth + 0.5)).toBe(true);
   });
 });
