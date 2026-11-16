@@ -1,6 +1,6 @@
 <script lang="ts">
   import { core } from "$lib/core";
-  import { saidBlocks } from "$lib/media.svelte";
+  import { saidBlocks, settled } from "$lib/media.svelte";
   import { mount, tick, unmount } from "svelte";
   import Copy from "./Copy.svelte";
 
@@ -9,7 +9,8 @@
    * renders for a presented document, links opening outside the window and
    * an image from an address shown as a link to it rather than fetched.
    * While it streams it is drawn again at most once a frame, a block at a
-   * time so the blocks before the last stay as they are, and a caret
+   * time: the blocks before the last are rendered once and stay as they
+   * are, only the last is rendered again as words come, and a caret
    * stands where the next words will come, so the text grows in place.
    * Every code block, at the top or in a list or a quote, has a Copy in its
    * top corner that copies its code; one in a block that is done keeps its
@@ -44,7 +45,30 @@
     if (frame !== null) cancelAnimationFrame(frame);
   });
 
-  let blocks = $derived(saidBlocks(shown));
+  /** The whole blocks of a reply that streams: their text and what they
+      render as, so they are rendered once. */
+  let kept = { text: "", blocks: [] as string[] };
+  /** A line that defines where a reference link leads. */
+  const DEFINES = /^ {0,3}\[[^\]\n]+\]:/m;
+
+  let blocks = $derived.by(() => {
+    const now = shown;
+    // Whole, a reply is rendered whole once more, and one that defines a
+    // reference link is rendered whole as it streams, so the link finds an
+    // address defined after it as soon as it comes.
+    if (!streaming || DEFINES.test(now)) {
+      kept = { text: "", blocks: [] };
+      return saidBlocks(now);
+    }
+    if (!now.startsWith(kept.text)) kept = { text: "", blocks: [] };
+    let rest = now.slice(kept.text.length);
+    const whole = settled(rest);
+    if (whole > 0) {
+      kept = { text: kept.text + rest.slice(0, whole), blocks: [...kept.blocks, ...saidBlocks(rest.slice(0, whole))] };
+      rest = rest.slice(whole);
+    }
+    return [...kept.blocks, ...saidBlocks(rest)];
+  });
 
   let box = $state<HTMLDivElement | null>(null);
 

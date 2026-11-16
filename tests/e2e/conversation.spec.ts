@@ -2512,3 +2512,21 @@ test.describe("copying from the conversation", () => {
     expect(await copied(page)).toEqual(["First words", "First words and more."]);
   });
 });
+
+test("resolves a reference link while its reply streams, once its address comes", async ({ page }) => {
+  await openIntegrated(page);
+  await agent(page, `f.startTurn("${H}");`);
+  const text = page.getByTestId("agent-text").last();
+  // A piece a frame, each drawn before the next comes.
+  for (const [piece, shows] of [
+    ["See [the notes][r] for more.\n\n", "for more"],
+    ["More words after it.\n\n", "More words"],
+    ["[r]: https://example.com/r\n\n", "More words"],
+    ["And the rest", "And the rest"],
+  ]) {
+    await agent(page, `f.emit("${H}", { type: "text", block: "refs", parent: null, text: ${JSON.stringify(piece)}, done: false });`);
+    await expect(text).toContainText(shows);
+  }
+  await expect(text.locator("a[href='https://example.com/r']")).toHaveText("the notes");
+  await expect(text).not.toContainText("[the notes][r]");
+});

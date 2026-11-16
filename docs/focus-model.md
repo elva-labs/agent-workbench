@@ -342,14 +342,15 @@ reached.
 | <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop
 each: the thread, where the arrows move through its folds, steps, links
-and Copy buttons from what is in view, each Copy after what it belongs to
-and shown while the keyboard is on it, and <kbd>Enter</kbd> opens or
-presses one, and the dock's choices. The composer's
+and Copy buttons from what is in view, drawing what is not drawn yet as
+they come to it, each Copy after what it belongs to and shown while the
+keyboard is on it, and <kbd>Enter</kbd> opens or presses one, and the
+dock's choices. The composer's
 controls, attach, the model and the mode, Send and Stop, the dock's folds,
 and the buttons of the cards that ask before a session can run are stops
 of their own in reading order. Focus is always drawn where the keyboard

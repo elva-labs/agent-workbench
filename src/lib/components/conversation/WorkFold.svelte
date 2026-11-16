@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { TextPart, ToolCall } from "$lib/conversation.svelte";
-  import { workSummary } from "$lib/thread";
+  import { openFolds, toggle } from "$lib/folds";
+  import { foldKey, workSummary } from "$lib/thread";
   import Icon from "./Icon.svelte";
   import Step from "./Step.svelte";
 
@@ -16,7 +17,9 @@
 
   let { parts, root }: Props = $props();
 
-  let open = $state(false);
+  const folds = openFolds();
+  let fold = $derived(foldKey("work", parts[0]));
+  let open = $derived(folds().has(fold));
   let now = $state(Date.now());
 
   let summary = $derived(workSummary(parts, now));
@@ -30,7 +33,7 @@
 </script>
 
 <div class="fold" class:open data-testid="work">
-  <button class="line" tabindex="-1" data-thread-item onclick={() => (open = !open)} aria-expanded={open} data-testid="work-line">
+  <button class="line" tabindex="-1" data-thread-item onclick={() => toggle(folds(), fold)} aria-expanded={open} data-testid="work-line">
     <span class="chev"><Icon name="chev" size={12} /></span>
     <span class="head" class:running={summary.running}>{summary.head}{summary.detail ? "," : ""}</span>
     {#if summary.detail}<span class="detail">{summary.detail}</span>{/if}
