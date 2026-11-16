@@ -265,6 +265,55 @@ for (const look of LOOKS)
     });
   }
 
+/** A call from the demo project's own session to the conductor, allowed
+    when it asks, answered before this returns. */
+async function conduct(page: Page, id: string, tool: string, args: Record<string, unknown>) {
+  await page.evaluate(
+    ({ project, id, tool, args }) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id,
+        tool,
+        arguments: args,
+        cwd: project,
+        session: "session-1",
+      }),
+    { project: PROJECT, id, tool, args },
+  );
+  const allow = page.getByTestId("conduct-allow");
+  await expect
+    .poll(async () => {
+      if (await allow.isVisible()) await allow.click();
+      const answers =
+        (await page.evaluate(() => (window as unknown as { __conductAnswers?: { id: string }[] }).__conductAnswers)) ?? [];
+      return answers.some((answer) => answer.id === id);
+    })
+    .toBe(true);
+}
+
+for (const look of LOOKS)
+  for (const appearance of APPEARANCES)
+    test(`nothing solid in a card: the board section and its rows, ${look}, ${appearance}`, async ({ page }) => {
+      await open(page, look, appearance);
+      await page.getByTestId("start-agent").click();
+      await expect(page.locator(TREE)).toBeVisible();
+      await conduct(page, "b-1", "start", { project: PROJECT, prompt: "Fix the flaky cache test", name: "Fix the cache" });
+      await conduct(page, "b-2", "start", { project: PROJECT, prompt: "Bump the client", name: "Bump the client" });
+      await page.locator("section[data-pane='sessions']").getByTestId("session-row").first().click();
+      const rows = page.getByTestId("board-row");
+      await expect(rows).toHaveCount(2);
+      // A row with its buttons showing, and the field that sends it a line.
+      await rows.last().hover();
+      await walk(page);
+      await rows.last().getByTestId("board-send").click();
+      await expect(page.getByTestId("board-send-field")).toBeVisible();
+      await walk(page);
+      await page.keyboard.press("Escape");
+      // The question before stopping them all.
+      await page.getByTestId("board-stop-all").click();
+      await expect(page.getByTestId("board-stop-all-ask")).toBeVisible();
+      await walk(page);
+    });
+
 test("with no share on the cards stamps nothing and leaves the agent's card solid", async ({ page }) => {
   await installFakeCore(page, {
     open: [PROJECT],
