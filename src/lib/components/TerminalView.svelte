@@ -88,6 +88,9 @@
       follows: a share moving within it changes nothing here. */
   let through = $derived(cardsThrough());
 
+  /** Whether a background or a share of it is being picked. */
+  let picking = $derived(theme.preview !== null);
+
   /** What WebGL here draws with, unmasked where the browser allows. */
   function glRenderer(): string | null {
     const canvas = document.createElement("canvas");
@@ -112,11 +115,14 @@
       through, since only it leaves the cells of the terminal's own ground
       unpainted: the GPU renderer would need a clear ground, on which it
       draws glyphs thinner than the page draws text and leaves dark text on
-      a dark colour a program paints faint. A context once lost stays lost
-      for this terminal. */
+      a dark colour a program paints faint. While a share is being picked a
+      terminal drawing with the DOM renderer keeps it, so a slider drawn
+      through none does not swap every terminal's renderer twice; it takes
+      the GPU renderer back once none is kept. A context once lost stays
+      lost for this terminal. */
   function useRenderer() {
     if (terminal === null) return;
-    const want = gpu && !cardsThrough();
+    const want = gpu && !cardsThrough() && !(picking && webgl === null);
     if (want && webgl === null) {
       try {
         const addon = new WebglAddon();
@@ -376,6 +382,7 @@
     theme.painted;
     void dim;
     void through;
+    void picking;
     if (!terminal) return;
     untrack(() => {
       useRenderer();
