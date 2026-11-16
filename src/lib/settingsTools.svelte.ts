@@ -272,7 +272,7 @@ export function describeSettings(): string {
     )
       .map(([token, most]) => `${token} up to ${most}px`)
       .join(", ")}. A token left out keeps the default palette's value. Its background argument keeps a background with it.`,
-    "A background tints the chrome behind the sessions pane, the headers and the status bar: one to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim, a harmony (single, complementary, analogous, triad, or free), a strength from 0.1 to 1 and grain from 0 to 1. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable.",
+    "A background tints the chrome behind the sessions pane, the headers and the status bar: one to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim, a harmony (single, complementary, analogous, triad, or free; colours close in hue, about 50 degrees apart as analogous places them, belong together and mix cleanly), a strength from 0.1 to 1 and grain from 0 to 1. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable.",
     "",
     ...describeWorkflows(),
     "",

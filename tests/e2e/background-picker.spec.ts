@@ -117,9 +117,19 @@ test("adds and removes a colour, and the last one taken away leaves none", async
   await page.getByTestId("background-add").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(1);
   await page.getByTestId("background-add").click();
+  await expect.poll(() => kept(page).then((bg) => bg?.harmony)).toBe("complementary");
   await page.getByTestId("background-add").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(3);
   await expect(page.getByTestId("background-add")).toBeDisabled();
+  // Three colours that belong together: close either side of the first,
+  // which the pad draws larger.
+  await expect.poll(() => kept(page).then((bg) => bg?.harmony)).toBe("analogous");
+  await expect(page.getByTestId("harmony-analogous")).toHaveAttribute("aria-checked", "true");
+  const hues = (await kept(page)).dots.map((dot: { hue: number }) => dot.hue);
+  const apart = (a: number, b: number) => Math.abs(((a - b + 540) % 360) - 180);
+  expect([apart(hues[1], hues[0]), apart(hues[2], hues[0])]).toEqual([50, 50]);
+  const size = (at: number) => page.getByTestId("background-dot").nth(at).evaluate((dot) => dot.getBoundingClientRect().width);
+  expect(await size(0)).toBeGreaterThan(await size(1));
   // The one the minus takes is marked on the pad and named by the minus.
   await expect(page.getByTestId("background-dot").nth(2)).toHaveClass(/chosen/);
   await expect(page.getByTestId("background-remove")).toHaveAccessibleName("Remove colour 3");
@@ -137,7 +147,7 @@ test("chooses a ready-made background keeping the strength, and None takes it aw
   await page.getByTestId("ready-aurora").click();
   await expect(page.getByTestId("ready-aurora")).toHaveAttribute("aria-checked", "true");
   await expect(page.getByTestId("background-dot")).toHaveCount(3);
-  await expect.poll(() => kept(page)).toMatchObject({ harmony: "triad", strength: 0.3, grain: 0 });
+  await expect.poll(() => kept(page)).toMatchObject({ harmony: "analogous", strength: 0.3, grain: 0 });
   await page.getByTestId("ready-none").click();
   await expect(page.getByTestId("background-dot")).toHaveCount(0);
   await expect(page.getByTestId("background-strength")).toBeDisabled();

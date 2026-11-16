@@ -102,6 +102,14 @@ const THEMES: Record<string, CustomTheme> = {
   sunken: { label: "Sunken", light: SUNKEN, dark: SUNKEN, shape: {} },
 };
 
+/** The owner's own background from beta 1: three hues a third of a turn
+    apart. */
+const HIS = [
+  { hue: 185, chroma: 0.85 },
+  { hue: 305, chroma: 0.85 },
+  { hue: 65, chroma: 0.85 },
+];
+
 const SWEPT: [string, Appearance][] = [
   ...Object.keys(PALETTE_COLOURS).flatMap((palette) =>
     (["light", "dark"] as const).map((appearance) => [palette, appearance] as [string, Appearance]),
@@ -339,7 +347,7 @@ describe("the guard on the cards", () => {
 
   it("holds the share where a terminal colour would fall under 4.5:1, and says so", () => {
     const painted = paintOf(
-      { dots: READY_MADE.find((ready) => ready.name === "aurora")!.dots, harmony: "triad", strength: 1, grain: 0.25 },
+      { dots: HIS, harmony: "triad", strength: 1, grain: 0.25 },
       "modern",
       coloursOf("mono", "light"),
       MOST_CARDS,
@@ -360,7 +368,7 @@ describe("the guard on the cards", () => {
 
   it("keeps a card's own lightness in dark, taking only the background's colour", () => {
     const colours = coloursOf("rose", "dark");
-    const choice = { dots: READY_MADE.find((ready) => ready.name === "aurora")!.dots, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
+    const choice = { dots: HIS, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
     const painted = paintOf(choice, "modern", colours, MOST_CARDS);
     const card = paint(painted.cards!.card);
     const solid = rgbToLab(hexToRgb(colours.surface));
@@ -371,7 +379,7 @@ describe("the guard on the cards", () => {
   });
 
   it("shows more of the background at every step of the range, enough to see", () => {
-    const choice = { dots: READY_MADE.find((ready) => ready.name === "aurora")!.dots, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
+    const choice = { dots: HIS, harmony: "triad" as const, strength: 0.75, grain: 0.25 };
     for (const appearance of ["light", "dark"] as const) {
       const colours = coloursOf("rose", appearance);
       const solid = rgbToLab(hexToRgb(colours.surface));

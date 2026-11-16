@@ -90,10 +90,15 @@ its distance from the centre how much colour it has. A click places the
 first colour, and dragging a colour repaints the window as it moves; what
 is let go of is kept. A harmony keeps the colours a fixed turn of the hue
 apart: single holds one, complementary two opposite each other, analogous
-three close together and triad three evenly spread. Dragging the first
-colour carries the others with it, and dragging another sets them free.
-The plus and minus under the pad add a colour, up to three, and take one
-away: the minus shows the colour it takes, which is the one last moved or
+three close together, 50 degrees either side of the first, and triad three
+evenly spread. The first colour is drawn larger. Dragging it carries the
+others with it, each keeping its own turn from it, and dragging another
+sets them free. The plus and minus under the pad add a colour, up to
+three, and take one away. A second colour is placed opposite the first,
+and a third makes three close colours around the first, since colours
+near in hue belong together and mix cleanly; to two colours placed freely
+the plus adds one close to the first, on the side away from the second.
+The minus shows the colour it takes, which is the one last moved or
 focused and has a white centre on the pad. Taking the last leaves none. A row of ready-made
 backgrounds sets the colours and keeps the strength and grain, and None
 goes back to the plain chrome. Strength is how far the background shows

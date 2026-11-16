@@ -16,6 +16,10 @@
  * from the top left down to the foot, mixed in OKLCH so the middle never
  * greys out, and a third glows from the top right. A harmony keeps the dots
  * a fixed turn of the hue apart, so dragging the first carries the others.
+ * Three colours are placed close together by default, a sixth of a turn
+ * either side of the first, since colours that are near in hue belong
+ * together and mix cleanly; three spread evenly round the wheel stay a
+ * choice.
  *
  * The background tints the chrome only, and every surface that holds text
  * to read stays solid. The guard judges each kind of text on a tinted part
@@ -92,12 +96,15 @@ export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
   dark: { lightness: 0.18, chroma: 0.13 },
 };
 
+/** How far either side of the first dot a close colour sits, in degrees. */
+export const NEAR = 50;
+
 /** The harmonies, in the order the picker shows them: each a turn of the
     hue from the first dot for every dot. */
 export const HARMONIES: { name: Exclude<Harmony, "free">; label: string; offsets: number[] }[] = [
   { name: "single", label: "Single", offsets: [0] },
   { name: "complementary", label: "Complementary", offsets: [0, 180] },
-  { name: "analogous", label: "Analogous", offsets: [0, 40, -40] },
+  { name: "analogous", label: "Analogous", offsets: [0, NEAR, -NEAR] },
   { name: "triad", label: "Triad", offsets: [0, 120, 240] },
 ];
 
@@ -117,18 +124,18 @@ export const READY_MADE: { name: string; label: string; dots: Dot[]; harmony: Ha
     harmony: "analogous",
     dots: [
       { hue: 140, chroma: 0.8 },
-      { hue: 180, chroma: 0.8 },
-      { hue: 100, chroma: 0.8 },
+      { hue: 190, chroma: 0.8 },
+      { hue: 90, chroma: 0.8 },
     ],
   },
   {
     name: "aurora",
     label: "Aurora",
-    harmony: "triad",
+    harmony: "analogous",
     dots: [
-      { hue: 185, chroma: 0.85 },
-      { hue: 305, chroma: 0.85 },
-      { hue: 65, chroma: 0.85 },
+      { hue: 250, chroma: 0.85 },
+      { hue: 300, chroma: 0.85 },
+      { hue: 200, chroma: 0.85 },
     ],
   },
   { name: "fog", label: "Fog", harmony: "single", dots: [{ hue: 250, chroma: 0.3 }] },
@@ -297,30 +304,36 @@ export function withHarmony(background: Background, harmony: Exclude<Harmony, "f
 }
 
 /** One dot moved. While a harmony holds, the first carries the others
-    with it; moving any other sets the harmony free. */
+    with it, each keeping its own turn of the hue from the first and taking
+    the first's colour, so a background kept with other turns than the
+    harmony's own keeps them; moving any other sets the harmony free. */
 export function moveDot(background: Background, index: number, dot: Dot): Background {
   const placed = { hue: turn(dot.hue), chroma: Math.min(1, Math.max(0, dot.chroma)) };
   if (index === 0 && background.harmony !== "free") {
-    return withHarmony({ ...background, dots: [placed, ...background.dots.slice(1)] }, background.harmony);
+    const from = background.dots[0].hue;
+    return {
+      ...background,
+      dots: background.dots.map((old, at) =>
+        at === 0 ? placed : { hue: turn(placed.hue + old.hue - from), chroma: placed.chroma },
+      ),
+    };
   }
   const dots = background.dots.map((old, at) => (at === index ? placed : old));
   return { ...background, dots, harmony: index === 0 ? background.harmony : "free" };
 }
 
-/** A dot more, up to three. One becomes a complementary pair and a pair in
-    harmony a triad; a free pair gains a dot in the widest gap of hue. */
+/** A dot more, up to three. One becomes a complementary pair, and a pair in
+    harmony three close colours around the first. A free pair keeps its two
+    and gains one a sixth of a turn from the first, on the side away from
+    the second. */
 export function addDot(background: Background): Background {
   const count = background.dots.length;
   if (count >= MOST_DOTS) return background;
   if (background.harmony === "single") return withHarmony(background, "complementary");
-  if (background.harmony === "complementary") return withHarmony(background, "triad");
-  const hues = background.dots.map((dot) => dot.hue).sort((a, b) => a - b);
-  let widest = { from: hues[hues.length - 1], gap: hues[0] + 360 - hues[hues.length - 1] };
-  for (let at = 1; at < hues.length; at++) {
-    const gap = hues[at] - hues[at - 1];
-    if (gap > widest.gap) widest = { from: hues[at - 1], gap };
-  }
-  const dot = { hue: turn(Math.round(widest.from + widest.gap / 2)), chroma: background.dots[0].chroma };
+  if (background.harmony !== "free") return withHarmony(background, "analogous");
+  const [first, second] = background.dots;
+  const towards = ((second.hue - first.hue + 540) % 360) - 180;
+  const dot = { hue: turn(first.hue + (towards >= 0 ? -NEAR : NEAR)), chroma: first.chroma };
   return { ...background, dots: [...background.dots, dot], harmony: "free" };
 }
 
