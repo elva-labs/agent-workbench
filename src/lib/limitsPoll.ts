@@ -26,9 +26,11 @@ import { byKey, isLive, sessions, type Session } from "$lib/sessions.svelte";
  *
  * The window is in use while it is shown and the user has pressed a key,
  * pressed or moved the pointer, scrolled or brought the window forward in
- * the last ten minutes. Focus alone is not use: a window left in front of
- * an unattended machine asks for nothing, and the first act after asks at
- * once. A question that fails says nothing; the next minute asks again.
+ * the last ten minutes. Focus alone is not use, nor is the app focusing an
+ * element or putting a session on screen of its own accord: a window left
+ * in front of an unattended machine asks for nothing, and the first act
+ * after asks at once. A question that fails says nothing; the next minute
+ * asks again.
  */
 
 /** How often the accounts in use are asked for while the window is in use. */
@@ -137,8 +139,10 @@ export function askAll(): Promise<void> {
 }
 
 /** Asks for the account of the session with this key, as it comes on
-    screen. */
+    screen, while the window is in use. A session the app puts on screen
+    in a window left alone asks nothing: the first act asks for it. */
 export function askForSession(key: string): Promise<void> {
+  if (!inUse()) return Promise.resolve();
   const session = byKey(key);
   const use = session === null ? null : useOf(session);
   return use === null ? Promise.resolve() : askFor(use);
@@ -160,13 +164,19 @@ export function used(now = Date.now()) {
   if (back) void askAll();
 }
 
-const ACTS = ["keydown", "pointerdown", "pointermove", "wheel", "focus"] as const;
+const ACTS = ["keydown", "pointerdown", "pointermove", "wheel"] as const;
 
 /** Keeps the figures of the accounts in use fresh while the window is in
     use, asking for them at once. Returns a stop function. */
 export function followLimits(target: Window = window): () => void {
   const act = () => used();
   for (const name of ACTS) target.addEventListener(name, act, { capture: true, passive: true });
+  // The window brought forward, not an element of it focused, which the
+  // app does on its own as sessions come on screen.
+  const forward = (event: Event) => {
+    if (event.eventPhase === Event.AT_TARGET) used();
+  };
+  target.addEventListener("focus", forward);
   const shown = () => {
     if (target.document.visibilityState === "visible") used();
   };
@@ -179,6 +189,7 @@ export function followLimits(target: Window = window): () => void {
   return () => {
     clearInterval(timer);
     for (const name of ACTS) target.removeEventListener(name, act, { capture: true });
+    target.removeEventListener("focus", forward);
     target.document.removeEventListener("visibilitychange", shown);
   };
 }

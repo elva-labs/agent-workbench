@@ -10,6 +10,7 @@ import {
   followLimits,
   noteWork,
   resetLimitsPoll,
+  used,
 } from "$lib/limitsPoll";
 import { sessions, type Session } from "$lib/sessions.svelte";
 
@@ -218,6 +219,7 @@ describe("asking for the figures", () => {
 
   it("asks for a session's account as the session comes on screen, and nothing for one with no session", async () => {
     sessions.all = [session("a", { account: "Work", status: "exited", agent: "codex" })];
+    used();
     await askForSession("a");
     expect(asked.map((options) => [options.agent, options.configDir])).toEqual([
       ["codex", "~/.codex-work"],
@@ -225,6 +227,42 @@ describe("asking for the figures", () => {
     ]);
     await askForSession("gone");
     expect(asked.length).toBe(2);
+  });
+
+  it("asks nothing for a session the app puts on screen in a window left alone, and asks at the first act", async () => {
+    sessions.all = [session("a", { account: "Work" }), session("b", { agent: "codex", account: "Work", status: "exited" })];
+    stop = followLimits();
+    await settle();
+    await vi.advanceTimersByTimeAsync(IDLE_AFTER + ASK_EVERY);
+    const before = asked.length;
+    sessions.active = "b";
+    await askForSession("b");
+    expect(asked.length).toBe(before);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "a" }));
+    await settle();
+    expect(asked.slice(before).map((options) => [options.agent, options.read])).toEqual([
+      ["claude-code", true],
+      ["codex", false],
+      ["codex", true],
+    ]);
+  });
+
+  it("counts the window brought forward as use, and not an element of it focused", async () => {
+    sessions.all = [session("a", { account: "Work" })];
+    stop = followLimits();
+    await settle();
+    await vi.advanceTimersByTimeAsync(IDLE_AFTER + ASK_EVERY);
+    const before = asked.length;
+    const terminal = document.createElement("textarea");
+    document.body.append(terminal);
+    terminal.focus();
+    terminal.dispatchEvent(new FocusEvent("focus"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(asked.length).toBe(before);
+    window.dispatchEvent(new FocusEvent("focus"));
+    await settle();
+    expect(asked.length).toBe(before + 1);
+    terminal.remove();
   });
 
   it("says nothing of a question that fails, and asks again the next minute", async () => {

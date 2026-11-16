@@ -322,8 +322,9 @@
     return () => offs.forEach((off) => off());
   });
 
-  // A session that comes on screen asks for its account's figures, which
-  // its machine reads where they are old or missing.
+  // A session that comes on screen while the window is in use asks for its
+  // account's figures, which its machine reads where they are old or
+  // missing.
   $effect(() => {
     const key = sessions.active;
     if (key !== null) untrack(() => void askForSession(key));
