@@ -54,6 +54,10 @@ export interface FakeIntegratedOptions {
   /** A mode the agent reports from its own configuration, whatever the
       start asked for, and which the list of modes does not hold. */
   ownMode?: string;
+  /** The mode the user's own settings start a session in when the start
+      names none: Default for Claude Code and Codex's own pair, unless it
+      says. */
+  defaultMode?: string;
   /** Keeps the sessions across a reload of the page, as the core keeps
       them while a window reloads: every call made on the fake is kept in
       the page's session storage under this key and played again when the
@@ -453,7 +457,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         startOptions.session ?? (options.mints || codex ? null : `integrated-session-${count}`);
       const settings = {
         model: startOptions.model ?? (codex ? "gpt-5-codex" : RESOLVED),
-        mode: options.ownMode ?? startOptions.mode ?? (codex ? "untrusted, workspace-write" : "default"),
+        mode: options.ownMode ?? startOptions.mode ?? options.defaultMode ?? (codex ? "untrusted, workspace-write" : "default"),
         effort: startOptions.effort ?? null,
       };
       sessions.set(id, {

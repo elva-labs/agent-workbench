@@ -31,8 +31,14 @@ import {
   runningByToken,
   reset as resetSessions,
   sessions,
+  started as startedTerminal,
+  ended as endedTerminal,
+  midTurn,
+  otherWayFor,
+  reopenOtherWay,
   wake,
 } from "$lib/sessions.svelte";
+import { modeOf, resetModes } from "$lib/sessionModes";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
@@ -781,24 +787,76 @@ describe("the last words of a run", () => {
 });
 
 describe("the mode a session starts in", () => {
-  it("is the agent's safe one, never left to its own configuration", async () => {
-    const { session } = await started();
-    expect(fake.calls[0]).toMatchObject({ method: "start", options: { mode: "default" } });
-    const codex = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
-    await launch(codex.key);
-    expect(fake.calls.filter((call) => call.method === "start")[1]).toMatchObject({ options: { agent: "codex", mode: "read-only" } });
-    expect(session.kind).toBe("integrated");
+  const starts = () => fake.calls.filter((call) => call.method === "start");
+
+  beforeEach(async () => {
+    localStorage.removeItem("workbench.modes");
+    resetModes();
+    stopListening();
+    await install({ defaultMode: "auto" });
   });
 
-  it("is the one the user chose when the session starts again, and the safe one for a mode the agent does not offer", async () => {
+  it("is named by none for a new session, so the agent's own settings decide as in a terminal", async () => {
+    const { session } = await started();
+    expect(starts()[0]).toMatchObject({ method: "start" });
+    expect((starts()[0] as { options: { mode?: string } }).options.mode).toBeUndefined();
+    // The agent says the mode its settings start it in, and the session
+    // runs in it.
+    expect(conversationOf(session.key).settings.mode).toBe("auto");
+    const codex = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(codex.key);
+    expect((starts()[1] as { options: { agent: string; mode?: string } }).options).toMatchObject({ agent: "codex" });
+    expect((starts()[1] as { options: { mode?: string } }).options.mode).toBeUndefined();
+  });
+
+  it("is the one the session last ran in when it starts again", async () => {
     const { session, handle } = await started();
     await configure(session.key, { mode: "plan" });
     expect(startMode(session, linkFor(session.key))).toBe("plan");
     fake.end(handle, true);
     await resume(session.key);
-    expect(fake.calls.filter((call) => call.method === "start").at(-1)).toMatchObject({ options: { mode: "plan" } });
-    linkFor(session.key).conversation.settings.mode = "untrusted, workspace-write";
-    expect(startMode(session, linkFor(session.key))).toBe("default");
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
+  });
+
+  it("leaves a mode from the agent's own settings that it does not offer to those settings, rather than one that asks", async () => {
+    const { session } = await started();
+    linkFor(session.key).conversation.settings.mode = "bypassPermissions";
+    expect(startMode(session, linkFor(session.key))).toBeUndefined();
+  });
+
+  it("is kept for the conversation across a restart, and goes to no other", async () => {
+    const { session, handle } = await started();
+    const id = session.id!;
+    await configure(session.key, { mode: "acceptEdits" });
+    fake.end(handle, true);
+    close(session.key);
+    // The window starts again: what it keeps in memory is gone.
+    resetModes();
+    resetIntegrated();
+    const again = await started({ resumedFrom: id });
+    expect(starts().at(-1)).toMatchObject({ options: { session: id, mode: "acceptEdits" } });
+    expect(again.session.id).toBe(id);
+    // Another conversation, and a new one another session starts, take
+    // none of it: the agent's settings decide for each.
+    await started({ resumedFrom: "another-conversation" });
+    expect((starts().at(-1) as { options: { mode?: string } }).options.mode).toBeUndefined();
+    await started({ prompt: "Fix the flaky test" });
+    expect((starts().at(-1) as { options: { mode?: string } }).options.mode).toBeUndefined();
+  });
+
+  it("is let go when a mode the agent does not offer replaces it, and when the conversation runs in a terminal", async () => {
+    const { session } = await started();
+    const id = session.id!;
+    await configure(session.key, { mode: "plan" });
+    expect(modeOf(id)).toBe("plan");
+    fake.emit(handleOf(session.key)!, { type: "configured", model: null, mode: "bypassPermissions", effort: null, efforts: [] });
+    expect(modeOf(id)).toBeNull();
+    await configure(session.key, { mode: "plan" });
+    expect(modeOf(id)).toBe("plan");
+    // A terminal run of it: its mode is the terminal's own to keep.
+    const terminal = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
+    startedTerminal(terminal.key, "pty-1", id);
+    expect(modeOf(id)).toBeNull();
   });
 });
 
@@ -812,6 +870,79 @@ describe("an interrupt with no turn running", () => {
     await settled();
     expect(fake.calls.some((call) => call.method === "interrupt")).toBe(true);
     expect(conversationOf(session.key).interrupting).toBe(false);
+  });
+});
+
+describe("a session reopened the other way", () => {
+  beforeEach(() => {
+    applyDetect(
+      {
+        id: "claude-code",
+        path: "/usr/local/bin/claude-code",
+        caps: { resumable: true, titles: true, acp: false, integrated: true },
+        fromLoginShell: true,
+      },
+      true,
+    );
+  });
+  afterEach(() => resetAgent());
+
+  /** A terminal row of a conversation, its process up. */
+  function terminalRow(id: string) {
+    const row = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
+    startedTerminal(row.key, "pty-7", id);
+    return byKey(row.key)!;
+  }
+
+  it("goes on with a terminal session as a conversation once its process has ended, in the same row", async () => {
+    const row = terminalRow("conversation-1");
+    const { key, token, ordinal } = row;
+    expect(otherWayFor(row)).toBe("integrated");
+    const reopening = reopenOtherWay(key);
+    // Its process is asked to end, and nothing starts until it has.
+    await settled();
+    expect(byKey(key)!.kind).toBe("terminal");
+    expect(otherWayFor(byKey(key)!)).toBeNull();
+    endedTerminal({ id: "pty-7", code: 0, clean: true });
+    await reopening;
+    const now = byKey(key)!;
+    expect(now).toMatchObject({ kind: "integrated", status: "starting", resumedFrom: "conversation-1", token, ordinal });
+    // Its end was the user's doing, and no news.
+    expect(now.unread).toBe(false);
+    await launch(key);
+    expect(fake.calls.find((call) => call.method === "start")).toMatchObject({
+      options: { session: "conversation-1", token },
+    });
+    expect(sessions.all.filter((one) => one.id === "conversation-1")).toHaveLength(1);
+  });
+
+  it("goes on with a conversation in a terminal once its agent has ended, in the same row", async () => {
+    const { session, key } = await started();
+    const id = session.id!;
+    const token = session.token;
+    await reopenOtherWay(key);
+    const now = byKey(key)!;
+    expect(fake.calls.some((call) => call.method === "stop")).toBe(true);
+    expect(now).toMatchObject({ kind: "terminal", status: "starting", resumedFrom: id, token, ptyId: null });
+    expect(handleOf(key)).toBeNull();
+    expect(now.unread).toBe(false);
+  });
+
+  it("is offered for a session whose conversation is known and whose agent runs both ways", async () => {
+    const { session } = await started();
+    expect(otherWayFor(session)).toBe("terminal");
+    const fresh = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "terminal");
+    expect(otherWayFor(fresh)).toBeNull();
+    resetAgent();
+    expect(otherWayFor(session)).toBeNull();
+  });
+
+  it("asks first while a turn runs", async () => {
+    const { session, handle } = await started();
+    expect(midTurn(session)).toBe(false);
+    send(session.key, "Go");
+    fake.emit(handle, { type: "state", state: "working" });
+    expect(midTurn(byKey(session.key)!)).toBe(true);
   });
 });
 
@@ -905,8 +1036,10 @@ describe("a new conversation put under a workflow", () => {
     follow(key, "Build and review");
     await vi.waitFor(() => expect(starts()).toHaveLength(3));
     const picked = starts().at(-1)!.options;
-    const without = ({ token: _token, ...rest }: Record<string, unknown>) => rest;
+    const without = ({ token: _token, mode: _mode, ...rest }: Record<string, unknown>) => rest;
     expect(without(picked as never)).toEqual(without(direct as never));
+    // The run started again keeps the mode the one it left ran in.
+    expect(picked.mode).toBe("default");
   });
 
   it("goes back to the agent alone, on its own default model", async () => {
@@ -990,7 +1123,7 @@ describe("a new conversation put under a workflow", () => {
     ]);
   });
 
-  it("keeps the mode chosen with the same agent, and starts another agent in its own safe mode", async () => {
+  it("keeps the mode chosen with the same agent, and starts another agent as its own settings say", async () => {
     const codexFlow = { ...defaultWorkflow(), name: "Codex directs", orchestrator: { agent: "codex" as const, model: "default" } };
     adoptWorkflows({ list: [defaultWorkflow(), codexFlow], default: null, overrides: {} });
     const { key } = await started();
@@ -1000,7 +1133,8 @@ describe("a new conversation put under a workflow", () => {
     expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
     follow(key, "Codex directs");
     await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
-    expect(starts().at(-1)).toMatchObject({ options: { agent: "codex", mode: "read-only", startOnly: true } });
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "codex", startOnly: true } });
+    expect(starts().at(-1)!.options.mode).toBeUndefined();
     expect(byKey(key)!.agent).toBe("codex");
     expect(byKey(key)!.model).toBeNull();
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toEqual(["gpt-5-codex"]);
@@ -1090,7 +1224,8 @@ describe("a new conversation put under a workflow", () => {
     follow(key, null);
     await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
     expect(byKey(key)!.agent).toBe("claude-code");
-    expect(starts().at(-1)).toMatchObject({ options: { agent: "claude-code", mode: "default" } });
+    expect(starts().at(-1)).toMatchObject({ options: { agent: "claude-code" } });
+    expect(starts().at(-1)!.options.mode).toBeUndefined();
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toContain("sonnet");
   });
 

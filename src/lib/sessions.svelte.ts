@@ -28,6 +28,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { forgetMode } from "$lib/sessionModes";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 
 /**
@@ -1711,6 +1712,8 @@ export function started(
   changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
+    // The mode a terminal runs in is the terminal's own to keep.
+    forgetMode(sessionId);
     keepToken(session);
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
@@ -1754,6 +1757,7 @@ export function ended(event: SessionEnded): boolean {
   unseen(session);
   // The transcript is complete now, so the history it belongs in has moved.
   loadHistory(session.project);
+  runEnded(session.key);
   return true;
 }
 
@@ -1790,6 +1794,110 @@ let stopIntegrated: (session: Session) => void = () => {};
 
 export function onIntegratedClose(handler: (session: Session) => void) {
   stopIntegrated = handler;
+}
+
+/** What stops an integrated session's agent and keeps its row, whose run
+    then ends as any run does. */
+let haltIntegrated: (session: Session) => void = () => {};
+
+export function onIntegratedHalt(handler: (session: Session) => void) {
+  haltIntegrated = handler;
+}
+
+/** The rows being reopened the other way, from the stop of their run to
+    the start of the next: their run's end is no news. */
+const reopening = new Set<string>();
+
+/** Who waits for a row's run to end, by the row's key. */
+const endings = new Map<string, () => void>();
+
+/** How long a reopen waits for the run it stopped to end before it goes
+    on, so a run that never says it ended does not hold the row for good. */
+const REOPEN_WAIT = 20_000;
+
+/** The row's run has ended: whoever waits on that hears it. */
+export function runEnded(key: string) {
+  const done = endings.get(key);
+  endings.delete(key);
+  done?.();
+}
+
+/**
+ * The way a row can be reopened the other way: integrated for a terminal
+ * session whose agent can run so, a terminal for an integrated one. Null
+ * where it cannot be: its agent runs one way only, its conversation's id
+ * is not known yet, a start or a reopen of it is on its way, or it waits on
+ * the user's word about a workflow it lost.
+ */
+export function otherWayFor(session: Session): SessionKind | null {
+  if (session.id === null || !canIntegrate(session.agent)) return null;
+  if (session.status === "starting" || session.workflowLost !== null || reopening.has(session.key)) return null;
+  return session.kind === "terminal" ? "integrated" : "terminal";
+}
+
+/** Whether the agent is at work in the session, or waits on the user in
+    the middle of a turn: what reopening it would stop. */
+export function midTurn(session: Session): boolean {
+  return isLive(session) && (session.working || session.needs !== null);
+}
+
+/**
+ * Reopens a session the other way: a terminal session as a conversation,
+ * a conversation in a terminal. Its run is stopped, and once that has
+ * ended the same conversation resumes the other way in the same row, with
+ * its token, its name and its place. A row left from the last quit only
+ * changes the way it will start.
+ */
+export async function reopenOtherWay(key: string): Promise<void> {
+  const session = byKey(key);
+  if (session === null) return;
+  const to = otherWayFor(session);
+  if (to === null) return;
+  reopening.add(key);
+  try {
+    if (session.status === "running") await stopRun(session);
+    const row = byKey(key);
+    if (row === null) return;
+    // The conversation the stopped run had, which the other way lets go
+    // of: the next run reads it back from the agent's own record.
+    if (row.kind === "integrated") stopIntegrated(row);
+    row.kind = to;
+    row.resumedFrom = row.id;
+    followsAgain(key);
+    row.ptyId = null;
+    row.working = false;
+    row.needs = null;
+    row.engaged = false;
+    row.startedAt = null;
+    row.error = null;
+    row.exitCode = null;
+    row.exact = false;
+    if (row.status !== "dormant") {
+      renewToken(row);
+      row.status = "starting";
+    }
+    changed(row);
+  } finally {
+    reopening.delete(key);
+  }
+}
+
+/** Stops the row's run, and settles once it has ended. */
+function stopRun(session: Session): Promise<void> {
+  const key = session.key;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => runEnded(key), REOPEN_WAIT);
+    endings.set(key, () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    if (session.kind === "integrated") haltIntegrated(session);
+    else if (session.ptyId !== null)
+      core()
+        .kill(session.ptyId)
+        .catch(() => runEnded(key));
+    else runEnded(key);
+  });
 }
 
 /** Closes a row. Its shells go with it, unless they are kept for the row
@@ -2159,7 +2267,7 @@ export function onDirected(handler: ((session: Session) => boolean) | null) {
     nothing else: a stop, an ending, a bell or a line left are its
     director's to hear. */
 function unseen(session: Session, asking = false) {
-  if (isViewed(session)) return;
+  if (isViewed(session) || reopening.has(session.key)) return;
   if (!asking && directed(session)) return;
   const news = asking || !session.unread;
   session.unread = true;

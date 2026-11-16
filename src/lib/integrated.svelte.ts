@@ -4,7 +4,7 @@ import { unsent, type Sent } from "$lib/mention";
 import { mentionedIn } from "$lib/mentioned.svelte";
 import { reservedName } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
-import { agentProfile } from "$lib/agent.svelte";
+import { keepMode, modeOf } from "$lib/sessionModes";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import {
@@ -32,10 +32,12 @@ import {
   leaveRun,
   noted,
   onIntegratedClose,
+  onIntegratedHalt,
   putUnder,
   rang,
   rejoined,
   rememberWorkflow,
+  runEnded,
   toldAtStart,
   toldFor,
   type Session,
@@ -234,9 +236,11 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       identify(session, body.sessionId);
       // This run started on the workflow the row follows now.
       rememberWorkflow(session);
+      keepRunMode(session, link);
       break;
     case "configured":
       session.model = body.model;
+      keepRunMode(session, link);
       break;
     case "limits":
       heardLimits(hostOf(session.project), session.account, body);
@@ -331,6 +335,7 @@ function ended(session: Session, link: Link, code: number | null, clean: boolean
   rang(session.key);
   // The transcript is complete now, so the history it belongs in moved.
   void loadHistory(session.project);
+  runEnded(session.key);
 }
 
 /**
@@ -555,13 +560,28 @@ async function restart(key: string, session: Session, link: Link) {
   settleRun(key);
 }
 
-/** The mode a session starts in: the one it ran in, when the user chose
-    one the agent offers, and otherwise the agent's safe one, which asks
-    before it acts. The agent's own configuration never decides it. */
-export function startMode(session: Session, link: Link): string {
+/** The mode a session starts in: the one it last ran in, where the window
+    knows it and the agent offers it. Otherwise none is named, and the
+    agent decides as it does in a terminal: by the mode a resumed
+    conversation last ran in, where the agent keeps that, else by the
+    user's own settings. A mode from those settings that the agent does
+    not offer is left to them again rather than replaced. */
+export function startMode(session: Session, link: Link): string | undefined {
   const mode = link.conversation.settings.mode;
-  const offered = link.conversation.ready?.modes.some((known) => known.value === mode) ?? false;
-  return mode !== null && offered ? mode : agentProfile(session.agent).safeMode;
+  if (mode !== null) return offers(link, mode) ? mode : undefined;
+  return session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined);
+}
+
+/** Whether the agent behind the link offers a mode to switch to. */
+function offers(link: Link, mode: string): boolean {
+  return link.conversation.ready?.modes.some((known) => known.value === mode) ?? false;
+}
+
+/** Keeps the mode the conversation runs in now, for the next time it
+    starts. */
+function keepRunMode(session: Session, link: Link) {
+  const mode = link.conversation.settings.mode;
+  if (session.id !== null) keepMode(session.id, mode, mode !== null && offers(link, mode));
 }
 
 /** The user trusts the folder: recorded where the agent's own question
@@ -888,6 +908,25 @@ function stop(session: Session) {
 }
 
 onIntegratedClose(stop);
+
+/** The row's agent is stopped and the row kept: its run ends as any run
+    does, its end told by the core. */
+function halt(session: Session) {
+  const link = links.get(session.key);
+  if (link === undefined || link.handle === null) {
+    runEnded(session.key);
+    return;
+  }
+  const handle = link.handle;
+  core()
+    .integratedStop(handle)
+    .catch(() => {
+      // Gone already: no end will be told of it.
+      if (link.handle === handle) ended(session, link, null, true);
+    });
+}
+
+onIntegratedHalt(halt);
 
 function message(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);

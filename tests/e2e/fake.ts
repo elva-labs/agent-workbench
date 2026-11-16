@@ -129,6 +129,9 @@ export async function installFakeCore(
     integrable?: string[];
     /** Keeps the integrated sessions across a reload, as the core does. */
     keepIntegrated?: boolean;
+    /** The mode the user's own agent settings start an integrated session
+        in when the start names none. */
+    defaultMode?: string;
     /** Past sessions the core reports for the first project, each Claude
         Code's unless it names another agent, and from the agent's own
         directory unless it names an account's. */
@@ -164,8 +167,12 @@ export async function installFakeCore(
 ) {
   // The scripted integrated session, as `window.__integrated`, for a test
   // to drive with `page.evaluate`.
+  const integratedOptions = {
+    ...(options.keepIntegrated ? { keep: "fake.integrated" } : {}),
+    ...(options.defaultMode === undefined ? {} : { defaultMode: options.defaultMode }),
+  };
   await page.addInitScript(
-    `window.__integrated = (${fakeIntegrated.toString()})(${options.keepIntegrated ? '{ keep: "fake.integrated" }' : ""});`,
+    `window.__integrated = (${fakeIntegrated.toString()})(${JSON.stringify(integratedOptions)});`,
   );
   await page.addInitScript(
     ({ open, opened, fixture, settings, settingsFile, styles, stylesFile, transcripts, agents, integrable, active, used, held, buildAndReview, direct, orchestratorFolder, orchestratorTranscripts }) => {

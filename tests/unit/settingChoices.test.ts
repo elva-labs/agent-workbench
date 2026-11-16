@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Conversation } from "$lib/conversation.svelte";
-import { effortInUse, heldModel, workflowChoices } from "$lib/settingChoices";
+import { effortInUse, heldModel, modeChoices, modeName, workflowChoices } from "$lib/settingChoices";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
@@ -44,6 +44,44 @@ describe("the effort the session runs at", () => {
 
   it("is none before the agent names one", () => {
     expect(effortInUse(ready("claude-sonnet-5-5", null, ["low", "medium", "high"]))).toBeNull();
+  });
+});
+
+describe("the mode the session runs in", () => {
+  function inMode(mode: string): Conversation {
+    const c = ready("claude-sonnet-5-5", null, []);
+    c.apply({
+      type: "configured",
+      model: "claude-sonnet-5-5",
+      mode,
+      effort: null,
+      efforts: [],
+    });
+    c.ready = {
+      ...c.ready!,
+      modes: [
+        { value: "default", name: "Default", description: null },
+        { value: "auto", name: "Auto", description: null },
+      ],
+    };
+    return c;
+  }
+
+  it("is named as the agent names a mode it offers, and in plain words otherwise", () => {
+    expect(modeName(inMode("auto"), "auto")).toBe("Auto");
+    expect(modeName(inMode("auto"), "bypassPermissions")).toBe("Bypass permissions");
+    expect(modeName(inMode("auto"), "untrusted, workspace-write")).toBe("Untrusted, workspace write");
+  });
+
+  it("is listed first when it comes from the agent's own settings, saying it does not come back once left", () => {
+    const choices = modeChoices(inMode("bypassPermissions"));
+    expect(choices.map((choice) => [choice.name, choice.on])).toEqual([
+      ["Bypass permissions", true],
+      ["Default", false],
+      ["Auto", false],
+    ]);
+    expect(choices[0].about).toContain("comes back only in a new session");
+    expect(modeChoices(inMode("auto")).map((choice) => choice.name)).toEqual(["Default", "Auto"]);
   });
 });
 

@@ -23,6 +23,9 @@
     drafting,
     forProject,
     otherWay,
+    otherWayFor,
+    midTurn,
+    reopenOtherWay,
     historyFor,
     historyLabel,
     isLive,
@@ -90,6 +93,7 @@
   import { rowFade, rowMove } from "$lib/motion";
   import { overrideOf, workflowOf } from "$lib/workflows.svelte";
   import { linkOf } from "$lib/integrated.svelte";
+  import type { SessionKind } from "$lib/sessionKind.svelte";
   import { subagentNote, subagentSaid, subagentWords, subagentsOf, type Subagent } from "$lib/subagents";
   import { showCall } from "$lib/callShown.svelte";
   import Plain from "$lib/components/conversation/Plain.svelte";
@@ -300,6 +304,7 @@
     sortOpen = !sortOpen;
     menuOpen = false;
     projectMenu = null;
+    sessionMenu = null;
     nav?.focus();
     sortAt = Math.max(
       0,
@@ -425,6 +430,7 @@
         : false;
     menuOpen = false;
     sortOpen = false;
+    sessionMenu = null;
     projectMenu = { path, up };
     projectMenuAt = 0;
     if (row?.dataset.row !== undefined) cursor = row.dataset.row;
@@ -438,11 +444,114 @@
     item.run();
   }
 
+  /** A session's own menu, from a right click on its row or the menu key
+      on the row under the cursor: the session reopened the other way where
+      its agent runs both ways, and stopping it. It opens upwards near the
+      pane's foot, and its keyboard cursor walks the items while it is
+      open. */
+  let sessionMenu = $state<{ key: string; up: boolean } | null>(null);
+  let sessionMenuAt = $state(0);
+
+  let sessionItems = $derived.by((): MenuItem[] => {
+    if (sessionMenu === null) return [];
+    const session = byKey(sessionMenu.key);
+    if (session === null) return [];
+    const other = otherWayFor(session);
+    const live = isLive(session);
+    return [
+      ...(other === null
+        ? []
+        : [
+            {
+              id: "session-menu-reopen",
+              label: other === "integrated" ? "Reopen as a conversation" : "Reopen in a terminal",
+              title:
+                other === "integrated"
+                  ? "Stop it, and go on with the same conversation drawn here"
+                  : "Stop it, and go on with the same conversation in the agent's own terminal",
+              disabled: false,
+              run: () => reopenAsking(session, other),
+            },
+          ]),
+      {
+        id: "session-menu-stop",
+        label: live ? "Stop" : "Close",
+        destructive: true,
+        disabled: false,
+        run: () => void closeSessionAsking(session),
+      },
+    ];
+  });
+
+  function openSessionMenu(key: string, e: MouseEvent | null) {
+    e?.preventDefault();
+    const row = nav?.querySelector<HTMLElement>(`[data-row="${CSS.escape(`session:${key}`)}"]`) ?? null;
+    const tree = nav?.querySelector<HTMLElement>(".tree");
+    const up =
+      row !== null && tree !== null && tree !== undefined
+        ? row.getBoundingClientRect().bottom > tree.getBoundingClientRect().bottom - 90
+        : false;
+    menuOpen = false;
+    sortOpen = false;
+    projectMenu = null;
+    sessionMenu = { key, up };
+    sessionMenuAt = 0;
+    cursor = `session:${key}`;
+    nav?.focus();
+  }
+
+  /** An item of the session's menu runs and the menu closes behind it. */
+  function fromSessionMenu(item: MenuItem) {
+    if (item.disabled) return;
+    sessionMenu = null;
+    item.run();
+  }
+
+  /** Reopening a session the other way stops it, so while a turn runs the
+      pane asks first. */
+  let reopenAsk = $state<{ key: string; to: SessionKind } | null>(null);
+
+  function reopenAsking(session: Session, to: SessionKind) {
+    if (midTurn(session)) reopenAsk = { key: session.key, to };
+    else void reopenOtherWay(session.key);
+  }
+
+  function reopenConfirm() {
+    const ask = reopenAsk;
+    reopenAsk = null;
+    if (ask !== null) void reopenOtherWay(ask.key);
+    nav?.focus();
+  }
+
+  function reopenCancel() {
+    reopenAsk = null;
+    nav?.focus();
+  }
+
+  // The question goes with its session.
+  $effect(() => {
+    if (reopenAsk !== null && byKey(reopenAsk.key) === null) untrack(() => (reopenAsk = null));
+  });
+
+  /** The question about reopening a session, while it is up. */
+  let reopenQuestion = $derived.by(() => {
+    if (reopenAsk === null) return null;
+    const session = byKey(reopenAsk.key);
+    if (session === null) return null;
+    const name = closingName(session);
+    return {
+      question:
+        reopenAsk.to === "integrated" ? `Reopen ${name} as a conversation?` : `Reopen ${name} in a terminal?`,
+      detail: `${agentLabel(session.agent)} is in the middle of a turn. Reopening stops it there, and the conversation goes on from where it stopped.`,
+    };
+  });
+
 
   function openMenu() {
     menuOpen = !menuOpen;
     sortOpen = false;
     projectMenu = null;
+    sessionMenu = null;
     menuAt = 0;
     nav?.focus();
   }
@@ -1059,13 +1168,21 @@
     if (
       (sortOpen && onSortKeydown(e)) ||
       (menuOpen && onMenuKeys(e)) ||
-      (projectMenu !== null && onProjectMenuKeys(e))
+      (projectMenu !== null && onProjectMenuKeys(e)) ||
+      (sessionMenu !== null && onSessionMenuKeys(e))
     ) {
       nav.focus();
       e.preventDefault();
       return;
     }
     const at = rows.findIndex((row) => row.id === current);
+    // The menu key, or Shift+F10 where there is none, opens the menu of
+    // the session under the cursor, as a right click on it does.
+    if (e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey)) {
+      if (current?.startsWith("session:")) openSessionMenu(current.slice("session:".length), null);
+      e.preventDefault();
+      return;
+    }
     switch (e.key) {
       case "ArrowDown":
         moveTo(at + 1);
@@ -1091,6 +1208,7 @@
         menuOpen = false;
         sortOpen = false;
         projectMenu = null;
+        sessionMenu = null;
         if (!layout.sessionsPeek) return;
         peekSessions(false);
         e.preventDefault();
@@ -1188,6 +1306,29 @@
         return true;
       case "Escape":
         projectMenu = null;
+        e.stopPropagation();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** While a session's menu is open the arrows walk its items, Enter runs
+      one and Escape closes it. False for a key the menu leaves alone. */
+  function onSessionMenuKeys(e: KeyboardEvent): boolean {
+    switch (e.key) {
+      case "ArrowDown":
+        sessionMenuAt = Math.min(sessionMenuAt + 1, sessionItems.length - 1);
+        return true;
+      case "ArrowUp":
+        sessionMenuAt = Math.max(sessionMenuAt - 1, 0);
+        return true;
+      case "Enter":
+      case " ":
+        fromSessionMenu(sessionItems[sessionMenuAt]);
+        return true;
+      case "Escape":
+        sessionMenu = null;
         e.stopPropagation();
         return true;
       default:
@@ -1379,6 +1520,7 @@
       class:two={line !== null}
       tabindex="-1"
       onclick={() => choose(session.key)}
+      oncontextmenu={(e) => openSessionMenu(session.key, e)}
       title={session.model === null ? undefined : modelLabel(session.model)}
       data-testid="session-row"
     >
@@ -1482,7 +1624,34 @@
         data-testid="close-session">×</button
       >
     </span>
+    {@render sessionMenuFor(session.key)}
   </div>
+{/snippet}
+
+<!-- A session's own menu, under its row, or over it near the pane's foot. -->
+{#snippet sessionMenuFor(key: string)}
+  {#if sessionMenu?.key === key}
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="scrim" onclick={() => (sessionMenu = null)}></div>
+    <div class="menu session-menu" data-card class:up={sessionMenu.up} role="menu" data-testid="session-menu">
+      {#each sessionItems as item, index (item.id)}
+        {#if item.destructive && index > 0}<div class="separator" role="separator"></div>{/if}
+        <button
+          role="menuitem"
+          tabindex="-1"
+          class:at={sessionMenuAt === index}
+          class:destructive={item.destructive}
+          onclick={() => fromSessionMenu(item)}
+          disabled={item.disabled}
+          title={item.title}
+          data-testid={item.id}
+        >
+          <span>{item.label}</span>
+        </button>
+      {/each}
+    </div>
+  {/if}
 {/snippet}
 
 <!-- A session's subagents, hanging under it on a rail of their own while
@@ -1593,7 +1762,13 @@
         >
           <span class="rail-in" aria-hidden="true"></span>
           {#if index < kids.length - 1}<span class="rail-on" aria-hidden="true"></span>{/if}
-          <button class="row kid-row" tabindex="-1" onclick={() => choose(kid.key)} data-testid="started-session">
+          <button
+            class="row kid-row"
+            tabindex="-1"
+            onclick={() => choose(kid.key)}
+            oncontextmenu={(e) => openSessionMenu(kid.key, e)}
+            data-testid="started-session"
+          >
             <span
               class="dot"
               class:live={isLive(kid)}
@@ -1646,6 +1821,7 @@
               data-testid="close-session">×</button
             >
           </span>
+          {@render sessionMenuFor(kid.key)}
         </div>
         {@render subagents(kid, true, index < kids.length - 1, false)}
       {/each}
@@ -1998,12 +2174,22 @@
     >
   {/if}
 
-  {#if editor.closing !== null}
+  {#if editor.closing !== null || reopenQuestion !== null}
     <!-- Closing a session or a project whose tabs hold the only copy of
          unsaved edits, or whose shells are busy, asks first, here where it
-         was closed. -->
+         was closed; so does reopening a session the other way in the
+         middle of a turn. -->
     <div class="closing" class:folded inert={folded} bind:this={closingStrip}>
-      {#if editor.closing.keys.length > 0}
+      {#if reopenQuestion !== null}
+        <ConfirmStrip
+          question={reopenQuestion.question}
+          detail={reopenQuestion.detail}
+          action="Stop and reopen"
+          onConfirm={reopenConfirm}
+          onCancel={reopenCancel}
+          testid="reopen-session"
+        />
+      {:else if editor.closing !== null && editor.closing.keys.length > 0}
         <ConfirmStrip
           question="Close {editor.closing.what} with unsaved edits?"
           detail="{editor.closing.keys.length === 1 ? '1 file' : `${editor.closing.keys.length} files`} open beside it {editor.closing.keys.length === 1 ? 'has' : 'have'} edits not yet saved: {unsavedNames(editor.closing.keys).join(', ')}.{closingAside(editor.closing.kind, editor.closing.busy)}"
@@ -2647,6 +2833,23 @@
   .project-menu.up {
     top: auto;
     bottom: calc(100% + 2px);
+  }
+
+  /* A session's menu hangs from its row's right, under the row's own
+     buttons, and stands over the rows below it. */
+  .session-menu {
+    top: calc(100% + 2px);
+    right: var(--row-pad-x);
+    min-width: 190px;
+  }
+
+  .session-menu.up {
+    top: auto;
+    bottom: calc(100% + 2px);
+  }
+
+  .session:has(> .session-menu) {
+    z-index: 6;
   }
 
   .menu .chord {

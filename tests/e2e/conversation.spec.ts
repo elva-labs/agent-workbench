@@ -55,8 +55,12 @@ async function answerTo(page: Page, id: string): Promise<Answer | null> {
   return answers.find((answer) => answer.id === id) ?? null;
 }
 
-async function openIntegrated(page: Page, options: { untrusted?: boolean } = {}) {
-  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+async function openIntegrated(page: Page, options: { untrusted?: boolean; defaultMode?: string } = {}) {
+  await installFakeCore(page, {
+    open: [PROJECT],
+    settings: { integrated: ["claude-code"] },
+    defaultMode: options.defaultMode,
+  });
   if (options.untrusted)
     await page.addInitScript(
       (project) =>
@@ -654,10 +658,10 @@ test.describe("a session of an agent shaped as Codex is", () => {
       readFileSync(new URL("../fixtures/codex-session.json", import.meta.url), "utf8"),
     );
     await openCodex(page);
-    // The view starts Codex in its safe mode, one the driver offers.
-    const start = (await calls(page)).find((call) => call.method === "start") as unknown as { options: { mode: string } };
-    const ready = events[0] as unknown as { modes: { value: string }[] };
-    expect(ready.modes.map((mode) => mode.value)).toContain(start.options.mode);
+    // The view names no mode, so Codex starts as the user's configuration
+    // says.
+    const start = (await calls(page)).find((call) => call.method === "start") as unknown as { options: { mode?: string } };
+    expect(start.options.mode).toBeUndefined();
     const play = (bodies: unknown[]) =>
       page.evaluate((bodies) => {
         const f = (window as unknown as { __integrated: { replay: (id: string, bodies: unknown) => void } }).__integrated;
@@ -666,10 +670,10 @@ test.describe("a session of an agent shaped as Codex is", () => {
     const asked = events.findIndex((event) => event.type === "questionAsked");
     await play(events.slice(0, asked));
     // A mode the user's configuration sets that is not among the modes
-    // shows as it is; full access is said to ask for nothing.
-    await expect(page.getByTestId("mode-chip")).toHaveText("untrusted, workspace-write");
+    // shows in plain words; full access is said to ask for nothing.
+    await expect(page.getByTestId("mode-chip")).toHaveText("Untrusted, workspace write");
     await page.getByTestId("mode-chip").click();
-    await expect(page.getByTestId("mode-menu")).toContainText("From the agent's own configuration");
+    await expect(page.getByTestId("mode-menu")).toContainText("From the agent's own settings");
     await expect(page.getByTestId("mode-menu")).toContainText("Changes anything and runs anything without asking");
     await page.keyboard.press("Escape");
     // A command as Codex wraps it, asked about as a command.
@@ -1101,18 +1105,20 @@ test.describe("the model and the mode", () => {
     await expect(page.getByTestId("model-menu")).toHaveCount(0);
   });
 
-  test("start a session in the agent's safe mode, say which mode it runs in, and change it", async ({ page }) => {
-    await openIntegrated(page);
-    expect((await calls(page))[0]).toMatchObject({ method: "start", options: { mode: "default" } });
+  test("start a session in the mode the agent's own settings name, say which it runs in, and change it", async ({ page }) => {
+    await openIntegrated(page, { defaultMode: "auto" });
+    const start = (await calls(page))[0] as unknown as { method: string; options: { mode?: string } };
+    expect(start.method).toBe("start");
+    expect(start.options.mode).toBeUndefined();
     const chip = page.getByTestId("mode-chip");
-    await expect(chip).toHaveText("Default");
+    await expect(chip).toHaveText("Auto");
     await chip.click();
     await page.getByTestId("mode-option").filter({ hasText: "Plan" }).click();
     await expect(chip).toHaveText("Plan");
     expect((await calls(page)).find((call) => call.method === "configure")).toMatchObject({ settings: { mode: "plan" } });
   });
 
-  test("show a mode the agent took from its own configuration as it is, and say it cannot be come back to", async ({ page }) => {
+  test("show a mode the agent took from its own configuration in plain words, and say it does not come back", async ({ page }) => {
     await installFakeCore(page, { open: [PROJECT], agents: ["codex"], integrable: ["codex"], settings: { integrated: ["codex"] } });
     await page.addInitScript(() => {
       const w = window as unknown as { __integrated: { start: (options: Record<string, unknown>) => unknown } };
@@ -1124,10 +1130,10 @@ test.describe("the model and the mode", () => {
     await page.getByTestId("start-agent").click();
     expect((await calls(page))[0]).toMatchObject({ method: "start" });
     const chip = page.getByTestId("mode-chip");
-    await expect(chip).toHaveText("untrusted, workspace-write");
+    await expect(chip).toHaveText("Untrusted, workspace write");
     await chip.click();
-    await expect(page.getByTestId("mode-option").first()).toContainText("cannot be chosen again here");
-    await expect(page.getByTestId("mode-option").locator(".name")).toHaveText(["untrusted, workspace-write", "Read only", "Auto", "Full access"]);
+    await expect(page.getByTestId("mode-option").first()).toContainText("comes back only in a new session");
+    await expect(page.getByTestId("mode-option").locator(".name")).toHaveText(["Untrusted, workspace write", "Read only", "Auto", "Full access"]);
   });
 });
 
