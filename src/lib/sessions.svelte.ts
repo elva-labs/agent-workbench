@@ -31,7 +31,8 @@ import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
-import { failureOf, type Failure } from "$lib/turnFailure";
+import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
+import { screen } from "$lib/screens";
 
 /**
  * Every session this window has, live or finished.
@@ -2078,6 +2079,8 @@ export function close(key: string, keepShells = false) {
   if (still !== undefined) clearTimeout(still);
   stills.delete(key);
   interrupts.delete(key);
+  answered.delete(key);
+  worded.delete(key);
   closing(session);
 
   // The browser tabs opened for the session go with the row.
@@ -2288,6 +2291,10 @@ const lastKeys = new Map<string, string>();
     several, and a command such as /config opens a panel the next keys
     would answer, with no prompt hook for any of them. */
 const drafts = $state<Record<string, true>>({});
+/** The sessions whose terminal line holds words the user typed, by the
+    row's key: Ctrl+C there empties the line, and stops no turn. Narrower
+    than a draft, which any key may leave: only printable keys count. */
+const worded = new Set<string>();
 
 /** What a terminal sends on its own, which is no key of the user's: focus
     going in or out, and the mouse. */
@@ -2314,9 +2321,13 @@ const INTERRUPTS = new Set(["\x1b", "\x03"]);
     then on what it writes back can be work. A key while the agent asks
     for a permission answers that prompt, and leaves nothing on the line:
     the window hears no hook when the prompt closes, so the keys after it,
-    once the agent is seen at work again, are the line's as ever. Escape or
-    Ctrl+C while the hooks say a turn runs may stop it, which no hook
-    reports: from that key on, the screen going still ends the turn. */
+    once the agent is seen at work again, are the line's as ever. Escape, or
+    Ctrl+C on an empty line, while the hooks say a turn runs may stop it,
+    which no hook reports: from that key on, the screen going still ends
+    the turn. Ctrl+C with words on the line only empties it. At Claude
+    Code's permission prompt Escape is its No, which stops the turn the
+    same way; a digit or Enter may be a yes or a no, and the screen says
+    which once it is still. */
 export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
@@ -2326,10 +2337,15 @@ export function typed(ptyId: string, data: string) {
     stirred(session);
   }
   pressed.set(session.key, Date.now());
-  if (
+  const hooked = session.exact && session.agent !== "codex";
+  if (hooked && session.needs === "permission") {
+    if (data === "\x1b") interrupts.add(session.key);
+    else answered.add(session.key);
+    stillLater(session);
+  } else if (
+    hooked &&
     INTERRUPTS.has(data) &&
-    session.exact &&
-    session.agent !== "codex" &&
+    !(data === EMPTIES && worded.has(session.key)) &&
     session.working &&
     session.needs === null &&
     !session.delegated
@@ -2338,6 +2354,13 @@ export function typed(ptyId: string, data: string) {
     stillLater(session);
   }
   if (session.needs !== null) return;
+  // Words typed are on the line until Ctrl+C empties it or an Enter that
+  // sends takes it in; Escape, the arrows and a paste's brackets are none.
+  const before = lastKeys.get(session.key) ?? "";
+  if (data === EMPTIES || (data === "\r" && !before.endsWith("\\"))) worded.delete(session.key);
+  // eslint-disable-next-line no-control-regex
+  else if (/[^\x00-\x1f\x7f]/u.test(data.replace(/\x1b(?:\[[\d;?]*[~A-Za-z]|O.|.)?/g, "")))
+    worded.add(session.key);
   lastKeys.set(session.key, ((lastKeys.get(session.key) ?? "") + data).slice(-2));
   if (data.endsWith(EMPTIES)) delete drafts[session.key];
   else drafts[session.key] = true;
@@ -2364,6 +2387,7 @@ function tookLine(key: string) {
   const last = lastKeys.get(key);
   // eslint-disable-next-line no-control-regex
   if (last === undefined || (last.endsWith("\r") && !/[\\\x1b]\r$/.test(last))) delete drafts[key];
+  worded.delete(key);
 }
 
 /** Whether the user's keys may have left words on a session's terminal
@@ -2409,7 +2433,7 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
       stirred(session);
       changed(session);
     }
-    if (interrupts.has(key) && session.working && work) stillLater(session);
+    if ((interrupts.has(key) || answered.has(key)) && session.working && work) stillLater(session);
     return;
   }
   if (said) {
@@ -2467,9 +2491,16 @@ function stillLater(session: Session) {
     setTimeout(() => {
       stills.delete(session.key);
       const now = byKey(session.key);
-      if (now === null || !now.exact || !now.working || !interrupts.has(now.key)) return;
-      interrupts.delete(now.key);
+      if (now === null || !now.exact) return;
+      const key = now.key;
+      const drawn = answered.has(key) ? screen(key, SCREEN_TAIL) : null;
+      const stopped =
+        interrupts.has(key) || (drawn !== null && interruptedOnScreen(drawn.split("\n")));
+      interrupts.delete(key);
+      answered.delete(key);
+      if (!stopped || (!now.working && now.needs === null)) return;
       now.working = false;
+      now.needs = null;
       now.turnEnd = "cut";
       changed(now);
       unseen(now);
@@ -2478,10 +2509,18 @@ function stillLater(session: Session) {
 }
 
 const stills = new Map<string, ReturnType<typeof setTimeout>>();
-/** The hooked sessions the user pressed Escape or Ctrl+C in while their
-    hooks said a turn ran, by the row's key, until the next hook says what
-    happened or the screen going still says the turn was stopped. */
+/** The hooked sessions the user pressed Escape, or Ctrl+C on an empty
+    line, in while their hooks said a turn ran or at its permission prompt,
+    by the row's key, until the next hook says what happened or the screen
+    going still says the turn was stopped. */
 const interrupts = new Set<string>();
+/** The hooked sessions whose permission prompt the user answered with a
+    key that may be a yes or a no, by the row's key, until the next hook
+    says what happened or the still screen shows the turn stopped or not. */
+const answered = new Set<string>();
+/** How many of the last lines on a session's screen are read for the line
+    Claude Code draws under a turn the user stopped. */
+const SCREEN_TAIL = 16;
 
 /** The agent went quiet: it is waiting, and unread unless watched stop. */
 function settle(key: string) {
@@ -2671,6 +2710,7 @@ export function exact(
   // The hooks have spoken since the user's Escape or Ctrl+C: what it did
   // is theirs to say.
   interrupts.delete(session.key);
+  answered.delete(session.key);
   // The line a run that a reopen stops leaves on its way out is not left
   // for the user.
   const line = reopening.has(session.key) ? null : note;
@@ -2835,6 +2875,8 @@ export function reset() {
   for (const still of stills.values()) clearTimeout(still);
   stills.clear();
   interrupts.clear();
+  answered.clear();
+  worded.clear();
   for (const pulse of pulses.values()) {
     if (pulse.quiet !== null) clearTimeout(pulse.quiet);
   }

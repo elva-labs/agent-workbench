@@ -96,3 +96,22 @@ export function failureOnScreen(lines: string[]): Failure | null {
   const error = last.find((line) => ERROR.test(line));
   return error === undefined ? null : { limit: false, until: null, line: error };
 }
+
+/** The line Claude Code draws under a turn the user stopped, a tool call
+    refused at its permission prompt among them: "Interrupted · What should
+    Claude do instead?". */
+const INTERRUPTED = /^Interrupted\b/;
+
+/** Whether the last lines of a session's screen show the turn stopped by
+    the user, on a result line under the turn's last bullet. */
+export function interruptedOnScreen(lines: string[]): boolean {
+  let from = 0;
+  for (let at = lines.length - 1; at >= 0; at--)
+    if (BULLET.test(lines[at])) {
+      from = at;
+      break;
+    }
+  return lines
+    .slice(from)
+    .some((line) => RESULT.test(line) && INTERRUPTED.test(line.replace(RESULT, "").trim()));
+}

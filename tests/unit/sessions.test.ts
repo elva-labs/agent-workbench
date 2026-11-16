@@ -5,6 +5,7 @@ import { stash } from "$lib/exits";
 import { resetZoom, zoom, zoomed } from "$lib/zoom.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { register, resetScreens } from "$lib/screens";
 import {
   activeSession,
   adoptPastSessions,
@@ -1794,6 +1795,108 @@ describe("working, and waiting for you", () => {
       typed("pty-1", "\x03");
       vi.advanceTimersByTime(QUIET_EXACT_MS);
       expect(session.working).toBe(false);
+      expect(session.turnEnd).toBe("cut");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A terminal whose last lines are these, for what the screen is read
+      for. */
+  const showing = (key: string, lines: string[]) =>
+    register(key, {
+      buffer: {
+        active: {
+          length: lines.length,
+          getLine: (index: number) => ({ translateToString: () => lines[index] }),
+        },
+      },
+    });
+
+  // Escape at Claude Code's permission prompt is its No: the turn ends and
+  // no hook fires. The prompt closing redraws the screen.
+  it("ends a turn the user stopped by refusing a permission with Escape", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      typed("pty-1", "\x1b");
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      expect(session.working).toBe(false);
+      expect(session.needs).toBeNull();
+      expect(session.turnEnd).toBe("cut");
+      // Refused with no redraw to speak of, it ends all the same.
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      typed("pty-1", "\x1b");
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      expect(session.needs).toBeNull();
+      expect(session.turnEnd).toBe("cut");
+    } finally {
+      resetScreens();
+      vi.useRealTimers();
+    }
+  });
+
+  // The numbered No is a digit or Enter, as a yes is: the screen says which
+  // once it is still.
+  it("ends a turn refused with the numbered No by the interrupted line, and not one granted", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      typed("pty-1", "3");
+      showing(session.key, [
+        "⏺ Bash(rm -rf build)",
+        "  ⎿  Interrupted · What should Claude do instead?",
+        "",
+        "❯ ",
+      ]);
+      output(session.key, WORK_BYTES);
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
+      expect(session.working).toBe(false);
+      expect(session.turnEnd).toBe("cut");
+
+      // Granted, the command runs quietly under the spinner and the turn
+      // goes on, an old interrupted line above its bullet notwithstanding.
+      exact("session-pty-1", "prompt");
+      exact("session-pty-1", "permission");
+      typed("pty-1", "1");
+      showing(session.key, [
+        "  ⎿  Interrupted · What should Claude do instead?",
+        "⏺ Bash(npm test)",
+        "  ⎿  Running…",
+        "✽ Swooping… (1m 2s)",
+      ]);
+      output(session.key, WORK_BYTES);
+      spins(session.key, 60_000);
+      expect(session.working).toBe(true);
+      expect(session.turnEnd).toBeNull();
+    } finally {
+      resetScreens();
+      vi.useRealTimers();
+    }
+  });
+
+  // Claude Code's Ctrl+C with words on the line empties the line, and the
+  // turn goes on; the real stop is then the agent's own.
+  it("takes Ctrl+C that empties a draft for no stop", () => {
+    vi.useFakeTimers();
+    try {
+      const session = live(A, "pty-1");
+      exact("session-pty-1", "prompt");
+      output(session.key, WORK_BYTES);
+      typed("pty-1", "also check the docs");
+      typed("pty-1", "\x03");
+      spins(session.key, 8000);
+      expect(session.working).toBe(true);
+      expect(session.turnEnd).toBeNull();
+      // On the emptied line a second Ctrl+C stops the turn.
+      typed("pty-1", "\x03");
+      vi.advanceTimersByTime(QUIET_EXACT_MS);
       expect(session.turnEnd).toBe("cut");
     } finally {
       vi.useRealTimers();

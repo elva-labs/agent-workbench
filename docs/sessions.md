@@ -293,7 +293,12 @@ cannot say: output after a permission prompt means it was granted and the
 agent went on, and, for Claude Code, after Escape or Ctrl+C at the keyboard
 while the hooks say working, a screen that goes still, give or take a
 redraw, for five seconds means the turn was stopped, which fires no hook,
-and the row says it was cut short. Without such a key a still screen ends
+and the row says it was cut short. Ctrl+C with words typed on the line only
+empties the line, and stops nothing. At Claude Code's permission prompt,
+Escape is its No, which stops the turn the same way; a digit or Enter may
+be a yes or a no, and the turn is taken as stopped only when the screen,
+once still, shows Claude Code's interrupted line under the turn's last
+bullet. Without such a key a still screen ends
 nothing: an agent running a long command, or thinking, draws only its
 spinner's clock for minutes on end. An idle notice from the agent, which
 it sends only once nothing of its own is running, ends the working either
