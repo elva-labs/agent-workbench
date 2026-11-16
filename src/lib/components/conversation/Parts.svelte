@@ -28,17 +28,17 @@
 <div class="parts" class:nested>
   {#each drawn as segment (segment.kind === "work" ? segment.key : segment.kind === "text" ? segment.part.block : segment.kind === "question" ? segment.part.request : `plan-${segment.part.at}`)}
     {#if segment.kind === "text"}
-      <div class="text" data-testid="agent-text">
+      <div class="text" data-testid="agent-text" data-find={segment.part.block}>
         <Markdown text={segment.part.text} streaming={!segment.part.done} />
         {#if segment.part.gap && segment.part.done}
-          <p class="gap">Some of this did not reach the window.</p>
+          <p class="gap" data-find-skip>Some of this did not reach the window.</p>
         {/if}
       </div>
     {:else if segment.kind === "work"}
       <WorkFold parts={segment.parts} {root} />
     {:else if segment.kind === "plan"}
-      <div class="plan" data-testid="plan">
-        <div class="plan-head"><Icon name="plan" size={13} />Plan</div>
+      <div class="plan" data-testid="plan" data-find="plan-{segment.part.at}">
+        <div class="plan-head" data-find-skip><Icon name="plan" size={13} />Plan</div>
         {#if segment.part.steps.length > 0}
           <ol class="plan-steps">
             {#each segment.part.steps as step, at (at)}
@@ -55,22 +55,22 @@
       </div>
     {:else if segment.kind === "question"}
       {@const part = segment.part}
-      <div class="asked" data-testid="asked">
+      <div class="asked" data-testid="asked" data-find={part.request}>
         {#each part.questions as question, at (at)}
-          <p class="question"><span class="label">Asked</span><Plain text={question.question} /></p>
+          <p class="question"><span class="label" data-find-skip>Asked</span><Plain text={question.question} /></p>
           {#if part.outcome === "answered"}
             {@const answer = part.answers?.[at] ?? null}
             <p class="answer">
-              <span class="label">You</span>{#if answer === null}<span class="quiet"
+              <span class="label" data-find-skip>You</span>{#if answer === null}<span class="quiet" data-find-skip
                   >answered. The answer is not shown.</span
                 >{:else}<Plain text={answer.join(", ")} />{/if}
             </p>
           {/if}
         {/each}
         {#if part.outcome === "declined"}
-          <p class="answer quiet">You chose not to answer.</p>
+          <p class="answer quiet" data-find-skip>You chose not to answer.</p>
         {:else if part.outcome === "withdrawn"}
-          <p class="answer quiet">The agent stopped waiting for an answer.</p>
+          <p class="answer quiet" data-find-skip>The agent stopped waiting for an answer.</p>
         {/if}
       </div>
     {/if}

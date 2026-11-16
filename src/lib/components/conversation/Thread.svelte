@@ -10,6 +10,7 @@
   import { shareFolds } from "$lib/folds";
   import { renderSaid } from "$lib/media.svelte";
   import { goTo } from "$lib/workspace.svelte";
+  import { reduced } from "$lib/motion";
   import Copy from "./Copy.svelte";
   import Icon from "./Icon.svelte";
   import Parts from "./Parts.svelte";
@@ -50,9 +51,12 @@
     /** What opens a file a message mentions, or null for one the viewer
         does not show. */
     opener?: (path: string) => (() => void) | null;
+    /** Room kept at the top for what stands over it, such as the find
+        bar, in pixels. */
+    room?: number;
   }
 
-  let { conversation, root, intro, agent, onPutBack, sender, opener }: Props = $props();
+  let { conversation, root, intro, agent, onPutBack, sender, opener, room = 0 }: Props = $props();
 
   shareFolds(() => conversation.opened);
 
@@ -647,7 +651,7 @@
     const [kept, offset] = node.contains(anchor.block) ? [anchor.block, anchor.blockOffset] : [node, anchor.offset];
     const moved = kept.getBoundingClientRect().top - scroller.getBoundingClientRect().top - offset;
     if (Math.abs(moved) < 0.5) return;
-    const scrolling = dragging || performance.now() - scrolledBy < 1000;
+    const scrolling = dragging || performance.now() - scrolledBy < 1000 || performance.now() - glided < 1000;
     if (scrolling && range().from > 0 && space.above - moved >= 0) {
       space.above -= moved;
       paint();
@@ -751,6 +755,67 @@
     await tick();
     return find();
   }
+
+  // Room at the top comes and goes without moving what is in view: only a
+  // thread at its top shows it.
+  let roomWas = 0;
+  $effect(() => {
+    const now = room;
+    untrack(() => {
+      if (scroller === null || now === roomWas) return;
+      const by = now - roomWas;
+      roomWas = now;
+      const top = scroller.scrollTop;
+      scroller.style.setProperty("--room", `${now}px`);
+      if (top <= 0) return;
+      scroller.scrollTop = top + by;
+      if (ownTop === top) ownTop = scroller.scrollTop;
+      if (lookedTop === top) lookedTop = scroller.scrollTop;
+      lastTop = scroller.scrollTop;
+    });
+  });
+
+  /** The first row reaching into the view from above: where a search
+      for new words starts. */
+  export function topRow(): string | null {
+    if (scroller === null) return null;
+    const top = scroller.getBoundingClientRect().top;
+    for (const node of rowNodes()) if (node.getBoundingClientRect().bottom > top) return node.dataset.row ?? null;
+    return null;
+  }
+
+  /**
+   * Puts what find found in the middle of the view, and into view across
+   * a block that scrolls sideways. It glides there from near, and is there
+   * at once from further than a screen away or where the system asks for
+   * less motion. The thread stops following its foot.
+   */
+  export function center(range: Range) {
+    if (scroller === null) return;
+    const at = range.getBoundingClientRect();
+    if (at.width === 0 && at.height === 0) return;
+    const view = scroller.getBoundingClientRect();
+    const by = at.top + at.height / 2 - (view.top + view.height / 2);
+    const glide = !reduced() && Math.abs(by) <= scroller.clientHeight;
+    const across = range.startContainer.parentElement?.closest<HTMLElement>("pre, [data-testid='diff']") ?? null;
+    if (across !== null && across.scrollWidth > across.clientWidth) {
+      const side = across.getBoundingClientRect();
+      if (at.left < side.left || at.right > side.right)
+        across.scrollTo({ left: across.scrollLeft + at.left - side.left - side.width / 3, behavior: glide ? "smooth" : "instant" });
+    }
+    if (Math.abs(by) < 1) return;
+    pinned = false;
+    const top = Math.max(0, Math.min(scroller.scrollHeight - scroller.clientHeight, scroller.scrollTop + by));
+    ownTop = top;
+    // While it glides, rows drawn above the view take up their own
+    // difference in height, as while the user scrolls, so nothing set
+    // stops the glide.
+    if (glide) glided = performance.now();
+    scroller.scrollTo({ top, behavior: glide ? "smooth" : "instant" });
+  }
+
+  /** When find last set the thread gliding. */
+  let glided = Number.NEGATIVE_INFINITY;
 
   /**
    * What a screen reader hears of a long thread. Its log says nothing
@@ -915,7 +980,7 @@
           {/if}
         </article>
       {:else if entry.kind === "note" && entry.key !== endedWith}
-        <p class="note {entry.tone}" data-testid="note">
+        <p class="note {entry.tone}" data-testid="note" data-find={entry.key}>
           <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} /><Plain text={entry.text} />
         </p>
       {:else if entry.kind === "compaction"}
@@ -998,7 +1063,7 @@
           {/each}
         </div>
       {/if}
-      {#if words.text !== ""}<p
+      {#if words.text !== ""}<p data-find={said.id}
           >{#each sentParts(words.text, mentionsOf(said.id)) as part, at (at)}{#if part.path === undefined}<Plain text={part.text} />{:else}{@const open =
                 opener?.(part.path) ?? null}{#if open === null}<span class="mention" data-testid="message-mention"
                   ><Plain text={part.text} /></span
@@ -1072,7 +1137,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 22px 24px 12px;
+    padding: calc(22px + var(--room, 0px)) 24px 12px;
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1096,7 +1161,7 @@
 
   @container conversation (max-width: 520px) {
     .frame .thread {
-      padding: 16px 14px 10px;
+      padding: calc(16px + var(--room, 0px)) 14px 10px;
     }
 
     .you .bubble {

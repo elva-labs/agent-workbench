@@ -12,6 +12,7 @@
   import type { Message } from "$lib/conversation.svelte";
   import Composer from "./Composer.svelte";
   import Dock from "./Dock.svelte";
+  import FindBar from "./FindBar.svelte";
   import Icon from "./Icon.svelte";
   import Thread from "./Thread.svelte";
   import Plain from "./Plain.svelte";
@@ -40,6 +41,9 @@
   let folder = $derived(session.startIn ?? session.project);
 
   let dock = $state<Dock | null>(null);
+  let thread = $state<Thread | null>(null);
+  /** The find bar stands over the thread. */
+  let finding = $state(false);
   /** The agent's own name, as the one who speaks and asks. */
   let name = $derived(profile.name);
 
@@ -175,7 +179,10 @@
       </div>
     </div>
   {:else}
+    <FindBar bind:open={finding} {conversation} {thread} root={folder} {active} host={view} />
     <Thread
+      bind:this={thread}
+      room={finding ? 28 : 0}
       {conversation}
       root={folder}
       {intro}

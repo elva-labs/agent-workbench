@@ -1,7 +1,18 @@
 <script lang="ts">
   import type { TextPart, ToolCall } from "$lib/conversation.svelte";
   import { openFolds, toggle } from "$lib/folds";
-  import { answered, foldKey, glyph, inputPath, span, stepTitle } from "$lib/thread";
+  import {
+    answered,
+    foldKey,
+    glyph,
+    longCommand,
+    showsFields,
+    showsOutput,
+    span,
+    stepInput,
+    stepOutput,
+    stepTitle,
+  } from "$lib/thread";
   import Copy from "./Copy.svelte";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
@@ -48,34 +59,13 @@
     return took >= 1000 ? { text: span(took), tone: "quiet" } : null;
   });
 
-  /** The input as the user reads it: a command as typed, the rest as its
-      fields, each named, leaving out what the row already says. Nothing
-      when the row says all of it; while it streams, as it comes. */
-  let input = $derived.by(
-    (): { command: string } | { fields: { name: string; value: string }[] } | { json: string } | null => {
-      if (part.kind !== "tool") return null;
-      const value = part.inputDone ? part.input : null;
-      if (value === null || value === undefined) return part.inputText ? { json: part.inputText } : null;
-      if (typeof value !== "object" || Array.isArray(value)) return { json: JSON.stringify(value, null, 2) };
-      const record = value as Record<string, unknown>;
-      if (part.tool === "command" && typeof record.command === "string") return { command: record.command };
-      const said = new Set([inputPath(value), title.object].filter((known) => known !== null));
-      const fields = Object.entries(record)
-        .filter(([, field]) => field !== null && field !== undefined && field !== "" && !said.has(field as string))
-        .map(([name, field]) => ({
-          name: name.replace(/_/g, " "),
-          value: typeof field === "string" ? field : JSON.stringify(field, null, 2),
-        }));
-      return fields.length === 0 ? null : { fields };
-    },
-  );
+  /** The input as the user reads it, leaving out what the row says. */
+  let input = $derived(part.kind === "tool" ? stepInput(part, title) : null);
 
   /** The command a step ran, as typed, once its input is whole. */
   let command = $derived(input !== null && "command" in input ? input.command : null);
 
-  let output = $derived(
-    part.kind === "tool" ? (part.done ? (part.result ?? part.output) : part.output) : "",
-  );
+  let output = $derived(part.kind === "tool" ? stepOutput(part) : "");
   let tasks = $derived(part.kind === "tool" ? part.tasks.filter((task) => !task.ambient) : []);
 </script>
 
@@ -98,7 +88,7 @@
         <span class="verb"
           >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
         >
-        {#if title.object !== null}<code class="object"><Plain text={title.object} /></code>{/if}
+        {#if title.object !== null}<code class="object" data-find={part.kind === "tool" ? part.call : null}><Plain text={title.object} /></code>{/if}
         {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
       </span>
     </button>
@@ -117,13 +107,13 @@
   </div>
 
   {#if open}
-    <div class="detail" data-testid="step-detail">
+    <div class="detail" data-testid="step-detail" data-find={part.kind === "tool" ? `${part.call}:shows` : part.block}>
       {#if part.kind !== "tool"}
         <div class="thinking"><Markdown text={part.text} /></div>
       {:else}
         {#if part.tool === "agent"}
           {#if tasks.length > 0}
-            <ul class="tasks">
+            <ul class="tasks" data-find-skip>
               {#each tasks as task (task.task)}
                 <li class={task.status}>
                   <span class="dot"></span>{#if task.description}<Plain text={task.description} />{:else}Task{/if}
@@ -141,14 +131,14 @@
           {#if input !== null}
             {#if "command" in input}
               <!-- The row shows a short command whole; a long one is here. -->
-              {#if input.command.includes("\n") || input.command.length > 72}
-                <pre class="block command"><span class="prompt">$ </span><Plain text={input.command} /></pre>
+              {#if longCommand(input.command)}
+                <pre class="block command"><span class="prompt" data-find-skip>$ </span><Plain text={input.command} /></pre>
               {/if}
             {:else if "fields" in input}
-              {#if part.tool !== "edit" || part.changes.length === 0}
+              {#if showsFields(part)}
                 <dl class="block fields" data-testid="step-input">
                   {#each input.fields as field (field.name)}
-                    <dt><Plain text={field.name} /></dt>
+                    <dt data-find-skip><Plain text={field.name} /></dt>
                     <dd><Plain text={field.value} /></dd>
                   {/each}
                 </dl>
@@ -161,7 +151,7 @@
             <FileChange {change} {root} />
           {/each}
           {#if tasks.length > 0}
-            <ul class="tasks">
+            <ul class="tasks" data-find-skip>
               {#each tasks as task (task.task)}
                 <li class={task.status}>
                   <span class="dot"></span>{#if task.description}<Plain text={task.description} />{:else}Background task{/if}
@@ -171,19 +161,19 @@
             </ul>
           {/if}
         {/if}
-        {#if output !== "" && part.tool !== "edit"}
+        {#if showsOutput(part)}
           <div class="copyable" data-copy-host="output">
             <pre class="block output" class:bad={part.error} data-testid="step-output"><Plain text={output} /></pre>
             <Copy label="Copy output" text={() => output} host="output" place="corner" testid="copy-output" />
           </div>
         {/if}
         {#if part.truncated || part.inputTruncated}
-          <p class="cut">Some of this was cut short on its way to the window.</p>
+          <p class="cut" data-find-skip>Some of this was cut short on its way to the window.</p>
         {:else if part.gap}
-          <p class="cut">Some of the output did not reach the window; the result will hold all of it.</p>
+          <p class="cut" data-find-skip>Some of the output did not reach the window; the result will hold all of it.</p>
         {/if}
         {#if part.answer?.message}
-          <p class="said">You told the agent: {part.answer.message}</p>
+          <p class="said" data-find-skip>You told the agent: {part.answer.message}</p>
         {/if}
       {/if}
     </div>
