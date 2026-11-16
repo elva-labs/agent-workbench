@@ -14,6 +14,51 @@ function agent(page: Page, script: string) {
 const fromFoot = (page: Page) =>
   page.getByTestId("thread").evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight);
 
+/** Turns the wheel over the thread `times` times by `delta`, and waits
+    until the page is told the view landed where the wheel takes it.
+    WebKit on Linux eases a wheel's scroll in over the frames after the
+    wheel has turned, and a browser tells the page of a scroll at the frame
+    after it moves: what is read before then is read mid-scroll. */
+async function wheel(page: Page, delta: number, times = 1) {
+  const view = page.getByTestId("thread");
+  await view.hover();
+  const from = await view.evaluate((node) => {
+    const heard = node as HTMLElement & { told?: number };
+    if (heard.told === undefined) node.addEventListener("scroll", () => (heard.told = node.scrollTop));
+    heard.told = node.scrollTop;
+    return node.scrollTop;
+  });
+  for (let step = 0; step < times; step++) await page.mouse.wheel(0, delta);
+  await expect
+    .poll(() => view.evaluate((node, to) => Math.abs((node as HTMLElement & { told?: number }).told! - to), from + delta * times))
+    .toBeLessThan(1);
+}
+
+/** Marks what stands at the top of the view: the innermost block reaching
+    into it from above. Answers how far below the top of the view it is. */
+const markTop = (page: Page) =>
+  page.getByTestId("thread").evaluate((node) => {
+    const top = node.getBoundingClientRect().top;
+    node.querySelector("[data-mark]")?.removeAttribute("data-mark");
+    let at: Element = node.querySelector("[data-testid='thread-rows']")!;
+    for (;;) {
+      const next = [...at.children].find((child) => {
+        const box = child.getBoundingClientRect();
+        return box.height > 0 && box.bottom > top;
+      });
+      if (next === undefined) break;
+      at = next;
+    }
+    at.setAttribute("data-mark", "");
+    return at.getBoundingClientRect().top - top;
+  });
+
+/** How far below the top of the view the marked block is now. */
+const markedAt = (page: Page) =>
+  page
+    .getByTestId("thread")
+    .evaluate((node) => node.querySelector("[data-mark]")!.getBoundingClientRect().top - node.getBoundingClientRect().top);
+
 /** Whether the rows drawn cover the whole view, top to bottom. */
 const covered = (page: Page) =>
   page.getByTestId("thread").evaluate((node) => {
@@ -168,8 +213,7 @@ test.describe("a long conversation", () => {
     const last = page.getByTestId("agent-text").last();
     await last.evaluate((node) => document.getSelection()!.selectAllChildren(node));
     // Six screens up, where the foot would no longer be drawn.
-    await thread(page).hover();
-    for (let step = 0; step < 6; step++) await page.mouse.wheel(0, -900);
+    await wheel(page, -900, 6);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(4000);
     await expect(last).not.toBeInViewport();
     await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(1);
@@ -192,13 +236,11 @@ test.describe("a long conversation", () => {
     await expect.poll(() => fromFoot(page)).toBeLessThan(2);
     expect(await page.getByTestId("thread-rows").locator(":scope > [data-row]").count()).toBeLessThanOrEqual(drawn + 2);
     // Scrolled up, it stays where the reader is while the reply goes on.
-    await thread(page).hover();
-    await page.mouse.wheel(0, -3000);
-    await expect.poll(() => fromFoot(page)).toBeGreaterThan(1000);
-    const top = await thread(page).evaluate((node) => node.scrollTop);
+    await wheel(page, -3000);
+    const before = await markTop(page);
     await agent(page, `f.emit("${H}", { type: "text", block: "streamed", parent: null, text: "One more paragraph.\\n\\n", done: false });`);
     await expect(page.getByTestId("jump-latest")).toBeVisible();
-    expect(await thread(page).evaluate((node) => node.scrollTop)).toBe(top);
+    expect(Math.abs((await markedAt(page)) - before)).toBeLessThan(1);
   });
 
   test("draws the turns around the view wherever the view is moved to, not only by the user", async ({ page }) => {
@@ -233,8 +275,7 @@ test.describe("a long conversation", () => {
     await expect(thread(page)).toHaveAttribute("aria-live", "off");
     const said = page.getByTestId("thread-said");
     await expect(said).toHaveAttribute("aria-live", "polite");
-    await thread(page).hover();
-    for (let step = 0; step < 5; step++) await page.mouse.wheel(0, -900);
+    await wheel(page, -900, 5);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
     await expect(said).toHaveText("");
     await page.getByTestId("composer-input").fill("And one more");
@@ -248,8 +289,7 @@ test.describe("a long conversation", () => {
     const last = page.getByTestId("work-line").last();
     await last.focus();
     await expect.poll(() => focusedTurn(page)).toBe(String(TURNS));
-    await thread(page).hover();
-    for (let step = 0; step < 10; step++) await page.mouse.wheel(0, -700);
+    await wheel(page, -700, 10);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(5000);
     await expect(last).toBeFocused();
     // The walk goes on from it, not from where the view is.
@@ -262,8 +302,7 @@ test.describe("a long conversation", () => {
 
   test("keeps the line read in place when the type size changes", async ({ page }) => {
     await openLong(page);
-    await thread(page).hover();
-    for (let step = 0; step < 6; step++) await page.mouse.wheel(0, -600);
+    await wheel(page, -600, 6);
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
     // The first block of text reaching into the view from above.
     const before = await thread(page).evaluate((node) => {
