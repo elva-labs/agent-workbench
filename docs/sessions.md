@@ -49,7 +49,8 @@ on the header, a ⋯ opens the project's own menu, New session and, set apart
 below a separator and in the colour of a removal, Close project; a right
 click on the header opens it too. Closing a project stops everything
 running in it. The header stays in view while the project's rows
-scroll under it, until the next project's pushes it out, and a hairline
+scroll under it, until the next project's pushes it out, and the list's
+scroll bar is drawn over the headers as it is over the rows. A hairline
 separates one project from the next. With more than one agent installed, a
 new session from a project's own button or menu opens the choice in place
 under the project's name, a row per agent; see [agents](adapters.md). The

@@ -108,11 +108,24 @@ place in a file, once, for the place being talked about. Claude Code is
 pointed at the server in its own per-project state, the state file of
 every account in the settings as well as the agent's own, so a session
 under any of them has the tools; Codex in the project's
-`.codex/config.toml`, kept out of the repository like the hooks file. Such a file is the agent's own: the core changes its one entry
-and writes the rest back as it found it, and one it cannot parse it leaves
-alone rather than replaces. A machine kind the app has no daemon build for
-gets the hooks without the tool. An app run from the source uses the daemon
-built beside it.
+`.codex/config.toml`, kept out of the repository like the hooks file. Such
+a file is the agent's own: the core changes its one entry and writes the
+rest back as it found it, comments, headers, dotted keys, inline tables,
+line breaks and a byte order mark included, and one it cannot parse or
+whose servers are not a table it leaves alone rather than replaces. The
+entry lets the server's tools run without asking, with
+`default_tools_approval_mode = "approve"`, and says nothing of any other
+server or of the approval policy. An entry for the server that has no such
+setting reads as installed but out of date when the project is checked.
+Where the project should have the hooks, the install that follows adds
+that one line to it and leaves the rest of the file as it was; where it
+should have none, they are taken away. An entry that names an approval of
+its own keeps it, and so does a session in that project, since the server
+is named again on its command line with nothing of approval. A Codex older
+than 0.122.0 does not know the setting and passes over it, and there each
+call to the workbench's tools asks. A machine kind the app has no daemon
+build for gets the hooks without the tool. An app run from the source uses
+the daemon built beside it.
 
 What a session's agent asks to show is for that session. While the user is
 looking at another session, the call waits on the agent's own rather than

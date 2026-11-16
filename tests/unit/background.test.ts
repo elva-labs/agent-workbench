@@ -302,6 +302,63 @@ describe("the colours a background paints", () => {
     near(labToRgb(field(colours.slice(0, 1))(0.5, 0.5)), [200, 220, 240]);
   });
 
+  it("draws each pixel of the gradient within a step of its colour, the dither even on the whole", () => {
+    const steepest: Background["dots"][] = [
+      // Opposite hues at the rim, and three spread evenly round it.
+      [{ hue: 300, chroma: 1 }, { hue: 120, chroma: 1 }],
+      [{ hue: 0, chroma: 1 }, { hue: 120, chroma: 1 }, { hue: 240, chroma: 1 }],
+    ];
+    const sets = [...READY_MADE.map((ready) => ready.dots), ...steepest].filter((dots) => dots.length > 1);
+    const [width, height] = [96, 60];
+    for (const tone of ["light", "dark"] as const) {
+      for (const dots of sets) {
+        const colours = dots.map((dot) => dotColour(dot, tone));
+        const pixels = gradientPixels(colours, width, height);
+        const colourAt = field(colours);
+        let worst = 0;
+        let sum = 0;
+        let counted = 0;
+        // A pixel stands for its colour if it is within reach of the colour
+        // at its centre or at an edge of it: with a third colour glowing,
+        // the colour jumps where the glow's shortest turn of hue goes the
+        // other way round, and a pixel there may take either side.
+        const half = [0.5 / (width - 1), 0.5 / (height - 1)];
+        const around = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const [u, v] = [x / (width - 1), y / (height - 1)];
+            const drawn = [0, 1, 2].map((channel) => pixels[(y * width + x) * 4 + channel]);
+            const offs = around.map(([dx, dy]) => {
+              const exact = labToRgb(colourAt(u + dx * half[0], v + dy * half[1]));
+              return exact.map((value, channel) =>
+                // A channel at either end is clamped there, which no
+                // dither can even out.
+                value < 1 || value > 254 ? null : drawn[channel] - value,
+              );
+            });
+            const nearest = offs.reduce((best, off) =>
+              Math.max(...off.map((value) => Math.abs(value ?? 0))) <
+              Math.max(...best.map((value) => Math.abs(value ?? 0)))
+                ? off
+                : best,
+            );
+            for (const off of nearest) {
+              if (off === null) continue;
+              worst = Math.max(worst, Math.abs(off));
+              sum += off;
+              counted++;
+            }
+          }
+        }
+        const name = `${tone} ${dots.map((dot) => dot.hue).join(", ")}`;
+        // Half a step of rounding and half of dither, and a tenth for the
+        // nearest place along the run and the strengths of the glow.
+        expect(worst, name).toBeLessThan(1.1);
+        expect(Math.abs(sum / counted), name).toBeLessThan(0.05);
+      }
+    }
+  });
+
   it("draws the gradient and the grain the same way each time, the grain no stronger than its speck", () => {
     const colours = [dotColour({ hue: 192, chroma: 0.9 }, "light"), dotColour({ hue: 252, chroma: 0.8 }, "light")];
     expect(gradientPixels(colours, 8, 5)).toEqual(gradientPixels(colours, 8, 5));

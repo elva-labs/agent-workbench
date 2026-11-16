@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hexToRgb, luminance, type Background } from "$lib/background";
-import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
+import { FULL, backgroundCss, drawImagesWith, imagesOf } from "$lib/backgroundPaint";
 import { coloursOf } from "$lib/paletteColours";
 import {
   adoptTheme,
@@ -10,6 +10,8 @@ import {
   loadTheme,
   previewBackground,
   previewCards,
+  REST,
+  resolvedTheme,
   setBackground,
   setCards,
   setPalette,
@@ -87,7 +89,7 @@ describe("the stylesheet a background is painted from", () => {
     );
     const none = backgroundCss(LAGOON, colours, { light: null, dark: null, grain: null });
     expect(none).not.toContain("tint-image");
-    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null });
+    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null, rough: [] });
   });
 
   it("paints a theme that is dark in both appearances dark in both, its text lighter", () => {
@@ -103,6 +105,62 @@ describe("the stylesheet a background is painted from", () => {
   });
 });
 
+/** Draws an image as its size and a count, so a test can tell which size
+    a URL is and whether it was drawn again. */
+function drawSizes() {
+  let count = 0;
+  drawImagesWith((_pixels, width, height) => `${width}x${height}#${++count}`);
+}
+
+const sizeOf = (url: string | null) => url?.split("#")[0] ?? null;
+
+describe("the gradient's image", () => {
+  beforeEach(drawSizes);
+  afterEach(() => drawImagesWith(null));
+
+  it("is small while the background moves and full size where asked, and stays full size", () => {
+    const [small, full] = ["192x120", `${FULL.width}x${FULL.height}`];
+    const moving = imagesOf(LAGOON, colours, []);
+    expect([sizeOf(moving.light), sizeOf(moving.dark), moving.rough]).toEqual([small, small, ["light", "dark"]]);
+    // One appearance at a time.
+    const one = imagesOf(LAGOON, colours, ["dark"]);
+    expect([sizeOf(one.light), sizeOf(one.dark), one.rough]).toEqual([small, full, ["light"]]);
+    const rested = imagesOf(LAGOON, colours, ["light"]);
+    expect([sizeOf(rested.light), sizeOf(rested.dark), rested.rough]).toEqual([full, full, []]);
+    expect(rested.dark).toBe(one.dark);
+    // Moved back to where it was, it is not drawn again.
+    const again = imagesOf(LAGOON, colours, []);
+    expect([again.light, again.dark, again.rough]).toEqual([rested.light, rested.dark, []]);
+    // Only the appearance given colours for is drawn, and a colour moved is
+    // drawn small again.
+    const moved = { ...LAGOON, dots: [{ hue: 40, chroma: 0.9 }, LAGOON.dots[1]] };
+    const shown = imagesOf(moved, { dark: colours.dark }, []);
+    expect([shown.light, sizeOf(shown.dark), shown.rough]).toEqual([null, small, ["dark"]]);
+    // A single colour has no gradient to draw.
+    const single = imagesOf({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" }, colours, []);
+    expect([single.light, single.dark, single.rough]).toEqual([null, null, []]);
+  });
+
+  it("keeps the last four full-size gradients, whichever appearance each is for", () => {
+    const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
+    const first = imagesOf(moved(10), { light: colours.light }, ["light"]).light;
+    for (const hue of [20, 30, 40]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    // Read again, it is the latest of the four.
+    expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
+    for (const hue of [50, 60, 70]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
+    // Four more in the other appearance, and it is gone.
+    for (const hue of [80, 90, 100, 110]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    const later = imagesOf(moved(10), { light: colours.light }, []);
+    expect([sizeOf(later.light), later.rough]).toEqual(["192x120", ["light"]]);
+  });
+
+  it("is drawn fine enough at full size that a pixel is five device pixels across at most on a 4K window", () => {
+    expect(3840 / FULL.width).toBeLessThanOrEqual(5);
+    expect(2160 / FULL.height).toBeLessThanOrEqual(5);
+  });
+});
+
 describe("painting the background the palette keeps", () => {
   beforeEach(() => {
     theme.palette = "teal";
@@ -115,6 +173,79 @@ describe("painting the background the palette keeps", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
+    drawImagesWith(null);
+  });
+
+  it("draws the gradient small while it moves and at full size once it has rested", () => {
+    vi.useFakeTimers();
+    drawSizes();
+    const [small, full] = ["192x120", `${FULL.width}x${FULL.height}`];
+    // The size of the gradient the sheet names for each appearance.
+    const images = () =>
+      Object.fromEntries(
+        [...sheet().matchAll(/--tint-image-(light|dark): url\("(\d+x\d+)#\d+"\)/g)].map((found) => [
+          found[1],
+          found[2],
+        ]),
+      );
+    const shown = resolvedTheme();
+    const other = shown === "light" ? "dark" : "light";
+    const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
+    // A background no other test paints, so no sheet is already worked
+    // out for it. Once it rests, the appearance on screen is drawn at full
+    // size, and the other after another rest, so no frame draws two.
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
+    expect(images()).toEqual({ light: small, dark: small });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ [shown]: full, [other]: small });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ light: full, dark: full });
+    // Painted again with nothing changed, it stays at full size.
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ light: full, dark: full });
+    // A dot dragged on the pad: only the appearance on screen is drawn, and
+    // each move puts the full size off again.
+    previewBackground(moved(40));
+    expect(images()).toEqual({ [shown]: small });
+    vi.advanceTimersByTime(REST - 1);
+    previewBackground(moved(50));
+    vi.advanceTimersByTime(REST - 1);
+    expect(images()).toEqual({ [shown]: small });
+    vi.advanceTimersByTime(1);
+    expect(images()).toEqual({ [shown]: full });
+    // Let go, it is kept at full size, and the other appearance follows.
+    setBackground(moved(50));
+    expect(images()).toEqual({ [shown]: full, [other]: small });
+    vi.advanceTimersByTime(REST);
+    expect(images()).toEqual({ light: full, dark: full });
+  });
+
+  it("stamps the background as drawn at rest once every gradient is at full size, and not before", async () => {
+    drawSizes();
+    const rested = () => document.documentElement.dataset.backgroundRested;
+    const images = () => [...sheet().matchAll(/--tint-image-(?:light|dark): url\("(\d+x\d+)#/g)].map((found) => found[1]);
+    const full = `${FULL.width}x${FULL.height}`;
+    const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
+    adoptTheme({ palette: "teal", backgrounds: { teal: moved(70) } });
+    expect(rested()).toBeUndefined();
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    expect(images()).toEqual([full, full]);
+    // A dot moved takes it off at once, until the new gradient has rested.
+    previewBackground(moved(80));
+    expect(rested()).toBeUndefined();
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    expect(images()).toEqual([full]);
+    // A repaint with nothing changed leaves it on.
+    previewBackground(moved(80));
+    expect(rested()).toBe("");
+    // A single colour has no gradient to wait for.
+    setBackground({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" });
+    await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
+    // No background, no stamp.
+    setBackground(null);
+    expect(rested()).toBeUndefined();
   });
 
   it("paints a palette's background and stamps it, and takes both away with another palette", () => {

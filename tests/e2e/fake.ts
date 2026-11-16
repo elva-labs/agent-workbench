@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
 /**
@@ -110,6 +110,14 @@ export async function foldedWidth(page: Page): Promise<number> {
   return page
     .locator(".frame")
     .evaluate((frame) => parseFloat(getComputedStyle(frame).getPropertyValue("--folded")));
+}
+
+/** Waits until the window's background is drawn at rest: every gradient
+    at full size and decoded, so its pixels no longer change on their own.
+    A test that compares a background's pixels reads them after this. The
+    window must have a background. */
+export async function backgroundAtRest(page: Page) {
+  await expect(page.locator(":root")).toHaveAttribute("data-background-rested", "");
 }
 
 export async function installFakeCore(
