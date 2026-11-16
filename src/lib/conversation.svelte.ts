@@ -395,13 +395,15 @@ export class Conversation {
 
   /**
    * Lays what the conversation said and did before above what the thread
-   * holds, each event at the time it happened, and marks where `run`
-   * began: before the first of the main thread's events from its `since`
-   * on, or after all of it, where a line already stands at the top or the
-   * run has a time. A turn left open by what was read is this run's,
-   * which the session's own events and snapshot settle, unless all of it
-   * is from before, or the thread already has a turn running: then it is
-   * over, and with all of it from before its calls with no finish failed.
+   * holds, each event at the time it happened and each turn under the
+   * model the record names for it, or none where it names none, and marks
+   * where `run` began: before the first of the main thread's events from
+   * its `since` on, or after all of it, where a line already stands at the
+   * top or the run has a time. A turn left open by what was read is this
+   * run's, which the session's own events and snapshot settle, unless all
+   * of it is from before, or the thread already has a turn running: then
+   * it is over, and with all of it from before its calls with no finish
+   * failed.
    */
   lay(history: IntegratedHistory, run: Run | null) {
     const later = this.entries;
@@ -414,9 +416,9 @@ export class Conversation {
       if (after === undefined && run !== null && run.since !== null && main && item.at >= run.since)
         after = this.entries[this.entries.length - 1]?.key ?? null;
       this.apply(item.event, item.at);
-      if (item.event.type === "turnStarted" && item.model !== undefined) {
+      if (item.event.type === "turnStarted") {
         const turn = this.turn;
-        if (turn !== null) turn.model = item.model;
+        if (turn !== null) turn.model = item.model ?? null;
       }
     }
     if (after === undefined) after = this.entries[this.entries.length - 1]?.key ?? null;

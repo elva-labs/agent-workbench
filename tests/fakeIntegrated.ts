@@ -111,14 +111,16 @@ export interface FakeIntegrated {
   /** What the agent wrote down of a conversation, as the core reads it
       back: the messages it took, its turns with the model each ran on,
       and what it said and did in whole, each with when; nothing of what
-      only streamed. Null for Codex, whose history is not read. */
+      only streamed. Codex names no model on a turn and keeps no plan's
+      steps, and a thread it does not have is an error, as Codex says;
+      Claude Code has nothing of a conversation it did not write. */
   history(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
 
   /** Writes a past conversation into the transcript of `session` ahead
-      of anything said in it since. */
-  transcript(session: string, items: IntegratedHistory["items"]): void;
+      of anything said in it since, as the agent given keeps it. */
+  transcript(session: string, items: IntegratedHistory["items"], agent?: "claude-code" | "codex"): void;
   /** Holds what the agent says to every answer and reply until
       `releaseAnswers`, as a core whose agent takes its time does: the call
       is taken and checked at once, and the answer told on release. */
@@ -355,6 +357,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const handlers = new Set<(event: IntegratedEvent) => void>();
   /** Each conversation's transcript, by its id. */
   const transcripts = new Map<string, Written[]>();
+  /** The conversations Codex keeps, the rest being Claude Code's. */
+  const threads = new Set<string>();
   let historyHeld: { wait: Promise<void>; release: () => void } | null = null;
   /** What answers and replies tell, held until released. */
   let answersHeld: (() => void)[] | null = null;
@@ -645,14 +649,17 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
     async history(historyOptions) {
       fake.calls.push({ method: "history", options: historyOptions });
-      if (historyOptions.agent === "codex") return null;
+      const codex = historyOptions.agent === "codex";
+      const own = threads.has(historyOptions.session) === codex;
       // Read when asked; a held read only answers late.
-      const items = JSON.parse(JSON.stringify(transcripts.get(historyOptions.session) ?? [])) as Written[];
+      const items = JSON.parse(JSON.stringify(own ? (transcripts.get(historyOptions.session) ?? []) : [])) as Written[];
       if (historyHeld !== null) await historyHeld.wait;
+      if (codex && !own) throw new Error(`thread not loaded: ${historyOptions.session}`);
       return { items, cut: false };
     },
 
-    transcript(session, items) {
+    transcript(session, items, agent = "claude-code") {
+      if (agent === "codex") threads.add(session);
       transcripts.set(session, [...items, ...(transcripts.get(session) ?? [])]);
     },
 
@@ -1060,7 +1067,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
   /** Writes down what the agent writes into its transcript of an event:
       a message when a turn takes it, with what it said, the turn with the
-      model it runs on, and what is said and done in whole. */
+      model it runs on where the agent keeps that, and what is said and
+      done in whole. */
   function remember(session: Session, body: IntegratedEventBody, told: Map<string, Told>) {
     const conversation = session.sessionId ?? session.ready?.sessionId;
     if (!conversation) return;
@@ -1069,6 +1077,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       written = [];
       transcripts.set(conversation, written);
     }
+    if (session.codex) threads.add(conversation);
     const write = (event: IntegratedEventBody, model?: string | null) =>
       written.push({ at: Date.now(), event, ...(model ? { model } : {}) });
     const said = (message: string) => told.get(message);
@@ -1083,7 +1092,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
             text: said(message)?.text ?? null,
             images: said(message)?.images ?? [],
           });
-        write(body, session.settings.model);
+        write(body, session.codex ? null : session.settings.model);
         break;
       case "message":
         if (body.state === "taken")
@@ -1096,9 +1105,11 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       case "toolInput":
         if (body.delta === null) write(body);
         break;
+      case "plan":
+        if (!session.codex || body.text !== null) write(body);
+        break;
       case "toolStarted":
       case "toolFinished":
-      case "plan":
       case "turnEnded":
       case "compacted":
         write(body);

@@ -1326,7 +1326,8 @@ export interface Core {
       Resolves once every event that went out before it has arrived. */
   integratedSnapshot(id: string): Promise<IntegratedSnapshot>;
   /** What a conversation said and did before; null for an agent whose
-      history the core does not read. */
+      history the core does not read. Rejects where the agent could not
+      read it, as for a thread Codex does not know. */
   integratedHistory(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;

@@ -713,6 +713,14 @@ describe("what a conversation said before, read back", () => {
     expect(conversation.earlier).toBe("read");
   });
 
+  it("puts a turn whose record names no model down to none, whatever the session runs on now", () => {
+    const { conversation } = played();
+    expect(conversation.settings.model).not.toBeNull();
+    const unnamed = turn(5_000, "one").map(({ model: _model, ...item }) => item);
+    conversation.lay({ items: unnamed, cut: false }, { at: 9_000, since: null });
+    expect(conversation.turns[1].model).toBeNull();
+  });
+
   it("marks this run after all of it when all of it is from before, and at the top when there is nothing", () => {
     const conversation = new Conversation(() => 99_000);
     conversation.lay({ items: [...turn(1_000, "one"), ...turn(2_000, "two")], cut: false }, { at: 9_000, since: null });
