@@ -1,6 +1,10 @@
 import type { Conversation } from "$lib/conversation.svelte";
+import type { AgentId, Workflow } from "$lib/core";
 import { configure } from "$lib/integrated.svelte";
+import { modelLabel } from "$lib/models";
+import { cannotDirect } from "$lib/sessions.svelte";
 import { modelName, offeredModel } from "$lib/thread";
+import { workflowGist, workflows } from "$lib/workflows.svelte";
 
 /**
  * What an integrated session can be switched to, and the switch itself, for
@@ -14,6 +18,8 @@ export interface Choice {
   name: string;
   about: string | null;
   on: boolean;
+  /** It cannot be chosen here: its line says why. */
+  off?: boolean;
 }
 
 /** The model the session runs on, as the agent offers it where it does. */
@@ -117,4 +123,45 @@ export function choose(
     if (value !== inUse(conversation) && value !== conversation.settings.model)
       void configure(key, { model: value });
   } else if (value !== conversation.settings[setting]) void configure(key, { [setting]: value });
+}
+
+/** The workflows a new conversation can follow, after none: the agent
+    alone. Each says in a line who directs, works and reviews, or why it
+    cannot direct a conversation here. The one the session follows is
+    ticked, and kept in the list though the settings have dropped it. */
+export function workflowChoices(agent: AgentId, name: string, following: Workflow | null): Choice[] {
+  const list = workflows.list;
+  const all =
+    following !== null && !list.some((known) => known.name === following.name) ? [following, ...list] : list;
+  return [
+    {
+      value: "",
+      name: "No workflow",
+      about: `${name} works alone, on the model you pick`,
+      on: following === null,
+    },
+    ...all.map((workflow) => {
+      const why = workflow.orchestrator.agent === agent ? null : cannotDirect(workflow);
+      return {
+        value: workflow.name,
+        name: workflow.name,
+        about: why ?? workflowGist(workflow),
+        on: workflow.name === following?.name,
+        ...(why === null ? {} : { off: true }),
+      };
+    }),
+  ];
+}
+
+/** The model a session under a workflow runs on, as the composer and the
+    status bar both name it: the one its run says it is on, once the run
+    has said, and the workflow's orchestrator's until then. Each is named
+    as the agent names it where it offers it, else by the workflow's own
+    name for it. */
+export function heldModel(conversation: Conversation, workflow: Workflow): string {
+  const { agent, model } = workflow.orchestrator;
+  const said = conversation.sessionId === null ? null : conversation.settings.model;
+  const named = said ?? model;
+  const offered = offeredModel(conversation, named) === null ? null : modelName(conversation, named);
+  return offered ?? modelLabel(agent, named);
 }

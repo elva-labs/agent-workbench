@@ -793,7 +793,10 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
-    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    // Before the first message the composer says the workflow, and the
+    // header's chip says it once the first message is sent.
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
     const [start] = await calls(page);
     expect(start).toMatchObject({
       method: "start",
@@ -803,6 +806,10 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     expect(told).toContain('workflow "Build and review"');
     expect(told).toContain('2. For the step "Work"');
     expect(await spawns(page)).toEqual([]);
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    await expect(page.getByTestId("workflow-chip")).toHaveCount(0);
     // The run's chip in the header keeps the keyboard it is clicked with,
     // as it does over a terminal, so Escape puts its popover away.
     await page.getByTestId("run-chip").click();
@@ -872,7 +879,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("new-session").click();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("run-chip")).toBeVisible();
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
   });
 
   test("the palette offers a terminal session, alone, beside New session", async ({ page }) => {
@@ -1004,11 +1011,12 @@ test.describe("a Codex orchestrator, integrated", () => {
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
     const [first] = await calls(page);
     expect(first).toMatchObject({ method: "start", options: { agent: "codex", startOnly: true } });
     await agent(page, `f.end("${H}", true);`);
     await expect(page.getByTestId("resume-session")).toHaveText("Resume");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
 
     // The workflow gives the orchestrator its own subagents from now on.
     await page.keyboard.press("ControlOrMeta+,");
@@ -1723,7 +1731,7 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
   await openIntegrated(page);
   await agent(page, `f.context("${H}", 41000, 200000);`);
   const boxes = await Promise.all(
-    ["attach", "model-chip", "mode-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
+    ["attach", "model-chip", "mode-chip", "workflow-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
   );
   const ctx = await page.getByTestId("composer").locator(".ctx").boundingBox();
   const all = [...boxes, ctx].map((box) => box!);
@@ -1735,6 +1743,9 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
     }
   const composer = (await page.getByTestId("composer").boundingBox())!;
   for (const box of all) expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
+  // Send keeps to the right end, wrapped or not.
+  const send = all[4];
+  expect(composer.x + composer.width - (send.x + send.width)).toBeLessThan(16);
 });
 
 test.describe("in the sessions pane, an integrated session", () => {

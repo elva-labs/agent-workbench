@@ -563,7 +563,10 @@ menus, `/` for commands where the agent lists them and `@` for files where
 the project has a git repository. It shows the model the
 session runs on, which a click changes: the agent's default is named once
 the agent has said which model that is, and a model chosen during a turn is
-said to be used from the next. It shows the mode the session runs in, which
+said to be used from the next. A session that follows a workflow shows its
+orchestrator's model and holds it, saying the workflow sets it, and so does
+the status bar. Both name the model the run says it is on, and the
+workflow's own name for it until the run has said. It shows the mode the session runs in, which
 a click changes among the modes the agent offers; a session starts in the
 agent's safe mode, which asks before it acts, whatever the agent's own
 configuration says, and a mode taken from that configuration is shown as it
@@ -576,6 +579,33 @@ second Enter, so it is not sent as a message by surprise. A message that was not
 by the agent or never sent, can be put back in the composer. What is being
 written stays with its session while another is on screen. The keys are in
 [focus](focus-model.md#an-integrated-session).
+
+A new session, until its first message, also shows the
+[workflow](orchestrator.md#following-a-workflow) it follows in a chip
+after the mode: the project's workflow to begin with, or none. The chip
+opens a menu of no workflow, the agent working alone on the model the user
+picks, then each workflow with a line saying which model directs, works and
+reviews. A workflow directed by an agent that is not installed, or that
+runs only in a terminal, is listed with why and cannot be picked. Picking a
+workflow makes the session its orchestrator, as starting a session under it
+does: the session starts again on the orchestrator's agent and model, told
+the workflow's instructions and with the agent's own subagent tools taken
+away where the workflow says so, and the thread's first line says what it
+follows. A workflow directed by another agent puts the session on that
+agent, still as a conversation, whatever that agent's own setting is.
+Picking none starts it again alone, on the agent it was started on and that
+agent's own default model. Either way it keeps its row and its token, the
+words being written, the keyboard, and, while the agent stays the same, the
+user's last choice of mode, one still on its way included. The run it
+leaves is stopped before anything can reach it, and what that run answers
+later is let go. A start already on its way is waited for, and a message
+sent while the new run comes up waits for it, as does a change of the
+settings, which is made on the new run before the message goes.
+Once the first message is sent the choice is kept: the chip goes, and the
+header's chip names the workflow. Working another way takes a new session.
+A resumed session, one another session started and a session in a terminal
+have no chip, and neither does any session while the settings have no
+workflow.
 
 A slash typed as the first thing in the composer opens a menu over the
 thread of the agent's slash commands, then its skills, for an agent that
