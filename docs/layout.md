@@ -49,6 +49,8 @@ rule under the header would; the sessions pane's header, over its own list
 on the ground, keeps its rule. In light a card lifts off the ground with a
 faint shadow. The terminal look keeps its boxes on the ground instead, 6
 pixels apart inside the frame's padding, each with its header inside it.
+With a background of your own the cards and the boxes can let a little of
+it through, as [settings](settings.md#cards) describes.
 
 Every pane header is one height in a look, 40 pixels in the modern look and
 35 in the terminal look, the terminal list's top row included, and each

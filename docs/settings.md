@@ -70,15 +70,15 @@ for editing by hand.
 ## Background
 
 A colour or a gradient of up to three colours of your own behind the
-window's chrome. It tints the chrome only: in the modern look the window's
+window's chrome. It tints the chrome: in the modern look the window's
 ground, with the sessions pane, the pane headers and the status bar on it,
-and the settings' title row and tab column. Every surface that holds text
-to read stays solid: the cards with the terminal, the conversation, the
-diff, the editor and the viewer in them, and the palette. In dark the
-ground under the tint is the chrome's darkest tone, so the headers on it
-stand apart from the cards below them. In the terminal look it shows only
+and the settings' title row and tab column. The cards, with the terminal,
+the conversation, the diff, the editor and the viewer in them, stay solid
+unless [Cards](#cards) lets a little of the background through them. In
+dark the ground under the tint is the chrome's darkest tone, so the headers
+on it stand apart from the cards below them. In the terminal look it shows
 in the ground between the boxes and in the status bar, at half strength at
-most and with no grain, and the boxes stay as they are.
+most and with no grain.
 
 Each palette and each theme of your own keeps a background of its own, so
 choosing another colour brings its background with it, and one that has
@@ -126,15 +126,51 @@ Every line the window draws stays. With a background each line on or
 beside a tinted part is the text colour let through at one amount for the
 whole window, so it takes the colour of what it crosses, stands off a
 tinted part as far as the plain line stands off the plain chrome, and
-lines that meet are one paint. In the terminal look the boxes stay as they
-are: their outline and the status rule take the background, which shows in
-the gap between them, and the rules inside them keep their colour. A
+lines that meet are one paint. In the terminal look the boxes' outline and
+the status rule take the background, which shows in the gap between them,
+and the rules inside a box keep their colour while the box is solid. A
 divider's grip and line, the focus rings, the focused pane's mark and a
 chosen row stay in the accent.
 
 The system's increase-contrast setting, or a contrast theme that forces
 the system's own colours, sets the background aside, with every line and
-text as they are without one, and the section says so.
+text as they are without one and every card solid, and the section says
+so, with Cards greyed out.
+
+### Cards
+
+Cards, under strength and grain, lets a little of the background show
+through the cards as well: the panes in the modern look, the boxes in the
+terminal look, and what stands over the window, such as the settings, the
+palette and a menu. It is a share of the strength, from none, the default,
+to a quarter, so a card shows a quarter of what the chrome shows at most.
+It does nothing while there is no background, and each palette and theme
+keeps its own share with its background.
+
+A card shows the background soft: the gradient, with the grain blurred
+into an even veil rather than speckled. Everything inside a card takes
+the card's paint, so nothing in it looks patched: a list beside what is read lets the background
+through its own step toward the ground, and a hovered, chosen or selected
+row, a field, your message, inline code, a diff's rows and a find match let
+the ink or the accent through rather than laying a solid fill over it. A
+menu or popover takes the card's tint from the background, never from
+what is under it. The terminal's ground is clear while any shows, so the
+card shows through it, and rows a program paints in colours of its own,
+such as a diff in Claude Code, keep them. On Windows and Linux a terminal
+with a clear ground draws its text with greyscale rather than subpixel
+smoothing, so the ground is clear only while Cards shows something. In the terminal look the rules
+inside a see-through box are the text colour let through, as the lines on
+the ground are. The browser pane's page and media such as images stay as
+they are.
+
+Text on a card is judged as text on the chrome is, at the worst point of
+the gradient behind it, and the app's own text is drawn a step stronger
+where it would fall under 4.5 to 1, quiet text included. A terminal draws
+its sixteen colours as they are, so the share is held back where one of
+them that holds 4.5 to 1 on a solid card would fall under it. In dark the
+background lifts the ground toward the cards' lightness, so the share is
+also held back where the cards would stop standing off the ground. The
+section says when either holds the share back, and by how much.
 
 ## Custom styles
 
@@ -511,7 +547,7 @@ on, whichever machine the agent runs on.
 The appearance, the look, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, the
-notifications, your own themes and the backgrounds are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
@@ -520,7 +556,7 @@ know is passed over and the default stands for it in the window, and the file
 keeps it as written until that setting is chosen. A field that is not a
 setting at all is kept in the file as written and not shown.
 
-The keys, the hooks, the accounts, the themes, the backgrounds and the workflows are read one
+The keys, the hooks, the accounts, the themes, the backgrounds, the cards' shares and the workflows are read one
 entry at a time. An entry that does not read, a chord that is not a key, a
 choice that is neither on nor off, an account with a directory that is not a
 path, a theme with a colour that is not hex, a background with a colour past the
