@@ -284,19 +284,26 @@ function block(selector: string, tokens: Record<string, string>): string {
   return lines.length === 0 ? "" : `${selector} {\n${lines.join("\n")}\n}\n`;
 }
 
-/** The tones the chrome is built on, the deep and the well, and whether a
-    card lifts off the ground, follow whether a theme's colours are light or
-    dark rather than the appearance they are worn in: a theme dark in the
-    light appearance gets the dark ones. Nothing where the two agree. */
+/** The tones the chrome is built on, the deep and the well, whether a card
+    lifts off the ground and how quiet text stands on it, follow whether a
+    theme's colours are light or dark rather than the appearance they are
+    worn in: a theme dark in the light appearance gets the dark ones.
+    Nothing where the two agree. */
 function tonesOf(colours: Record<string, string>, appearance: "light" | "dark"): Record<string, string> {
   const tone = toneOf(colours);
   if (tone === appearance) return {};
   return tone === "dark"
-    ? { deep: "var(--bg)", well: "color-mix(in srgb, var(--surface) 45%, var(--bg))", "card-cast": "none" }
+    ? {
+        deep: "var(--bg)",
+        well: "color-mix(in srgb, var(--surface) 45%, var(--bg))",
+        "card-cast": "none",
+        "ground-quiet": "var(--ink-3)",
+      }
     : {
         deep: "color-mix(in srgb, var(--bg) 96%, var(--ink) 4%)",
         well: "var(--bg)",
         "card-cast": "0 1px 2px rgb(0 0 0 / 0.05), 0 0 0 0.5px rgb(0 0 0 / 0.025)",
+        "ground-quiet": "color-mix(in srgb, var(--ink-2) 60%, var(--ink-3))",
       };
 }
 

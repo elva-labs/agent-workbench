@@ -135,6 +135,12 @@
   border-bottom-color: transparent;
 }
 
+/* The headers' quiet text, a status or a count, holds its contrast on the
+   ground as it did on the surface. With a background the guard holds it. */
+:root[data-look="modern"]:not([data-background]) section[data-pane] > header {
+  --ink-3: var(--ground-quiet);
+}
+
 /* Files against lines is one control with two halves, so the pair sits on a
    surface of its own, clear of the field beside it, and the half in force is
    filled rather than outlined. */

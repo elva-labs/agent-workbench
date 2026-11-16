@@ -1169,7 +1169,7 @@
   .sessions-slot.peeking :global(.pane) {
     flex: none;
     width: var(--peek-w);
-    box-shadow: var(--pane-shadow-on), 12px 0 28px rgba(0, 0, 0, 0.3);
+    box-shadow: 12px 0 28px rgba(0, 0, 0, 0.3);
   }
 
   @media (prefers-reduced-motion: no-preference) {

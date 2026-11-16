@@ -73,6 +73,10 @@
   --well: var(--bg);
   /* A pane standing on the ground lifts off it a little in light. */
   --card-cast: 0 1px 2px rgb(0 0 0 / 0.05), 0 0 0 0.5px rgb(0 0 0 / 0.025);
+  /* Quiet text on the modern look's ground, which in light is a step
+     darker than the surface: the faint ink taken toward the second, as
+     far as holds it at 4.5:1 there. In dark the faint ink holds as it is. */
+  --ground-quiet: color-mix(in srgb, var(--ink-2) 60%, var(--ink-3));
 
   /* look: every decision a second look restates, in one place. The values
      here are the terminal look, which is what no stamp on <html> means. */
@@ -209,6 +213,7 @@
     --deep: var(--bg);
     --well: color-mix(in srgb, var(--surface) 45%, var(--bg));
     --card-cast: none;
+    --ground-quiet: var(--ink-3);
 
     --ansi-black: #3a4244;
     --ansi-red: #e08894;
@@ -248,6 +253,7 @@
   --deep: var(--bg);
   --well: color-mix(in srgb, var(--surface) 45%, var(--bg));
   --card-cast: none;
+  --ground-quiet: var(--ink-3);
 
   --ansi-black: #3a4244;
   --ansi-red: #e08894;

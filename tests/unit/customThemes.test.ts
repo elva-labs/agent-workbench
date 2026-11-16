@@ -173,6 +173,7 @@ describe("themeCss", () => {
     expect(light.deep).toBe("var(--bg)");
     expect(light.well).toBe("color-mix(in srgb, var(--surface) 45%, var(--bg))");
     expect(light["card-cast"]).toBe("none");
+    expect(light["ground-quiet"]).toBe("var(--ink-3)");
     // Dark colours in the dark appearance need nothing of their own.
     expect(tokensIn(night, ':root:root[data-palette="night"][data-theme="dark"]').deep).toBeUndefined();
     const paper = themeCss({ paper: { label: "Paper", light: DEFAULTS.light, dark: DEFAULTS.light, shape: {} } });
