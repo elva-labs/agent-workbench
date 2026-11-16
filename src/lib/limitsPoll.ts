@@ -83,10 +83,25 @@ const seen = new Set<string>();
 /** When a session of each account was last seen at work, by account. */
 const workedAt = new Map<string, number>();
 
+/** The sessions at work when the sessions were last looked at, by key. */
+const atWork = new Set<string>();
+
 /** A session is at work, so its account's figures may move. */
 export function noteWork(session: Session, now = Date.now()) {
   const use = useOf(session);
   if (use !== null) workedAt.set(keyOf(use), now);
+}
+
+/** Takes in which sessions are at work, as their state changes: one at
+    work, and one that has just stopped, worked up to now. A turn that runs
+    on past a read so counts as work since it. */
+export function lookAtWork(all: readonly Session[], now = Date.now()) {
+  const was = new Set(atWork);
+  atWork.clear();
+  for (const session of all) {
+    if (session.working) atWork.add(session.key);
+    if (session.working || was.has(session.key)) noteWork(session, now);
+  }
 }
 
 /** Whether a session of the account worked since its figures were read:
@@ -202,5 +217,6 @@ export function resetLimitsPoll() {
   asking.clear();
   seen.clear();
   workedAt.clear();
+  atWork.clear();
   lastUsed = 0;
 }

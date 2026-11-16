@@ -8,6 +8,7 @@ import {
   accountsInUse,
   askForSession,
   followLimits,
+  lookAtWork,
   noteWork,
   resetLimitsPoll,
   used,
@@ -172,6 +173,35 @@ describe("asking for the figures", () => {
     window.dispatchEvent(new Event("pointermove"));
     await vi.advanceTimersByTimeAsync(ASK_EVERY);
     expect(worked()).toEqual([true, false, true, false, false]);
+  });
+
+  it("counts a turn that runs on past a read as work since it, up to when it stops", async () => {
+    const start = Math.floor(Date.now() / 1000);
+    const key = "claude-code ~/.claude-work";
+    held[key] = report(10, start - 3 * 3600);
+    fresh[key] = report(20, start + 30);
+    sessions.all = [session("a", { account: "Work", working: true })];
+    lookAtWork(sessions.all);
+    const worked = () => asked.filter((options) => options.read).map((options) => options.worked);
+    // Read while the turn runs, after it began.
+    stop = followLimits();
+    await settle();
+    expect(worked()).toEqual([true]);
+    // The turn runs on past that read and stops two minutes in.
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(2 * ASK_EVERY);
+    sessions.all[0].working = false;
+    lookAtWork(sessions.all);
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked().at(-1)).toBe(true);
+    // A read after it stopped: nothing has worked since.
+    fresh[key] = report(30, start + 4 * 60);
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    window.dispatchEvent(new Event("pointermove"));
+    await vi.advanceTimersByTimeAsync(ASK_EVERY);
+    expect(worked().at(-1)).toBe(false);
   });
 
   it("asks for nothing once the window has been left alone a long while, and at once when it is used again", async () => {
