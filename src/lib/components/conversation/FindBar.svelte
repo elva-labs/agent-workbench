@@ -86,7 +86,7 @@
     if (!open) return;
     const had = bar?.contains(document.activeElement) ?? false;
     open = false;
-    finder.cancel();
+    finder.forget();
     wanted = null;
     if (timer !== null) clearTimeout(timer);
     timer = null;

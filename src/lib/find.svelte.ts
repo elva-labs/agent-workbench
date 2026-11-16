@@ -397,6 +397,19 @@ export class Finder {
   cancel() {
     this.#run += 1;
   }
+
+  /** Lets go of everything read and counted, keeping the words: a closed
+      bar holds nothing of a long conversation. */
+  forget() {
+    this.cancel();
+    this.#seen.clear();
+    this.#entries.clear();
+    this.#read = null;
+    this.#counted = null;
+    this.found = [];
+    this.total = 0;
+    this.current = -1;
+  }
 }
 
 const HITS = "find-hit";

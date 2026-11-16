@@ -162,6 +162,18 @@ describe("find in a conversation", () => {
     expect(finder.hit()).toMatchObject({ key: "c-3:shows", nth: 0 });
   });
 
+  it("lets go of what it read when the bar closes, and counts again when it opens", async () => {
+    const c = conversation();
+    const finder = await find(c, "counter");
+    expect(finder.total).toBe(5);
+    finder.forget();
+    expect(finder.found).toEqual([]);
+    expect(finder.current).toBe(-1);
+    expect(finder.query).toBe("counter");
+    await finder.search({});
+    expect(finder.total).toBe(5);
+  });
+
   it("goes on from no match to the first that comes", async () => {
     const c = conversation();
     const finder = await find(c, "ledger");
