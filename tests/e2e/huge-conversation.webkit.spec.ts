@@ -168,6 +168,28 @@ test.describe("a conversation as long as a real one kept for days", () => {
     await expect.poll(() => footInView(page)).toBe(true);
   });
 
+  test("stays at its foot while a message of several lines is written and taken out again", async ({ page }) => {
+    await openHuge(page);
+    const field = page.locator(`${HUGE} [data-testid='composer-input']`);
+    await field.click();
+    const one = (await field.boundingBox())!.height;
+    for (let line = 0; line < 5; line++) {
+      await page.keyboard.type(`Line ${line} of a message.`);
+      await page.keyboard.press("Shift+Enter");
+      await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    }
+    expect((await field.boundingBox())!.height).toBeGreaterThan(one);
+    // Words added to a field that keeps its height move nothing.
+    await page.keyboard.type("And");
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    for (let line = 0; line < 4; line++) {
+      await page.keyboard.press("Shift+ArrowUp");
+      await page.keyboard.press("Backspace");
+      await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    }
+    await expect.poll(() => footInView(page)).toBe(true);
+  });
+
   test("going to another session and back draws no row again and keeps its place", async ({ page }) => {
     await openHuge(page);
     await page.getByTestId("new-session").click();

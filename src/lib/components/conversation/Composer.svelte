@@ -563,8 +563,13 @@
   function grow() {
     // Out of view the field has no size to grow to; it grows when back.
     if (field === null || field.getClientRects().length === 0) return;
+    // The composer keeps its height while the field is measured, so the
+    // thread above it is never taller for that moment: a browser pulls a
+    // thread at its foot up to fit, and nothing after puts it back.
+    if (box !== null) box.style.minHeight = `${box.offsetHeight}px`;
     field.style.height = "auto";
     field.style.height = `${field.scrollHeight}px`;
+    if (box !== null) box.style.minHeight = "";
     gutter = field.offsetWidth - field.clientWidth;
     scrolled();
   }
