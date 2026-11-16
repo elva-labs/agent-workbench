@@ -1391,6 +1391,12 @@ export async function toldAtStart(key: string): Promise<Told | null> {
     takeUp(session, resumed);
     if (session.status !== "starting") return null;
   }
+  return toldFor(session);
+}
+
+/** What the agent behind a row is told of the workflow the row follows
+    now, as it starts. */
+export function toldFor(session: Session): Told {
   // Resumed with other instructions than its conversation was first given,
   // or with none where it was given some, the agent lets go of the ones it
   // recorded. Codex cannot, and the user is told.
@@ -1406,6 +1412,59 @@ export async function toldAtStart(key: string): Promise<Told | null> {
         }),
     ...(afresh ? { afresh: true } : {}),
   };
+}
+
+/** Why a session running as a conversation cannot be made the
+    orchestrator of a workflow, or null when it can: its orchestrator's
+    agent is not installed here, or runs only in a terminal. */
+export function cannotDirect(workflow: Workflow): string | null {
+  const runs = workflow.orchestrator.agent;
+  if (!installed().includes(runs)) return `Directed by ${agentLabel(runs)}, which is not installed here`;
+  if (!canIntegrate(runs)) return `Directed by ${agentLabel(runs)}, which runs only in a terminal`;
+  return null;
+}
+
+/**
+ * Puts a row under a workflow, or under none, the way a new row is put
+ * under one: on the orchestrator's agent and model and told the workflow
+ * as it starts, or alone on the agent given and that agent's own default
+ * model. It changes what the row says it is; the run behind it is the
+ * caller's to start again. False when the workflow cannot direct a
+ * conversation here.
+ */
+export function putUnder(key: string, workflow: Workflow | null, alone: AgentId): boolean {
+  const session = byKey(key);
+  if (session === null) return false;
+  if (workflow !== null && cannotDirect(workflow) !== null) return false;
+  if (workflow === null) {
+    session.workflow = null;
+    session.agent = alone;
+    session.model = null;
+  } else {
+    session.workflow = structuredClone($state.snapshot(workflow)) as Workflow;
+    session.agent = workflow.orchestrator.agent;
+    session.model = orchestratorModel(workflow);
+  }
+  session.workflowGone = false;
+  return true;
+}
+
+/** A row starts again before it was spoken to, under another workflow:
+    nothing is kept from here under the id of the run it leaves, so its
+    token and the workflow it follows are kept under the id of the run
+    that takes over alone. */
+export function leaveRun(session: Session) {
+  const id = session.id;
+  session.id = null;
+  if (id === null) return;
+  if (sessions.tokens[id] !== undefined) {
+    delete sessions.tokens[id];
+    saveTokens();
+  }
+  if (sessions.workflows[id] !== undefined) {
+    delete sessions.workflows[id];
+    saveKept();
+  }
 }
 
 /** What a Codex session resumed under other instructions than it began

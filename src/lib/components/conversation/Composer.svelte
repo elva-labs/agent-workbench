@@ -4,9 +4,10 @@
   import type { Attached } from "$lib/integrated.svelte";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { compact, interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { compact, follow, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
-  import { choose, modeChoices, modelChoices } from "$lib/settingChoices";
+  import { choose, heldModel, modeChoices, modelChoices, workflowChoices } from "$lib/settingChoices";
+  import type { AgentId, Workflow } from "$lib/core";
   import { modelName, tokens } from "$lib/thread";
   import { pieces } from "$lib/completion";
   import { complete, named, slashGroups, slashWord, sourceOf, waitingHint } from "$lib/slash";
@@ -55,6 +56,13 @@
    * after it takes it out whole. It goes to the agent as the path, for the
    * agent to read itself. A file attached that is not an image goes the
    * same way, shown as a card above the field until it is sent.
+   *
+   * A new conversation nothing has been said in yet offers the workflows
+   * beside the model and the mode: picking one makes the session its
+   * orchestrator, picking none makes it the agent alone. Once a message
+   * is sent the choice is kept, and the chip goes. While the session
+   * follows a workflow the model chip shows the orchestrator's model and
+   * holds it, saying the workflow sets it.
    */
   interface Props {
     sessionKey: string;
@@ -81,6 +89,16 @@
     dir?: string;
     /** The project's name, as the menu says it. */
     project?: string;
+    /** The agent the session runs on. */
+    agentId?: AgentId;
+    /** The name of the agent it runs on under no workflow. */
+    alone?: string;
+    /** The workflow the session follows, which holds its model; null for
+        none. */
+    workflow?: Workflow | null;
+    /** Whether the workflow can still be chosen: nothing has been said in
+        the session yet. */
+    choosable?: boolean;
   }
 
   let {
@@ -96,13 +114,17 @@
     root = null,
     dir = "",
     project = "the project",
+    agentId = "claude-code",
+    alone = agent,
+    workflow = null,
+    choosable = false,
   }: Props = $props();
 
   let link = $derived(linkFor(sessionKey));
   let field = $state<HTMLTextAreaElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
-  let menu = $state<"model" | "mode" | null>(null);
+  let menu = $state<"model" | "mode" | "workflow" | null>(null);
   /** It was opened with the pointer rather than a key. */
   let byPointer = $state(false);
   let reading = $state(0);
@@ -461,7 +483,7 @@
   let digit = $state<string | null>(null);
 
   $effect(() => {
-    if (reading === 0 && held) {
+    if (reading === 0 && held && !link.restarting) {
       held = false;
       untrack(submit);
     }
@@ -474,7 +496,7 @@
 
   function submit() {
     if (!ready || !hasWords || unlisted) return;
-    if (reading > 0) {
+    if (reading > 0 || link.restarting) {
       held = true;
       return;
     }
@@ -750,6 +772,23 @@
     field?.focus();
   }
 
+  // ---- the workflow ----
+
+  /** The model a workflow holds the session to, as the chip says it. */
+  let heldName = $derived(workflow === null ? null : heldModel(conversation, workflow));
+  let workflowLabel = $derived(workflow?.name ?? "No workflow");
+
+  function pickWorkflow(value: string) {
+    menu = null;
+    follow(sessionKey, value === "" ? null : value);
+    field?.focus();
+  }
+
+  // The choice goes with the chip once something is said.
+  $effect(() => {
+    if (!choosable && untrack(() => menu) === "workflow") menu = null;
+  });
+
   function closeMenu(how: "escape" | "tab" | "away") {
     const which = menu;
     menu = null;
@@ -757,7 +796,7 @@
       void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
   }
 
-  function openMenu(which: "model" | "mode", e: MouseEvent) {
+  function openMenu(which: "model" | "mode" | "workflow", e: MouseEvent) {
     byPointer = e.detail > 0;
     menu = menu === which ? null : which;
   }
@@ -963,7 +1002,9 @@
       “{digit}” would go to {agent} as a message, not as an answer. Press ↑ to answer, or Enter again to send it.
     </p>
   {:else if held}
-    <p class="hint" data-testid="composer-held">Sends once the images are read.</p>
+    <p class="hint" data-testid="composer-held">
+      {reading > 0 ? "Sends once the images are read." : `Sends once ${agent} is ready.`}
+    </p>
   {:else if notice !== null}
     <p class="hint" data-testid="composer-notice"><Plain text={notice} /></p>
   {:else if link.compactAsked && running && !conversation.compacting}
@@ -974,17 +1015,32 @@
       ><Icon name="clip" /></button
     >
     <div class="picker">
-      <button
-        class="chip"
-        tabindex="0"
-        onclick={(e) => openMenu("model", e)}
-        disabled={models.length === 0 || !ready}
-        aria-haspopup="menu"
-        aria-expanded={menu === "model"}
-        title={defaultModel ? "The agent's default model, which the session runs on" : "The model the session runs on"}
-        data-testid="model-chip"><Plain text={modelLabel} /><Icon name="down" size={12} /></button
-      >
-      {#if menu === "model"}
+      {#if workflow !== null && heldName !== null}
+        <!-- The workflow sets the orchestrator's model, so it is not a
+             choice here: it is reached like the others, says why, and
+             opens nothing. -->
+        <button
+          class="chip"
+          tabindex="0"
+          aria-disabled="true"
+          aria-label="Model {heldName}, set by {workflow.name}"
+          title="Set by {workflow.name}"
+          data-testid="model-chip"
+          data-held=""><Plain text={heldName} /></button
+        >
+      {:else}
+        <button
+          class="chip"
+          tabindex="0"
+          onclick={(e) => openMenu("model", e)}
+          disabled={models.length === 0 || !ready}
+          aria-haspopup="menu"
+          aria-expanded={menu === "model"}
+          title={defaultModel ? "The agent's default model, which the session runs on" : "The model the session runs on"}
+          data-testid="model-chip"><Plain text={modelLabel} /><Icon name="down" size={12} /></button
+        >
+      {/if}
+      {#if menu === "model" && workflow === null}
         <ChoiceMenu
           label="Model"
           choices={modelChoices(conversation)}
@@ -1025,6 +1081,35 @@
         {/if}
       </div>
     {/if}
+    {#if choosable}
+      <div class="picker">
+        <button
+          class="chip"
+          tabindex="0"
+          onclick={(e) => openMenu("workflow", e)}
+          aria-haspopup="menu"
+          aria-expanded={menu === "workflow"}
+          aria-label="Workflow: {workflow?.name ?? 'none'}"
+          title="The workflow this session follows, chosen before its first message"
+          data-testid="workflow-chip"
+          ><Icon name="flow" size={13} /><Plain text={workflowLabel} /><Icon name="down" size={12} /></button
+        >
+        {#if menu === "workflow"}
+          <ChoiceMenu
+            label="Workflow"
+            choices={workflowChoices(agentId, alone, workflow)}
+            note="Chosen before the first message, then kept."
+            onpick={pickWorkflow}
+            onclose={closeMenu}
+            pointer={byPointer}
+            end
+            within={box}
+            testid="workflow-menu"
+            optionTestid="workflow-option"
+          />
+        {/if}
+      </div>
+    {/if}
     {#if link.configureError !== null}
       <span class="error" title={shown(link.configureError)}>Not changed: <Plain text={link.configureError} /></span>
     {/if}
@@ -1033,27 +1118,29 @@
         >Not compacted: <Plain text={link.compactError} /></span
       >
     {/if}
-    <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
-    {#if running}
-      <button class="round stop" tabindex="0" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
-        ><Icon name="stop" size={12} /></button
-      >
-    {/if}
-    {#if !running || hasWords}
-      <button
-        class="round send"
-        tabindex="0"
-        onclick={submit}
-        disabled={!ready || !hasWords || reading > 0 || unlisted}
-        aria-label={running ? "Send, to wait for the agent" : "Send"}
-        title={unlisted
-          ? `Sends once ${agent} has listed its commands`
-          : running
-            ? "Send; it waits until the agent is done (Enter)"
-            : "Send (Enter)"}
-        data-testid="send"><Icon name="up" size={14} /></button
-      >
-    {/if}
+    <span class="end">
+      <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
+      {#if running}
+        <button class="round stop" tabindex="0" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
+          ><Icon name="stop" size={12} /></button
+        >
+      {/if}
+      {#if !running || hasWords}
+        <button
+          class="round send"
+          tabindex="0"
+          onclick={submit}
+          disabled={!ready || !hasWords || reading > 0 || unlisted}
+          aria-label={running ? "Send, to wait for the agent" : "Send"}
+          title={unlisted
+            ? `Sends once ${agent} has listed its commands`
+            : running
+              ? "Send; it waits until the agent is done (Enter)"
+              : "Send (Enter)"}
+          data-testid="send"><Icon name="up" size={14} /></button
+        >
+      {/if}
+    </span>
   </div>
 </div>
 
@@ -1398,12 +1485,13 @@
     cursor: pointer;
   }
 
-  .chip:hover:not(:disabled) {
+  .chip:hover:not(:disabled, [aria-disabled="true"]) {
     color: var(--ink);
     background: var(--paint-surface);
   }
 
-  .chip:disabled {
+  .chip:disabled,
+  .chip[aria-disabled="true"] {
     opacity: 0.6;
     cursor: default;
   }
@@ -1434,8 +1522,16 @@
     color: var(--del);
   }
 
-  .ctx {
+  /* What the context takes, and Send or Stop, keep to the right end
+     together, on the bar's last line when it wraps. */
+  .end {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ctx {
     padding-right: 4px;
     font-size: var(--conv-meta);
     color: var(--ink-2);
@@ -1488,7 +1584,7 @@
     transform: scale(0.9);
   }
 
-  .chip:active:not(:disabled) {
+  .chip:active:not(:disabled, [aria-disabled="true"]) {
     background: var(--surface-2);
     box-shadow: inset 0 0 0 1px var(--ink-3);
   }

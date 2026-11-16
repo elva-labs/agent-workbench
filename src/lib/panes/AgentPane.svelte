@@ -40,7 +40,7 @@
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import type { SessionKind } from "$lib/sessionKind.svelte";
-  import { handleOf, launch as launchIntegrated, linkFor } from "$lib/integrated.svelte";
+  import { handleOf, launch as launchIntegrated, linkFor, unspoken } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -116,8 +116,10 @@
   /** The workflow the session on screen is part of, and its place in it. */
   let tag = $derived(current === null ? null : workflowTag(current));
   /** Where the run stands, for a session that follows a workflow: the chip
-      takes the tag's place. */
-  let run = $derived(current === null ? null : runStanding(current));
+      takes the tag's place. Before anything is said in a conversation its
+      composer says the workflow, which can still be chosen there, and the
+      chip comes once the first message is sent. */
+  let run = $derived(current === null || unspoken(current) ? null : runStanding(current));
   let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
 
   // A session that was open when the app quit starts once it is the one
@@ -247,7 +249,7 @@
 {#snippet head()}
   {#if run !== null && tag !== null}
     <RunChip {run} rules={tag.rules} />
-  {:else if tag !== null}
+  {:else if tag !== null && current?.workflow === null}
     <WorkflowTagButton {tag} />
   {/if}
   {#if current !== null && integrated}

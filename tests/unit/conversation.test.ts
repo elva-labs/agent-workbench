@@ -743,9 +743,13 @@ describe("what a conversation said before, read back", () => {
     const conversation = new Conversation(() => 99_000);
     conversation.beganAbove(7_000);
     conversation.earlier = "loading";
-    conversation.unread();
+    conversation.unread("Codex does not have this conversation");
     expect(conversation.earlier).toBe("unread");
+    expect(conversation.earlierWhy).toBe("Codex does not have this conversation");
     expect(conversation.began).toBeNull();
+    // Read after all, there is no why.
+    conversation.lay({ items: [], cut: false }, null);
+    expect(conversation.earlierWhy).toBeNull();
   });
 
   it("marks this run before the first of the main thread's events from when it began", () => {
@@ -843,5 +847,31 @@ describe("what a conversation said before, read back", () => {
     fake.turn(id, "hello");
     conversation.beganHere(7);
     expect(conversation.began).toEqual({ after: conversation.entries.at(-1)!.key, at: 7 });
+  });
+});
+
+describe("a conversation nothing has been said in", () => {
+  it("is untouched until a message is sent, and stays so for a note the agent made as it started", () => {
+    const { fake, conversation, id, send } = played();
+    expect(conversation.untouched).toBe(true);
+    fake.emit(id, { type: "notice", level: "warning", message: "A hook failed to load" });
+    expect(conversation.untouched).toBe(true);
+    send(M1, "hello");
+    expect(conversation.untouched).toBe(false);
+  });
+
+  it("starts again with nothing of its last run, keeping what the same agent offers and the mode chosen", () => {
+    const { fake, conversation, id } = played();
+    fake.emit(id, { type: "notice", level: "warning", message: "A hook failed to load" });
+    conversation.settings = { ...conversation.settings, mode: "plan" };
+    conversation.restarted("fable", true);
+    expect(conversation.entries).toEqual([]);
+    expect(conversation.sessionId).toBeNull();
+    expect(conversation.settings).toMatchObject({ model: "fable", mode: "plan" });
+    expect(conversation.ready?.models.length).toBeGreaterThan(0);
+    expect(conversation.untouched).toBe(true);
+    conversation.restarted(null, false);
+    expect(conversation.ready).toBeNull();
+    expect(conversation.settings).toEqual({ model: null, mode: null, effort: null });
   });
 });

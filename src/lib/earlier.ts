@@ -24,7 +24,8 @@ export const EARLIER_WAIT = 5000;
  * Reads what the session said before and lays it in its conversation once
  * read, with this run beginning where `run` says. Answers once it is laid,
  * or once `wait` is over. An agent whose history is not read, or a read
- * that fails, leaves the conversation saying it was not read.
+ * that fails, leaves the conversation saying it was not read, and why
+ * where the read said.
  */
 export function layEarlier(
   session: Session,
@@ -36,6 +37,7 @@ export function layEarlier(
   conversation.earlier = "loading";
   const laid = (async () => {
     let history: IntegratedHistory | null = null;
+    let why: string | null = null;
     try {
       if (id !== null)
         history = await core().integratedHistory({
@@ -45,11 +47,12 @@ export function layEarlier(
           session: id,
           configDir: dirFor(session.account, session.agent),
         });
-    } catch {
+    } catch (error) {
       history = null;
+      why = typeof error === "string" ? error : error instanceof Error ? error.message : null;
     }
     const began = await Promise.resolve(run).catch(() => null);
-    if (history === null) conversation.unread();
+    if (history === null) conversation.unread(why);
     else conversation.lay(history, began);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;

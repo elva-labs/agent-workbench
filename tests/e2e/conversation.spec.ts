@@ -793,7 +793,10 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
-    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    // Before the first message the composer says the workflow, and the
+    // header's chip says it once the first message is sent.
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
+    await expect(page.getByTestId("run-chip")).toHaveCount(0);
     const [start] = await calls(page);
     expect(start).toMatchObject({
       method: "start",
@@ -803,6 +806,10 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     expect(told).toContain('workflow "Build and review"');
     expect(told).toContain('2. For the step "Work"');
     expect(await spawns(page)).toEqual([]);
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    await expect(page.getByTestId("workflow-chip")).toHaveCount(0);
     // The run's chip in the header keeps the keyboard it is clicked with,
     // as it does over a terminal, so Escape puts its popover away.
     await page.getByTestId("run-chip").click();
@@ -872,7 +879,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("new-session").click();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("run-chip")).toBeVisible();
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
   });
 
   test("the palette offers a terminal session, alone, beside New session", async ({ page }) => {
@@ -1004,11 +1011,12 @@ test.describe("a Codex orchestrator, integrated", () => {
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+    await expect(page.getByTestId("workflow-chip")).toHaveText("Build and review");
     const [first] = await calls(page);
     expect(first).toMatchObject({ method: "start", options: { agent: "codex", startOnly: true } });
     await agent(page, `f.end("${H}", true);`);
     await expect(page.getByTestId("resume-session")).toHaveText("Resume");
+    await expect(page.getByTestId("run-words")).toHaveText("Build and review");
 
     // The workflow gives the orchestrator its own subagents from now on.
     await page.keyboard.press("ControlOrMeta+,");
@@ -1716,6 +1724,127 @@ test.describe("a resumed conversation", () => {
     const line = await box(page, "run-began", 0);
     expect((await box(page, "agent-run", 2)).y).toBeLessThan(line.y);
   });
+
+  test.describe("of Codex", () => {
+    const THREAD = "019a0000-0000-7000-8000-00000000000a";
+    /** The past thread as Codex gives it back: a question answered with a
+        command after some thinking, and a change answered with an edit,
+        under Codex's own ids and with no model named for a turn. */
+    const thread = (at: number) => {
+      const ended = { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 5000, usage: null };
+      const command = { command: "/bin/zsh -lc 'ls src | wc -l'", cwd: PROJECT, actions: [] };
+      const change = { path: `${PROJECT}/src/count.ts`, kind: { type: "update", move_path: null }, diff: "@@ -1 +1 @@\n-let counter = 0;\n+let total = 0;\n" };
+      return [
+        { at, event: { type: "message", message: "m-1", state: "sent", error: null, text: "Count the files in src", images: [] } },
+        { at, event: { type: "turnStarted", messages: ["m-1"] } },
+        { at: at + 1000, event: { type: "thinking", block: "rs_1:0", parent: null, text: "Counting with ls.", done: true } },
+        { at: at + 2000, event: { type: "toolStarted", call: "call_1", parent: null, name: "commandExecution", kind: "command" } },
+        { at: at + 2000, event: { type: "toolInput", call: "call_1", parent: null, delta: null, input: command, truncated: false } },
+        { at: at + 3000, event: { type: "toolFinished", call: "call_1", parent: null, output: "12\n", error: false, truncated: false, changes: [] } },
+        { at: at + 5000, event: { type: "text", block: "msg_1", parent: null, text: "There are **12** files in `src`.", done: true } },
+        { at: at + 5000, event: ended },
+        { at: at + 60_000, event: { type: "message", message: "m-2", state: "sent", error: null, text: "Rename the counter to total", images: [] } },
+        { at: at + 60_000, event: { type: "turnStarted", messages: ["m-2"] } },
+        { at: at + 62_000, event: { type: "toolStarted", call: "call_2", parent: null, name: "fileChange", kind: "edit" } },
+        { at: at + 62_000, event: { type: "toolInput", call: "call_2", parent: null, delta: null, input: { changes: [change] }, truncated: false } },
+        {
+          at: at + 63_000,
+          event: {
+            type: "toolFinished", call: "call_2", parent: null, output: "", error: false, truncated: false,
+            changes: [{
+              path: `${PROJECT}/src/count.ts`, kind: "update", to: null, content: null, truncated: false,
+              hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-let counter = 0;", "+let total = 0;"] }],
+            }],
+          },
+        },
+        { at: at + 65_000, event: { type: "text", block: "msg_2", parent: null, text: "Renamed it to `total`.", done: true } },
+        { at: at + 65_000, event: ended },
+      ];
+    };
+
+    /** The project with a past Codex thread of ours, kept by Codex when
+        `kept`, ready to resume. */
+    async function withThread(page: Page, kept: boolean) {
+      await installFakeCore(page, {
+        open: [PROJECT],
+        agents: ["codex"],
+        integrable: ["codex"],
+        settings: { integrated: ["codex"] },
+        keepIntegrated: true,
+        transcripts: [
+          { id: THREAD, modified: Math.floor(Date.now() / 1000) - 3600, size: 100, title: "Count the files in src", agent: "codex" },
+        ],
+      });
+      await page.addInitScript(
+        ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+        { project: PROJECT, past: THREAD },
+      );
+      await page.goto("/");
+      if (kept) await agent(page, `f.transcript("${THREAD}", ${JSON.stringify(thread(threeDaysAgo()))}, "codex");`);
+    }
+
+    test("draws what it said before as it was, read from Codex's thread, with a line where it resumed", async ({ page }) => {
+      await withThread(page, true);
+      await page.getByTestId("past-session").click();
+      await expect(page.getByTestId("user-message")).toHaveCount(2);
+      const asked = (await calls(page)).filter((call) => call.method === "start" || call.method === "history");
+      expect(asked).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ method: "start", options: expect.objectContaining({ agent: "codex", session: THREAD }) }),
+          expect.objectContaining({ method: "history", options: expect.objectContaining({ agent: "codex", session: THREAD }) }),
+        ]),
+      );
+      const day = await weekday(page, threeDaysAgo());
+      await expect(page.getByTestId("user-message").first().locator("time")).toHaveText(new RegExp(`^${day} \\d{1,2}:\\d{2}`));
+      // A turn Codex names no model for goes under the agent's own name.
+      await expect(page.getByTestId("agent-run").first().locator("header")).toContainText("Codex");
+      await expect(page.getByTestId("agent-text").first()).toHaveText("There are 12 files in src.");
+      await expect(page.getByTestId("work-line").first()).toContainText("ran 1 command");
+      await expect(page.getByTestId("work-line").nth(1)).toContainText("changed 1 file");
+      await page.getByTestId("work-line").first().click();
+      await page.getByTestId("step-row").filter({ hasText: "ls src | wc -l" }).click();
+      await expect(page.getByTestId("step-output")).toHaveText("12");
+      await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+      await expect(page.getByText("are not shown here")).toHaveCount(0);
+
+      await page.getByTestId("composer-input").fill("And the tests?");
+      await page.keyboard.press("Enter");
+      await agent(page, `f.turn("${H}", "Four of them pass.");`);
+      await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+      // This run's turn goes under the agent's name too, as it will once
+      // read back after a reload.
+      await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Codex");
+      await expect(page.getByTestId("agent-run").last().locator("header")).not.toContainText("gpt-5-codex");
+      const line = await box(page, "run-began", 0);
+      expect(line.y + line.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
+
+      // A reload reads the thread again, this run's turn with it, and
+      // draws each message, reply and step once.
+      await page.reload();
+      await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+      await expect(page.getByTestId("user-message")).toHaveCount(3);
+      await expect(page.getByTestId("agent-text")).toHaveCount(3);
+      await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Codex");
+      await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here, today \d{1,2}:\d{2}/);
+      const after = await box(page, "run-began", 0);
+      expect((await box(page, "user-message", 1)).y).toBeLessThan(after.y);
+      expect(after.y + after.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
+    });
+
+    test("says so, and can be written to, when Codex cannot read the thread", async ({ page }) => {
+      await withThread(page, false);
+      await page.getByTestId("past-session").click();
+      await expect(page.getByTestId("thread-intro")).toHaveText(
+        "This session was resumed. Its earlier messages could not be read: Codex does not have this conversation.",
+      );
+      await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+      await expect(page.getByTestId("composer-input")).toBeEditable();
+      await page.getByTestId("composer-input").fill("Still there?");
+      await page.keyboard.press("Enter");
+      await agent(page, `f.turn("${H}", "Yes.");`);
+      await expect(page.getByTestId("agent-text")).toHaveText(["Yes."]);
+    });
+  });
 });
 
 test("lays out the composer's bar in a narrow pane with nothing drawn over another", async ({ page }) => {
@@ -1723,7 +1852,7 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
   await openIntegrated(page);
   await agent(page, `f.context("${H}", 41000, 200000);`);
   const boxes = await Promise.all(
-    ["attach", "model-chip", "mode-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
+    ["attach", "model-chip", "mode-chip", "workflow-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
   );
   const ctx = await page.getByTestId("composer").locator(".ctx").boundingBox();
   const all = [...boxes, ctx].map((box) => box!);
@@ -1735,6 +1864,9 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
     }
   const composer = (await page.getByTestId("composer").boundingBox())!;
   for (const box of all) expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
+  // Send keeps to the right end, wrapped or not.
+  const send = all[4];
+  expect(composer.x + composer.width - (send.x + send.width)).toBeLessThan(16);
 });
 
 test.describe("in the sessions pane, an integrated session", () => {

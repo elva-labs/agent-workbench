@@ -15,8 +15,14 @@
    * are one mark. The keyboard going anywhere outside what holds the menu,
    * by a chord or a press, puts it away and leaves the keyboard there.
    *
-   * It opens above what holds it, or at a place the owner gives, where
-   * what holds it cuts off what overflows it.
+   * A choice that cannot be taken here is walked to like the others and
+   * says why in its line, but picking it does nothing.
+   *
+   * It opens above what holds it, from its left edge or with `end` from
+   * its right, or at a place the owner gives, where what holds it cuts off
+   * what overflows it. Opened from the right edge it moves as far as it
+   * takes to stay inside the box the owner names, as when what holds it
+   * has wrapped to the left of a narrow row.
    */
   interface Props {
     label: string;
@@ -28,6 +34,11 @@
     onclose: (how: "escape" | "tab" | "away") => void;
     /** Where it stands in the window, by its left edge and its foot. */
     at?: { left: number; bottom: number } | null;
+    /** It opens from the right edge of what holds it, for a holder near
+        the right of a row. */
+    end?: boolean;
+    /** What it stays inside when it opens from the right edge. */
+    within?: HTMLElement | null;
     /** Opened with the pointer: the choice the keyboard is on is marked
         only while the pointer is on it or once a key is pressed, so a
         menu opened by a press marks nothing until the pointer or a key
@@ -37,8 +48,19 @@
     optionTestid: string;
   }
 
-  let { label, choices, note = null, onpick, onclose, at = null, pointer = false, testid, optionTestid }: Props =
-    $props();
+  let {
+    label,
+    choices,
+    note = null,
+    onpick,
+    onclose,
+    at = null,
+    end = false,
+    within = null,
+    pointer = false,
+    testid,
+    optionTestid,
+  }: Props = $props();
 
   let menu = $state<HTMLDivElement | null>(null);
   let pointing = $state(untrack(() => pointer));
@@ -47,8 +69,31 @@
     return [...(menu?.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']") ?? [])];
   }
 
+  /** Opened from the right edge, where its left edge stands from what
+      holds it, once measured. */
+  let shift = $state<number | null>(null);
+
+  /** Puts it at the right edge of what holds it, or as near as it can be
+      while inside `within`. */
+  function place() {
+    if (!end || menu === null) return;
+    const holder = menu.parentElement?.getBoundingClientRect();
+    if (holder === undefined) return;
+    const width = menu.offsetWidth;
+    const room = (within ?? document.documentElement).getBoundingClientRect();
+    const left = Math.max(room.left, Math.min(holder.right - width, room.right - width));
+    shift = left - holder.left;
+  }
+
   onMount(() => {
+    place();
     (menu?.querySelector<HTMLButtonElement>("[aria-checked='true']") ?? items()[0])?.focus();
+  });
+
+  $effect(() => {
+    if (!end) return;
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
   });
 
   function onkeydown(e: KeyboardEvent) {
@@ -94,10 +139,12 @@
   class="menu"
   data-card
   class:placed={at !== null}
+  class:end
   class:pointing
   {onpointermove}
   {onfocusout}
-  style:left={at === null ? undefined : `${at.left}px`}
+  style:left={at !== null ? `${at.left}px` : shift !== null ? `${shift}px` : undefined}
+  style:right={shift !== null ? "auto" : undefined}
   style:bottom={at === null ? undefined : `${at.bottom}px`}
   role="menu"
   aria-label={label}
@@ -108,8 +155,12 @@
     <button
       role="menuitemradio"
       aria-checked={choice.on}
+      aria-disabled={choice.off ? "true" : undefined}
       class:on={choice.on}
-      onclick={() => onpick(choice.value)}
+      class:off={choice.off}
+      onclick={() => {
+        if (!choice.off) onpick(choice.value);
+      }}
       data-testid={optionTestid}
     >
       <span class="name"><Plain text={choice.name} /></span>
@@ -149,6 +200,15 @@
     z-index: 30;
   }
 
+  /* Wide enough for a line on each choice to sit on one line, and no
+     wider than the conversation it opens over. */
+  .menu.end {
+    left: auto;
+    right: 0;
+    width: min(330px, calc(100cqi - 32px));
+    max-width: none;
+  }
+
   button {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 16px;
@@ -182,6 +242,17 @@
   .on,
   .pointing .on:focus:not(:hover) {
     color: var(--ink);
+  }
+
+  .off,
+  .off:focus,
+  .pointing .off:focus:not(:hover) {
+    color: var(--ink-3);
+    cursor: default;
+  }
+
+  .off .about {
+    color: var(--ink-3);
   }
 
   .name {

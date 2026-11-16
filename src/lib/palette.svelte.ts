@@ -17,10 +17,10 @@ import {
   names,
 } from "$lib/accounts.svelte";
 import { agentLabel, installed, isReady } from "$lib/agent.svelte";
-import type { AgentId, Workflow, WorkflowModel } from "$lib/core";
-import { modelLabel } from "$lib/models";
+import type { AgentId } from "$lib/core";
 import {
   overrideOf,
+  workflowGist,
   workflowNamed,
   workflowOf,
   workflows,
@@ -486,20 +486,6 @@ function runSections(
     },
   ];
   return sections.filter((section) => section.items.length > 0);
-}
-
-/** A workflow in a few words: the model each part runs on first, and what
-    it does. "Fable directs, Sonnet works, Opus reviews". */
-export function workflowGist(workflow: Workflow): string {
-  const label = (model: WorkflowModel | undefined) =>
-    model === undefined ? "Any model" : modelLabel(model.agent, model.model);
-  return [
-    `${label(workflow.orchestrator)} directs`,
-    ...workflow.steps.map(
-      (step) =>
-        `${label(step.models[0])} ${step.kind === "work" ? "works" : "reviews"}`,
-    ),
-  ].join(", ");
 }
 
 /** The projects a new session can go in: the one on screen first, then

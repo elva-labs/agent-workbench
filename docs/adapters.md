@@ -15,6 +15,7 @@ and an id to resume by.
 | Resume        | `claude --resume <id>`                                             | `codex resume <id>`                                      |
 | Session id    | Chosen by the workbench, known from the first byte                 | Minted by Codex; the core watches for it                 |
 | Past sessions | Its transcripts under its configuration directory                  | Its SQLite index under its home                          |
+| Earlier messages | Read from the session's transcript                              | Read through its own app-server, from the thread's turns and items |
 | Account       | `CLAUDE_CONFIG_DIR`, its configuration directory                   | `CODEX_HOME`, its home                                   |
 | Session name  | The terminal title, stripped of the glyph and the agent's own name | The thread's name, else its title, else the first prompt |
 | Workflow      | `--append-system-prompt-file`, `--disallowedTools`                 | `-c developer_instructions=…`, `-c features.multi_agent=false`, `-c features.multi_agent_v2.disable_native_tools=true`; integrated, the same in the thread's start |
@@ -170,10 +171,12 @@ old index behind when its schema moves; the newest is read.
 
 The protocols the integrated sessions speak move with the agents' versions
 too, and are read the same way, as [integrated sessions](integrated.md)
-describes. Codex generates its app-server's protocol from its own code for
-each version, and a version can drop what an earlier one had. Everything
-the workbench reads from that protocol and writes to it, each method,
-field, status and shape of an answer, is listed with the code, and a test
-checks each against the schema the Codex installed on a developer's
-machine generates, so what moved shows when Codex is upgraded. What the
-workbench does not use may come and go.
+describes, and so is what a past conversation said, which
+[history](integrated.md#history) describes for each agent. Codex
+generates its app-server's protocol from its own code for each version,
+and a version can drop what an earlier one had. Everything the workbench
+reads from that protocol and writes to it, each method, field, status and
+shape of an answer, is listed with the code, and a test checks each
+against the schema the Codex installed on a developer's machine
+generates, so what moved shows when Codex is upgraded. What the workbench
+does not use may come and go.

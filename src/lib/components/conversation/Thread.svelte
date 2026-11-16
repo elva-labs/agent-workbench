@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
+  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -44,6 +44,9 @@
     intro: string | null;
     /** The agent's own name, for a run on its default model. */
     agent: string;
+    /** Whether each run goes under the model its turn ran on; else under
+        the agent's name. */
+    models?: boolean;
     /** A message that failed to send is taken back into the composer. */
     onPutBack?: (message: Message) => void;
     /** The session that sent a message, or null for the user. */
@@ -56,7 +59,7 @@
     room?: number;
   }
 
-  let { conversation, root, intro, agent, onPutBack, sender, opener, room = 0 }: Props = $props();
+  let { conversation, root, intro, agent, models = true, onPutBack, sender, opener, room = 0 }: Props = $props();
 
   shareFolds(() => conversation.opened);
 
@@ -984,7 +987,7 @@
     {/if}
     {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")}
       <p class="intro" data-testid="thread-intro">
-        {conversation.late ? "Earlier messages of this session are in its transcript and are not shown here." : intro}
+        {conversation.late ? `Earlier messages of this session ${notRead(conversation.earlierWhy)}` : intro}
       </p>
     {/if}
     {#if conversation.earlier === "loading"}
@@ -1013,7 +1016,7 @@
         {@const doing = live ? nowDoing(conversation, entry.parts) : null}
         <article class="msg agent" data-testid="agent-run" data-turn={entry.turn} data-copy-host="message">
           <header class="who">
-            <i class="mark"></i><b><Plain text={speaker(conversation, turn?.model ?? null, agent)} /></b>
+            <i class="mark"></i><b><Plain text={speaker(conversation, models ? (turn?.model ?? null) : null, agent)} /></b>
             {#if entry.at !== null}<time class="num">{written.get(`e:${entry.key}`) ?? clock(entry.at)}</time>{/if}
             {#if entry.parts.some((part) => part.kind === "text" && part.text.trim() !== "")}
               <Copy label="Copy as Markdown" text={() => replyMarkdown(entry.parts)} host="message" place="end" testid="copy-reply" />
