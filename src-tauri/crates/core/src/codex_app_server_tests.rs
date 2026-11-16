@@ -294,6 +294,44 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
 }
 
 #[test]
+fn a_thread_that_names_no_effort_runs_at_its_model_s_default() {
+    let ready_effort = |model: &str| {
+        let mut driver = fresh();
+        let mut started = thread_started();
+        // As Codex answers when neither the user nor the start sets one.
+        started["model"] = json!(model);
+        started["reasoningEffort"] = Value::Null;
+        let (_, out) = handshake_with(
+            &mut driver,
+            json!({"account": null, "requiresOpenaiAuth": false}),
+            started,
+        );
+        match &out[0] {
+            Event::Ready { effort, .. } => effort.clone(),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(ready_effort("gpt-a").as_deref(), Some("medium"));
+    assert_eq!(ready_effort("gpt-b").as_deref(), Some("minimal"));
+    assert_eq!(ready_effort("unlisted"), None, "nothing to go by");
+
+    // An effort the start asked for still wins.
+    let vars = HashMap::new();
+    let mut driver = launch_with(&vars, |launch| launch.effort = Some("high"));
+    let mut started = thread_started();
+    started["reasoningEffort"] = Value::Null;
+    let (_, out) = handshake_with(
+        &mut driver,
+        json!({"account": null, "requiresOpenaiAuth": false}),
+        started,
+    );
+    assert!(
+        matches!(&out[0], Event::Ready { effort: Some(e), .. } if e == "high"),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     let vars = HashMap::new();
     let server = PathBuf::from("/opt/workbench/agent-workbench-remote");

@@ -1451,6 +1451,18 @@ impl AppServer {
             .unwrap_or_default()
     }
 
+    /// The effort a model runs at when none is set, where it is one the
+    /// model takes.
+    fn default_effort(&self, model: Option<&str>) -> Option<String> {
+        let model = model?;
+        let efforts = self.efforts_of(Some(model));
+        self.models
+            .iter()
+            .find(|(info, _)| info.value == model)
+            .and_then(|(_, default)| default.clone())
+            .filter(|default| efforts.is_empty() || efforts.contains(default))
+    }
+
     fn configured(&self) -> Event {
         Event::Configured {
             model: self.model.clone(),
@@ -1485,7 +1497,11 @@ impl AppServer {
             self.workspace = Some(started["sandbox"].clone());
         }
         self.model = text(&started["model"]).or_else(|| self.start_model.clone());
-        self.effort = text(&started["reasoningEffort"]).or_else(|| self.start_effort.clone());
+        // Codex names no effort where nothing sets one, and the model then
+        // runs at its own default.
+        self.effort = text(&started["reasoningEffort"])
+            .or_else(|| self.start_effort.clone())
+            .or_else(|| self.default_effort(self.model.as_deref()));
         self.mode =
             mode_of(&started["approvalPolicy"], &started["sandbox"]).or(self.start_mode.clone());
         self.ready = true;
@@ -2574,11 +2590,7 @@ impl Driver for AppServer {
                 if !efforts.is_empty() && !self.effort.as_ref().is_some_and(|e| efforts.contains(e))
                 {
                     let default = self
-                        .models
-                        .iter()
-                        .find(|(info, _)| info.value == model)
-                        .and_then(|(_, default)| default.clone())
-                        .filter(|default| efforts.contains(default))
+                        .default_effort(Some(model))
                         .or_else(|| efforts.first().cloned());
                     self.effort = default.clone();
                     self.changes.effort = default;
