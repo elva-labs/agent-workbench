@@ -356,10 +356,9 @@ chosen for the starter, else under its project's, as the
 starter names the account when it is not its project's. A session resumed
 runs under the account it ran under. The status bar names the account the
 active session runs under, Default included, as long as there are
-accounts to tell apart, and beside it the account's allowance once an
-integrated session on it has reported one, as the [status
-bar](layout.md#the-status-bar) describes. An account of the same name on
-another machine is another login, with figures of its own.
+accounts to tell apart, and beside it the account's allowance, as the
+[status bar](layout.md#the-status-bar) describes. An account of the same
+name on another machine is another login, with figures of its own.
 
 The past sessions under a project are read from every account's
 directory, so a session started under another account is listed under its

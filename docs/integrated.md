@@ -433,12 +433,12 @@ does.
 An account's usage is metered over spans of time, called limit windows
 here: a session window of five hours, the week over every model, and for
 some plans the week for one model alone. The agent knows how much of each
-the account has used, and an integrated session asks it, so that the
-window can show the figures. Only the agent's own binary asks its
-provider, inside a session that is already running. The workbench passes
-no token or key, calls no provider itself, and starts no process just to
-read the figures, so an account with no integrated session running has
-none to show.
+the account has used. An integrated session asks it as it goes, and for
+an account with no integrated session running, or one between turns, the
+workbench starts the agent to ask it, as [reading the limits with no
+session](#reading-the-limits-with-no-session) describes. Only the agent's
+own binary asks its provider: the workbench passes no token or key and
+calls no provider itself.
 
 The limits event carries every limit window the session knows of, each
 time, one of each kind and model and at most eight, with a model's name
@@ -490,6 +490,51 @@ The usage request Claude Code answers is not a documented interface, and
 either agent may refuse a read or answer in a shape the workbench does not
 know. The session then goes on with no figures, or with the last ones it
 had, and says nothing of it.
+
+### Reading the limits with no session
+
+The window asks for the figures of every account in use: each account a
+session runs under, and the account of the session on screen. It asks the
+core of the machine the session's project is on, so a remote project's
+account is read on that machine, under the directories the account names
+there. The first time the window asks for an account it takes the figures
+the machine kept, so they show at once with their age, and then asks for
+a read. After that it asks every minute while the window is in use, and
+at once when a session comes on screen. The window is in use while it is
+shown and the user has pressed a key, used the pointer, scrolled or
+brought the window forward in the last ten minutes. A window left alone
+asks for nothing, and the first act after that asks at once. A question
+that fails says nothing, and the next minute asks again.
+
+The core reads an account only when a read is due: when the newest full
+read of its limits, the core's own or one an integrated session's agent
+answered, is five minutes old. What an integrated session reports counts
+on its way to the window, so an account whose session keeps reading is
+not read again while its reports keep coming. A read of an account already
+under way is not doubled, and one read runs at a time on a machine, so a
+window with many accounts has them read one after another. A read that
+fails holds back the next for a minute, then for twice as long after each
+failure since, up to an hour. An account whose directory is not there is
+not read.
+
+A read starts the agent's own binary under the account's directory, in
+the system's temporary folder. Claude Code runs as a stream that answers
+control requests, with no
+conversation saved, none of the user's servers started, and in its safe
+mode, which leaves the user's hooks, plugins and instructions unloaded. It
+is asked the usage control request above and nothing else, which reaches
+no model: the answer itself says the process spent nothing. Codex runs its
+app-server with its plugins off and is asked for its rate limits after its
+handshake, with no thread started. A read has twenty seconds from the
+start of the process to its answer, and takes about a second, most of it
+the agent's start. The process's input is then closed, which ends it, and
+whatever is left of its process group is ended a moment later.
+
+The core keeps the figures of each account's last full read in a file of
+its own in the workbench's directory on the machine, for the 32 accounts
+read most recently. A version before this one does not read the file, and a
+version reading it leaves out an account or a limit window of a shape it
+does not know.
 
 ## Failure
 

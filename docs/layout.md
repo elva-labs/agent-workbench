@@ -143,25 +143,26 @@ the workbench started it on, as plain text, since the agent owns any change
 in its terminal; one started on the agent's own default shows none, and its
 effort is not known.
 
-The allowance is the share used of each limit window the agent reported for
-the account, as text: `5h 11%  Week 34%  Fable 52%` for the five hour window,
-the week, and the week for one model. Only the windows the account has are
-drawn, and only once an integrated session on the account has reported
-them, as [integrated sessions](integrated.md#account-limits) describes;
-nothing is fetched to fill them. The figures belong to the account on its
-machine, so a terminal session on the same account shows what an integrated
-one reported, and the newest report wins whichever session sent it. A share
-is rounded, and reads 100% only when the window is used up.
+The allowance is the share used of each limit window of the account, as
+text: `5h 11%  Week 34%  Fable 52%` for the five hour window, the week, and
+the week for one model. Only the windows the account has are drawn. The
+figures belong to the account on its machine and are read there, as
+[account limits](integrated.md#account-limits) describes, so a terminal
+session and an integrated one on the same account show the same figures,
+and the newest wins whoever read them. A share is rounded, and reads 100%
+only when the window is used up.
 
 A window near its end, as the agent reads it, or from 80% used where the
 agent gives no reading, takes the theme's warning tone in a heavier weight.
 One used up takes the error tone and says when it resets. A window whose
 reset time has passed reads as reset until new figures come. Figures older
-than fifteen minutes are followed by a small clock and their age. A session
-reads them when it is ready and after a turn at most every five minutes, so
-figures that old mean no turn on the account has ended in a while. The age
-is that of the last full read, since what the agent pushes during a turn
-moves only some of the windows.
+than fifteen minutes are followed by a small clock and their age. An
+account in use is read about every five minutes while the window is in
+use, so figures that old mean its reads have failed or the window was left
+alone for a while. After a restart the figures kept from before show, with
+their age, until a read brings new ones. The age is that of the last full
+read, since what the agent pushes during a turn moves only some of the
+windows.
 
 A click on the allowance opens a popover with every window: a meter, the
 share used and when it resets in words, such as `resets in 2 h 10 min` or
