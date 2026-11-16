@@ -2250,6 +2250,18 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
         h.send(text);
         h.until_type("turnEnded");
     }
+    // In full access Codex fails a call that would ask; the workbench's own
+    // tools do not ask, so they run.
+    let called = h
+        .events()
+        .into_iter()
+        .find(|e| e["type"] == "toolFinished" && e["output"] == "echoed");
+    assert_eq!(
+        called.map(|e| e["error"].clone()),
+        Some(json!(false)),
+        "{:#?}",
+        h.events()
+    );
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
     let image = Image {
         media_type: "image/png".into(),
