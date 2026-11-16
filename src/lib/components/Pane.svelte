@@ -164,12 +164,14 @@
   }
 
   /* The focused card's accent runs along its top and down into its
-     rounded corners, where it ends square. */
+     rounded corners, where it ends square. It and the outline stand over
+     everything the card holds, whose layers stay below theirs, and under
+     what stands over the panes, such as an agent's question, from 5 up. */
   .pane.focused > .body::before {
     content: "";
     position: absolute;
     inset: 0 0 auto 0;
-    z-index: 6;
+    z-index: 4;
     height: var(--card-radius);
     border: var(--card-mark) solid var(--accent);
     border-bottom: 0;
@@ -183,7 +185,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    z-index: 5;
+    z-index: 3;
     border: 1px solid var(--card-edge);
     border-radius: inherit;
     pointer-events: none;
