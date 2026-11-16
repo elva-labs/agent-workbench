@@ -65,6 +65,7 @@ import {
   defaultAgent,
   drafting,
   isLive,
+  reopeningRow,
   isViewed,
   keysStillIn,
   label,
@@ -1331,6 +1332,9 @@ function observe(session: Session) {
     if (stops.delete(key)) moved();
     return;
   }
+  // Reopened the other way, it is the same session going on: how it is
+  // stays as last seen until its next run is up.
+  if (reopeningRow(key) && stops.has(key)) return;
   const mark =
     stops.get(key) ?? { worked: false, rest: null, told: null, toldTurn: null, turn: 0, seen: false };
   const before = unheardMark(stops.get(key));
@@ -2830,6 +2834,12 @@ async function holdWait(
         if (session === null) {
           settle(closedText(owner, ids.get(key) ?? null, names.get(key) ?? key));
           return;
+        }
+        // Reopened the other way, it is the same session going on, at
+        // work as far as the wait goes until its next run is up.
+        if (reopeningRow(key)) {
+          busy = true;
+          continue;
         }
         const resting =
           !isLive(session) || session.needs === "permission"

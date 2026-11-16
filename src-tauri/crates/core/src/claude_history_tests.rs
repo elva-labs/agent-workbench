@@ -409,6 +409,41 @@ fn reads_the_same_lines_again_though_the_file_grew() {
 }
 
 #[test]
+fn the_mode_a_transcript_last_ran_in_is_its_last_mode_entry() {
+    let body = concat!(
+        r#"{"type":"permission-mode","permissionMode":"auto","sessionId":"s"}"#,
+        "\n",
+        r#"{"type":"user","uuid":"u-1","parentUuid":null,"permissionMode":"plan","message":{"role":"user","content":"One"}}"#,
+        "\n",
+        r#"{"type":"permission-mode","permissionMode":"acceptEdits","sessionId":"s"}"#,
+        "\n",
+        r#"{"type":"assistant","uuid":"a-1","parentUuid":"u-1","message":{"id":"m","content":[{"type":"text","text":"Says permission-mode in passing"}]}}"#,
+        "\n",
+    );
+    let (_home, path) = transcript("mode", PROJECT, body);
+    // The mode a message went with is not the one the terminal resumes in.
+    assert_eq!(last_mode(&path).as_deref(), Some("acceptEdits"));
+}
+
+#[test]
+fn a_transcript_with_no_mode_entry_near_its_end_names_none() {
+    let (_home, path) = transcript("no-mode", PROJECT, REWOUND);
+    assert_eq!(last_mode(&path), None);
+    // An entry further back than the end that is read is not found.
+    let mut body = String::from(r#"{"type":"permission-mode","permissionMode":"plan"}"#);
+    body.push('\n');
+    let filler =
+        r#"{"type":"user","uuid":"u","parentUuid":null,"message":{"role":"user","content":"x"}}"#;
+    while body.len() <= 2 * MODE_KEEP as usize {
+        body.push_str(filler);
+        body.push('\n');
+    }
+    let (_far, far) = transcript("far-mode", PROJECT, &body);
+    assert_eq!(last_mode(&far), None);
+    assert_eq!(last_mode(Path::new("/nowhere/at/all.jsonl")), None);
+}
+
+#[test]
 fn finds_nothing_for_an_id_that_is_not_one() {
     let (home, _) = transcript("bad-id", PROJECT, REWOUND);
     for id in ["", "../x", "a/b", "a b", "."] {
