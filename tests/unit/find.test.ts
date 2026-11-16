@@ -162,6 +162,17 @@ describe("find in a conversation", () => {
     expect(finder.hit()).toMatchObject({ key: "c-3:shows", nth: 0 });
   });
 
+  it("goes on from no match to the first that comes", async () => {
+    const c = conversation();
+    const finder = await find(c, "ledger");
+    expect(finder.total).toBe(0);
+    expect(finder.current).toBe(-1);
+    c.apply({ type: "message", message: "m-2", state: "sent", error: null, text: "And the ledger?", images: [] });
+    await finder.search();
+    expect(finder.total).toBe(1);
+    expect(finder.current).toBe(0);
+  });
+
   it("finds a message still waiting under the thread", async () => {
     const c = conversation();
     c.apply({ type: "message", message: "m-3", state: "queued", error: null, text: "Rename the counter", images: [] });

@@ -437,7 +437,7 @@ test.describe("find in a long conversation", () => {
   const TURNS = 300;
 
   /** A past conversation of `TURNS` turns; one early turn's command output
-      holds the only "needle", and one early reply the only "haystack". */
+      holds the only "needle", and two early replies a "haystack". */
   const long = (start: number) => {
     const items: unknown[] = [];
     let at = start;
@@ -450,7 +450,7 @@ test.describe("find in a long conversation", () => {
       items.push({ at, event: { type: "toolInput", call, parent: null, delta: null, input: { command: `ls part-${turn}` }, truncated: false } });
       const output = turn === 4 ? "a.ts\nthe needle.ts\nb.ts" : "a.ts\nb.ts";
       items.push({ at, event: { type: "toolFinished", call, parent: null, output, error: false, truncated: false, changes: [] } });
-      const text = turn === 6 ? `Reply ${turn}, a haystack.` : `Reply ${turn}.`;
+      const text = turn === 6 ? `Reply ${turn}, a haystack.` : turn === 8 ? `Reply ${turn}, another haystack.` : `Reply ${turn}.`;
       items.push({ at, event: { type: "text", block: `b-${turn}`, parent: null, text, done: true } });
       items.push({ at, event: { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: 1000, usage: null } });
       at += 60_000;
@@ -481,7 +481,7 @@ test.describe("find in a long conversation", () => {
     await page.getByTestId("composer-input").focus();
     await findChord(page);
     await page.getByTestId("find-input").fill("haystack");
-    await expect(page.getByTestId("find-count")).toHaveText("1 of 1");
+    await expect(page.getByTestId("find-count")).toHaveText("1 of 2");
     await expect(page.getByText("Reply 6, a haystack.")).toBeInViewport();
     await expect.poll(() => currentInView(page)).toBe(true);
     // Only the turns near it are drawn.
@@ -498,6 +498,36 @@ test.describe("find in a long conversation", () => {
     // The thread stays where find left it, far from its foot.
     expect(await page.getByTestId("thread").evaluate((node) => node.scrollHeight - node.scrollTop - node.clientHeight)).toBeGreaterThan(5000);
     await expect(page.getByTestId("jump-latest")).toHaveCount(0);
+  });
+
+  test("says nothing while earlier messages are read, and goes to the first match once they come", async ({ page }) => {
+    const now = Date.now();
+    await installFakeCore(page, {
+      open: [PROJECT],
+      settings: { integrated: ["claude-code"] },
+      transcripts: [{ id: PAST, modified: Math.floor(now / 1000) - 60, size: 100, title: "Question 1" }],
+    });
+    await page.addInitScript(
+      ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+      { project: PROJECT, past: PAST },
+    );
+    await page.goto("/");
+    await agent(page, `f.transcript("${PAST}", ${JSON.stringify(long(now - TURNS * 60_000 - 3_600_000))}); f.holdHistory();`);
+    await page.getByTestId("past-session").click();
+    await expect(page.getByTestId("earlier-reading")).toBeVisible();
+    await page.getByTestId("composer-input").focus();
+    await findChord(page);
+    await page.getByTestId("find-input").fill("haystack");
+    await expect(page.getByTestId("find-count")).toHaveText("");
+    await agent(page, `f.releaseHistory();`);
+    // No match stands below the view, at the foot, so it comes round to
+    // the first, which is brought into view and filled.
+    await expect(page.getByTestId("find-count")).toHaveText("1 of 2");
+    await expect.poll(async () => (await painted(page)).current).toEqual(["haystack"]);
+    await expect(page.getByText("Reply 6, a haystack.")).toBeInViewport();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("find-count")).toHaveText("2 of 2");
+    await expect(page.getByText("Reply 8, another haystack.")).toBeInViewport();
   });
 
   test("counts every turn, drawn or not, and steps from the last to the first", async ({ page }) => {

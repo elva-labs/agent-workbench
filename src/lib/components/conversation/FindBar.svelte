@@ -56,9 +56,13 @@
   let from: HTMLElement | null = null;
   const mac = isMac();
 
+  /** Nothing is said to be missing while earlier messages are still
+      being read. */
+  let none = $derived(finder.query !== "" && finder.total === 0 && conversation.earlier !== "loading");
+
   let label = $derived.by(() => {
     if (finder.query === "" || finder.total === null) return "";
-    if (finder.total === 0) return "No matches";
+    if (finder.total === 0) return none ? "No matches" : "";
     return `${finder.current + 1} of ${finder.total}`;
   });
 
@@ -109,9 +113,11 @@
   }
 
   /** Counts the matches: for new words, going to the first; otherwise
-      marking them again, the current one where it was. */
+      marking them again, the current one where it was. A count that finds
+      the first match for words that had none goes to it, as for new words,
+      from the top of the view. */
   async function count() {
-    const start = wanted;
+    const start = wanted ?? (finder.current < 0 ? { key: null, entry: thread?.topRow() ?? null } : null);
     if (!(await finder.search(start))) return;
     if (start === null) {
       paintSoon();
@@ -324,7 +330,7 @@
     </label>
     <span
       class="count"
-      class:none={finder.total === 0 && finder.query !== ""}
+      class:none
       id="{id}-count"
       data-testid="find-count">{label}</span
     >

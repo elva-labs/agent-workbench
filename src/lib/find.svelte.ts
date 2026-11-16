@@ -236,6 +236,8 @@ export class Finder {
   /** Everything the thread held when last read, and what it was read at. */
   #read: { conversation: Conversation; root: string | null; revision: number; items: Held[] } | null = null;
   #run = 0;
+  /** The words the count shown is for. */
+  #counted: string | null = null;
 
   constructor(conversation: () => Conversation, options: () => HeldOptions = () => ({})) {
     this.#conversation = conversation;
@@ -292,6 +294,7 @@ export class Finder {
       this.found = [];
       this.total = 0;
       this.current = -1;
+      this.#counted = query;
       return true;
     }
     const cased = caseCounts(query);
@@ -302,7 +305,9 @@ export class Finder {
         later count was asked for meanwhile. */
     const breathe = async (): Promise<boolean> => {
       if (performance.now() - started <= SLICE) return true;
-      if (from !== null) this.total = null;
+      // The count for other words is no count for these: it is not shown
+      // while these are counted.
+      if (this.#counted !== query) this.total = null;
       await pause();
       started = performance.now();
       return run === this.#run;
@@ -347,6 +352,7 @@ export class Finder {
     this.found = found;
     this.total = total;
     this.current = total === 0 ? -1 : current;
+    this.#counted = query;
     return true;
   }
 
