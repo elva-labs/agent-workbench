@@ -1512,6 +1512,7 @@
   {#if subs.length > 0}
     <div class="subs" class:deep data-testid="subagent-rail">
       {#if pass}<span class="rail-pass" aria-hidden="true"></span>{/if}
+      {#if more}<span class="rail-through" aria-hidden="true"></span>{/if}
       <span class="sub-dots" aria-hidden="true" data-testid="subagent-dots"
         >{#each subs as one (one.call)}<span
             class="dot mini"
@@ -3499,20 +3500,33 @@
   }
 
   /* Folded to the narrow column, a session's subagents are a dot each,
-     packed from under its own dot to the column's edge, where their rows
-     stand. */
-  .sub-dots {
+     packed beside its rail to the column's edge, where their rows stand,
+     and the rail runs straight past them to the sessions it started. */
+  .sub-dots,
+  .rail-through {
     display: none;
   }
 
+  /* Never so far in that the column's fading edge takes the first. */
   .nav.folded .sub-dots {
+    --dots-x: min(calc(var(--row-inset) + var(--rail-x) + 6px), calc(var(--folded) - 20px));
     position: absolute;
-    top: 3px;
-    left: calc(var(--row-inset) + var(--rail-x) - var(--dot) / 2 + 0.5px);
-    width: calc(var(--folded) - var(--row-inset) - var(--rail-x) - 4px);
+    top: 4px;
+    left: var(--dots-x);
+    width: max(var(--dot), calc(var(--folded) - 8px - var(--dots-x)));
     display: flex;
     flex-wrap: wrap;
     gap: 3px;
+  }
+
+  .nav.folded .rail-through {
+    display: block;
+    position: absolute;
+    top: calc(-1 * var(--rail-reach));
+    bottom: 0;
+    left: calc(var(--row-inset) + var(--rail-x));
+    border-left: 1px solid var(--rule-strong);
+    pointer-events: none;
   }
 
   .nav.folded .sub {
