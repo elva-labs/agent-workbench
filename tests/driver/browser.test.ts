@@ -12,6 +12,7 @@ import {
   openProjects,
   textOf,
   waitForPaneText,
+  whyNoAnswer,
   type App,
 } from "./harness";
 
@@ -210,8 +211,18 @@ function focusReadout(driver: WebDriver): Promise<string> {
   return textOf(driver, "[data-testid='focus-readout']");
 }
 
-/** One call on the agent's tool server, answered with its text. */
-function tool(name: string, args: Record<string, unknown>): string {
+/** A test that calls a tool has the tool server's minute for the app to
+    answer, and time left over to say why it did not. */
+const TOOL_TEST = 90_000;
+
+/** One call on the agent's tool server, answered with its text. A call the
+    app did not answer also says what of the app still answers. */
+async function tool(name: string, args: Record<string, unknown>): Promise<string> {
+  const said = call(name, args);
+  return said.includes("did not answer") ? `${said}\n${await whyNoAnswer(app)}` : said;
+}
+
+function call(name: string, args: Record<string, unknown>): string {
   const messages = [
     {
       jsonrpc: "2.0",
@@ -393,13 +404,13 @@ describe.skipIf(process.platform !== "linux")("the browser on Linux", () => {
     await new Promise((resolve) => setTimeout(resolve, 2_500));
     expect(await textOf(driver, "[data-testid='browser-failed']")).toContain("is not answering");
 
-    expect(tool("browser_open", { url: "https://no-such-host.invalid/" })).toContain(
+    expect(await tool("browser_open", { url: "https://no-such-host.invalid/" })).toContain(
       "did not load",
     );
-  });
+  }, TOOL_TEST);
 
   it("answers the tools that read a page with not supported", async () => {
-    expect(tool("browser_open", { url: `${site}/a.html` })).toContain("Opened tab");
-    expect(tool("browser_snapshot", {})).toContain("not supported");
-  });
+    expect(await tool("browser_open", { url: `${site}/a.html` })).toContain("Opened tab");
+    expect(await tool("browser_snapshot", {})).toContain("not supported");
+  }, TOOL_TEST);
 });
