@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { installFakeCore } from "./fake";
+import { foldedWidth, installFakeCore } from "./fake";
 
 /**
  * How the sessions pane folds and opens. Its column eases between its folded
@@ -11,7 +11,8 @@ import { installFakeCore } from "./fake";
 const SLOT = ".sessions-slot";
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
-const FOLDED = 50;
+/** The folded column's width where the page runs, read once it is up. */
+let FOLDED = 0;
 
 type Frame = {
   slotWidth: number;
@@ -73,6 +74,7 @@ test.describe("the sessions pane's motion", () => {
     await installFakeCore(page);
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
+    FOLDED = await foldedWidth(page);
   });
 
   test("folds as its column narrows, and the agent takes the room as it goes", async ({
@@ -197,6 +199,7 @@ test.describe("the sessions pane peeked over the agent", () => {
     await installFakeCore(page);
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
+    FOLDED = await foldedWidth(page);
     await page.keyboard.press("ControlOrMeta+d");
     await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
     await expect(page.getByTestId("unfold-sessions")).toBeVisible();

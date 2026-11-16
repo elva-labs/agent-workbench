@@ -154,7 +154,7 @@ A list in it replaces the configured one, so the window is given whole.
 ```
 SCRATCH=$(mktemp -d)
 npm run build
-TAURI_CONFIG='{"build":{"devUrl":"http://localhost:14431"},"app":{"windows":[{"title":"Workbench Probe","width":702,"height":560,"minWidth":702,"minHeight":560,"x":800,"y":400,"focus":false,"titleBarStyle":"Overlay","hiddenTitle":true}]}}' \
+TAURI_CONFIG='{"build":{"devUrl":"http://localhost:14431"},"app":{"windows":[{"title":"Workbench Probe","width":706,"height":560,"minWidth":706,"minHeight":560,"x":800,"y":400,"focus":false,"titleBarStyle":"Overlay","hiddenTitle":true}]}}' \
   cargo build --manifest-path src-tauri/Cargo.toml
 
 mkdir -p "$SCRATCH/Probe.app/Contents/MacOS" "$SCRATCH/home" "$SCRATCH/tmp"

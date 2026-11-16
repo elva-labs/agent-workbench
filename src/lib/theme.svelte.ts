@@ -71,7 +71,7 @@ export const LOOKS: LookInfo[] = [
   {
     name: "modern",
     label: "Modern",
-    hint: "The sans, sentence case, soft corners, the panes flush with one hairline between",
+    hint: "The sans, sentence case, soft corners, panes as cards on the ground",
   },
   {
     name: "terminal",

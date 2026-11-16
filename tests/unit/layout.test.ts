@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { theme } from "$lib/theme.svelte";
 import {
   DEFAULT,
   FRAME_PADDING,
   FOLDED,
+  FOLDED_WIDE,
+  folded,
   MIN,
   NEEDS_AGENT_WHILE_REVIEWING,
   NEEDS_CHANGES,
@@ -11,6 +14,7 @@ import {
   NEEDS_SESSIONS,
   NEEDS_TERMINAL,
   SPLITTER,
+  INNER,
   CONTROLS_STEP,
   agentVisible,
   applyLayout,
@@ -33,7 +37,6 @@ import {
   focusPane,
   hideTerminal,
   layout,
-  leftmost,
   loadLayout,
   peekSessions,
   returnFocus,
@@ -294,7 +297,7 @@ describe("review mode", () => {
     applyLayout(1600);
     enterReview();
     expect(layout.review).toBe(Math.round(1600 * REVIEW_SHARE));
-    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(
+    expect(layout.review - INNER - layout.tree).toBeGreaterThanOrEqual(
       MIN.viewer,
     );
   });
@@ -559,7 +562,7 @@ describe("the tree column", () => {
     enterReview();
     layout.tree = 900;
     applyLayout(1600);
-    expect(layout.review - SPLITTER - layout.tree).toBeGreaterThanOrEqual(
+    expect(layout.review - INNER - layout.tree).toBeGreaterThanOrEqual(
       MIN.viewer,
     );
   });
@@ -696,7 +699,7 @@ describe("the terminal list", () => {
   it("gives way before the shells do", () => {
     layout.terminalList = 900;
     applyLayout(1000, 900);
-    expect(1000 - SPLITTER - layout.terminalList).toBeGreaterThanOrEqual(
+    expect(1000 - INNER - layout.terminalList).toBeGreaterThanOrEqual(
       MIN.shells,
     );
   });
@@ -716,24 +719,16 @@ describe("the terminal list", () => {
   });
 });
 
-describe("the leftmost pane", () => {
-  it("is the sessions pane while that is showing", () => {
-    applyLayout(1600, 900);
-    expect(leftmost()).toBe("sessions");
-  });
-
-  it("is the agent once the sessions pane is gone", () => {
+describe("the pane beside the sessions column", () => {
+  it("is the agent while that is showing", () => {
     togglePane("sessions");
-    expect(leftmost()).toBe("agent");
-    layout.sessionsChosen = true;
-    applyLayout(500);
-    expect(leftmost()).toBe("agent");
+    expect(besideSessions()).toBe("agent");
   });
 
   it("is the viewer when reviewing hides the agent too", () => {
     layout.mode = "reviewing";
     applyLayout(500);
-    expect(leftmost()).toBe("changes");
+    expect(besideSessions()).toBe("changes");
   });
 });
 
@@ -758,7 +753,7 @@ describe("the rightmost pane", () => {
 /** The editor's width while editing, from what the store laid out. */
 function editorWidth(width: number) {
   const sessions = (sessionsVisible() ? layout.sessions : FOLDED) + SPLITTER;
-  const tree = editTreeVisible() ? layout.editTree + SPLITTER : 0;
+  const tree = editTreeVisible() ? layout.editTree + INNER : 0;
   const agent = agentVisible() ? SPLITTER + layout.editAgent : 0;
   return width - sessions - tree - agent;
 }
@@ -1031,11 +1026,10 @@ describe("peeking while editing", () => {
 });
 
 describe("the edges while editing", () => {
-  it("puts the files pane beside the sessions column and leftmost when it folds", () => {
+  it("puts the files pane beside the sessions column", () => {
     applyLayout(1440);
     setEditing(true);
     expect(besideSessions()).toBe("changes");
-    expect(leftmost()).toBe("changes");
   });
 
   it("puts the agent rightmost, and the files pane once the agent is away", () => {
@@ -1113,6 +1107,52 @@ describe("the right pane's default widths", () => {
       expect(layout.changesDragged).toBe(false);
       expect(layout.editAgent).toBe(380);
       expect(layout.editAgentDragged).toBe(true);
+    });
+  });
+});
+
+describe("the folded sessions column", () => {
+  afterEach(() => {
+    theme.look = "modern";
+  });
+
+  it("holds the window's buttons on macOS, in either look, and stays narrow elsewhere", () => {
+    asPlatform("MacIntel", () => {
+      theme.look = "modern";
+      expect(folded()).toBe(FOLDED_WIDE.modern);
+      theme.look = "terminal";
+      expect(folded()).toBe(FOLDED_WIDE.terminal);
+    });
+    for (const platform of ["Linux x86_64", "Win32", ""]) {
+      asPlatform(platform, () => {
+        theme.look = "modern";
+        expect(folded()).toBe(FOLDED);
+      });
+    }
+  });
+
+  it("clears the buttons, 18 to 76 pixels in, with even room either side", () => {
+    // Modern: the column starts at the window's edge, the first card a gap
+    // past it, as far from the buttons as they are from the edge.
+    expect(FOLDED_WIDE.modern + SPLITTER - 76).toBe(18);
+    // Terminal: the column's box stands inside the frame's 10 pixels and
+    // holds the buttons with as much room after them as before.
+    expect(10 + FOLDED_WIDE.terminal - 76).toBe(18 - 10);
+  });
+
+  it("is what the changes pane and the agent need room beside on macOS", () => {
+    asPlatform("MacIntel", () => {
+      theme.look = "modern";
+      const wider = FOLDED_WIDE.modern - FOLDED;
+      applyLayout(NEEDS_CHANGES + wider);
+      expect(changesVisible()).toBe(true);
+      applyLayout(NEEDS_CHANGES + wider - 1);
+      expect(changesVisible()).toBe(false);
+      layout.mode = "reviewing";
+      applyLayout(NEEDS_AGENT_WHILE_REVIEWING + wider);
+      expect(agentVisible()).toBe(true);
+      applyLayout(NEEDS_AGENT_WHILE_REVIEWING + wider - 1);
+      expect(agentVisible()).toBe(false);
     });
   });
 });

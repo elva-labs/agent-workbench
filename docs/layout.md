@@ -31,9 +31,64 @@ scroll position, open folders and selection across the transitions.
 Opening a file costs the agent one resize: the pane opens at six tenths of
 the window, or wider when it and the sessions pane already came to more, and
 the agent gives up the difference. Clicking through files after that reflows
-nothing. Drag the viewer's splitter and the
+nothing. Drag the viewer's divider and the
 app stops sizing it for you; working and reviewing widths, and the tree
 column, are remembered separately.
+
+## Panes on the ground
+
+The window has a ground, its darkest tone: a step below the background in
+light, the background itself in dark. In the modern look the sessions pane,
+the pane headers and the status bar lie on it. What the agent, the changes
+pane and the terminal panel hold stands on it as a card with rounded
+corners under the pane's header. The cards stand 8 pixels apart, and the
+same gap in from the window's right edge and its foot. The sessions pane starts at
+the window's left edge and the header row at its top, so every header is
+one band of ground across the window. The card's top edge stands where a
+rule under the header would; the sessions pane's header, over its own list
+on the ground, keeps its rule. In light a card lifts off the ground with a
+faint shadow. The terminal look keeps its boxes on the ground instead, 6
+pixels apart inside the frame's padding, each with its header inside it.
+
+Every pane header is one height in a look, 40 pixels in the modern look and
+35 in the terminal look, the terminal list's top row included, and each
+title's line sits in its middle, so the titles stand on one line across the
+window whatever a header holds.
+
+Inside a pane, a list beside what is read sits a step from the surface
+toward the ground: the tree beside the viewer or the editor, and the
+terminal panel's list beside its shells. In a group of shells the ones
+without the keyboard sit the same step down. Alone in its pane the tree is
+what is read, and keeps the surface.
+
+Where the system asks for more contrast, plain lines come back: each card
+takes an outline in the strong rule, a box's border takes it too, the rules
+on the ground and the status bar's rule do as well, and each divider inside
+a pane draws a line.
+
+## Dividers
+
+The gap between two panes is the divider between them, and nothing is
+drawn in it at rest. The pointer takes hold over the gap and 4 pixels into
+the pane on either side, where it turns into the resize arrow; a divider
+inside a pane, between the tree and the viewer or the shells and their
+list, takes no room of its own and takes hold 5 pixels either side of the
+seam. Where what lies under that reach wants the pointer itself, a scroll
+bar along that edge or a control, the reach on that side gives way to it
+and the gap alone takes hold.
+
+As the pointer comes within 24 pixels, a grip in the accent fades in on the
+divider, stronger the nearer it is, and follows the pointer along it; on
+the divider it stands full. While dragged, and while the divider has the
+keyboard, a line in the accent runs its length with the grip on it. A
+double-click puts the pane back at its default size. With the keyboard the
+arrows move a divider 8 pixels, 24 with <kbd>Shift</kbd>, and
+<kbd>Home</kbd> puts it back; the grip then stands at the divider's middle
+and the status bar names the keys. Where the divider between two panes
+meets the one over the terminal panel, the pointer turns into the four-way
+arrow there and drags both, both grips meeting in a T, and a double-click
+puts both back. Where the system asks for reduced motion, the grip shows
+and goes without fading.
 
 ## The corner
 
@@ -47,7 +102,7 @@ the window controls the app draws come after them, and the right pane's
 widths are 60 pixels more in both modes: the changes pane opens at 400 and
 never goes below 320, so the corner and the window controls never cover
 each other, and the agent opens at 480 while editing. A width dragged by
-hand stays as dragged, and a double-click on the splitter gives the
+hand stays as dragged, and a double-click on the divider gives the
 default back. Short of room, a header's status gives way before its name,
 and goes once it would show no more than a letter or two. The agent's header
 gives way in this order: a workflow's name and a session's project and
@@ -129,17 +184,22 @@ The agent pane is a character grid, and below a certain width a TUI stops
 being usable. It is the last pane to lose room and the only one that can
 never be closed.
 
-| Content width | Windows and Linux | Layout                                        |
-| ------------- | ----------------- | --------------------------------------------- |
-| 812 and up    | 872 and up        | All three panes                               |
-| 682 to 812    | 742 to 872        | Sessions folds                                |
-| Under 682     | Under 742         | Changes folds away too, agent beside the fold |
+| Content width, macOS | Windows and Linux | Layout                                        |
+| -------------------- | ----------------- | --------------------------------------------- |
+| 816 and up           | 876 and up        | All three panes                               |
+| 722 to 816           | 746 to 876        | Sessions folds                                |
+| Under 722            | Under 746         | Changes folds away too, agent beside the fold |
 
-The window's minimum width is that 682 plus the frame's padding, which stays
-under half of a 1440-wide display so macOS split-screen still accepts the
-window. A unit test keeps the window configuration and the layout's numbers
-in step. On Windows and Linux the changes pane needs 60 pixels more, so at
-the window's minimum it folds away and the agent stands beside the fold.
+On macOS the folded column holds the window's buttons and is wider, as
+[folded, not gone](#folded-not-gone) says; the figures are the modern
+look's, and the terminal look's narrower fold lets the changes pane stay
+down to 710. The window's minimum width is the narrow fold's 686 plus the
+frame's widest padding, 706, which stays under half of a 1440-wide display
+so macOS split-screen still accepts the window. A unit test keeps the
+window configuration and the layout's numbers in step. The changes pane
+needs 60 pixels more on Windows and Linux and the fold is wider on macOS,
+so at the window's minimum the changes pane folds away and the agent
+stands beside the fold.
 
 Within a shape, the changes pane gives width up before the sessions pane.
 The sessions pane opens 300 pixels wide, room for a session's name beside
@@ -151,18 +211,26 @@ and not remembered, and peeks from its column as it does while reviewing.
 Then the tree column goes, and then the agent is hidden rather than squeezed
 below its minimum. The agent and the tree give way down to their own
 minimums before they go. At 1440 wide the sessions pane is folded while
-editing; everything is open from 1618, and from 1678 on Windows and Linux.
+editing; everything is open from a window 1624 wide in the modern look and
+1636 in the terminal look, and 60 more on Windows and Linux.
 
 ## Folded, not gone
 
-The sessions pane is never gone, only open or folded. Folded, its column is
-50 pixels wide and the pane keeps every row where it stands when open: each
-project's name, cut at the column's edge and without the part of the path
-that tells two projects of one name apart, and under it the dots of its
-sessions, each in its own row. The rest of the rows keep their height
-and show nothing, so the dots stay with their heading and nothing moves
-when the pane opens again. Its header joins the header beside it into one row, and
-the line down the column's edge starts under that row.
+The sessions pane is never gone, only open or folded. Folded on Windows and
+Linux, its column is 50 pixels wide. On macOS it is wide enough to hold the
+window's three buttons on its own ground with even room on either side, 86
+pixels in the modern look and 74 for the terminal look's box, and it keeps
+that width in full screen so nothing moves on the way in or out. The pane
+keeps every row where it stands when open: each project's name, cut at the
+column's edge and without the part of the path that tells two projects of
+one name apart, and under it the dots of its sessions, each in its own row,
+on macOS with the start of the session's name beside its dot, fading out
+at the column's edge. The rest of the rows keep their height and show
+nothing, so the dots stay with their heading and nothing moves when the
+pane opens again. Its header row is part of the band of ground the headers
+lie on, with no rule under it in the modern look, and on Windows and Linux
+the menu button stands in it. Between the column and the pane beside it is
+the plain gap: there is nothing to drag.
 
 The folded column is one button, and a stop for Tab. A click anywhere on it,
 or <kbd>Enter</kbd> on it, opens the pane and gives it the keyboard, and so
@@ -200,7 +268,9 @@ for.
 
 ## Hiding is free, resizing is not
 
-Below 988px of content, reviewing hides the agent rather than squeezing it.
+Below 986px of content, reviewing hides the agent rather than squeezing it;
+on macOS, where the folded column is wider, below 1022 in the modern look and
+1010 in the terminal look.
 The pane keeps its width while hidden, so no pty resize is sent and the
 terminal comes back as it was, with nothing redrawn or rewrapped. The agent
 pane is hidden rather than unmounted for the same reason; unmounting would
@@ -211,9 +281,9 @@ destroy the terminal.
 Toggling the sessions pane eases its column between folded and open. What
 the pane holds keeps its open width throughout and the column cuts it off,
 so no row moves, and the panes beside it widen into the room it leaves, or
-narrow to make room as it returns. The header beside the column keeps its
-title clear of the traffic lights by whatever the column leaves short of
-them, so the title stands still. Opening and closing the viewer moves the
+narrow to make room as it returns. On macOS the column holds the traffic
+lights however far it is open, so the header beside it never moves for
+them. Opening and closing the viewer moves the
 same way: the sessions column eases folded or open while the changes column
 eases to its new width on the same curve, so the agent between them moves
 steadily from its old width to its new one and never below its minimum. When
@@ -299,38 +369,40 @@ keyboard. A shell with something still running in it asks first, as
 
 Shells come in groups, one group on screen at a time. A new shell is a group
 of its own; `split` opens one beside the current shell, in its group, taking
-half of that shell's width. The bar between two halves moves the boundary,
-never below 200px on either side, and Home makes the group even again.
+half of that shell's width. The divider between two halves moves the
+boundary, never below 200px on either side, and Home makes the group even
+again. The shell without the keyboard sits a step toward the ground, as the
+list beside them does.
 Closing one half leaves you in the other. Split widths are not persisted,
 since shells do not survive a restart. The list's own width is remembered
 with the others; below 140px it stops giving way and the shells keep 320px.
 
 ## The window's own chrome
 
-On macOS the window has no title bar. The traffic lights sit over the header
-of whichever pane is at the left edge, sessions normally, the agent once that
-pane is closed or folded, the viewer when reviewing hides the agent too, the
-files pane while editing once the sessions pane folds, and that pane's
-header is inset so its title clears them. The app measures that
-header once the look has painted and again when the look changes, and places
-the buttons on its middle; since macOS lays the title bar out again whenever
-it likes, it listens for the buttons' frames changing and puts them back each
-time. The window keeps its plain title bar rather than a toolbar, because
+On macOS the window has no title bar. The traffic lights sit in the
+sessions pane's header row, open or folded: open, its title is inset so it
+clears them; folded, the column holds them on the ground. The app measures
+that header once the look has painted and again when the look changes, and
+places the buttons on its middle; since macOS lays the title bar out again
+whenever it likes, it listens for the buttons' frames changing and puts
+them back each time. The window keeps its plain title bar rather than a toolbar, because
 macOS 26 rounds a toolbar window's corners far more than every other window's.
 In full screen macOS keeps the buttons in a bar of its own that shows under
 the pointer, and the app places nothing from the start of the way in until
-the window is back out. The headers keep no room for the buttons from the
-start of the way in to the start of the way out, so the leftmost title sits
-at the pane's edge like any other.
-The pane headers are drag regions: grab one to move the window, double-click
-to zoom.
+the window is back out. The sessions pane's header keeps no room for the
+buttons from the start of the way in to the start of the way out, so its
+title sits at the pane's edge like any other; the folded column keeps its
+width. The pane headers and the gap beside the folded column are drag
+regions: grab one to move the window, double-click to zoom.
 
 On Windows and Linux the window is undecorated and the app draws minimize,
 maximize and close at the end of the rightmost pane's header, where the
-platform has them, after [the corner](#the-corner). The pane headers are drag regions there too, and the
-platform keeps the resize borders. A menu button at the start of the
-leftmost header pops the native menu with Settings and Quit in it, since
-a menu bar would sit in the row the app took.
+platform has them, after [the corner](#the-corner): in the modern look flush
+in the window's corner, as tall as the header band, and in the terminal look
+inside the rightmost box. The pane headers are drag regions there too, and
+the platform keeps the resize borders. A menu button at the start of the
+sessions pane's header, open or folded, pops the native menu with Settings
+and Quit in it, since a menu bar would sit in the row the app took.
 
 ## On window resize
 
