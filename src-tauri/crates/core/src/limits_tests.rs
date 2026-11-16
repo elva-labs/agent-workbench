@@ -358,6 +358,26 @@ fn codex_is_started_with_its_plugins_off_under_the_account_and_asked_after_the_h
     );
 }
 
+/// The real agents on the PATH, under the accounts of whoever runs it, each
+/// asked for its limits with no turn. Run by hand after an agent is updated:
+/// it says only how many windows came and how long each read took.
+#[test]
+#[ignore = "runs the real claude and codex on PATH under your own accounts"]
+fn the_real_agents_answer_with_no_turn() {
+    let vars: HashMap<String, String> = std::env::vars().collect();
+    for agent in ["claude-code", "codex"] {
+        let started = Instant::now();
+        let event = read(agent, &vars, None, READ_WAIT).unwrap_or_else(|e| panic!("{agent}: {e}"));
+        let (_, _, windows, read_at, _) = told(&event);
+        eprintln!(
+            "{agent}: {} windows in {:?}",
+            windows.len(),
+            started.elapsed()
+        );
+        assert!(!windows.is_empty() && read_at.is_some(), "{agent}");
+    }
+}
+
 // ---- the schedule, with a clock the test turns ----
 
 const T0: u64 = 2_000_000_000;
