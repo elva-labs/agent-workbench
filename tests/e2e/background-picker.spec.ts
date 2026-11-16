@@ -212,9 +212,13 @@ test.describe("cards", () => {
       backgrounds: { mono: { ...LAGOON, dots: [{ hue: 185, chroma: 0.85 }, { hue: 305, chroma: 0.85 }, { hue: 65, chroma: 0.85 }], harmony: "triad", strength: 1 } },
       cards: { mono: 0.25 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("25%, held at 14% here");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("25%, held at 14% in light");
+    await expect(page.getByTestId("background-cards")).toHaveAttribute(
+      "aria-valuetext",
+      "25% of the strength, held at 14% in light",
+    );
     await expect(page.getByTestId("background-note")).toContainText(
-      "Held at 14% here, since more would leave a terminal colour hard to read.",
+      "Held at 14% in light, since more would leave a terminal colour hard to read.",
     );
   });
 
@@ -224,8 +228,13 @@ test.describe("cards", () => {
       backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.6, grain: 0.25 } },
       cards: { teal: 0.2 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("20%, held at 0% here");
-    await expect(page.getByTestId("background-note")).toContainText("since more would melt the cards into the ground");
+    await expect(page.getByTestId("background-cards-value")).toHaveText("20%, none in dark");
+    await expect(page.getByTestId("background-note")).toContainText(
+      "None shows through in dark, since any would melt the cards into the ground.",
+    );
+    // Held at none, the window is as it is with none asked.
+    await expect(page.locator("html")).not.toHaveAttribute("data-cards", "");
+    expect(await cardPainted(page)).toBe(false);
   });
 
   test("is greyed with the reason while the system asks for more contrast", async ({ page }) => {

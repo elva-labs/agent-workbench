@@ -100,6 +100,8 @@
     void theme.cards;
     return shownCards();
   });
+  const percent = (value: number) => `${Math.round(value * 100)}%`;
+
   /** What the guard lets through the cards here, in this look and
       appearance, and why it holds back. */
   let through = $derived(
@@ -108,6 +110,11 @@
       : paintOf(shown, theme.look, coloursOf(theme.palette, appearance, theme.themes), cards).cards,
   );
   let held = $derived(through !== null && through.held < cards - 1e-9 ? through.held : null);
+  /** Where the hold applies: the appearance on screen, which the guard
+      reads in the look on screen. */
+  let where = $derived(`in ${appearance}`);
+  /** The share held, in words: a percentage, or none. */
+  let heldWords = $derived(held === null ? "" : held === 0 ? `none ${where}` : `held at ${percent(held)} ${where}`);
 
   onDestroy(() => {
     moreContrast?.removeEventListener?.("change", followContrast);
@@ -136,7 +143,6 @@
     context.putImageData(image, 0, 0);
   });
 
-  const percent = (value: number) => `${Math.round(value * 100)}%`;
 
   /** A first dot: the palette's own hue, well into the pad. */
   function first(dot: Dot = accentDot()): Background {
@@ -587,13 +593,11 @@
         disabled={shown === null || setAside}
         oninput={(event) => slideCards(event, false)}
         onchange={(event) => slideCards(event, true)}
-        aria-valuetext={cards === 0 ? "None" : `${percent(cards)} of the strength${held === null ? "" : `, held at ${percent(held)} here`}`}
+        aria-valuetext={cards === 0 ? "None" : `${percent(cards)} of the strength${held === null ? "" : `, ${heldWords}`}`}
         data-testid="background-cards"
       />
       <span class="value" data-testid="background-cards-value">
-        {#if shown !== null && !setAside}{cards === 0 ? "None" : percent(cards)}{#if held !== null}<em
-              >, held at {percent(held)} here</em
-            >{/if}{/if}
+        {#if shown !== null && !setAside}{cards === 0 ? "None" : percent(cards)}{#if held !== null}<em>, {heldWords}</em>{/if}{/if}
       </span>
     </div>
     <p class="note" data-testid="background-note">
@@ -601,10 +605,14 @@
       well, as a share of the strength. Text on it always stays easy to read.
       {#if setAside}
         Off while the system asks for more contrast.
-      {:else if held !== null && through?.heldBy === "terminal"}
-        Held at {percent(held)} here, since more would leave a terminal colour hard to read.
+      {:else if held === 0}
+        None shows through {where}, since any would {through?.heldBy === "terminal"
+          ? "leave a terminal colour hard to read"
+          : "melt the cards into the ground"}.
       {:else if held !== null}
-        Held at {percent(held)} here, since more would melt the cards into the ground.
+        Held at {percent(held)} {where}, since more would {through?.heldBy === "terminal"
+          ? "leave a terminal colour hard to read"
+          : "melt the cards into the ground"}.
       {/if}
     </p>
   </div>
