@@ -136,7 +136,7 @@ A call whose token names a session the workbench is not running, one it
 never had or one that has stopped, cannot come from one of its sessions,
 and every one of the seven tools refuses it, with the reason, asking
 nothing. A call that names an agent's id is refused the same way. The
-other tools take either for a call from no session: show, diff, terminal,
+other tools never take either for that session's: show, diff, terminal,
 notify and present act as for an agent the workbench did not start, the
 browser tools refuse it, and the settings tools put its change to the user
 as an agent's.
@@ -173,10 +173,9 @@ is how a call reaches the workbench: the tool server adds a line for each
 call, with its token, and the workbench reads it. The log holds the most
 recent calls, up to a quarter of a megabyte, and any program the user runs
 can read it and add to it, so any agent of the user's can learn the token
-of a session that called lately there and call as it. Keeping tokens out
-of the request log narrows who learns one by accident, not who can: the
-token is also in the environment of the session's own processes and in the
-window's stored state.
+of a session that called lately there and call as it. The token is also in
+the environment of the session's own processes and in the window's stored
+state, which any program the user runs can read too.
 
 ## When the user writes to it
 
@@ -352,15 +351,17 @@ afresh.
 
 A session from before there were tokens had all of this kept under its id,
 and the standing answers it was given in this run of the app as well. When
-it is given a token, they move there: the lists are joined by session id
-and a count of rounds takes the larger of the two, so a move made again
-adds nothing, and puts back what a second window that wrote over the
-first lost. The id's own copy stays for the version before to read, and
-what the workflow ran goes from both, with the token, once the session is
-gone from its project's past sessions. What the session is done with, such
-as a session it stopped, goes from both, so a move never brings it back. A
-session resumed while a run of it named by its id still runs gets a token
-of its own all the same: two rows never share one.
+it is given a token, they move there. What it started is joined to the
+token's list by session id, so a move made again adds nothing and puts
+back a list a second window that wrote over the first lost; the id's list
+stays for the version before to read, and a session the starter is done
+with, such as one it stopped, goes from both, so a move never brings it
+back. What its workflow ran, the standing answers and the sessions it
+started in this run move whole, and the id keeps none of them, so one the
+starter has since let go of does not come back. A session resumed while a
+run of it named by its id still runs gets a token of its own, and nothing
+moves until that run stops: what is kept under the id is the run's, and
+two rows never share a token.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool

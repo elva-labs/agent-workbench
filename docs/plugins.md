@@ -140,8 +140,9 @@ means the agent has; the view's page and the data the view shows. The app
 never polls a plugin, and a plugin that has nothing to say stays silent.
 A line for a session's row names the session by the agent's own id, as the
 session events give it, and the app puts it on the row of the running
-session it started with that id; a line naming an id it is not running,
-or one two running sessions share, lands on no row.
+session it started with that id. A line naming an id the session events
+have not given, one it is not running, or one two running sessions share,
+lands on no row.
 
 A plugin gets the project path, the session events and the tree events,
 and nothing else from the app. What it knows about the repository it finds
