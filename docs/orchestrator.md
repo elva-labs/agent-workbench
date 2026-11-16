@@ -724,7 +724,7 @@ row in the section asks first, and Stop all on the board stops every one.
 
 ## Where the work happens
 
-An orchestrator directs; it does not edit. The sessions it starts run in
-their own projects, on their own branches when they asked for a worktree,
-each with its own terminal and scrollback, and they are sessions you can
-open, type in and take over at any point.
+A session under a workflow directs; it does not edit. The sessions it
+starts run in their own projects, on their own branches when they asked
+for a worktree, each with its own terminal and scrollback, and they are
+sessions you can open, type in and take over at any point.
