@@ -77,12 +77,11 @@
 
   /** The colours the terminal draws in: the theme's, on the well's ground
       where it is drawn a step toward the ground. The well is a mix, so it is
-      read as the page paints it. While the cards let a background through,
-      the terminal's ground is clear and the card's paint, or the well's,
-      shows through it; rows a program paints itself keep their colour. */
+      read as the page paints it. The ground stays the card's own tone while
+      the cards let a background through, so what xterm works out from it,
+      an inverse cell's text, stays right; the page clears it there. */
   function colours() {
     const built = buildTheme(tokenReader(document.documentElement));
-    if (cardsThrough()) return { ...built, background: CLEAR };
     if (!dim) return built;
     const probe = document.createElement("span");
     probe.style.color = "var(--well)";
@@ -115,8 +114,6 @@
     return typeof renderer === "string" ? renderer : null;
   }
 
-  const CLEAR = "rgba(0, 0, 0, 0)";
-
   /** Whether the GPU renderer can draw here, and the one drawing now. */
   let gpu = false;
   let webgl: WebglAddon | null = null;
@@ -124,10 +121,12 @@
   /** The GPU renderer where there is one. A software rasteriser gives a
       context that presents late or not at all, and a headless X server may
       give none; the DOM renderer is the fallback for both: slower under a
-      flood of output, identical to look at. It also draws while the cards
-      let a background through: the GPU renderer draws glyphs on a clear
-      ground thinner than the page draws text, which leaves dark text on a
-      dark colour a program paints faint. */
+      flood of output. It also draws while the cards let a background
+      through, since only it leaves the cells of the terminal's own ground
+      unpainted: the GPU renderer would need a clear ground, on which it
+      draws glyphs thinner than the page draws text and leaves dark text on
+      a dark colour a program paints faint. A context once lost stays lost
+      for this terminal. */
   function useRenderer() {
     if (terminal === null) return;
     const want = gpu && !cardsThrough();
@@ -135,6 +134,7 @@
       try {
         const addon = new WebglAddon();
         addon.onContextLoss(() => {
+          gpu = false;
           addon.dispose();
           if (webgl === addon) webgl = null;
         });
@@ -182,8 +182,6 @@
       fontSize,
       lineHeight: 1.35,
       scrollback: 10_000,
-      // A clear ground is on only while the cards let a background through.
-      allowTransparency: cardsThrough(),
       theme: colours(),
       // Links the program marked up itself (OSC 8), as Claude Code does.
       linkHandler: { activate: follow },
@@ -215,6 +213,7 @@
       });
     }
     terminal.open(host);
+    host.style.setProperty("--term-selection", terminal.options.theme?.selectionBackground ?? null);
 
     gpu = !softwareGl(glRenderer()) && !domRendererChosen();
     useRenderer();
@@ -390,10 +389,9 @@
     void dim;
     if (!terminal) return;
     untrack(() => {
-      const clear = cardsThrough();
-      if (terminal!.options.allowTransparency !== clear) terminal!.options.allowTransparency = clear;
       useRenderer();
       terminal!.options.theme = colours();
+      host.style.setProperty("--term-selection", terminal!.options.theme.selectionBackground ?? null);
     });
   });
 
@@ -476,6 +474,14 @@
   /* A file is being dragged over this terminal: the drop will paste here. */
   .term.target {
     box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* While the cards let a background through, the DOM renderer draws the
+     terminal: its ground is cleared so the card or the well shows through,
+     and a selection is the accent let through over it rather than a blend
+     over the solid tone. */
+  :global(:root[data-cards]) .term :global(.xterm-selection div) {
+    background-color: var(--term-selection) !important;
   }
 
   /* xterm sizes its own rows; keep its scrollbar out of the app's chrome. */
