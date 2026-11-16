@@ -1365,16 +1365,17 @@ export async function installFakeCore(
         }),
         hookStatusMany: async (projects: string[]) =>
           projects.map(() => ({ installed: false, settings: "", events: "" })),
-        hookInstall: async () => ({
-          installed: true,
-          settings: "",
-          events: "",
-        }),
-        hookUninstall: async () => ({
-          installed: false,
-          settings: "",
-          events: "",
-        }),
+        // What the window asked of the hooks, by project, in order.
+        hookInstall: async (project: string) => {
+          const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };
+          (w.__hookCalls ??= []).push({ kind: "install", project });
+          return { installed: true, settings: "", events: "" };
+        },
+        hookUninstall: async (project: string) => {
+          const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };
+          (w.__hookCalls ??= []).push({ kind: "uninstall", project });
+          return { installed: false, settings: "", events: "" };
+        },
         gitStatus: async () => state.fixture.status,
         // As the core does: the index and what is untracked, so a file
         // deleted from the tree but not from the index is still listed.

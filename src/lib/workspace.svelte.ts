@@ -18,7 +18,7 @@ import {
 } from "$lib/sessions.svelte";
 import { closeProject as closeShells } from "$lib/terminals.svelte";
 import { drawnIn, forgetUsed, touch } from "$lib/projects.svelte";
-import { closeFolder, isOrchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
+import { closeFolder, folderShown, isOrchestratorFolder, startsIn } from "$lib/orchestratorFolder.svelte";
 
 /**
  * The projects this window has open.
@@ -190,6 +190,16 @@ export function onScreen(): string | null {
   const session = sessions.active === null ? null : byKey(sessions.active);
   if (session === null || session.project !== current) return current;
   return drawnIn(session);
+}
+
+/** The projects the hooks answer covers: the open ones, and the
+    orchestrator folder while the sessions pane lists it, which takes the
+    same answer and may have a word of its own like any project. */
+export function hookedProjects(): string[] {
+  const paths = workspace.open.map((project) => project.path);
+  const folder = folderShown(onScreen());
+  if (folder !== null && !paths.includes(folder)) paths.push(folder);
+  return paths;
 }
 
 /** The user picked a session: it comes forward, and its project with it

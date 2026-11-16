@@ -707,6 +707,45 @@ test.describe("the orchestrator folder", () => {
     await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
   });
 
+  // The folder takes the hooks answer as any project does, and may have a
+  // word of its own: with hooks off everywhere, it is the one way to give
+  // a session resumed there the workbench's tools.
+  test("has the hooks answer of any project, and a word of its own", async ({ page }) => {
+    await installFakeCore(page, {
+      settings: { ...NO_WORKFLOW, hooks: { everywhere: false, overrides: {} } },
+      orchestratorTranscripts: PAST,
+    });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    const calls = () =>
+      page.evaluate(
+        () => (window as unknown as { __hookCalls?: { kind: string; project: string }[] }).__hookCalls ?? [],
+      );
+
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-live").click();
+    await page.getByTestId("hooks-overrides").click();
+    const own = page.locator(`[data-testid='hooks-row'][data-project='${ORCHESTRATOR_FOLDER}']`);
+    await expect(own.locator(".project-name")).toHaveText("orchestrator");
+    await own.getByTestId("hooks-on").click();
+    await expect(own.getByTestId("hooks-on")).toHaveAttribute("aria-checked", "true");
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER))
+      .toEqual([{ kind: "install", project: ORCHESTRATOR_FOLDER }]);
+
+    // Every project follows again, and with hooks on everywhere the folder
+    // is brought along with the open ones.
+    await own.getByTestId("hooks-default").click();
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER).map((call) => call.kind))
+      .toEqual(["install", "uninstall"]);
+    await page.getByTestId("hooks-everywhere-on").click();
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER).map((call) => call.kind))
+      .toEqual(["install", "uninstall", "install"]);
+    await expect.poll(async () => (await calls()).some((call) => call.project === PROJECT && call.kind === "install")).toBe(true);
+  });
+
   test("leaves the pane once closed, and stays out after a restart", async ({ page }) => {
     await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST });
     await page.goto("/");

@@ -40,7 +40,7 @@ import {
   startsIn,
 } from "$lib/orchestratorFolder.svelte";
 import { create, forProject, reset as resetSessions, sessions, type HistoryEntry } from "$lib/sessions.svelte";
-import { close, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
+import { close, hookedProjects, reset as resetWorkspace, startSession, workspace } from "$lib/workspace.svelte";
 
 const DIR = "/home/ada/.agent-workbench/orchestrator";
 const A = "/home/ada/dev/one";
@@ -101,6 +101,15 @@ describe("the orchestrator folder", () => {
     // A session resumed there, or back from the last quit, is a row.
     create(DIR, "old-1", "claude-code", null);
     expect(folderShown(A)).toBe(DIR);
+  });
+
+  it("is one of the projects the hooks answer covers while it is listed", () => {
+    expect(hookedProjects()).toEqual([A]);
+    sessions.history[DIR] = [past("old-1")];
+    sessions.mine[DIR] = ["old-1"];
+    expect(hookedProjects()).toEqual([A, DIR]);
+    closeFolder();
+    expect(hookedProjects()).toEqual([A]);
   });
 
   it("leaves the pane for good once closed, unless a session of it has a row", () => {

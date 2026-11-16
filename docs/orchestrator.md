@@ -34,7 +34,8 @@ own, the folder `orchestrator` under the workbench's home. While
 that folder holds past sessions the sessions pane lists it as a project,
 under its name, so they can be read and resumed. A session resumed there is
 a session like any other: it is told nothing of directing, has the tools
-and hooks any project has under the [hooks](hooks.md) setting, and keeps
+and hooks any project has under the [hooks](hooks.md) setting, where the
+folder has a project override of its own like any project, and keeps
 its token and what it started, as [what is
 remembered](#what-is-remembered) describes. Nothing new starts in the
 folder: it has no new-session button, its menu holds only Close project,

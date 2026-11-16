@@ -209,7 +209,8 @@ among them. Class names are the app's own and change without notice.
 
 Watcher only, or agent hooks, chosen once for every project; each project
 you open follows it, and a project that should go the other way can say so
-under it. A fresh install starts with the hooks on; a setup from before the
+under it. The `orchestrator` folder is among those projects while the
+sessions pane lists it (see [orchestrator](orchestrator.md)). A fresh install starts with the hooks on; a setup from before the
 choice existed starts with them off, and is told once, in a word over the
 agent pane, what turning them on gives; the word's link opens the settings
 at this section. What each means for the changes pane and for a session's
