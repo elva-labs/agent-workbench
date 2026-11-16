@@ -243,9 +243,12 @@ impl Core {
             .ok_or_else(|| "no home directory".to_string())
     }
 
-    /// The machine's settings, and whether a file held them yet.
+    /// The machine's settings, and whether a file held them yet. A list of
+    /// workflows written before one shipped is offered it first, once.
     pub fn settings_get(&self) -> Result<crate::settings::Stored, String> {
-        Ok(self.settings()?.load())
+        let store = self.settings()?;
+        store.offer_shipped();
+        Ok(store.load())
     }
 
     /// The user's own stylesheet, or none and why it is not handed over.

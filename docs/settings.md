@@ -286,9 +286,12 @@ same model, and its one step, Work, runs on any model, eight sessions at
 once at most, which is as many as a session may run. Its orchestrator hands
 each piece to a session of its own and does none itself, as
 [orchestrator](orchestrator.md) describes. A settings file from before
-workflows existed gets the same two. They are ordinary workflows, changed,
-renamed or deleted like any other. New sessions follow none until the user
-turns a workflow on, in this tab or by picking one when starting a session.
+workflows existed gets the same two, and a list written before Direct
+shipped is given Direct once, at its end, unless it holds a workflow of
+that name or as many as it may. They are ordinary workflows, changed,
+renamed or deleted like any other, and one deleted stays deleted. New
+sessions follow none until the user turns a workflow on, in this tab or by
+picking one when starting a session.
 
 A workflow in the file that does not read or keep the rules is not used, and
 neither is a default or a project choice that names it. It is not dropped:

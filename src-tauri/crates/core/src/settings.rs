@@ -138,6 +138,19 @@ pub fn settings_path(home: &Path) -> PathBuf {
     home.join(".agent-workbench").join("settings.json")
 }
 
+/// The names of the workflows offered once to a settings file that held
+/// a list of workflows before they shipped. A file of its own beside the
+/// settings, which a version before this one never reads.
+fn offered_path(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("offered-workflows.json")
+}
+
+/// The workflows that shipped after a settings file could hold workflows:
+/// a list written before them lacks them unless the user added one of the
+/// name. Build and review shipped with workflows, so a list without it is
+/// one the user took it out of, and it is not offered again.
+const OFFERED_LATER: [&str; 1] = [workflow::DIRECT_NAME];
+
 /// A chord the app claims: the platform modifier is implied, and Shift and
 /// Alt may join it. The key is spelled as a browser's key event spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1217,6 +1230,38 @@ pub fn apply(settings: &Settings, change: &Value) -> Result<Settings, String> {
     Ok(next)
 }
 
+/// The settings with each shipped workflow named added at the end of the
+/// list, unless a workflow of that name is there, used or set aside, or
+/// the list is full.
+fn with_shipped(settings: &Settings, names: &[&str]) -> Settings {
+    let mut next = settings.clone();
+    let shipped = Workflows::default();
+    for name in names {
+        let workflows = &mut next.workflows;
+        let taken = workflows
+            .list
+            .iter()
+            .any(|kept| kept.name.eq_ignore_ascii_case(name))
+            || workflows.unread.iter().any(|aside| {
+                aside
+                    .name
+                    .as_deref()
+                    .is_some_and(|own| own.eq_ignore_ascii_case(name))
+            });
+        if taken || workflows.list.len() >= workflow::MOST_WORKFLOWS {
+            continue;
+        }
+        if let Some(found) = shipped
+            .list
+            .iter()
+            .find(|candidate| candidate.name == *name)
+        {
+            workflows.list.push(found.clone());
+        }
+    }
+    next
+}
+
 /// The settings a window hands over for a file that is not there: what it
 /// holds laid over the defaults, read a field at a time the way a file is
 /// read, so a value the app does not accept is set aside and kept as written
@@ -1602,6 +1647,52 @@ impl Store {
             }
         }
         Err(KEEPS_CHANGING.into())
+    }
+
+    /// Adds each workflow that shipped after the file's list was written,
+    /// once: to a list that holds no workflow of that name, used or set
+    /// aside, and has room for one more. What has been offered is noted,
+    /// so a workflow the user deletes stays deleted. A missing file is
+    /// noted only, since the defaults hold them all. A file that cannot be
+    /// read, or that changes while this looks at it, is left alone and
+    /// offered to on the next look.
+    pub fn offer_shipped(&self) {
+        let noted = offered_path(&self.home);
+        let offered: Vec<String> = std::fs::read_to_string(&noted)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        let due: Vec<&str> = OFFERED_LATER
+            .into_iter()
+            .filter(|name| !offered.iter().any(|done| done == name))
+            .collect();
+        if due.is_empty() {
+            return;
+        }
+        let Ok(_writing) = self.writing.lock() else {
+            return;
+        };
+        let (found, seen) = self.look_settled(&mut || std::thread::sleep(BETWEEN_LOOKS));
+        match found {
+            Found::Whole(settings) => {
+                let next = with_shipped(&settings, &due);
+                if next != *settings
+                    && !matches!(self.put_in_place(&next, &seen, &mut || {}), Ok(true))
+                {
+                    return;
+                }
+            }
+            Found::Missing => {}
+            Found::Unreadable | Found::Denied(_) => return,
+        }
+        let names: Vec<String> = offered
+            .into_iter()
+            .chain(due.into_iter().map(str::to_string))
+            .collect();
+        if let Some(parent) = noted.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&noted, Value::from(names).to_string());
     }
 
     /// Hands over the settings a window holds, for a file that is not
@@ -2003,6 +2094,139 @@ mod tests {
         assert_eq!(names, [workflow::DEFAULT_NAME, workflow::DIRECT_NAME]);
         assert_eq!(workflows.default, None);
         assert!(workflows.overrides.is_empty());
+    }
+
+    /// A settings file whose list of workflows a version before Direct
+    /// wrote: Build and review alone.
+    fn before_direct(home: &Path, list: Value) {
+        std::fs::create_dir_all(settings_path(home).parent().unwrap()).unwrap();
+        let file = json!({ "look": "terminal", "workflows": { "list": list, "default": null, "overrides": {} } });
+        std::fs::write(settings_path(home), file.to_string()).unwrap();
+    }
+
+    fn names(store: &Store) -> Vec<String> {
+        store
+            .load()
+            .settings
+            .workflows
+            .list
+            .iter()
+            .map(|workflow| workflow.name.clone())
+            .collect()
+    }
+
+    fn offered(home: &Path) -> Option<Value> {
+        std::fs::read_to_string(offered_path(home))
+            .ok()
+            .map(|text| serde_json::from_str(&text).unwrap())
+    }
+
+    #[test]
+    fn a_list_from_before_direct_is_offered_it_once() {
+        let home = home("offer-direct");
+        let shipped = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        before_direct(&home, json!([shipped]));
+        let recorder = Arc::new(Recorder::default());
+        let store = Store::new(&home, recorder.clone());
+        store.offer_shipped();
+        assert_eq!(
+            names(&store),
+            [workflow::DEFAULT_NAME, workflow::DIRECT_NAME]
+        );
+        assert_eq!(store.load().settings.workflows.default, None);
+        assert_eq!(store.load().settings.look, "terminal");
+        assert_eq!(offered(&home), Some(json!([workflow::DIRECT_NAME])));
+        let told = recorder.events.lock().unwrap().clone();
+        assert_eq!(
+            told.iter()
+                .filter(|(name, _)| name == SETTINGS_CHANGED)
+                .count(),
+            1
+        );
+
+        // Deleted by the user, it stays deleted.
+        store
+            .set(&json!({ "workflows": { "list": [shipped], "default": null, "overrides": {} } }))
+            .unwrap();
+        store.offer_shipped();
+        assert_eq!(names(&store), [workflow::DEFAULT_NAME]);
+    }
+
+    #[test]
+    fn a_workflow_of_the_name_already_there_is_kept_as_it_is() {
+        let home = home("offer-own-direct");
+        let own = json!({
+            "name": "direct",
+            "orchestrator": { "agent": "claude-code", "model": "opus" },
+            "steps": [{ "kind": "work", "name": "Build", "models": [], "parallel": 2 }],
+        });
+        before_direct(&home, json!([own]));
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        let before = std::fs::read_to_string(settings_path(&home)).unwrap();
+        store.offer_shipped();
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&home)).unwrap(),
+            before
+        );
+        assert_eq!(names(&store), ["direct"]);
+        assert_eq!(offered(&home), Some(json!([workflow::DIRECT_NAME])));
+
+        // One of the name set aside, unread, counts as there too.
+        let aside = self::home("offer-unread-direct");
+        before_direct(&aside, json!([{ "name": "Direct", "steps": "not steps" }]));
+        let store = Store::new(&aside, Arc::new(Recorder::default()));
+        store.offer_shipped();
+        let loaded = store.load().settings.workflows;
+        assert!(loaded.list.is_empty());
+        assert_eq!(loaded.unread[0].name.as_deref(), Some("Direct"));
+    }
+
+    #[test]
+    fn a_full_list_is_not_offered_more() {
+        let home = home("offer-full");
+        let full: Vec<Value> = (0..workflow::MOST_WORKFLOWS)
+            .map(|at| {
+                let mut one = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+                one["name"] = json!(format!("Flow {at}"));
+                one
+            })
+            .collect();
+        before_direct(&home, Value::from(full));
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        store.offer_shipped();
+        assert_eq!(names(&store).len(), workflow::MOST_WORKFLOWS);
+        assert!(!names(&store)
+            .iter()
+            .any(|name| name == workflow::DIRECT_NAME));
+        assert_eq!(offered(&home), Some(json!([workflow::DIRECT_NAME])));
+    }
+
+    #[test]
+    fn a_missing_file_is_not_written_and_one_that_cannot_be_read_waits() {
+        let home = home("offer-missing");
+        let store = Store::new(&home, Arc::new(Recorder::default()));
+        store.offer_shipped();
+        assert!(!settings_path(&home).exists());
+        assert_eq!(offered(&home), Some(json!([workflow::DIRECT_NAME])));
+
+        let broken = self::home("offer-unreadable");
+        std::fs::create_dir_all(settings_path(&broken).parent().unwrap()).unwrap();
+        std::fs::write(settings_path(&broken), "{ not json").unwrap();
+        let store = Store::new(&broken, Arc::new(Recorder::default()));
+        store.offer_shipped();
+        assert_eq!(
+            std::fs::read_to_string(settings_path(&broken)).unwrap(),
+            "{ not json"
+        );
+        assert_eq!(offered(&broken), None);
+        // Mended, it is offered then.
+        let shipped = serde_json::to_value(&Workflows::default().list[0]).unwrap();
+        before_direct(&broken, json!([shipped]));
+        store.offer_shipped();
+        assert_eq!(
+            names(&store),
+            [workflow::DEFAULT_NAME, workflow::DIRECT_NAME]
+        );
     }
 
     #[test]
