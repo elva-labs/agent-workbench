@@ -97,6 +97,12 @@ export class Link {
   configureError = $state<string | null>(null);
   /** Why the conversation could not be compacted, until it next is. */
   compactError = $state<string | null>(null);
+  /** The waiting messages were asked to go now, and the core has not
+      answered yet. */
+  sendingNow = $state(false);
+  /** Why the waiting messages could not be sent now, or a message taken
+      back, until either is next tried. */
+  nowError = $state<string | null>(null);
   /** A compaction was asked for while a turn ran, and waits for it to
       end. */
   compactAsked = $state(false);
@@ -826,6 +832,61 @@ export function interrupt(key: string) {
   core()
     .integratedInterrupt(link.handle)
     .catch(() => (link.conversation.interrupting = false));
+}
+
+/** Why the messages that wait cannot be sent now, in the window's words,
+    or null when they can: a turn runs to send them into, nothing waits on
+    the user, and no compaction runs, as the core has it. */
+export function sendNowBlocked(key: string): string | null {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return "The agent is not running";
+  const conversation = link.conversation;
+  if (!conversation.waiting.some((message) => message.state === "queued")) return "No message waits";
+  if (link.sendingNow) return "Sending it now";
+  if (conversation.open.length > 0) return "Answer the request below first";
+  if (conversation.compacting) return "It goes once the compaction is done";
+  if (conversation.current === null) return "It goes as soon as the agent takes it";
+  if (conversation.interrupting) return "It goes once the turn has stopped";
+  return null;
+}
+
+/** Sends the messages that wait now, in the order sent, the way the
+    session's agent takes them: Claude Code's turn is interrupted and it
+    takes them all at once, Codex has them added to its running turn. */
+export async function sendNow(key: string): Promise<boolean> {
+  const link = links.get(key);
+  const session = byKey(key);
+  if (link === undefined || link.handle === null || session === null) return false;
+  if (sendNowBlocked(key) !== null) return false;
+  link.nowError = null;
+  link.sendingNow = true;
+  const interrupts = agentProfile(session.agent).sendNow === "interrupts";
+  if (interrupts) link.conversation.interrupting = true;
+  try {
+    await core().integratedSendNow(link.handle);
+    return true;
+  } catch (error) {
+    if (interrupts) link.conversation.interrupting = false;
+    link.nowError = `Not sent now: ${message(error)}`;
+    return false;
+  } finally {
+    link.sendingNow = false;
+  }
+}
+
+/** Takes back a message the agent has not taken yet. Resolves true once
+    it is withdrawn, and false, saying why, when the agent took it first. */
+export async function takeBack(key: string, id: string): Promise<boolean> {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return false;
+  link.nowError = null;
+  try {
+    await core().integratedWithdraw(link.handle, id);
+    return true;
+  } catch (error) {
+    link.nowError = `Not taken back: ${message(error)}`;
+    return false;
+  }
 }
 
 /** Answers a permission request with one of the choices it offered. */

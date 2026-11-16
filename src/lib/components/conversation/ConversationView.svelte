@@ -1,7 +1,8 @@
 <script lang="ts">
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
-  import { aloneOn, linkFor, resume, trust, unspoken } from "$lib/integrated.svelte";
+  import { aloneOn, linkFor, resume, sendNow, sendNowBlocked, takeBack, trust, unspoken } from "$lib/integrated.svelte";
+  import { describe } from "$lib/keys.svelte";
   import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
@@ -70,6 +71,77 @@
         .querySelector<HTMLTextAreaElement>(`[data-session="${session.key}"] [data-testid="composer-input"]`)
         ?.focus(),
     );
+  }
+
+  /** Sends now and takes back, from the composer as well as the thread. */
+  const SEND_NOW = describe({ key: "Enter", shift: false, alt: false });
+  const TAKE_BACK = describe({ key: "Enter", shift: true, alt: false });
+
+  /** The messages that wait for a turn, in the order sent. */
+  let queued = $derived(conversation.waiting.filter((message) => message.state === "queued"));
+  let blocked = $derived(sendNowBlocked(session.key));
+
+  /** What the messages that wait can do, and what the line under them
+      says they wait for. */
+  let waiting = $derived.by(() => {
+    const many = queued.length > 1;
+    const what = many ? `the ${queued.length} waiting messages, in order` : "this";
+    const title =
+      profile.sendNow === "interrupts"
+        ? `Interrupts the turn and sends ${what} (${SEND_NOW})`
+        : `Adds ${what} to the running turn, without stopping it (${SEND_NOW})`;
+    const line =
+      link.sendingNow || (conversation.interrupting && queued.length > 0)
+        ? "Sending now"
+        : conversation.open.length > 0
+          ? "Waiting for the request below to be answered"
+          : conversation.compacting
+            ? "Waiting for the compaction to finish"
+            : "Waiting for the agent to finish what it is doing";
+    return {
+      sendNow: () => void sendNow(session.key),
+      takeBack: (message: Message) => void withdraw(message),
+      line,
+      canSend: blocked === null,
+      canTake: !link.sendingNow && !conversation.interrupting,
+      title,
+      takeTitle: "Takes it back into the composer",
+      takeChord: TAKE_BACK,
+    };
+  });
+
+  /** What the composer says of the messages that wait: the chords that
+      send them now and take the newest back, or why the last try failed. */
+  let nowHint = $derived.by(() => {
+    if (link.nowError !== null) return link.nowError;
+    const own = queued.filter((message) => senderOf(message) === null).length;
+    const send = blocked === null ? `${SEND_NOW} sends ${queued.length > 1 ? "them" : "it"} now` : null;
+    const take = own > 0 && waiting.canTake ? `${TAKE_BACK} takes ${own > 1 ? "the newest" : "it"} back` : null;
+    const said = [send, take].filter((part) => part !== null).join(", ");
+    return said === "" ? null : `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
+  });
+
+  /** Takes a waiting message back into the composer, once the agent has
+      let go of it. */
+  async function withdraw(message: Message) {
+    const kept = { ...message, images: [...message.images] };
+    if (await takeBack(session.key, message.id)) putBack(kept);
+  }
+
+  /** Sends the waiting messages now; false when they cannot go now. */
+  function sendWaiting(): boolean {
+    if (blocked !== null) return false;
+    void sendNow(session.key);
+    return true;
+  }
+
+  /** The newest of the user's own waiting messages, back into the
+      composer; false when there is none. */
+  function takeNewest(): boolean {
+    const newest = queued.findLast((message) => senderOf(message) === null);
+    if (newest === undefined || !waiting.canTake) return false;
+    void withdraw(newest);
+    return true;
   }
 
   /** The keyboard on the dock, when something waits there. */
@@ -224,6 +296,7 @@
       agent={name}
       models={profile.turnModels}
       onPutBack={putBack}
+      {waiting}
       sender={(message) => senderOf(message)}
       opener={(path) => mentionOpener(session.key, path)}
     />
@@ -252,6 +325,9 @@
           ready={session.status === "running" && (link.handle !== null || link.restarting)}
           {active}
           onDock={toDock}
+          onSendNow={sendWaiting}
+          onTakeBack={takeNewest}
+          {nowHint}
           answers={docked.some(answerable)}
           defaultModel={session.model === null}
           slash={profile.commands}

@@ -17,6 +17,9 @@ import {
   resetIntegrated,
   resume,
   send,
+  sendNow,
+  sendNowBlocked,
+  takeBack,
   trust,
   unspoken,
 } from "$lib/integrated.svelte";
@@ -54,6 +57,8 @@ async function install(options: FakeIntegratedOptions = {}) {
     integratedSend: async (id: string, message: string, text: string, images?: never[]) =>
       fake.send(id, message, text, images),
     integratedInterrupt: async (id: string) => fake.interrupt(id),
+    integratedSendNow: async (id: string) => fake.sendNow(id),
+    integratedWithdraw: async (id: string, message: string) => fake.withdraw(id, message),
     integratedCompact: async (id: string, instructions?: string) => fake.compact(id, instructions),
     integratedAnswer: async (id: string, request: string, choice: never, message?: string) =>
       fake.answer(id, request, choice, message),
@@ -276,6 +281,73 @@ describe("an integrated session behind its row", () => {
     await configure(session.key, { model: "haiku" });
     expect(conversationOf(session.key).settings.model).toBe("haiku");
     expect(session.model).toBe("haiku");
+  });
+
+  it("sends the waiting messages now by interrupting Claude Code's turn, and they start the next at once", async () => {
+    const { session, handle } = await started();
+    const conversation = conversationOf(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    expect(sendNowBlocked(session.key)).toBe("No message waits");
+    const first = send(session.key, "and this")!;
+    const second = send(session.key, "and that")!;
+    await settled();
+    expect(sendNowBlocked(session.key)).toBeNull();
+    const going = sendNow(session.key);
+    expect(conversation.interrupting).toBe(true);
+    expect(await going).toBe(true);
+    await settled();
+    expect(conversation.turns[1].outcome).toBe("interrupted");
+    // One turn for both, in the order sent.
+    expect(conversation.turns[2].messages).toEqual([first, second]);
+    expect(conversation.waiting).toEqual([]);
+  });
+
+  it("says why the waiting messages cannot go now", async () => {
+    const { session, handle } = await started();
+    send(session.key, "go");
+    fake.startTurn(handle);
+    send(session.key, "and this");
+    await settled();
+    fake.ask(handle, "Bash", { command: "ls" });
+    expect(sendNowBlocked(session.key)).toBe("Answer the request below first");
+    expect(await sendNow(session.key)).toBe(false);
+    expect(fake.calls.some((call) => call.method === "sendNow")).toBe(false);
+  });
+
+  it("steers the messages held for Codex into its running turn", async () => {
+    await install({ holding: true, mints: true });
+    const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const handle = handleOf(session.key)!;
+    const conversation = conversationOf(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const waiting = send(session.key, "and this")!;
+    await settled();
+    expect(await sendNow(session.key)).toBe(true);
+    expect(conversation.interrupting).toBe(false);
+    await settled();
+    expect(conversation.messages[waiting].state).toBe("taken");
+    expect(conversation.turns[1].messages).toContain(waiting);
+    expect(conversation.current).not.toBeNull();
+  });
+
+  it("takes a waiting message back, and says so when the agent took it first", async () => {
+    const { session, handle } = await started();
+    const conversation = conversationOf(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const waiting = send(session.key, "and this")!;
+    await settled();
+    expect(await takeBack(session.key, waiting)).toBe(true);
+    expect(conversation.messages[waiting]).toBeUndefined();
+    expect(conversation.waiting).toEqual([]);
+    const taken = send(session.key, "and that")!;
+    await settled();
+    fake.startTurn(handle, [taken]);
+    expect(await takeBack(session.key, taken)).toBe(false);
+    expect(linkFor(session.key).nowError).toBe("Not taken back: the agent has taken the message already");
   });
 
   it("compacts with what the summary should keep, saying it waits while a turn runs", async () => {

@@ -27,6 +27,10 @@ export interface AgentProfile {
   safeMode: string;
   commands: boolean;
   turnModels: boolean;
+  /** What sending waiting messages now does: interrupt the turn, after
+      which the agent takes them all at once, or add them to the turn
+      that runs without stopping it. */
+  sendNow: "interrupts" | "steers";
 }
 
 const PROFILES: Record<AgentId, AgentProfile> = {
@@ -38,6 +42,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     safeMode: "default",
     commands: true,
     turnModels: true,
+    sendNow: "interrupts",
   },
   codex: {
     product: "Codex",
@@ -47,6 +52,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     safeMode: "read-only",
     commands: false,
     turnModels: false,
+    sendNow: "steers",
   },
 };
 

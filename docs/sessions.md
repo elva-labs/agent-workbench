@@ -648,7 +648,21 @@ configuration says, and a mode taken from that configuration is shown as it
 is. It shows how much of the context window the conversation takes. While
 the agent works its Send button is a Stop button, and a message sent
 meanwhile stands under the thread, marked as waiting, until the turn that
-takes it. While the dock holds a request the user answers there, the
+takes it. The line under the last of them offers Send now, which sends
+every waiting message at once, in the order sent: Claude Code's turn is
+interrupted and drawn as interrupted, and the messages start the next turn
+straight away; Codex is given them in the turn it runs, which goes on.
+Its tooltip says which. Each of the user's own waiting messages offers
+Take back, which takes it from the agent and puts its words and images
+back in the composer, unless the agent has taken it first, which the
+composer then says. While a request waits for an answer, or the
+conversation is being compacted, the line says what it waits for and Send
+now is not offered; a message another session sent can be sent now but
+not taken back. From the composer, Cmd+Enter sends them now and
+Cmd+Shift+Enter takes the newest of the user's own back (Ctrl off macOS),
+as its hint says while a message waits; both are on the thread's arrow
+walk too. The thread at its foot keeps the waiting messages and their line
+in view above the composer and the dock as they come and change. While the dock holds a request the user answers there, the
 composer says Up reaches it, and a lone digit sent then goes only on a
 second Enter, so it is not sent as a message by surprise. A message that was not delivered, refused
 by the agent or never sent, can be put back in the composer. What is being

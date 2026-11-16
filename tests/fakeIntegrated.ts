@@ -25,6 +25,8 @@ export type IntegratedCall =
   | { method: "trust"; options: IntegratedTrustOptions }
   | { method: "send"; id: string; message: string; text: string; images: IntegratedImage[] }
   | { method: "interrupt"; id: string }
+  | { method: "sendNow"; id: string }
+  | { method: "withdraw"; id: string; message: string }
   | { method: "compact"; id: string; instructions: string | null }
   | {
       method: "answer";
@@ -101,6 +103,13 @@ export interface FakeIntegrated {
   /** Asks the agent to compact: once no turn runs, it compacts in a turn
       that names no message. Codex takes no instructions for it. */
   compact(id: string, instructions?: string): void;
+  /** Sends the waiting messages now, refused as the core refuses it: a
+      holding agent, or one shaped as Codex, has them steered into its
+      turn and taken, in order;
+      another has its turn interrupted, then starts one for them all. */
+  sendNow(id: string): void;
+  /** Takes back a message the agent has not taken; it is withdrawn. */
+  withdraw(id: string, message: string): void;
   answer(id: string, request: string, choice: PermissionChoice, message?: string): void;
   reply(id: string, request: string, answers: string[][] | null): void;
   configure(
@@ -548,6 +557,43 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       });
     },
 
+    sendNow(id) {
+      const session = live(id);
+      const why =
+        session.pending.length === 0
+          ? "no message waits"
+          : session.asked.size > 0
+            ? "the agent waits for an answer first"
+            : session.compacting
+              ? "the conversation is being compacted"
+              : !session.turn
+                ? "no turn runs, and the agent takes the message next"
+                : null;
+      if (why !== null) throw new Error(why);
+      fake.calls.push({ method: "sendNow", id });
+      if (options.holding || session.codex) {
+        // Steered into the running turn, in the order sent.
+        const steered = options.holding ? session.held.splice(0).map((held) => held.message) : [...session.pending];
+        later(() => {
+          for (const message of steered) fake.emit(id, { ...movedOn(message, "taken"), error: null });
+        });
+        return;
+      }
+      // Interrupted, and the agent takes every waiting message at once.
+      later(() => {
+        if (session.turn) fake.endTurn(id, "interrupted");
+        fake.emit(id, { type: "turnStarted", messages: [...session.pending] });
+      });
+    },
+
+    withdraw(id, message) {
+      const session = live(id);
+      if (!session.pending.includes(message) || session.handed === message)
+        throw new Error("the agent has taken the message already");
+      fake.calls.push({ method: "withdraw", id, message });
+      fake.emit(id, { ...movedOn(message, "withdrawn"), error: null });
+    },
+
     compact(id, instructions) {
       const session = live(id);
       const words = instructions?.trim() ? instructions.trim() : null;
@@ -751,7 +797,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         }
         case "message": {
           const message = body.message;
-          if (body.state === "taken" || body.state === "dropped") {
+          if (body.state === "taken" || body.state === "dropped" || body.state === "withdrawn") {
             if (!session.pending.includes(message)) return;
             session.pending = session.pending.filter((m) => m !== message);
             session.told.delete(message);
@@ -1126,7 +1172,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   }
 
   /** A message event after the first, with nothing of what it said. */
-  function movedOn(message: string, state: "taken" | "dropped") {
+  function movedOn(message: string, state: "taken" | "dropped" | "withdrawn") {
     return { type: "message" as const, message, state, text: null, images: [] };
   }
 

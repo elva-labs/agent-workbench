@@ -187,6 +187,8 @@ the same way.
 | Trust | Records that the user trusts the folder a session would run in. |
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
+| Send now | Sends every message that waits for a turn now, in the order sent, as described under [sending now](#sending-now). Fails saying why while a request waits for an answer, while the conversation is being compacted, when no turn runs, or when nothing waits. |
+| Withdraw | Takes back a message the agent has not taken yet, which then ends as withdrawn. Fails once the agent has taken it. |
 | Compact | Compacts the conversation, the way the agent does it, with what the summary should keep where the agent takes that. Claude Code is sent a compact command as a message of its own, with those words after it, and Codex is asked to compact its thread, refusing words since it takes none; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
@@ -283,9 +285,10 @@ naming the session and its kind:
   source, and goes once a turn's start does not name it. Codex lists none.
 - **configured**: the model, the mode or the effort changed.
 - **message**: a sent message went to the agent with nothing ahead of it,
-  is queued behind a running turn, was taken into the running turn, or
-  was dropped and will not be answered, because the agent refused,
-  discarded or cancelled it. The first of these for a message carries its
+  is queued behind a running turn, was taken into the running turn, was
+  dropped and will not be answered, because the agent refused, discarded
+  or cancelled it, or was withdrawn by the user before the agent took it.
+  The first of these for a message carries its
   text and the images it attached, so that any window can draw it.
 - **turn started**, with the messages it answers, and **turn ended**: how
   it ended (done, interrupted or failed, with why), its time and token
@@ -387,6 +390,36 @@ is the one that names it, whatever other turn starts first, such as one
 that compacts. A turn that starts before the answer comes names no message
 at first; the answer then names the message as taken into it. A message
 Codex refuses is dropped with Codex's own words for why.
+
+### Sending now
+
+A message that waits can be sent now, without waiting for the turn to
+end. Each agent takes it its own way:
+
+- **Claude Code** takes a message sent during a turn into that turn by
+  itself, once the step it is on is done, such as a command that runs. So
+  sending now interrupts the turn: the turn ends as interrupted, and the
+  agent then takes every message that waited into a turn of its own at
+  once, in the order sent.
+- **Codex** is given each held message in the turn it runs, in the order
+  sent, which it reads at its next step without the turn stopping; its
+  settings wait for the next message's turn. Codex names each as taken
+  when it answers. One it will not take, such as in a turn that compacts,
+  or because the turn has ended, is held again, ahead of those sent since,
+  with a warning notice in Codex's words, and goes once the turn ends.
+
+Sending now is refused while a permission or a question waits for an
+answer, since the turn waits on the user then; while the conversation is
+being compacted; when no turn runs, since the agent takes the message
+next anyway; and when nothing waits.
+
+A message is withdrawn before the agent takes it. Claude Code is asked to
+cancel it, and answers whether it did: one it took first stays as it is,
+and the command fails saying so. A message held for Codex is taken out of
+what the core holds, and one already handed over or given to the running
+turn cannot be withdrawn. A message the user withdrew is withdrawn for
+every window; the window that withdrew it puts its words back in the
+composer.
 
 The state a session's row shows comes from the same events, never from
 timing or hooks:

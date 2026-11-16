@@ -335,6 +335,8 @@ reached.
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
+| <kbd>Cmd</kbd><kbd>Enter</kbd> | Sends the messages that wait for the turn now, while they can go now; Ctrl off macOS |
+| <kbd>Cmd</kbd><kbd>Shift</kbd><kbd>Enter</kbd> | Takes the newest of the user's own waiting messages back into the composer; Ctrl off macOS |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover or find is open it puts that away instead, and stops nothing |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started; <kbd>Esc</kbd> there comes back |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
@@ -345,7 +347,7 @@ reached.
 | <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer, once find is closed |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons, and the Send now and Take back of the messages that wait; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the last being under what waits, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer, once find is closed |
 | <kbd>Cmd</kbd><kbd>F</kbd> | Opens find over the thread with the keyboard in its field; with find open, selects the words in it |
 | <kbd>Enter</kbd> / <kbd>Shift</kbd><kbd>Enter</kbd> in find | The next match, or the one before, coming round at the ends |
 | <kbd>Cmd</kbd><kbd>G</kbd> / <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>G</kbd> | The same, from anywhere in the session's pane while find is open, unless an action holds the chord |

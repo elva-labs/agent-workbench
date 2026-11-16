@@ -31,6 +31,8 @@
   import Icon from "./Icon.svelte";
   import Plain from "./Plain.svelte";
   import { shown } from "$lib/unseen";
+  import { actionOf, chordFromEvent } from "$lib/keys.svelte";
+  import { isMac } from "$lib/platform";
 
   /**
    * Where the user writes to the agent. It takes several lines, files and
@@ -99,6 +101,13 @@
     /** Whether the workflow can still be chosen: nothing has been said in
         the session yet. */
     choosable?: boolean;
+    /** Sends the messages that wait now; false when they cannot go now. */
+    onSendNow?: () => boolean;
+    /** Takes the newest of the user's waiting messages back into the
+        composer; false when there is none to take. */
+    onTakeBack?: () => boolean;
+    /** What the composer says of the messages that wait, or null. */
+    nowHint?: string | null;
   }
 
   let {
@@ -118,6 +127,9 @@
     alone = agent,
     workflow = null,
     choosable = false,
+    onSendNow,
+    onTakeBack,
+    nowHint = null,
   }: Props = $props();
 
   let link = $derived(linkFor(sessionKey));
@@ -538,9 +550,25 @@
     interrupt(sessionKey);
   }
 
+  /** Cmd+Enter sends the messages that wait now, and Cmd+Shift+Enter takes
+      the newest of the user's own back; Ctrl off macOS. Taken only while no
+      action holds the chord. */
+  function nowKey(e: KeyboardEvent): boolean {
+    if (e.key !== "Enter" || e.altKey || e.isComposing) return false;
+    const mac = isMac();
+    if (mac ? !e.metaKey || e.ctrlKey : !e.ctrlKey || e.metaKey) return false;
+    const chord = chordFromEvent(e, mac);
+    if (chord === null || actionOf(chord) !== null) return false;
+    e.preventDefault();
+    if (e.shiftKey) onTakeBack?.();
+    else onSendNow?.();
+    return true;
+  }
+
   function onkeydown(e: KeyboardEvent) {
     if (menuKey(e)) return;
     if (takeOut(e)) return;
+    if (nowKey(e)) return;
     if (e.key === "Enter" && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -1009,6 +1037,8 @@
     <p class="hint" data-testid="composer-notice"><Plain text={notice} /></p>
   {:else if link.compactAsked && running && !conversation.compacting}
     <p class="hint" data-testid="composer-compact">Compacts once {agent} is done with this turn.</p>
+  {:else if nowHint !== null}
+    <p class="hint" class:bad={link.nowError !== null} data-testid="composer-now"><Plain text={nowHint} /></p>
   {/if}
   <div class="bar">
     <button class="chip bare" tabindex="0" onclick={() => void pickFiles()} aria-label="Attach files" title="Attach files" data-testid="attach"
@@ -1371,6 +1401,10 @@
     padding: 0 2px;
     font-size: var(--conv-meta);
     color: var(--ink-2);
+  }
+
+  .hint.bad {
+    color: var(--del);
   }
 
   .attached {
