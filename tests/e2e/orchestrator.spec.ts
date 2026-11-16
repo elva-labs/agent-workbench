@@ -1,20 +1,19 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, NO_WORKFLOW, installFakeCore } from "./fake";
+import { PROJECT, NO_WORKFLOW, ORCHESTRATOR_FOLDER, installFakeCore } from "./fake";
 
 /**
- * An orchestrator, driven by a fake core.
+ * A session that directs others, driven by a fake core.
  *
- * The workbench's own directory is pinned above the projects you opened,
- * and a session started there directs the others. What it starts hangs
- * under it on a rail, a line each, wherever it runs, and can be folded into
- * dots on the orchestrator's own row.
+ * Any session may start others. What it starts hangs under it on a rail, a
+ * line each, wherever it runs, and can be folded into dots on the starter's
+ * own row.
  */
 
 const AGENT = "section[data-pane='agent']";
 /** Cmd on macOS, Ctrl elsewhere. */
 const MOD = "ControlOrMeta";
-/** Where the fake core says an orchestrator runs. */
-const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
+/** A second project, where the session that directs the others runs. */
+const LEAD = "/home/ada/dev/lead";
 
 interface Answer {
   id: string;
@@ -60,20 +59,22 @@ const row = (page: Page, project: string) =>
   page.locator(`[data-row="project:${project}"]`);
 
 /**
- * A session of the project's own, a session in the orchestrator's project,
- * and one that orchestrator starts in the project. The fake hands out ids
- * in that order, so the orchestrator is session-2 and what it starts is
+ * A session of the project's own, a session in a second project, and one
+ * that second session starts in the first project. The fake hands out ids
+ * in that order, so the starter is session-2 and what it starts is
  * session-3.
  */
 async function orchestrate(page: Page) {
   await page.getByTestId("start-agent").click();
   await expect(page.locator(AGENT)).toContainText("running");
 
-  // The orchestrator's project has nothing to show yet, so the first
-  // session there is started from the head's menu.
-  await page.getByTestId("sessions-menu").click();
-  await page.getByTestId("menu-orchestrator").click();
+  // The starter is a session like any other, from its project's own +.
+  await row(page, LEAD).getByTestId("project-new-session").click();
   await expect(page.locator(AGENT)).toContainText("running");
+  // The pointer leaves the pane, so the order settles with the project
+  // used last at the top.
+  await page.mouse.move(900, 450);
+  await expect(page.locator("[data-row^='project:']").first()).toHaveAttribute("data-row", `project:${LEAD}`);
 
   await push(page, {
     id: "o-1",
@@ -90,7 +91,7 @@ async function orchestrate(page: Page) {
 
 test.describe("the orchestrator", () => {
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page, { settings: NO_WORKFLOW });
+    await installFakeCore(page, { settings: NO_WORKFLOW, open: [PROJECT, LEAD] });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
   });
@@ -98,22 +99,16 @@ test.describe("the orchestrator", () => {
   test("hangs what it started under it on a rail, and says what it has out", async ({
     page,
   }) => {
-    // Nothing runs there and nothing waits to be resumed, so the project is
-    // not drawn at all: the menu is the way to the first session.
-    const pinned = page.getByTestId("orchestrator-project");
-    await expect(pinned).toHaveCount(0);
+    // No project of the workbench's own is drawn: the starter's is one the
+    // user opened, above the other as the one used last.
+    await expect(page.getByTestId("project-head")).toHaveCount(2);
 
     await orchestrate(page);
 
-    // With a session of its own it is pinned above the ones you opened, and
-    // has nothing to close: it is the workbench's own.
-    await expect(pinned).toHaveText("orchestrator");
-    const top = (await row(page, ORCHESTRATOR).boundingBox())!;
+    await expect(page.getByTestId("project-head")).toHaveCount(2);
+    const top = (await row(page, LEAD).boundingBox())!;
     const opened = (await row(page, PROJECT).boundingBox())!;
     expect(top.y).toBeLessThan(opened.y);
-    await expect(
-      row(page, ORCHESTRATOR).getByTestId("close-project"),
-    ).toHaveCount(0);
 
     // A row each for the two sessions a user started, and the one the
     // orchestrator started on a rail under it, above the project it runs
@@ -299,6 +294,13 @@ test.describe("the orchestrator", () => {
   test("says on the starter's row what it has not heard, quietly, until it is told", async ({
     page,
   }) => {
+    // The projects have the hooks, so the user's next message tells the
+    // starter as well as its next wait.
+    await page.evaluate(() =>
+      localStorage.setItem("workbench.hooks", JSON.stringify({ everywhere: true, overrides: {} })),
+    );
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
     await orchestrate(page);
     const event = (sessionId: string, kind: string) =>
       page.evaluate(
@@ -581,6 +583,243 @@ test.describe("the orchestrator", () => {
   });
 });
 
+// The orchestrator folder under the workbench's home holds the sessions
+// an earlier version ran there. It is listed as a project while it has
+// some to read or resume, nothing new starts in it, and closing it is for
+// good.
+test.describe("the orchestrator folder", () => {
+  const PAST = [
+    { id: "old-plan", modified: Math.floor(Date.now() / 1000) - 3600, size: 900, title: "Plan the release" },
+  ];
+  const folder = (page: Page) => row(page, ORCHESTRATOR_FOLDER);
+
+  // The version that ran them there kept them as the window's own, until
+  // a run of this one wrote the record over.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript((dir) => {
+      if (localStorage.getItem("workbench.mine") === null)
+        localStorage.setItem("workbench.mine", JSON.stringify({ [dir]: ["old-plan", "old-docs"] }));
+    }, ORCHESTRATOR_FOLDER);
+  });
+
+  test("is not there without past sessions", async ({ page }) => {
+    await installFakeCore(page, { settings: NO_WORKFLOW });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.getByTestId("project-head")).toHaveCount(1);
+    await expect(folder(page)).toHaveCount(0);
+    await page.getByTestId("sessions-menu").click();
+    await expect(page.getByTestId("menu-orchestrator")).toHaveCount(0);
+    await expect(page.getByRole("menuitem")).toHaveText(["Open project…", "Open remote project…", /^Settings…/]);
+  });
+
+  test("lists its past sessions to resume as plain sessions, and offers nothing new", async ({ page }) => {
+    await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+
+    // A project like the ones opened, by the folder's name, with no + and
+    // a menu that only closes it.
+    await expect(folder(page)).toBeVisible();
+    await expect(folder(page).locator(".project-row")).toHaveText("orchestrator");
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+    await folder(page).locator(".project-row").click({ button: "right" });
+    await expect(page.getByTestId("project-menu").getByRole("menuitem")).toHaveText(["Close project"]);
+    await page.keyboard.press("Escape");
+
+    // On screen with no session: nothing to start, in the pane or the
+    // palette.
+    await folder(page).locator(".project-row").click();
+    await expect(folder(page)).toHaveClass(/\bon\b/);
+    await expect(page.getByTestId("agent-status")).toHaveText("No session open. Resume a past one from the list.");
+    await expect(page.getByTestId("start-agent")).toHaveCount(0);
+    // The changes pane says why it has nothing to show.
+    await expect(page.getByTestId("folder-notice")).toBeVisible();
+    await page.keyboard.press(`${MOD}+Shift+P`);
+    await expect(page.getByTestId("palette")).toHaveAttribute("data-mode", "commands");
+    await expect(page.getByTestId("palette-row").filter({ hasText: /^New session in/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // Its past session resumes as a session like any other: no workflow,
+    // nothing told, its own id, and a token of its own.
+    const past = page.getByTestId("past-session").filter({ hasText: "Plan the release" });
+    await past.click();
+    await expect(page.locator(AGENT)).toContainText("running");
+    const spawned = await page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __spawns: { project: string; session?: string; token?: string; instructions?: string; startOnly?: boolean }[];
+          }
+        ).__spawns.at(-1)!,
+    );
+    expect(spawned.project).toBe(ORCHESTRATOR_FOLDER);
+    expect(spawned.session).toBe("old-plan");
+    expect(spawned.instructions ?? null).toBeNull();
+    expect(spawned.token).toBeTruthy();
+    expect(spawned.token).not.toBe("old-plan");
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+  });
+
+  // A session resumed there runs as its agent is set, integrated here, and
+  // its subagents hang under its row as any session's do, above the past
+  // session still to resume.
+  test("hangs a resumed session's subagents under it, above the past ones", async ({ page }) => {
+    const both = [
+      ...PAST,
+      { id: "old-docs", modified: Math.floor(Date.now() / 1000) - 7200, size: 700, title: "Split the docs work" },
+    ];
+    await installFakeCore(page, {
+      settings: { ...NO_WORKFLOW, integrated: ["claude-code"] },
+      orchestratorTranscripts: both,
+    });
+    await page.goto("/");
+    // Its past sessions are listed while it is the project on screen.
+    await folder(page).locator(".project-row").click();
+    await page.getByTestId("past-session").filter({ hasText: "Plan the release" }).click();
+    const conversation = page.locator("[data-testid='conversation'].active");
+    await expect(conversation.getByTestId("composer-input")).toBeEnabled();
+    await conversation.getByTestId("composer-input").fill("Where did the plan get to?");
+    await conversation.getByTestId("composer-input").press("Enter");
+    await page.evaluate(() => {
+      const f = (window as unknown as { __integrated: Record<string, (...args: unknown[]) => unknown> }).__integrated;
+      f.startTurn("int-1");
+      const call = f.startTool("int-1", "Agent", { description: "Read the old plan", subagent_type: "Explore", prompt: "go" }, { kind: "agent" });
+      f.task("int-1", call, { background: false });
+    });
+    await page.mouse.move(900, 500);
+
+    const section = page.locator("section.proj").filter({ has: folder(page) });
+    const resumed = section.getByTestId("session-row");
+    const sub = section.getByTestId("subagent-row").filter({ hasText: "Read the old plan" });
+    const left = section.getByTestId("past-session");
+    await expect(resumed).toHaveCount(1);
+    await expect(sub).toBeVisible();
+    // The past row of the session resumed fades out and leaves the other.
+    await expect(left).toHaveCount(1);
+    await expect(left).toHaveText(/Split the docs work/);
+    await expect.poll(async () => (await sub.boundingBox())!.y).toBeGreaterThan((await resumed.boundingBox())!.y);
+    const [own, under, after] = await Promise.all([resumed, sub, left].map(async (it) => (await it.boundingBox())!));
+    expect(under.y).toBeGreaterThanOrEqual(own.y + own.height - 1);
+    expect(after.y).toBeGreaterThanOrEqual(under.y + under.height - 1);
+    const ownDot = (await resumed.locator(".dot").boundingBox())!;
+    const subDot = (await sub.locator(".dot").boundingBox())!;
+    expect(subDot.x).toBeGreaterThan(ownDot.x + ownDot.width);
+    // Still nothing new offered there.
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+  });
+
+  // A version that let the folder be opened as a project may have it on
+  // record among the open ones, and the user may open it again: either
+  // way it is the folder, listed in the pane, and no project an agent may
+  // start a session in.
+  test("is the folder when opened by hand, not a project to start in", async ({ page }) => {
+    await installFakeCore(page, {
+      settings: NO_WORKFLOW,
+      open: [PROJECT, ORCHESTRATOR_FOLDER],
+      opened: [ORCHESTRATOR_FOLDER],
+    });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    await expect(folder(page)).toHaveClass(/\bon\b/);
+    await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+    await expect(page.getByTestId("project-head")).toHaveCount(2);
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("workbench.workspace")!).open))
+      .toEqual([PROJECT]);
+
+    await push(page, { id: "h-projects", tool: "projects" });
+    await expect.poll(() => answerTo(page, "h-projects")).not.toBeNull();
+    expect((await answerTo(page, "h-projects"))!.content).toBe(`${PROJECT}  demo  (this one)`);
+    await push(page, { id: "h-start", tool: "start", arguments: { project: ORCHESTRATOR_FOLDER, prompt: "Plan it" } });
+    await expect.poll(() => answerTo(page, "h-start")).not.toBeNull();
+    expect((await answerTo(page, "h-start"))!.error).toBe(`No project at ${ORCHESTRATOR_FOLDER} is open in the workbench.`);
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+  });
+
+  // The folder takes the hooks answer as any project does, and may have a
+  // word of its own: with hooks off everywhere, it is the one way to give
+  // a session resumed there the workbench's tools.
+  test("has the hooks answer of any project, and a word of its own", async ({ page }) => {
+    await installFakeCore(page, {
+      settings: { ...NO_WORKFLOW, hooks: { everywhere: false, overrides: {} } },
+      orchestratorTranscripts: PAST,
+    });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    const calls = () =>
+      page.evaluate(
+        () => (window as unknown as { __hookCalls?: { kind: string; project: string }[] }).__hookCalls ?? [],
+      );
+
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("settings-tab-live").click();
+    await page.getByTestId("hooks-overrides").click();
+    const own = page.locator(`[data-testid='hooks-row'][data-project='${ORCHESTRATOR_FOLDER}']`);
+    await expect(own.locator(".project-name")).toHaveText("orchestrator");
+    await own.getByTestId("hooks-on").click();
+    await expect(own.getByTestId("hooks-on")).toHaveAttribute("aria-checked", "true");
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER))
+      .toEqual([{ kind: "install", project: ORCHESTRATOR_FOLDER }]);
+
+    // Every project follows again, and with hooks on everywhere the folder
+    // is brought along with the open ones.
+    await own.getByTestId("hooks-default").click();
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER).map((call) => call.kind))
+      .toEqual(["install", "uninstall"]);
+    await page.getByTestId("hooks-everywhere-on").click();
+    await expect
+      .poll(async () => (await calls()).filter((call) => call.project === ORCHESTRATOR_FOLDER).map((call) => call.kind))
+      .toEqual(["install", "uninstall", "install"]);
+    await expect.poll(async () => (await calls()).some((call) => call.project === PROJECT && call.kind === "install")).toBe(true);
+  });
+
+  test("leaves the pane once closed, and stays out after a restart", async ({ page }) => {
+    await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    await folder(page).locator(".project-row").click({ button: "right" });
+    await page.getByTestId("close-project").click();
+    await expect(folder(page)).toHaveCount(0);
+    await expect(page.getByTestId("project-head")).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.getByTestId("project-head")).toHaveCount(1);
+    await expect(folder(page)).toHaveCount(0);
+  });
+
+  // A session left open there at the last quit comes back as a row, the
+  // folder listed with it, whether or not it was closed since and however
+  // long ago it was last used, as after a run of the version before.
+  for (const closed of [false, true]) {
+    test(`comes back with a session left open there at the last quit${closed ? ", closed since" : ""}`, async ({ page }) => {
+      await page.addInitScript(
+        ({ dir, closed }) => {
+          if (localStorage.getItem("workbench.open") !== null) return;
+          localStorage.setItem(
+            "workbench.open",
+            JSON.stringify({
+              open: [{ project: dir, id: "old-plan", agent: "claude-code", startIn: null, model: null }],
+              active: "old-plan",
+            }),
+          );
+          if (closed) localStorage.setItem("workbench.orchestratorFolder", JSON.stringify({ closed: true }));
+        },
+        { dir: ORCHESTRATOR_FOLDER, closed },
+      );
+      await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST, used: { [PROJECT]: 0 } });
+      await page.goto("/");
+      await expect(folder(page)).toBeVisible();
+      const section = page.locator("section.proj").filter({ has: folder(page) });
+      await expect(section.getByTestId("session-row")).toHaveCount(1);
+      await expect(section.getByTestId("session-row")).toContainText("was open, starts when selected");
+      await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
+    });
+  }
+});
+
 test.describe("a started session in a project of its own", () => {
   const OTHER = "/home/ada/dev/other";
 
@@ -597,8 +836,7 @@ test.describe("a started session in a project of its own", () => {
     });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    await row(page, PROJECT).getByTestId("project-new-session").click();
     await expect(page.locator(AGENT)).toContainText("running");
     await push(page, {
       id: "o-1",
@@ -617,7 +855,7 @@ test.describe("a started session in a project of its own", () => {
     await expect(page.locator(".session.kid")).toHaveClass(/on/);
     await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
     await expect(row(page, OTHER)).toHaveCount(0);
-    await expect(heads.first()).toHaveAttribute("data-row", `project:${ORCHESTRATOR}`);
+    await expect(heads.first()).toHaveAttribute("data-row", `project:${PROJECT}`);
   });
 
   // The started session on screen is drawn under its starter's project,
@@ -632,8 +870,7 @@ test.describe("a started session in a project of its own", () => {
     });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    await row(page, PROJECT).getByTestId("project-new-session").click();
     await expect(page.locator(AGENT)).toContainText("running");
     await push(page, {
       id: "o-1",
@@ -645,11 +882,11 @@ test.describe("a started session in a project of its own", () => {
     await expect.poll(() => answerTo(page, "o-1")).not.toBeNull();
     await page.getByTestId("started-session").click();
     await expect(page.locator(".session.kid")).toHaveClass(/\bon\b/);
-    await expect(row(page, ORCHESTRATOR)).toHaveClass(/\bon\b/);
+    await expect(row(page, PROJECT)).toHaveClass(/\bon\b/);
 
-    await row(page, ORCHESTRATOR).locator(".project-row").click();
+    await row(page, PROJECT).locator(".project-row").click();
     await expect(page.locator(".session.kid")).toHaveClass(/\bon\b/);
-    await expect(row(page, ORCHESTRATOR)).toHaveClass(/\bon\b/);
+    await expect(row(page, PROJECT)).toHaveClass(/\bon\b/);
     await expect(page.getByTestId("inactive-fold")).toHaveText(/1 project/);
   });
 
@@ -739,7 +976,7 @@ for (const width of [300, 240, 180]) {
     // Rows that move or fade in are measured where they end up.
     await page.emulateMedia({ reducedMotion: "reduce" });
     await installFakeCore(page, {
-      open: [PROJECT, OTHER],
+      open: [PROJECT, OTHER, LEAD],
       settings: {
         accounts: {
           list: { Work: { claude: "~/.claude-work", codex: null } },
@@ -750,8 +987,7 @@ for (const width of [300, 240, 180]) {
     });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    await row(page, LEAD).getByTestId("project-new-session").click();
     // With accounts there is a choice to make, which starts on the
     // project's own.
     await page.getByTestId("agent-option").click();
@@ -816,11 +1052,10 @@ for (const width of [300, 240, 180]) {
       localStorage.setItem("workbench.layout", JSON.stringify({ sessions: width }));
     }, width);
     await page.emulateMedia({ reducedMotion: "reduce" });
-    await installFakeCore(page, { settings: NO_WORKFLOW });
+    await installFakeCore(page, { settings: NO_WORKFLOW, open: [PROJECT, LEAD] });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    await row(page, LEAD).getByTestId("project-new-session").click();
     await expect(page.locator(AGENT)).toContainText("running");
     for (const [id, name] of [
       ["o-1", "Startup history scan"],

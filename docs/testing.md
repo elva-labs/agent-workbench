@@ -83,6 +83,16 @@ source as its stylesheet, and asks the terminals for the DOM renderer, since
 the software GL behind a headless X server paints a third WebGL terminal
 late or never and WebKit names every GPU the same.
 
+The app takes its environment, its home among it, from whatever starts it,
+and the agent's tools reach the app through the files in that home. On Linux
+each test file's app therefore gets WebDriver ports of its own, the harness
+asks for a session only once the driver behind `tauri-driver` answers, and
+both drivers are ended whether the app came up or not. Once the app is up,
+the harness waits for the heartbeat its core writes in the run's home, and
+fails there if none comes. A browser tool call the app leaves unanswered
+says whether the core still writes that heartbeat and whether the window
+still answers the driver.
+
 On Linux the tier also drives the embedded browser. A tab's page is a
 native view the WebDriver session cannot see into, so where it sits and what
 it shows are read from the X server's picture of the screen, a pixel at a

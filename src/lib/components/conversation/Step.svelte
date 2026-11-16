@@ -13,6 +13,8 @@
     stepOutput,
     stepTitle,
   } from "$lib/thread";
+  import { markedCall } from "$lib/callShown.svelte";
+  import { askingCalls } from "$lib/stepAsking";
   import Copy from "./Copy.svelte";
   import FileChange from "./FileChange.svelte";
   import Icon from "./Icon.svelte";
@@ -45,8 +47,12 @@
       : { lead: [part.done ? "Thought" : "Thinking"], object: null },
   );
 
+  const asking = askingCalls();
+
   let status = $derived.by((): { text: string; tone: "run" | "bad" | "quiet" } | null => {
     if (part.kind !== "tool") return null;
+    // A call whose subagent asks says so, as the subagent's row does.
+    if (part.tool === "agent" && asking().has(part.call)) return { text: "asking", tone: "run" };
     if (part.answer !== null && part.answer.choice !== "allow")
       return {
         text: answered(part.answer.choice),
@@ -69,7 +75,14 @@
   let tasks = $derived(part.kind === "tool" ? part.tasks.filter((task) => !task.ambient) : []);
 </script>
 
-<div class="step" class:open data-testid="step" data-tool={part.kind === "tool" ? part.tool : "thinking"}>
+<div
+  class="step"
+  class:open
+  class:marked={part.kind === "tool" && markedCall.call === part.call}
+  data-testid="step"
+  data-tool={part.kind === "tool" ? part.tool : "thinking"}
+  data-call={part.kind === "tool" ? part.call : undefined}
+>
   <!-- The row's button reaches over the whole line, its status too, so a
        click anywhere on it folds, but on the Copy, which stands above it. -->
   <div class="head" data-copy-host="command" data-testid="step-head">
@@ -183,6 +196,11 @@
 <style>
   .step {
     min-width: 0;
+  }
+
+  /* The call a session was opened at, marked for a moment. */
+  .step.marked > .head {
+    box-shadow: 0 0 0 2px var(--accent);
   }
 
   .head {

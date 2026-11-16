@@ -1057,8 +1057,8 @@ fn controls_centre(window: tauri::Window, centre: u32) {
     chrome::set_controls_centre(&window, centre);
 }
 
-/// Where an orchestrator session runs. It is on this machine whatever the
-/// projects it directs are on.
+/// The `orchestrator` folder under the workbench's home on this machine,
+/// listed while it holds past sessions.
 #[tauri::command]
 async fn orchestrator_dir(core: State<'_, Arc<Core>>) -> Result<String, String> {
     let core = Arc::clone(&core);

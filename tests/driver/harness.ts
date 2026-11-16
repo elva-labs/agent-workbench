@@ -1,12 +1,19 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { createConnection, createServer } from "node:net";
+import {
+  createConnection,
+  createServer,
+  type AddressInfo,
+  type Server,
+} from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { Builder, Key, type WebDriver } from "selenium-webdriver";
@@ -172,16 +179,142 @@ function environment(home: string, bin: string): NodeJS.ProcessEnv {
       };
 }
 
-/** A port nothing is on, asked of the OS and given straight back. */
-function freePort(): Promise<number> {
-  return new Promise((done, fail) => {
-    const server = createServer();
-    server.on("error", fail);
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as { port: number };
-      server.close(() => done(port));
+/** Ports nothing is on, asked of the OS and given straight back. All of
+    them are held until each is known, so no two are the same. */
+export async function freePorts(count: number): Promise<number[]> {
+  const servers = await Promise.all(
+    Array.from(
+      { length: count },
+      () =>
+        new Promise<Server>((done, fail) => {
+          const server = createServer();
+          server.on("error", fail);
+          server.listen(0, "127.0.0.1", () => done(server));
+        }),
+    ),
+  );
+  const ports = servers.map(
+    (server) => (server.address() as AddressInfo).port,
+  );
+  await Promise.all(
+    servers.map(
+      (server) => new Promise<void>((done) => server.close(() => done())),
+    ),
+  );
+  return ports;
+}
+
+async function freePort(): Promise<number> {
+  const [port] = await freePorts(1);
+  return port;
+}
+
+const pause = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Whether a WebDriver server answers its status on `port`. Through
+    tauri-driver that takes the native driver behind it as well: until
+    that one listens, tauri-driver drops the connection. */
+async function driverUp(port: number): Promise<boolean> {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/status`, {
+      signal: AbortSignal.timeout(2_000),
     });
-  });
+    await response.arrayBuffer();
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Whether a child process has ended, however it went. */
+function ended(child: ChildProcess): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
+/** Waits until a session can be asked for through `bridge`, listening on
+    `port`. tauri-driver listens before the WebKitWebDriver it starts does,
+    and a session asked for in between fails with the connection reset; a
+    tauri-driver that ends instead, as it does when its port is taken, is
+    reported at once. */
+export async function waitForDriver(
+  bridge: ChildProcess,
+  port: number,
+  ms: number,
+) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (ended(bridge)) {
+      throw new Error(
+        `tauri-driver on ${port} ended before its driver answered, ` +
+          `with code ${bridge.exitCode}` +
+          (bridge.signalCode ? ` (${bridge.signalCode})` : ""),
+      );
+    }
+    if (await driverUp(port)) return;
+    await pause(200);
+  }
+  throw new Error(
+    `nothing answered WebDriver's status through tauri-driver on ${port} after ${ms}ms`,
+  );
+}
+
+/** Ends `child` and waits until it has gone, killing it outright if a
+    polite request is not enough. tauri-driver ends its native driver as
+    it goes. */
+export async function end(child: ChildProcess) {
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    if (ended(child)) return;
+    const gone = new Promise<void>((done) => child.once("exit", () => done()));
+    child.kill(signal);
+    await Promise.race([gone, pause(5_000)]);
+  }
+}
+
+/** Where the app's core says it is there, under the home it runs with. */
+function heartbeat(home: string): string {
+  return join(home, ".agent-workbench", "answering");
+}
+
+/** Waits for the app's heartbeat under `home`. The agent's tools reach the
+    app through the request log in the home they run with, so an app that
+    writes none under this one is an app no tool call of this run reaches. */
+export async function waitForHeartbeat(home: string, ms: number) {
+  const beat = heartbeat(home);
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (existsSync(beat)) return;
+    await pause(200);
+  }
+  throw new Error(
+    `the app wrote no heartbeat at ${beat} within ${ms}ms: it runs with ` +
+      `another HOME, or its core did not start, and no tool call made ` +
+      `with this home reaches it`,
+  );
+}
+
+/** What can be told from outside about an app that did not answer a tool
+    call: whether its core still writes its heartbeat, every few seconds
+    while it runs, and whether its window still answers the driver, which
+    it cannot while its main thread is blocked. */
+export async function whyNoAnswer(app: App): Promise<string> {
+  const beat = heartbeat(app.home);
+  let core: string;
+  try {
+    const age = (Date.now() - statSync(beat).mtimeMs) / 1000;
+    core = `its heartbeat at ${beat} was written ${age.toFixed(1)}s ago`;
+  } catch {
+    core = `it has no heartbeat at ${beat}`;
+  }
+  const asked = Date.now();
+  const window = await Promise.race([
+    app.driver.executeScript(() => document.readyState).then(
+      () => `its window answered the driver in ${Date.now() - asked}ms`,
+      (error: Error) => `its window failed the driver: ${error.message}`,
+    ),
+    pause(5_000).then(() => "its window did not answer the driver within 5s"),
+  ]);
+  return `The app did not answer: ${core}, and ${window}.`;
 }
 
 /** Whether the WebView2 debugger is answering yet. */
@@ -466,35 +599,47 @@ async function attach(home: string, bin: string): Promise<App> {
   }
 }
 
-/** Linux: `tauri-driver` starts the binary through WebKitWebDriver. */
+/** Linux: `tauri-driver` starts the binary through WebKitWebDriver.
+
+    The app takes its environment, its HOME among it, from the driver that
+    starts it. So each launch gives both drivers ports of its own, and ends
+    them whether the launch comes up or not: a driver left listening by an
+    earlier file would otherwise start this file's app with that file's
+    home, where this file's tool calls never reach it. */
 async function bridge(home: string, bin: string): Promise<App> {
   const env = environment(home, bin);
-  const args = ["--port", String(DRIVER_PORT)];
+  const [port, nativePort] = await freePorts(2);
+  const args = ["--port", String(port), "--native-port", String(nativePort)];
   if (process.env.TAURI_NATIVE_DRIVER)
     args.push("--native-driver", process.env.TAURI_NATIVE_DRIVER);
   const tauriDriver: ChildProcess = spawn("tauri-driver", args, {
     env,
     stdio: ["ignore", "inherit", "inherit"],
   });
-  await waitForPort(DRIVER_PORT, 15_000);
 
-  const driver = await new Builder()
-    .usingServer(`http://127.0.0.1:${DRIVER_PORT}/`)
-    .withCapabilities({
-      browserName: "wry",
-      "tauri:options": { application: BIN },
-    })
-    .build();
+  try {
+    await waitForDriver(tauriDriver, port, 15_000);
+    const driver = await new Builder()
+      .usingServer(`http://127.0.0.1:${port}/`)
+      .withCapabilities({
+        browserName: "wry",
+        "tauri:options": { application: BIN },
+      })
+      .build();
 
-  return {
-    driver,
-    home,
-    bin,
-    stop: async () => {
-      await driver.quit().catch(() => {});
-      tauriDriver.kill();
-    },
-  };
+    return {
+      driver,
+      home,
+      bin,
+      stop: async () => {
+        await driver.quit().catch(() => {});
+        await end(tauriDriver);
+      },
+    };
+  } catch (failure) {
+    await end(tauriDriver);
+    throw failure;
+  }
 }
 
 /** The notifications the app asks the system for, read off the session bus
@@ -526,7 +671,14 @@ export function watchNotifications(): { seen: () => string; stop: () => void } {
 
 export async function launch(): Promise<App> {
   const { home, bin } = fixtures();
-  return WINDOWS ? attach(home, bin) : bridge(home, bin);
+  const app = WINDOWS ? await attach(home, bin) : await bridge(home, bin);
+  try {
+    await waitForHeartbeat(home, 10_000);
+  } catch (failure) {
+    await app.stop();
+    throw failure;
+  }
+  return app;
 }
 
 /** Points the app at projects, the way a restart would find them. Resolves

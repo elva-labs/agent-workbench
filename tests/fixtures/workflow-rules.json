@@ -40,6 +40,25 @@
       }
     },
     {
+      "case": "Direct, as it ships",
+      "valid": true,
+      "workflow": {
+        "name": "Direct",
+        "orchestrator": {
+          "agent": "claude-code",
+          "model": "fable"
+        },
+        "steps": [
+          {
+            "kind": "work",
+            "name": "Work",
+            "models": [],
+            "parallel": 8
+          }
+        ]
+      }
+    },
+    {
       "case": "codex by its default and any model",
       "valid": true,
       "workflow": {

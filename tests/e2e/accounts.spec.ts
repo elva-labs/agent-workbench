@@ -384,15 +384,16 @@ test.describe("a started session's row", () => {
   test.beforeEach(async ({ page }) => {
     // Rows that fade in are measured where they end up.
     await page.emulateMedia({ reducedMotion: "reduce" });
+    const LEAD = "/home/ada/dev/lead";
     await installFakeCore(page, {
-      open: [PROJECT],
+      open: [PROJECT, LEAD],
       settings: { accounts: { ...WORK, overrides: {} } },
     });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
-    // An orchestrator, under the account its project follows: session-1.
-    await page.getByTestId("sessions-menu").click();
-    await page.getByTestId("menu-orchestrator").click();
+    // A session of a second project's own, under the account that project
+    // follows: session-1.
+    await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
     await page.getByTestId("agent-option").click();
     await expect(page.locator(AGENT)).toContainText("running");
   });

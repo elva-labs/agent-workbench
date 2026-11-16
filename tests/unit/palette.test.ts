@@ -34,6 +34,7 @@ import { activate, bringForward, onScreen, reset as resetWorkspace, startSession
 import { projects, resetProjects } from "$lib/projects.svelte";
 import { conductor, resetConductor } from "$lib/conductor.svelte";
 import "$lib/orchestrator.svelte";
+import { resetFolder } from "$lib/orchestratorFolder.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
 vi.mock("$lib/core", () => ({
@@ -652,6 +653,25 @@ describe("a new session", () => {
     expect(outcome.type).toBe("close");
     if (outcome.type === "close") outcome.then();
     expect(sessions.all.at(-1)?.project).toBe(A);
+  });
+
+  // Nothing new starts in the orchestrator folder: on screen, it offers no
+  // New session in it, and a new session from one of its rows asks which
+  // project.
+  it("offers nothing new in the orchestrator folder", () => {
+    const folder = "/home/ada/.agent-workbench/orchestrator";
+    resetFolder(folder);
+    const old = create(folder, "old-1", "claude-code", null);
+    started(old.key, "pty-1", "old-1");
+    activate(folder);
+    sessions.active = old.key;
+    expect(onScreen()).toBe(folder);
+
+    expect(commandItems("new session").map((item) => item.label)).toEqual(["New session"]);
+    expect(beginNew(folder)).toEqual({ type: "stay" });
+    expect(palette.steps).toEqual([]);
+    expect(stepItems("").map((item) => item.label)).toEqual(["one", "two", "three"]);
+    resetFolder();
   });
 
   it("starts in the project at once when there is nothing else to choose", () => {

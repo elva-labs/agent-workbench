@@ -57,7 +57,7 @@
     setOverride as setAccountOverride,
     suggest,
   } from "$lib/accounts.svelte";
-  import { workspace, projectLabel } from "$lib/workspace.svelte";
+  import { hookedProjects, workspace, projectLabel } from "$lib/workspace.svelte";
   import { PAST_SESSIONS, sessions, setPastSessions } from "$lib/sessions.svelte";
   import { canIntegrate, kindFor, setKind } from "$lib/sessionKind.svelte";
   import { AGENTS, agentLabel, installed } from "$lib/agent.svelte";
@@ -231,24 +231,22 @@
     return () => clearTimeout(timer);
   });
 
-  /** How many open projects have a word of their own. */
-  let overridden = $derived(
-    workspace.open.filter((project) => overrideOf(project.path) !== null).length,
-  );
+  /** The projects the hooks answer covers: the open ones, and the
+      orchestrator folder while the sessions pane lists it. */
+  let hooked = $derived(hookedProjects());
+
+  /** How many of them have a word of their own. */
+  let overridden = $derived(hooked.filter((path) => overrideOf(path) !== null).length);
   // The overrides are the rare case: folded away unless one is in use.
   let overridesOpen = $state(false);
   $effect(() => {
     if (overridden > 0) overridesOpen = true;
   });
 
-  /** The answer for every project, applied to the open ones at once. */
+  /** The answer for every project, applied at once to the ones it covers
+      now. */
   function setHooksEverywhere(on: boolean) {
-    if (hook.everywhere !== on) {
-      void setEverywhere(
-        on,
-        workspace.open.map((project) => project.path),
-      );
-    }
+    if (hook.everywhere !== on) void setEverywhere(on, hookedProjects());
   }
 
   /** A project's own word, or none to follow the rest; asking for what it has is nothing. */
@@ -277,8 +275,8 @@
     addingAccount = true;
   }
 
-  /** The account is added, and every open project is brought to the hooks
-      answer again, since the server goes into each account's state. */
+  /** The account is added, and every project the hooks answer covers is
+      brought to it again, since the server goes into each account's state. */
   function submitAccount(e: SubmitEvent) {
     e.preventDefault();
     const problem = addAccount(accountName, { claude: claudeDir, codex: codexDir });
@@ -287,12 +285,12 @@
       return;
     }
     addingAccount = false;
-    void reapply(workspace.open.map((project) => project.path));
+    void reapply(hookedProjects());
   }
 
   function dropAccount(name: string) {
     removeAccount(name);
-    void reapply(workspace.open.map((project) => project.path));
+    void reapply(hookedProjects());
   }
 
   /** How many open projects have an account of their own. */
@@ -600,7 +598,7 @@
                 >
               </div>
             </div>
-            {#if workspace.open.length === 0}
+            {#if hooked.length === 0}
               <p class="note quiet" data-testid="hooks-none">Every project you open follows that.</p>
             {:else}
               <button
@@ -615,16 +613,16 @@
             {/if}
             {#if overridesOpen}
               <div class="projects">
-                {#each workspace.open as project (project.path)}
-                  {@const own = overrideOf(project.path)}
-                  <div class="project" data-testid="hooks-row" data-project={project.path}>
-                    <span class="project-name" title={project.path}>{projectLabel(project.path)}</span>
-                    <div class="seg" role="radiogroup" aria-label="Live updates for {projectLabel(project.path)}">
+                {#each hooked as path (path)}
+                  {@const own = overrideOf(path)}
+                  <div class="project" data-testid="hooks-row" data-project={path}>
+                    <span class="project-name" title={path}>{projectLabel(path)}</span>
+                    <div class="seg" role="radiogroup" aria-label="Live updates for {projectLabel(path)}">
                       <button
                         role="radio"
                         aria-checked={own === null}
                         class:on={own === null}
-                        onclick={() => setHooks(project.path, null)}
+                        onclick={() => setHooks(path, null)}
                         disabled={hook.busy}
                         data-testid="hooks-default">As every project</button
                       >
@@ -632,7 +630,7 @@
                         role="radio"
                         aria-checked={own === false}
                         class:on={own === false}
-                        onclick={() => setHooks(project.path, false)}
+                        onclick={() => setHooks(path, false)}
                         disabled={hook.busy}
                         data-testid="hooks-off">Watcher only</button
                       >
@@ -640,7 +638,7 @@
                         role="radio"
                         aria-checked={own === true}
                         class:on={own === true}
-                        onclick={() => setHooks(project.path, true)}
+                        onclick={() => setHooks(path, true)}
                         disabled={hook.busy}
                         data-testid="hooks-on">Agent hooks</button
                       >

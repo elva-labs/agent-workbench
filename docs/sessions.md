@@ -30,8 +30,8 @@ terminal wakes it; it is read again as it leaves Inactive.
 
 The pane's title row carries two small buttons at its end: the order the
 projects are listed in, and a menu with Open project, Open remote project,
-for a folder on another machine, New orchestrator session and Settings; see
-[remote](remote.md) and [orchestrator](orchestrator.md). Under it sits a
+for a folder on another machine, and Settings; see [remote](remote.md).
+Under it sits a
 field, `Go to session or project` with the chord of go to, which opens
 [go to](focus-model.md#the-palettes), and beside it a button in the accent
 that asks for a new session in the palette, which project first when more
@@ -48,7 +48,11 @@ running in it. The header stays in view while the project's rows
 scroll under it, until the next project's pushes it out, and a hairline
 separates one project from the next. With more than one agent installed, a
 new session from a project's own button or menu opens the choice in place
-under the project's name, a row per agent; see [agents](adapters.md).
+under the project's name, a row per agent; see [agents](adapters.md). The
+`orchestrator` folder an earlier version kept sessions in is listed among
+the projects while it holds past sessions, with no button for a new
+session and Close project alone in its menu; see
+[orchestrator](orchestrator.md).
 
 Once there are accounts to tell apart, the foot of the pane names the one
 the session on screen runs under, with a button that opens the settings
@@ -177,8 +181,10 @@ starts at once, through the agent's resume command, and each of the others
 starts when it is selected. Bringing a project forward selects its most
 recent session, so that one starts too. A session closed by hand before the
 quit stays closed, a session whose project did not open again is left out,
-and a session an orchestrator started stays with the orchestrator; see
-[orchestrator](orchestrator.md).
+and a session another session started stays with its starter; see
+[orchestrator](orchestrator.md). A session left open in the `orchestrator`
+folder of an earlier version comes back too, and lists that folder again;
+see [orchestrator](orchestrator.md).
 
 The yellow is the terminal's, so a theme that sets its yellow sets this dot
 too. In the amber palette, whose accent is a yellow, it is a lemon instead,
@@ -266,6 +272,71 @@ of its own is running, ends the working either way. A turn Codex reports as
 aborted, which is what an Escape does there, is a stop that says the user
 cut it short. Neither turn cut short wakes a session that started others;
 see [orchestrator](orchestrator.md#when-it-is-idle).
+
+## Subagents on the rail
+
+An integrated Claude Code session's subagents hang under its row while they
+run, one line each and a little smaller than a session's, on a rail from
+the session's dot: a dot for its state, the agent's glyph, what it was
+asked to do, its kind while it runs (Explore, Plan, general) or else
+`asking` in the accent, `done`, `stopped` or `failed`, and how long since
+that last changed. A session that started others has its own subagents
+right under its row and the sessions it started after them; the subagents
+of a session it started hang one step further in, under that session's
+row. With nothing else to say, the session's second line counts them, as in
+`2 subagents running, 1 asking`.
+
+What a subagent was asked and its kind are the agent's own words: each is
+cut to what a row holds, and drawn with every character that would change
+how it reads without being seen shown as a marker. A subagent is a run
+inside its session, not a session of its own: its row has no × and cannot
+be typed into, and the rows come in the order the subagents started.
+
+The rows are worked out from the conversation alone. A subagent shows from
+the call that starts it until it is done; one started in the background is
+followed past the turn that started it until its own run ends. A window
+that comes to the session late, after a reload, is told by the core which
+subagents are still at work, which no transcript holds, and finds their
+calls in what the conversation said before. Once done
+it stays, greyed, while the session is still at work and no turn has ended
+since, so the subagents of a piece of work go together once the turn that
+waits on them is over, or the session stops working. A subagent that asks
+for a permission, or whose start the agent asks for, says `asking`, and its
+request docks in its session and in the dock of the session that started
+that one, as described under the dock below.
+
+A click on a row, or Enter on it from the keyboard, opens the session at
+the call that started the subagent: the folds around it and the call itself
+open, the call comes into the middle of the view and is ringed in the
+accent for a moment, and the keyboard goes to the composer. The thread
+stops following its foot there, so what the run goes on to do leaves the
+call in view. The call's step says `asking` while its subagent asks. The rows are on the pane's cursor
+walk, and Left on one climbs to its session. They are no stops for Tab of
+their own, as no row in the pane is.
+
+Rows coming and going never move what is under the pointer or where the
+keyboard is walking: while either is in the pane, the subagent rows of the
+sessions above it keep what they show, a row that has gone standing as
+done and one that has come waiting, until both have moved off or away;
+the rows below come and go as they will, and the session's line counts the
+rows it shows. A screen reader is told politely as subagents start: a
+session's starts within a moment and a half are said in one line, with
+what it was asked for one alone and a count for several, each subagent
+once. One whose call was made before the window came, such as one read
+from what the conversation said before, is not news and is not said.
+
+Folded to the narrow column, the subagent rows keep their height so nothing
+moves when the pane opens, and show only a small dot for each, packed
+beside the session's rail, which runs straight past them to the sessions it
+started. With no words beside them the dots differ in shape: running is
+filled, asking a ring with a halo, done a plain hollow ring, failed a
+cross.
+
+A session in a terminal shows no subagent rows. Its hooks could say when a
+subagent starts and stops, but not what it was asked or which call started
+it without hooks on the agent's own tool besides, so the window does not
+guess. Codex runs its sub-agents as conversations of their own, which the
+window does not follow, so a Codex session shows none either.
 
 ## Accounts
 
@@ -508,9 +579,10 @@ them names the session that asks, after the step it was started for when
 it has one, as in "Work: Fix the cache asks to run cargo test", and a
 subagent inside it by both, as in "The subagent for Check every link in Fix
 the broken links"; Open beside it goes to that session, whose own dock
-holds the same request. A name longer than the line holds is cut wherever
-the dock says it, and the line says in the warning colour how many
-characters are cut. It is answered exactly as it is there, and every
+holds the same request, and for a subagent's request opens it at the call
+that started the subagent, as its row on the rail does. A name longer
+than the line holds is cut wherever the dock says it, and the line says
+in the warning colour how many characters are cut. It is answered exactly as it is there, and every
 choice acts on that session: the line under the choices names it, what a
 choice keeps is that session's, and Deny and stop stops that session's
 turn. A rule kept for good goes in the local settings of the folder that
