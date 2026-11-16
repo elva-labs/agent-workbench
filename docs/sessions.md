@@ -416,26 +416,33 @@ The conversation can be searched with find, which looks in all of it
 whether the thread draws it yet or not: the messages, what the agent wrote
 as it reads rendered rather than as its Markdown, plans, questions and
 notes, earlier messages read from the transcript, and inside folded work
-each step's command, input, changed lines and output, a subagent's run
-included. The labels around them, who spoke, when, and the line a stretch
-of work folds into, are not looked in. Case is ignored unless the words
-looked for hold a capital. The bar opens over the top of the thread with
-the count, such as 2 of 7, or No matches in the warning colour, and
-buttons for the match before, the next one and closing; the thread keeps
-room at its top for it, so its first message is never under it. Every
-match drawn is tinted and the current one filled. The marks are painted
-over the text without changing it, so selecting, copying and links work
-as ever. A new search starts from the top of the view, or from the match
-before the words changed. Stepping brings the current match into the
-middle of the view and stops the thread following its foot, drawing its
-turn if it is not drawn and opening the fold and the step that hold it;
-they close again when find moves on or the bar closes, unless the user
-opened or closed them meanwhile. It glides from near and is there at once
-from further than a screen away, or always where the system asks for less
-motion. While the conversation changes, a reply streaming among it, the
-count stays right and the current match stays on what holds it. A long
-conversation is counted a slice at a time, and typing never waits on it.
-Closing the bar leaves the thread where it is. The keys are in
+each step's command, input, changed lines and output, a subagent's run,
+and what the user told the agent when refusing a call. The labels around
+them, who spoke, when, the line a stretch of work folds into and a step's
+verb, are not looked in. Case is ignored unless the words looked for hold
+a capital.
+
+The bar opens over the top of the thread with the count, such as 2 of 7,
+or No matches in the warning colour, which it does not say while earlier
+messages are still being read, and buttons for the match before, the
+next one and closing. The thread keeps room at its top for it, so its
+first message is never under it. Every match drawn is tinted and the
+current one filled; the marks are painted over the text without changing
+it, so selecting, copying and links work as ever. A new search starts
+from the top of the view, or from the match the words were on before
+they changed. Stepping brings the current match into the middle of the
+view and stops the thread following its foot, drawing its turn if it is
+not drawn and opening the fold and the step that hold it; they close
+again when find moves on or the bar closes, unless the user opened or
+closed them meanwhile. It glides from near and is there at once from
+further than a screen away, or always where the system asks for less
+motion. Closing the bar leaves the thread where it is and lets go of
+what find read.
+
+While the conversation changes, a reply streaming among it, the count
+stays right and the current match stays on what holds it; words that had
+no match go to the first one that comes. A long conversation is counted
+a slice at a time, and typing never waits on it. The keys are in
 [focus](focus-model.md#an-integrated-session).
 
 A permission the agent asks for docks over the composer rather than in the
