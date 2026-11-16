@@ -251,6 +251,11 @@ export interface PermissionOffer {
     an answer; `idle` otherwise. */
 export type IntegratedState = "working" | "asking" | "idle";
 
+/** How the waiting messages were sent now, as `integratedSendNow` says. */
+export interface IntegratedSentNow {
+  sendNow: "stopped" | "delivering" | "nothingWaiting";
+}
+
 /** What the session runs on, as `integratedConfigure` answers it. */
 export interface IntegratedSettings {
   model: string | null;
@@ -1305,12 +1310,12 @@ export interface Core {
   /** Stops the running turn. Queued messages stay queued. The turn's end
       arrives as an event afterwards. */
   integratedInterrupt(id: string): Promise<void>;
-  /** Sends the messages that wait for a turn now, in the order sent: an
-      agent that takes messages into a running turn has the turn
-      interrupted, and takes them all at once after it; one that does not
-      has them steered into the running turn. Fails saying why when they
-      cannot go now. */
-  integratedSendNow(id: string): Promise<void>;
+  /** Sends the messages that wait for a turn now, in the order sent, and
+      says how: `stopped` when the running turn was stopped for them, after
+      which the agent takes them all at once; `delivering` when the running
+      turn takes them in; `nothingWaiting` when the agent had none waiting
+      by then. Fails saying why when they cannot go now. */
+  integratedSendNow(id: string): Promise<IntegratedSentNow>;
   /** Takes back a message the agent has not taken yet; it comes back as
       withdrawn. Fails once the agent has taken it. */
   integratedWithdraw(id: string, message: string): Promise<void>;
@@ -1810,7 +1815,7 @@ const tauriCore: Core = {
   integratedSend: (id, message, text, images) =>
     invoke<void>("integrated_send", { id, message, text, images: images ?? [] }),
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
-  integratedSendNow: (id) => invoke<void>("integrated_send_now", { id }),
+  integratedSendNow: (id) => invoke<IntegratedSentNow>("integrated_send_now", { id }),
   integratedWithdraw: (id, message) => invoke<void>("integrated_withdraw", { id, message }),
   integratedCompact: (id, instructions) =>
     invoke<void>("integrated_compact", { id, instructions: instructions ?? null }),
@@ -2160,7 +2165,7 @@ const detachedCore: Core = {
     throw new Error("not connected to the workbench core");
   },
   async integratedInterrupt() {},
-  async integratedSendNow() {
+  async integratedSendNow(): Promise<IntegratedSentNow> {
     throw new Error("not connected to the workbench core");
   },
   async integratedWithdraw() {

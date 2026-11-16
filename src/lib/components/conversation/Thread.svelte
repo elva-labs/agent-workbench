@@ -82,6 +82,12 @@
 
   let { conversation, root, intro, agent, models = true, onPutBack, sender, opener, room = 0, waiting }: Props = $props();
 
+  /** A message's first words, to tell its buttons from another's. */
+  function shortly(text: string): string {
+    const line = text.trim().split("\n")[0] ?? "";
+    return line.length > 40 ? `${line.slice(0, 39)}…` : line;
+  }
+
   /** The last message that waits for a turn, under which sending them
       all now is offered. */
   let lastQueued = $derived(conversation.waiting.findLast((said) => said.state === "queued")?.id ?? null);
@@ -1253,21 +1259,28 @@
     {/if}
     {#if said.state === "queued"}
       {@const last = waiting !== undefined && said.id === lastQueued}
+      {@const send = waiting !== undefined && last && waiting.canSend}
+      {@const take = waiting !== undefined && from === null && waiting.canTake}
       <p class="state" data-testid="message-waiting">
-        {waiting?.line ?? "Waiting for the agent to finish what it is doing"}{#if waiting !== undefined && last && waiting.canSend}<button
-            class="link"
-            tabindex="-1"
-            data-thread-item
-            onclick={waiting.sendNow}
-            title={waiting.title}
-            data-testid="send-now">Send now</button
-          >{/if}{#if waiting !== undefined && from === null && waiting.canTake}<button
-            class="link"
-            tabindex="-1"
-            data-thread-item
-            onclick={() => waiting.takeBack(said)}
-            title={said.id === newestOwn ? `${waiting.takeTitle} (${waiting.takeChord})` : waiting.takeTitle}
-            data-testid="take-back">Take back</button
+        {waiting?.line ?? "Waiting for the agent to finish what it is doing"}{#if waiting !== undefined && (send || take)}<span
+            class="acts"
+            >{#if send}<button
+                class="link"
+                tabindex="-1"
+                data-thread-item
+                onclick={waiting.sendNow}
+                title={waiting.title}
+                aria-label="Send the waiting messages now"
+                data-testid="send-now">Send now</button
+              >{/if}{#if take}<button
+                class="link"
+                tabindex="-1"
+                data-thread-item
+                onclick={() => waiting.takeBack(said)}
+                title={said.id === newestOwn && waiting.takeChord !== "" ? `${waiting.takeTitle} (${waiting.takeChord})` : waiting.takeTitle}
+                aria-label="Take back “{shortly(words.text)}”"
+                data-testid="take-back">Take back</button
+              >{/if}</span
           >{/if}
       </p>
     {:else if said.state === "sending"}
@@ -1525,6 +1538,17 @@
     font: inherit;
     color: var(--accent);
     cursor: pointer;
+  }
+
+  /* The actions on a waiting line wrap as one, never apart. */
+  .acts {
+    display: inline-block;
+    white-space: nowrap;
+  }
+
+  .acts .link:focus-visible {
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
   }
 
   .agent {

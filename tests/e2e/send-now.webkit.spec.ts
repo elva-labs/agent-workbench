@@ -69,7 +69,7 @@ test("sends a waiting message now by interrupting Claude Code's turn, the line s
   await open(page);
   await busy(page, "and this");
   const send = page.getByTestId("send-now");
-  await expect(send).toHaveAttribute("title", /^Interrupts the turn and sends this \(/);
+  await expect(send).toHaveAttribute("title", /^Sends this now: Claude takes it into the running turn, or stops the turn for it \(/);
   // The actions stand on the line under the message, after its words.
   const line = (await page.getByTestId("message-waiting").boundingBox())!;
   const box = (await send.boundingBox())!;
@@ -87,7 +87,7 @@ test("offers send now once, under the last, and says it sends them all in order"
   await busy(page, "first", "second");
   await expect(page.getByTestId("send-now")).toHaveCount(1);
   await expect(queued(page).last().getByTestId("send-now")).toHaveCount(1);
-  await expect(page.getByTestId("send-now")).toHaveAttribute("title", /sends the 2 waiting messages, in order/);
+  await expect(page.getByTestId("send-now")).toHaveAttribute("title", /^Sends the 2 waiting messages now, in order: Claude takes them/);
   // Each of the user's own can be taken back.
   await expect(page.getByTestId("take-back")).toHaveCount(2);
   await page.getByTestId("send-now").click();
@@ -114,12 +114,13 @@ test("sends now and takes back from the composer by its chords, which its hint n
   await page.keyboard.press(TAKE_BACK);
   await expect(queued(page)).toHaveCount(1);
   await expect(input(page)).toHaveValue("two");
+  // What came back is written again, and goes now with what waits.
+  await expect(page.getByTestId("composer-now")).toHaveText(/sends this and what waits now, .* takes it back\./);
+  await input(page).fill("");
   await expect(page.getByTestId("composer-now")).toHaveText(/sends it now, .* takes it back\./);
   await page.keyboard.press(SEND_NOW);
   await expect(queued(page)).toHaveCount(0);
   await expect(page.getByTestId("user-message").filter({ hasText: "one" })).toHaveAttribute("data-state", "taken");
-  // The draft stays where it was, unsent.
-  await expect(input(page)).toHaveValue("two");
   await expect(page.getByTestId("composer-now")).toHaveCount(0);
 });
 
@@ -145,7 +146,7 @@ test("waits for a request to be answered before it can be sent now, and says so"
   await open(page);
   await busy(page, "and this");
   await agent(page, `f.ask("${H}", "Bash", { command: "rm -rf build" });`);
-  await expect(page.getByTestId("message-waiting")).toContainText("Waiting for the request below to be answered");
+  await expect(page.getByTestId("message-waiting")).toContainText("Waits for the turn. Answer the request below to send it now");
   await expect(page.getByTestId("send-now")).toHaveCount(0);
   await expect(page.getByTestId("take-back")).toHaveCount(1);
   await input(page).focus();
@@ -156,7 +157,7 @@ test("waits for a request to be answered before it can be sent now, and says so"
 test("adds a waiting message to Codex's running turn without stopping it", async ({ page }) => {
   await open(page, { codex: true });
   await busy(page, "and this");
-  await expect(page.getByTestId("send-now")).toHaveAttribute("title", /^Adds this to the running turn, without stopping it \(/);
+  await expect(page.getByTestId("send-now")).toHaveAttribute("title", /^Adds this to the running turn without stopping it \(/);
   await page.getByTestId("send-now").click();
   await expect(page.getByTestId("user-message").filter({ hasText: "and this" })).toHaveAttribute("data-state", "taken");
   // The turn goes on.
@@ -312,16 +313,82 @@ test("keeps the line of a message waiting in a resumed session above the compose
   expect(began.y + began.height).toBeLessThanOrEqual(at.lastLineTop!);
 });
 
-test.describe("in dark", () => {
-  test("draws the actions in the accent, on the line's own size", async ({ page }) => {
-    await open(page, { appearance: "dark" });
+for (const appearance of ["light", "dark"] as const) {
+  test(`draws the actions in the accent, on the line's own size, in ${appearance}`, async ({ page }) => {
+    await open(page, { appearance });
     await busy(page, "and this");
-    const colours = await page.evaluate(() => {
+    const drawn = await page.evaluate(() => {
       const line = document.querySelector("[data-testid='message-waiting']")!;
       const send = document.querySelector("[data-testid='send-now']")!;
-      return { line: getComputedStyle(line).fontSize, send: getComputedStyle(send).fontSize };
+      // The accent as the line's own place paints it.
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent)";
+      line.appendChild(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      return {
+        lineSize: getComputedStyle(line).fontSize,
+        sendSize: getComputedStyle(send).fontSize,
+        accent,
+        send: getComputedStyle(send).color,
+        lineColour: getComputedStyle(line).color,
+      };
     });
-    expect(colours.send).toBe(colours.line);
+    expect(drawn.sendSize).toBe(drawn.lineSize);
+    expect(drawn.send).toBe(drawn.accent);
+    expect(drawn.send).not.toBe(drawn.lineColour);
   });
+}
+
+test("sends what is written now, with what waits, on the chord", async ({ page }) => {
+  await open(page);
+  await busy(page, "first");
+  await input(page).fill("and this, written after");
+  await expect(page.getByTestId("composer-now")).toHaveText(/sends this and what waits now/);
+  await page.keyboard.press(SEND_NOW);
+  await expect(input(page)).toHaveValue("");
+  await expect(page.getByTestId("user-message").filter({ hasText: "and this, written after" })).toHaveAttribute("data-state", "taken");
+  await expect(page.getByTestId("user-message").filter({ hasText: "first" }).last()).toHaveAttribute("data-state", "taken");
+  expect((await calls(page)).filter((call) => call.method === "sendNow")).toHaveLength(1);
 });
+
+test("puts the words back though the answer to taking them back is lost", async ({ page }) => {
+  await open(page);
+  await busy(page, "a thought to finish");
+  await agent(page, `f.withdrawAnswer = "the agent did not answer in time";`);
+  await page.getByTestId("take-back").click();
+  await expect(queued(page)).toHaveCount(0);
+  await expect(input(page)).toHaveValue("a thought to finish");
+  // Nothing failed that the user needs to know of.
+  await expect(page.getByTestId("composer-now")).not.toContainText("Not taken back");
+});
+
+test("says Codex's messages are on their way until Codex takes them", async ({ page }) => {
+  await open(page, { codex: true });
+  await busy(page, "and this");
+  await agent(page, `f.holdSteers = true;`);
+  await page.getByTestId("send-now").click();
+  await expect(page.getByTestId("message-waiting")).toHaveText("Sending now");
+  await expect(page.getByTestId("send-now")).toHaveCount(0);
+  await expect(page.getByTestId("take-back")).toHaveCount(0);
+  await agent(page, `f.releaseSteers();`);
+  await expect(page.getByTestId("user-message").filter({ hasText: "and this" })).toHaveAttribute("data-state", "taken");
+});
+
+for (const look of ["modern", "terminal"] as const) {
+  test(`keeps Send now and Take back together when the line wraps, in the ${look} look`, async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 720 });
+    await open(page, { look });
+    await busy(page, "first", "second");
+    await agent(page, `f.ask("${H}", "Bash", { command: "ls" });`);
+    await agent(page, `f.answer("${H}", f.events.findLast((e) => e.type === "permissionAsked").request, "allow");`);
+    const lastLine = page.getByTestId("message-waiting").last();
+    // The line is too long for one row at this width.
+    const rows = await lastLine.evaluate((line) => line.getBoundingClientRect().height / parseFloat(getComputedStyle(line).lineHeight));
+    expect(rows).toBeGreaterThan(1.5);
+    const send = (await lastLine.getByTestId("send-now").boundingBox())!;
+    const take = (await lastLine.getByTestId("take-back").boundingBox())!;
+    expect(Math.abs(send.y - take.y)).toBeLessThan(2);
+  });
+}
 

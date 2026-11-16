@@ -335,7 +335,7 @@ reached.
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
-| <kbd>Cmd</kbd><kbd>Enter</kbd> | Sends the messages that wait for the turn now, while they can go now; Ctrl off macOS |
+| <kbd>Cmd</kbd><kbd>Enter</kbd> | Sends the messages that wait for the turn now, while they can go now, and with words written while the agent works, sends those and has them go now too; Ctrl off macOS. Named in the hint only while no action of the keymap holds it |
 | <kbd>Cmd</kbd><kbd>Shift</kbd><kbd>Enter</kbd> | Takes the newest of the user's own waiting messages back into the composer; Ctrl off macOS |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover or find is open it puts that away instead, and stops nothing |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started; <kbd>Esc</kbd> there comes back |

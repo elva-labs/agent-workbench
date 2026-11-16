@@ -9,6 +9,7 @@ import type {
   IntegratedLimitWindow,
   IntegratedPlanStep,
   IntegratedQuestion,
+  IntegratedSentNow,
   IntegratedSettings,
   IntegratedSnapshot,
   IntegratedStartOptions,
@@ -105,11 +106,18 @@ export interface FakeIntegrated {
   compact(id: string, instructions?: string): void;
   /** Sends the waiting messages now, refused as the core refuses it: a
       holding agent, or one shaped as Codex, has them steered into its
-      turn and taken, in order;
-      another has its turn interrupted, then starts one for them all. */
-  sendNow(id: string): void;
+      turn and taken, in order, saying it delivers them; another has its
+      turn interrupted, then starts one for them all, saying it stopped. */
+  sendNow(id: string): IntegratedSentNow;
+  /** While set, the messages steered into a turn are taken only on
+      `releaseSteers`, as an agent that takes its time answers. */
+  holdSteers: boolean;
+  releaseSteers(): void;
   /** Takes back a message the agent has not taken; it is withdrawn. */
   withdraw(id: string, message: string): void;
+  /** While set, a message taken back is withdrawn and the asking then
+      fails with this, as when the answer is lost on the way. */
+  withdrawAnswer: string | null;
   answer(id: string, request: string, choice: PermissionChoice, message?: string): void;
   reply(id: string, request: string, answers: string[][] | null): void;
   configure(
@@ -366,6 +374,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
+  /** What takes the messages steered while `holdSteers` holds. */
+  const steersHeld: (() => void)[] = [];
   /** Each conversation's transcript, by its id. */
   const transcripts = new Map<string, Written[]>();
   /** The conversations Codex keeps, the rest being Claude Code's. */
@@ -451,6 +461,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     handed: [],
     holdReady: false,
     compactRefusal: null,
+    holdSteers: false,
+    withdrawAnswer: null,
 
     start(startOptions) {
       const folder = startOptions.cwd ?? startOptions.project;
@@ -572,18 +584,26 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       if (why !== null) throw new Error(why);
       fake.calls.push({ method: "sendNow", id });
       if (options.holding || session.codex) {
-        // Steered into the running turn, in the order sent.
+        // Steered into the running turn, in the order sent, and taken once
+        // the agent answers.
         const steered = options.holding ? session.held.splice(0).map((held) => held.message) : [...session.pending];
-        later(() => {
+        const take = () => {
           for (const message of steered) fake.emit(id, { ...movedOn(message, "taken"), error: null });
-        });
-        return;
+        };
+        if (fake.holdSteers) steersHeld.push(take);
+        else later(take);
+        return { sendNow: "delivering" };
       }
       // Interrupted, and the agent takes every waiting message at once.
       later(() => {
         if (session.turn) fake.endTurn(id, "interrupted");
         fake.emit(id, { type: "turnStarted", messages: [...session.pending] });
       });
+      return { sendNow: "stopped" };
+    },
+
+    releaseSteers() {
+      for (const take of steersHeld.splice(0)) take();
     },
 
     withdraw(id, message) {
@@ -592,6 +612,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         throw new Error("the agent has taken the message already");
       fake.calls.push({ method: "withdraw", id, message });
       fake.emit(id, { ...movedOn(message, "withdrawn"), error: null });
+      if (fake.withdrawAnswer !== null) throw new Error(fake.withdrawAnswer);
     },
 
     compact(id, instructions) {

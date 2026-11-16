@@ -101,8 +101,9 @@
     /** Whether the workflow can still be chosen: nothing has been said in
         the session yet. */
     choosable?: boolean;
-    /** Sends the messages that wait now; false when they cannot go now. */
-    onSendNow?: () => boolean;
+    /** Sends the messages that wait now, or with `written` makes what is
+        about to be sent go now with them; false when they cannot go now. */
+    onSendNow?: (written: boolean) => boolean;
     /** Takes the newest of the user's waiting messages back into the
         composer; false when there is none to take. */
     onTakeBack?: () => boolean;
@@ -550,9 +551,9 @@
     interrupt(sessionKey);
   }
 
-  /** Cmd+Enter sends the messages that wait now, and Cmd+Shift+Enter takes
-      the newest of the user's own back; Ctrl off macOS. Taken only while no
-      action holds the chord. */
+  /** Cmd+Enter sends now: what is written, with the messages that wait,
+      or those alone. Cmd+Shift+Enter takes the newest of the user's own
+      back. Ctrl off macOS. Taken only while no action holds the chord. */
   function nowKey(e: KeyboardEvent): boolean {
     if (e.key !== "Enter" || e.altKey || e.isComposing) return false;
     const mac = isMac();
@@ -561,7 +562,11 @@
     if (chord === null || actionOf(chord) !== null) return false;
     e.preventDefault();
     if (e.shiftKey) onTakeBack?.();
-    else onSendNow?.();
+    else if (hasWords) {
+      // Sent as Enter sends it, to go now as soon as it waits.
+      onSendNow?.(true);
+      submit();
+    } else onSendNow?.(false);
     return true;
   }
 
@@ -1040,6 +1045,8 @@
   {:else if nowHint !== null}
     <p class="hint" class:bad={link.nowError !== null} data-testid="composer-now"><Plain text={nowHint} /></p>
   {/if}
+  <!-- Why a message could not be sent now, or taken back, said aloud. -->
+  <p class="sr" aria-live="polite" data-testid="composer-now-said">{link.nowError ?? ""}</p>
   <div class="bar">
     <button class="chip bare" tabindex="0" onclick={() => void pickFiles()} aria-label="Attach files" title="Attach files" data-testid="attach"
       ><Icon name="clip" /></button

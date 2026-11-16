@@ -1,8 +1,8 @@
 <script lang="ts">
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
-  import { aloneOn, linkFor, resume, sendNow, sendNowBlocked, takeBack, trust, unspoken } from "$lib/integrated.svelte";
-  import { describe } from "$lib/keys.svelte";
+  import { aloneOn, linkFor, onTheirWay, restore, resume, sendNow, sendNowBlocked, takeBack, trust, unspoken } from "$lib/integrated.svelte";
+  import { actionOf, describe } from "$lib/keys.svelte";
   import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
   import { senderOf } from "$lib/senders.svelte";
@@ -60,76 +60,90 @@
       agent dropped stays in the thread, where it happened; one that never
       reached it leaves the thread for the composer. */
   function putBack(message: Message) {
-    const back = unsent(spoken(message.text, senderOf(message) === null).text, mentionsOf(message.id));
-    const text = back.draft;
-    link.draft = link.draft.trim() === "" ? text : `${text}\n${link.draft}`;
-    link.mentions = [...new Set([...link.mentions, ...back.picked])];
-    link.images = [...message.images, ...link.images];
-    if (!message.placed) conversation.forget(message.id);
-    queueMicrotask(() =>
-      document
-        .querySelector<HTMLTextAreaElement>(`[data-session="${session.key}"] [data-testid="composer-input"]`)
-        ?.focus(),
-    );
+    restore(session.key, message);
   }
 
-  /** Sends now and takes back, from the composer as well as the thread. */
-  const SEND_NOW = describe({ key: "Enter", shift: false, alt: false });
-  const TAKE_BACK = describe({ key: "Enter", shift: true, alt: false });
+  /** The chords that send now and take back, from the composer as well
+      as the thread, each named only while no action of the keymap holds
+      it. */
+  const SEND_NOW_CHORD = { key: "Enter", shift: false, alt: false };
+  const TAKE_BACK_CHORD = { key: "Enter", shift: true, alt: false };
+  let sendChord = $derived(actionOf(SEND_NOW_CHORD) === null ? describe(SEND_NOW_CHORD) : null);
+  let takeChord = $derived(actionOf(TAKE_BACK_CHORD) === null ? describe(TAKE_BACK_CHORD) : null);
 
   /** The messages that wait for a turn, in the order sent. */
   let queued = $derived(conversation.waiting.filter((message) => message.state === "queued"));
   let blocked = $derived(sendNowBlocked(session.key));
+  let going = $derived(onTheirWay(session.key));
 
   /** What the messages that wait can do, and what the line under them
       says they wait for. */
   let waiting = $derived.by(() => {
     const many = queued.length > 1;
-    const what = many ? `the ${queued.length} waiting messages, in order` : "this";
+    const chord = sendChord === null ? "" : ` (${sendChord})`;
     const title =
       profile.sendNow === "interrupts"
-        ? `Interrupts the turn and sends ${what} (${SEND_NOW})`
-        : `Adds ${what} to the running turn, without stopping it (${SEND_NOW})`;
-    const line =
-      link.sendingNow || (conversation.interrupting && queued.length > 0)
-        ? "Sending now"
-        : conversation.open.length > 0
-          ? "Waiting for the request below to be answered"
-          : conversation.compacting
-            ? "Waiting for the compaction to finish"
-            : "Waiting for the agent to finish what it is doing";
+        ? `Sends ${many ? `the ${queued.length} waiting messages now, in order` : "this now"}: ${name} takes ${many ? "them" : "it"} into the running turn, or stops the turn for ${many ? "them" : "it"}${chord}`
+        : `Adds ${many ? `the ${queued.length} waiting messages` : "this"} to the running turn${many ? ", in order," : ""} without stopping it${chord}`;
+    const line = going
+      ? "Sending now"
+      : conversation.open.length > 0
+        ? "Waits for the turn. Answer the request below to send it now"
+        : conversation.compacting
+          ? "Waits for the compaction to finish"
+          : "Waiting for the agent to finish what it is doing";
     return {
       sendNow: () => void sendNow(session.key),
-      takeBack: (message: Message) => void withdraw(message),
+      takeBack: (message: Message) => void takeBack(session.key, message.id),
       line,
       canSend: blocked === null,
-      canTake: !link.sendingNow && !conversation.interrupting,
+      canTake: !going,
       title,
       takeTitle: "Takes it back into the composer",
-      takeChord: TAKE_BACK,
+      takeChord: takeChord ?? "",
     };
   });
+
+  /** Whether what is written can go now with the messages that wait: a
+      turn runs, and nothing holds the waiting messages back. */
+  let draftGoesNow = $derived(
+    (link.draft.trim() !== "" || link.images.length > 0) &&
+      conversation.current !== null &&
+      conversation.open.length === 0 &&
+      !conversation.compacting &&
+      !going,
+  );
 
   /** What the composer says of the messages that wait: the chords that
       send them now and take the newest back, or why the last try failed. */
   let nowHint = $derived.by(() => {
     if (link.nowError !== null) return link.nowError;
     const own = queued.filter((message) => senderOf(message) === null).length;
-    const send = blocked === null ? `${SEND_NOW} sends ${queued.length > 1 ? "them" : "it"} now` : null;
-    const take = own > 0 && waiting.canTake ? `${TAKE_BACK} takes ${own > 1 ? "the newest" : "it"} back` : null;
+    const send =
+      sendChord === null
+        ? null
+        : draftGoesNow
+          ? `${sendChord} sends this${queued.length > 0 ? " and what waits" : ""} now`
+          : blocked === null
+            ? `${sendChord} sends ${queued.length > 1 ? "them" : "it"} now`
+            : null;
+    const take =
+      takeChord !== null && own > 0 && waiting.canTake
+        ? `${takeChord} takes ${own > 1 ? "the newest" : "it"} back`
+        : null;
     const said = [send, take].filter((part) => part !== null).join(", ");
     return said === "" ? null : `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
   });
 
-  /** Takes a waiting message back into the composer, once the agent has
-      let go of it. */
-  async function withdraw(message: Message) {
-    const kept = { ...message, images: [...message.images] };
-    if (await takeBack(session.key, message.id)) putBack(kept);
-  }
-
-  /** Sends the waiting messages now; false when they cannot go now. */
-  function sendWaiting(): boolean {
+  /** Sends the waiting messages now; false when they cannot go now. With
+      something written while a turn runs, that is sent, and goes now with
+      them once the agent has it waiting. */
+  function sendWaiting(written: boolean): boolean {
+    if (written) {
+      if (!draftGoesNow) return false;
+      link.nowOnQueue = true;
+      return true;
+    }
     if (blocked !== null) return false;
     void sendNow(session.key);
     return true;
@@ -140,7 +154,7 @@
   function takeNewest(): boolean {
     const newest = queued.findLast((message) => senderOf(message) === null);
     if (newest === undefined || !waiting.canTake) return false;
-    void withdraw(newest);
+    void takeBack(session.key, newest.id);
     return true;
   }
 

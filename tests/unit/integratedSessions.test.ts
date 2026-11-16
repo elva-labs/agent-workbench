@@ -19,6 +19,7 @@ import {
   send,
   sendNow,
   sendNowBlocked,
+  onTheirWay,
   takeBack,
   trust,
   unspoken,
@@ -327,13 +328,65 @@ describe("an integrated session behind its row", () => {
     await settled();
     expect(sendNowBlocked(session.key)).toBeNull();
     const going = sendNow(session.key);
-    expect(conversation.interrupting).toBe(true);
+    // On their way, with nothing said yet of how: the agent decides
+    // whether the turn stops.
+    expect(onTheirWay(session.key)).toBe(true);
+    expect(conversation.interrupting).toBe(false);
     expect(await going).toBe(true);
     await settled();
     expect(conversation.turns[1].outcome).toBe("interrupted");
     // One turn for both, in the order sent.
     expect(conversation.turns[2].messages).toEqual([first, second]);
     expect(conversation.waiting).toEqual([]);
+    expect(onTheirWay(session.key)).toBe(false);
+  });
+
+  it("keeps Codex's steered messages on their way until Codex takes them", async () => {
+    await install({ holding: true, mints: true });
+    const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const handle = handleOf(session.key)!;
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const waiting = send(session.key, "and this")!;
+    await settled();
+    fake.holdSteers = true;
+    expect(await sendNow(session.key)).toBe(true);
+    // Answered, and not yet taken: neither sent again nor taken back.
+    expect(onTheirWay(session.key)).toBe(true);
+    expect(sendNowBlocked(session.key)).toBe("Sending it now");
+    fake.releaseSteers();
+    expect(conversationOf(session.key).messages[waiting].state).toBe("taken");
+    expect(onTheirWay(session.key)).toBe(false);
+  });
+
+  it("puts a message taken back in the composer when the agent lets go of it, though the answer is lost", async () => {
+    const { session, handle } = await started();
+    const link = linkFor(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const waiting = send(session.key, "a thought to finish")!;
+    await settled();
+    link.draft = "something new";
+    fake.withdrawAnswer = "the agent did not answer in time";
+    expect(await takeBack(session.key, waiting)).toBe(true);
+    expect(conversationOf(session.key).messages[waiting]).toBeUndefined();
+    expect(link.draft).toBe("a thought to finish\nsomething new");
+    expect(link.nowError).toBeNull();
+  });
+
+  it("lets a failed try go once the turn moves on", async () => {
+    const { session, handle } = await started();
+    const link = linkFor(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const taken = send(session.key, "and that")!;
+    await settled();
+    fake.startTurn(handle, [taken]);
+    expect(await takeBack(session.key, taken)).toBe(false);
+    expect(link.nowError).not.toBeNull();
+    fake.endTurn(handle);
+    expect(link.nowError).toBeNull();
   });
 
   it("says why the waiting messages cannot go now", async () => {
