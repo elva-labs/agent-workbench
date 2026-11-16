@@ -1059,16 +1059,14 @@
   }
 
   /* A request that takes no answer yet, settling in or with an answer on
-     its way, says so by its controls fading. */
-  .choice,
-  .option {
-    transition: opacity 0.2s;
-  }
-
+     its way, says so by its controls fading. One that takes an answer
+     shows them whole at once, so no control that answers is ever drawn
+     faint. */
   .choice[aria-disabled="true"],
   .option[aria-disabled="true"] {
     opacity: 0.5;
     cursor: default;
+    transition: opacity 0.2s;
   }
 
   .choice.plain {
@@ -1439,8 +1437,8 @@
 
   @media (prefers-reduced-motion: reduce) {
     .chev,
-    .choice,
-    .option {
+    .choice[aria-disabled="true"],
+    .option[aria-disabled="true"] {
       transition: none;
     }
   }
