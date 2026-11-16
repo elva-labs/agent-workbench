@@ -41,8 +41,8 @@ The window has a ground, its darkest tone: a step below the background in
 light, the background itself in dark. In the modern look the sessions pane,
 the pane headers and the status bar lie on it. What the agent, the changes
 pane and the terminal panel hold stands on it as a card with rounded
-corners under the pane's header, the cards 8 pixels apart, the first one at
-the window's foot and right a gap from the edge. The sessions pane starts at
+corners under the pane's header. The cards stand 8 pixels apart, and the
+same gap in from the window's right edge and its foot. The sessions pane starts at
 the window's left edge and the header row at its top, so every header is
 one band of ground across the window. The card's top edge stands where a
 rule under the header would; the sessions pane's header, over its own list
@@ -268,8 +268,9 @@ for.
 
 ## Hiding is free, resizing is not
 
-Below 986px of content, and on macOS below that and what its wider fold
-takes, reviewing hides the agent rather than squeezing it.
+Below 986px of content, reviewing hides the agent rather than squeezing it;
+on macOS, where the folded column is wider, below 1022 in the modern look and
+1010 in the terminal look.
 The pane keeps its width while hidden, so no pty resize is sent and the
 terminal comes back as it was, with nothing redrawn or rewrapped. The agent
 pane is hidden rather than unmounted for the same reason; unmounting would
