@@ -4127,6 +4127,64 @@ describe("sessions told apart by their tokens", () => {
     }
   });
 
+  it("keeps what a run named by its id had for its next start, though a second row of it started again first", async () => {
+    const run = await runUnderItsId();
+    const kid = sessions.all.find((row) => row.id === "kid-new")!;
+    const old = reopened(B, "kid-old", "claude-code", null, null, null);
+    // A second row of the session comes up while the run goes on, and
+    // starts again in place once the run has stopped.
+    const second = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(second.key, "pty-second", "orch-old");
+    run.status = "exited";
+    second.status = "exited";
+    renewToken(second);
+    cameUp(second.key, "pty-second-2", "orch-old");
+    expect(sessions.tokens["orch-old"]?.token).not.toBe(second.token);
+    // The run starts again in place, with all it had.
+    renewToken(run);
+    cameUp(run.key, "pty-run-2", "orch-old");
+    const token = run.token;
+    expect([second.token, "orch-old"]).not.toContain(token);
+    expect(allowedProjects(token)).toEqual([B]);
+    expect(allowedProjects(second.token)).toEqual([]);
+    expect(allowedProjects("orch-old")).toEqual([]);
+    expect(startedFor(kid.key)).toBe(token);
+    expect(startedFor(old.key)).toBe(token);
+    expect(roundsOf(token, "Review", "kid-old")).toBe(2);
+    await handle(raw("read", { session: "kid-old" }, { session: second.token }));
+    expect(last().error).toContain("Session kid-old was not started by you.");
+    // Resumed once both are closed, it is asked before it starts in B.
+    close(second.key);
+    close(run.key);
+    const later = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(later.key, "pty-later", "orch-old");
+    expect(allowedProjects(later.token)).toEqual([]);
+  });
+
+  it("lets a session it stopped stay gone when two rows of it ran at once", async () => {
+    keptByAnEarlierVersion();
+    const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(back.key, "pty-back", "orch-old");
+    const token = back.token;
+    // A second row with the same id, as two Codex sessions found by folder
+    // and time can be: the id is kept a token neither holds.
+    const second = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(second.key, "pty-second", "orch-old");
+    expect(sessions.tokens["orch-old"]?.token).not.toBe(token);
+    const kid = await resumed(raw("start", { session: "kid-old" }, { session: token }), "pty-kid");
+    await handle(raw("stop", { session: "kid-old" }, { session: token }));
+    expect(last().content).toBe("Stopped session kid-old.");
+    expect(byKey(kid.key)).toBeNull();
+    expect(conductor.started["orch-old"]).toBeUndefined();
+    // Resumed once both are closed, it has nothing to come back to.
+    close(second.key);
+    close(back.key);
+    const later = create(A, "orch-old", "claude-code", null, null, null, null, null);
+    cameUp(later.key, "pty-later", "orch-old");
+    await handle(raw("sessions", {}, { session: later.token }));
+    expect(last().content).toBe("You have started no sessions.");
+  });
+
   it("carries what an earlier version kept under a folder to the one Codex session open there", async () => {
     const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
     localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")], [B]: [entry("kid-b")] }));

@@ -860,6 +860,10 @@ export function keepToken(session: Session) {
   // until it stops; an id is never kept as a token, nor the one the row
   // was resumed from.
   if (session.token === id || session.token === session.resumedFrom) return;
+  // Nor is another row's while a run named by the id still has its row:
+  // what is kept under the id is that run's, and goes to the token its
+  // next start gives it.
+  if (sessions.all.some((row) => row.key !== session.key && row.token === id)) return;
   sessions.tokens[id] = { token: session.token, project: session.project };
   saveTokens();
 }

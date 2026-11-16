@@ -638,10 +638,14 @@ function placed(caller: string, id: string): Place | null {
 
 /** Takes a session off its caller's list, and off the list a session
     from before there were tokens kept under its id, which is the caller's
-    as well: a session the caller is done with is not moved back to it. */
+    as well: a session the caller is done with is not moved back to it.
+    That is the list of each id whose kept token the caller is, and of the
+    caller's own id, whose kept token two rows of it running at once leave
+    to neither. */
 function forget(caller: string, id: string) {
+  const own = sessions.all.find((row) => row.token === caller)?.id ?? null;
   let changed = false;
-  for (const key of [caller, ...idsOf(caller)]) {
+  for (const key of new Set([caller, ...idsOf(caller), ...(own === null ? [] : [own])])) {
     const list = conductor.started[key];
     if (list === undefined || !list.some((known) => known.id === id)) continue;
     const kept = list.filter((known) => known.id !== id);
