@@ -1122,6 +1122,11 @@ test.describe("working, and waiting for you", () => {
     await named(page, "session 1").click();
     await named(page, "session 2").click();
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+    // At work again, so its bell is news rather than a reminder of what
+    // was read.
+    await page.evaluate(() =>
+      window.__fake.sessionEvent?.({ sessionId: "session-1", kind: "prompt" }),
+    );
     await page.evaluate(() => window.__fake.emit("pty-1", "\x07"));
     await expect(named(page, "session 1").locator(".dot")).toHaveClass(/unread/);
     await expect
@@ -1191,6 +1196,60 @@ test.describe("working, and waiting for you", () => {
     await expect(named(page, "session 1")).toContainText("waiting for you");
     await named(page, "session 1").click();
     await expect(named(page, "session 1")).toContainText("running");
+  });
+
+  // Claude Code says it is waiting a minute after a turn ends, and again a
+  // minute after each recap or compaction it does while idle. A row read
+  // since stays read through all of them; the next turn is news again.
+  test("keeps a read session read through the agent's idle notices", async ({
+    page,
+  }) => {
+    const event = (kind: string, note?: string) =>
+      page.evaluate(
+        ({ kind, note }) =>
+          window.__fake.sessionEvent?.({ sessionId: "session-1", kind, note }),
+        { kind, note },
+      );
+    const dot = named(page, "session 1").locator(".dot");
+
+    await event("prompt");
+    await event("stop", "All green.");
+    await expect(dot).toHaveClass(/unread/);
+    await named(page, "session 1").click();
+    await expect(dot).not.toHaveClass(/unread/);
+    await named(page, "session 2").click();
+    const badges = await page.evaluate(() => window.__fake.badges.length);
+
+    await event("idle");
+    await event("idle");
+    await event("idle");
+    // Claude Code set to ring its idle notice as well: with the hooks
+    // reporting its turns, the bell says nothing new either. Taken in once
+    // the words after it are on its screen.
+    await page.evaluate(() => window.__fake.emit("pty-1", "\x07rang"));
+    const key = await named(page, "session 1").evaluate((row) =>
+      row.closest("[data-row]")!.getAttribute("data-row")!.replace("session:", ""),
+    );
+    await expect
+      .poll(() => page.evaluate((key) => window.__fake.bufferOf(key), key))
+      .toContain("rang");
+    // Drawn once what came after the notices is.
+    await page.evaluate(() =>
+      window.__fake.sessionEvent?.({ sessionId: "session-2", kind: "prompt" }),
+    );
+    await expect(named(page, "session 2")).toContainText("working");
+    await expect(dot).not.toHaveClass(/unread/);
+    await expect(named(page, "session 1")).not.toContainText("waiting for you");
+    await expect(named(page, "session 1").getByTestId("session-note")).toHaveCount(0);
+    await expect(page.getByTestId("waiting-readout")).toHaveCount(0);
+    expect(await page.evaluate(() => window.__fake.badges.length)).toBe(badges);
+
+    await event("prompt");
+    await event("stop", "Second answer.");
+    await expect(dot).toHaveClass(/unread/);
+    await expect(named(page, "session 1").getByTestId("session-note")).toHaveText(
+      "Second answer.",
+    );
   });
 
   // The agent ends its turn to wait on subagents it runs in the background,
