@@ -6,7 +6,8 @@
 //! line to its stdout, `expect` reads its stdin until a line holds the
 //! given text, `reply` writes a line with `@ID@` replaced by the id of the
 //! request last expected, `sleep`, `exit` and `die` do what they say,
-//! `drain` reads until stdin closes and `err` writes a line to stderr. It
+//! `drain` reads until stdin closes, `err` writes a line to stderr and `bg`
+//! runs a command in the background, writing its pid beside it. It
 //! writes its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 //!
@@ -47,6 +48,7 @@ while IFS= read -r step || [ -n "$step" ]; do
     "exit "*) exit "${step#exit }" ;;
     "die") kill -9 $$ ;;
     "err "*) printf '%s\n' "${step#err }" >&2 ;;
+    "bg "*) sh -c "${step#bg }" & printf '%s\n' "$!" > "$dir/bg" ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
   esac
 done < "$FAKE_CODEX_SCENARIO"
@@ -1817,6 +1819,9 @@ fn a_history_is_read_through_an_app_server_of_its_own_under_the_account_s_home()
         r#"say {"id":90,"method":"item/tool/call","params":{"tool":"lookup","arguments":{}}}"#.into(),
         r#"expect "method":"thread/turns/list""#.into(),
         r#"reply {"id":@ID@,"result":{"data":[{"id":"turn-1","status":"completed","startedAt":1000,"completedAt":1001,"durationMs":900,"error":null,"itemsView":"full","items":[{"type":"userMessage","id":"u1","clientId":"m-1","content":[{"type":"text","text":"Hello","text_elements":[]}],"startedAtMs":1000000},{"type":"agentMessage","id":"msg-1","text":"Hi.","startedAtMs":1000400,"completedAtMs":1000500}]}],"nextCursor":null}}"#.into(),
+        // Something Codex starts that would outlive it, as its plugin sync
+        // does when plugins are on.
+        "bg sleep 37".into(),
         "drain".into(),
     ]
     .join("\n");
@@ -1856,24 +1861,50 @@ fn a_history_is_read_through_an_app_server_of_its_own_under_the_account_s_home()
     };
     assert_eq!(refused["error"]["code"], -32601);
     let args = std::fs::read_to_string(dir.join("args")).unwrap();
-    assert_eq!(args.trim(), "app-server");
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args, ["app-server", "-c", "features.plugins=false"]);
     let env = std::fs::read_to_string(dir.join("env")).unwrap();
     assert!(
         env.lines()
             .any(|line| line == format!("CODEX_HOME={}", dir.join("codex-home").display())),
         "{env}"
     );
+    // What Codex started goes with it.
+    let pid = loop {
+        if let Some(pid) = std::fs::read_to_string(dir.join("bg"))
+            .ok()
+            .and_then(|pid| pid.trim().parse::<i32>().ok())
+        {
+            break pid;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "nothing was started in the background"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "what Codex started outlived the read"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 #[test]
 fn an_answer_too_long_to_read_is_asked_again_a_turn_at_a_time() {
     let long = "x".repeat(70 * 1024);
+    let too_long = format!(
+        r#"reply {{"id":@ID@,"result":{{"data":[{{"id":"turn-1","status":"completed","itemsView":"full","items":[{{"type":"agentMessage","id":"long","text":"{long}"}}]}}],"nextCursor":null}}}}"#
+    );
     let scenario = [
         HISTORY_OPENING.to_string(),
+        r#"expect "limit":16"#.into(),
+        too_long.clone(),
+        // Again, a turn at a time.
         r#"expect "itemsView":"full""#.into(),
-        format!(
-            r#"reply {{"id":@ID@,"result":{{"data":[{{"id":"turn-1","status":"completed","itemsView":"full","items":[{{"type":"agentMessage","id":"long","text":"{long}"}}]}}],"nextCursor":null}}}}"#
-        ),
+        too_long,
         r#"expect "itemsView":"notLoaded""#.into(),
         r#"reply {"id":@ID@,"result":{"data":[{"id":"turn-1","status":"completed","startedAt":1000,"itemsView":"notLoaded","items":[]}],"nextCursor":null}}"#.into(),
         r#"expect "method":"thread/items/list""#.into(),
@@ -1933,7 +1964,7 @@ fn a_codex_that_does_not_answer_or_ends_is_an_error_in_time() {
     .join("\n");
     let (history, _) = history_within("unknown", &scenario, Duration::from_secs(30));
     let error = history.unwrap_err();
-    assert!(error.contains("thread not loaded"), "{error}");
+    assert_eq!(error, "Codex does not have this conversation");
 }
 
 /// The real `codex app-server` on PATH reads back the thread a session of
@@ -1941,7 +1972,7 @@ fn a_codex_that_does_not_answer_or_ends_is_an_error_in_time() {
 /// network: what was heard live comes back from Codex's record as the same
 /// events under the same ids, while the session still runs and once it
 /// has ended, read under a home that names no model provider it could
-/// sign in to. Run by hand:
+/// sign in to; and a turn read while it runs is left open. Run by hand:
 /// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
@@ -2106,6 +2137,70 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
     check(&read());
     assert_eq!(h.stop()["clean"], true);
     check(&read());
+
+    // In the middle of a turn: Codex gives it as interrupted with no end,
+    // and it is left open, its message read and its turn not ended.
+    let started = super::start(
+        h.recorder.clone(),
+        Arc::clone(&sessions),
+        &CODEX_APP_SERVER,
+        &launch,
+        Box::new(|_| {}),
+        Box::new(|_| {}),
+    )
+    .unwrap();
+    let busy = Harness {
+        dir: Arc::clone(&base),
+        sessions: Arc::clone(&sessions),
+        recorder: h.recorder.clone(),
+        id: started.id,
+        waits: Waits::default(),
+    };
+    let ready = busy.until(|e| e["type"] == "ready" || e["type"] == "ended");
+    let running = ready.last().unwrap()["sessionId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let message = busy.send(&format!(
+        "SLEEP 39.{:09}",
+        uuid::Uuid::new_v4().as_u128() % 1_000_000_000
+    ));
+    busy.until(|e| e["type"] == "toolStarted" && e["kind"] == "command");
+    let read_running = || {
+        crate::codex_history::read_within(
+            &environment.vars,
+            Some(&home),
+            &work,
+            None,
+            &running,
+            Duration::from_secs(60),
+        )
+        .unwrap()
+    };
+    let midway: Vec<Value> = read_running()
+        .items
+        .iter()
+        .map(|said| serde_json::to_value(&said.event).unwrap())
+        .collect();
+    println!("read in the middle of a turn: {midway:#?}");
+    assert_eq!(midway[0]["type"], "message");
+    assert_eq!(midway[0]["message"], message.as_str());
+    assert_eq!(midway[1]["type"], "turnStarted");
+    assert!(
+        !midway.iter().any(|e| e["type"] == "turnEnded"),
+        "the running turn is left open"
+    );
+    control(&sessions, &busy.id, &Control::Interrupt).unwrap();
+    busy.until_type("turnEnded");
+    let after: Vec<Value> = read_running()
+        .items
+        .iter()
+        .map(|said| serde_json::to_value(&said.event).unwrap())
+        .collect();
+    assert_eq!(after.last().unwrap()["type"], "turnEnded");
+    assert_eq!(after.last().unwrap()["outcome"], "interrupted");
+    assert_eq!(busy.stop()["clean"], true);
+
     // Reading needs no login: under a home whose provider is the default
     // one, signed in to nothing.
     std::fs::write(home.join("config.toml"), "").unwrap();

@@ -5,19 +5,21 @@
 //! app-server gives them back a page at a time: `thread/turns/list` pages
 //! through a thread's turns, newest first, each with its items, and
 //! `thread/items/list` through the items of one turn. A `codex app-server`
-//! of its own is started under the account's home for each read and ended
-//! once it is done, so a thread is read whether a session of it runs or
-//! not, here, in a terminal, or nowhere.
+//! of its own is started under the account's home for each read, with its
+//! plugins off so that it starts nothing, and ended with whatever is left
+//! in its process group once it is done, so a thread is read whether a
+//! session of it runs or not, here, in a terminal, or nowhere.
 //!
 //! Every item comes out as the events a live session sends for it, through
 //! the driver's own mapping and under the same ids, so that a window draws
 //! an item it both read and heard once, and a message under the id the
 //! window gave it when it sent it. The reading is kept apart and reads
 //! defensively, as the driver does: an item of a kind it does not know is
-//! skipped, never an error; a page too long to read is asked for again
-//! without its items, which are then read a page of one turn at a time; a
-//! turn that cannot be read, an answer that is not understood and a read
-//! that runs out of time each end the reading with what was read.
+//! skipped, never an error; a page too long to read is asked for again a
+//! turn at a time, and a turn too long for that without its items, which
+//! are then read a page at a time; a turn that cannot be read, an answer
+//! that is not understood and a read that runs out of time each end the
+//! reading with what was read.
 //!
 //! What is held is bounded. Turns are read newest first, each cut down as
 //! any history's events are, until the history holds as much as it may;
@@ -36,7 +38,7 @@ use crate::adapter::{prepare_process, process, CODEX_HOME_VAR};
 use crate::codex_app_server::{call_of, finished, said, turned_down};
 use crate::env::find_on_path;
 use crate::integrated::{
-    kill_tree, now_millis, CompactReason, Event, History, Image, MessageState, Outcome, Said,
+    cut, kill_tree, now_millis, CompactReason, Event, History, Image, MessageState, Outcome, Said,
 };
 
 /// How long a whole read may take. A read still going then keeps what it
@@ -46,6 +48,8 @@ const READ_WAIT: Duration = Duration::from_secs(20);
 const TURNS_PAGE: u64 = 16;
 /// Items of one turn asked for at once.
 const ITEMS_PAGE: u64 = 64;
+/// The most of a reason Codex gives for not reading a thread that is kept.
+const WHY_KEEP: usize = 200;
 /// The longest answer read. A longer one is passed over without being held.
 #[cfg(not(test))]
 const LINE_KEEP: usize = 32 * 1024 * 1024;
@@ -85,14 +89,38 @@ pub(crate) fn read_within(
         return Ok(History::default());
     }
     let folder = cwd.unwrap_or(project);
-    let mut server = AppServer::start(env, config_dir, folder, Instant::now() + wait)?;
-    server.introduce()?;
+    let mut server =
+        AppServer::start(env, config_dir, folder, Instant::now() + wait).map_err(plain)?;
+    server.introduce().map_err(plain)?;
     read(&mut server, thread, folder)
 }
 
 /// Whether an id can be a thread's: Codex's are UUIDs.
 fn is_thread(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
+/// Why a thread could not be read, in a few plain words that follow "its
+/// earlier messages could not be read": Codex's own refusals said the way a
+/// user can follow them, and anything else on one short line.
+fn plain(error: String) -> String {
+    if error.contains("thread not loaded") || error.contains("no rollout found") {
+        return "Codex does not have this conversation".into();
+    }
+    if error.contains("unknown variant") || error.contains("not supported") {
+        return "this version of Codex cannot give them back".into();
+    }
+    let mut first = error
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('.')
+        .to_string();
+    if cut(&mut first, WHY_KEEP) {
+        first.push('…');
+    }
+    first
 }
 
 /// What came back for a request.
@@ -126,7 +154,7 @@ pub(crate) fn read(server: &mut dyn Ask, thread: &str, folder: &Path) -> Result<
     'pages: loop {
         let page = match turns_page(server, thread, cursor.as_deref()) {
             Ok(page) => page,
-            Err(error) if turns.is_empty() && cursor.is_none() => return Err(error),
+            Err(error) if turns.is_empty() && cursor.is_none() => return Err(plain(error)),
             Err(_) => {
                 cut = true;
                 break;
@@ -167,23 +195,28 @@ pub(crate) fn read(server: &mut dyn Ask, thread: &str, folder: &Path) -> Result<
     Ok(History { items, cut })
 }
 
-/// A page of turns, newest first, with their items; a page too long to
-/// read comes again without them.
+/// A page of turns, newest first, with their items. A page too long to
+/// read comes again a turn at a time, and a turn too long for that comes
+/// again without its items, which a thread kept the older way cannot give
+/// on their own.
 fn turns_page(server: &mut dyn Ask, thread: &str, cursor: Option<&str>) -> Result<Value, String> {
-    let ask = |server: &mut dyn Ask, view: &str| {
+    let ask = |server: &mut dyn Ask, limit: u64, view: &str| {
         server.ask(
             "thread/turns/list",
             json!({
                 "threadId": thread,
                 "cursor": cursor,
-                "limit": TURNS_PAGE,
+                "limit": limit,
                 "sortDirection": "desc",
                 "itemsView": view,
             }),
         )
     };
-    let answer = match ask(server, "full") {
-        Answer::TooLong => ask(server, "notLoaded"),
+    let answer = match ask(server, TURNS_PAGE, "full") {
+        Answer::TooLong => match ask(server, 1, "full") {
+            Answer::TooLong => ask(server, 1, "notLoaded"),
+            answer => answer,
+        },
         answer => answer,
     };
     match answer {
@@ -318,8 +351,10 @@ fn agent_s(item: &Value) -> bool {
 /// one was asked for, while one in a turn the user began was made because
 /// the context was full. A tool call Codex keeps as still running finishes
 /// as failed when its turn has ended. The newest turn, `last`, is left
-/// open while Codex says it runs; an older one Codex never ended is
-/// interrupted.
+/// open while it has no end: a turn that still runs, read from a process
+/// of Codex's own, comes back as interrupted with no time it completed,
+/// where one that was interrupted has one. An older turn Codex never ended
+/// was interrupted.
 fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<Said> {
     let mut out: Vec<Said> = Vec::new();
     let mut now = items
@@ -448,7 +483,9 @@ fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<
         }
     }
     let status = turn["status"].as_str();
-    if last && status == Some("inProgress") {
+    let running = matches!(status, Some("inProgress" | "interrupted"))
+        && turn["completedAt"].as_u64().is_none_or(|at| at == 0);
+    if last && running {
         return out;
     }
     let end = seconds(turn, "completedAt").map_or(now, |at| at.max(now));
@@ -521,11 +558,12 @@ impl AppServer {
         folder: &Path,
         deadline: Instant,
     ) -> Result<Self, String> {
-        let binary = find_on_path(env, "codex").ok_or_else(|| {
-            "codex was not found on your PATH, so its threads cannot be read".to_string()
-        })?;
+        let binary =
+            find_on_path(env, "codex").ok_or_else(|| "codex is not on your PATH".to_string())?;
         let mut command = process(&binary, env);
-        command.arg("app-server");
+        // Codex syncs its plugins when it starts, which runs git and leaves
+        // a folder in its home each time; a read has no use for them.
+        command.args(["app-server", "-c", "features.plugins=false"]);
         // Codex reads the folder it runs in only for a project's own
         // settings, so one that is gone takes nothing from the read.
         let folder = if folder.is_dir() {
@@ -548,7 +586,7 @@ impl AppServer {
         }
         let mut child = command
             .spawn()
-            .map_err(|e| format!("could not start codex: {e}"))?;
+            .map_err(|e| format!("codex could not be started: {e}"))?;
         let (stdin, stdout) = match (child.stdin.take(), child.stdout.take()) {
             (Some(stdin), Some(stdout)) => (stdin, stdout),
             _ => {
@@ -649,8 +687,10 @@ impl Ask for AppServer {
 }
 
 impl Drop for AppServer {
-    /// Closes Codex's input, which ends it, and kills it with its group if
-    /// it is still there a little later, without waiting here for either.
+    /// Closes Codex's input, which ends it, then kills whatever is left in
+    /// its group, Codex too once it has had a little while, without waiting
+    /// here for either. The group goes before Codex is reaped, so that its
+    /// id is still Codex's own when it is signalled.
     fn drop(&mut self) {
         self.stdin.take();
         let Some(mut child) = self.child.take() else {
@@ -658,16 +698,36 @@ impl Drop for AppServer {
         };
         std::thread::spawn(move || {
             let until = Instant::now() + END_GRACE;
-            while Instant::now() < until {
-                if !matches!(child.try_wait(), Ok(None)) {
-                    return;
-                }
+            while !ended(&mut child) && Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(50));
             }
             kill_tree(&mut child);
             let _ = child.wait();
         });
     }
+}
+
+/// Whether Codex has ended, leaving it unreaped where the system allows,
+/// so that what it started can still be reached through its group.
+#[cfg(unix)]
+fn ended(child: &mut Child) -> bool {
+    // SAFETY: a zeroed siginfo is a valid one for waitid to fill, and
+    // WNOWAIT leaves the child to be reaped by its wait.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            child.id() as libc::id_t,
+            &mut info,
+            libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    result != 0 || unsafe { info.si_pid() } != 0
+}
+
+#[cfg(not(unix))]
+fn ended(child: &mut Child) -> bool {
+    !matches!(child.try_wait(), Ok(None))
 }
 
 /// Hands each line of Codex's output on, past a line too long to hold,

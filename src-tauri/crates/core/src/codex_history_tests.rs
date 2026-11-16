@@ -450,7 +450,7 @@ fn a_turn_answers_the_message_before_the_agent_s_first_word_and_takes_the_rest()
 }
 
 #[test]
-fn a_page_too_long_comes_again_without_its_items_which_are_read_a_turn_at_a_time() {
+fn a_turn_too_long_comes_again_without_its_items_which_are_read_a_page_at_a_time() {
     let entry = |item: Value, at: u64| json!({ "turnId": "t1", "item": item, "startedAtMs": at, "completedAtMs": at + 5 });
     let mut bare = user("u1", Some("m-1"), "one", 0);
     bare["startedAtMs"] = Value::Null;
@@ -458,6 +458,7 @@ fn a_page_too_long_comes_again_without_its_items_which_are_read_a_turn_at_a_time
     let mut listed = turn("t1", "completed", 1_000, vec![]);
     listed["itemsView"] = json!("notLoaded");
     let (history, codex) = read_all(vec![
+        ("thread/turns/list", Answer::TooLong),
         ("thread/turns/list", Answer::TooLong),
         ("thread/turns/list", page(vec![listed], None)),
         (
@@ -478,19 +479,24 @@ fn a_page_too_long_comes_again_without_its_items_which_are_read_a_turn_at_a_time
         ("thread/items/list", Answer::TooLong),
         ("thread/items/list", Answer::TooLong),
     ]);
-    assert_eq!(codex.asked[1].1["itemsView"], "notLoaded");
-    assert_eq!(codex.asked[1].1["cursor"], Value::Null);
-    let items = &codex.asked[2].1;
+    let asked = |at: usize| &codex.asked[at].1;
+    let page_of = |at: usize| (asked(at)["limit"].clone(), asked(at)["itemsView"].clone());
+    assert_eq!(page_of(0), (json!(TURNS_PAGE), json!("full")));
+    assert_eq!(page_of(1), (json!(1), json!("full")));
+    assert_eq!(page_of(2), (json!(1), json!("notLoaded")));
+    assert_eq!(asked(2)["cursor"], Value::Null);
+    let items = asked(3);
     assert_eq!(items["turnId"], "t1");
     assert_eq!(items["sortDirection"], "asc");
     assert_eq!(items["limit"], ITEMS_PAGE);
-    assert_eq!(codex.asked[3].1["cursor"], "after-a1");
+    assert_eq!(asked(4)["cursor"], "after-a1");
     assert_eq!(
-        codex.asked[4].1["limit"], 1,
+        asked(5)["limit"],
+        1,
         "a page too long is asked an item at a time"
     );
-    assert_eq!(codex.asked[5].1["limit"], ITEMS_PAGE);
-    assert_eq!(codex.asked[6].1["limit"], 1);
+    assert_eq!(asked(6)["limit"], ITEMS_PAGE);
+    assert_eq!(asked(7)["limit"], 1);
     assert_eq!(
         outline(&history),
         [
@@ -505,6 +511,131 @@ fn a_page_too_long_comes_again_without_its_items_which_are_read_a_turn_at_a_time
         "the entry's times stand for an item with none; an item too long to read ends what is read"
     );
     assert!(!history.cut);
+}
+
+#[test]
+fn a_page_too_long_comes_again_a_turn_at_a_time_with_its_items() {
+    let (history, codex) = read_all(vec![
+        ("thread/turns/list", Answer::TooLong),
+        (
+            "thread/turns/list",
+            page(
+                vec![turn(
+                    "t2",
+                    "completed",
+                    2_000,
+                    vec![user("u2", Some("m-2"), "two", 2_000_000)],
+                )],
+                Some("after-t2"),
+            ),
+        ),
+        (
+            "thread/turns/list",
+            page(
+                vec![turn(
+                    "t1",
+                    "completed",
+                    1_000,
+                    vec![user("u1", Some("m-1"), "one", 1_000_000)],
+                )],
+                None,
+            ),
+        ),
+    ]);
+    let asked: Vec<(Value, Value, Value)> = codex
+        .asked
+        .iter()
+        .map(|(_, params)| {
+            (
+                params["limit"].clone(),
+                params["itemsView"].clone(),
+                params["cursor"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            (json!(TURNS_PAGE), json!("full"), Value::Null),
+            (json!(1), json!("full"), Value::Null),
+            (json!(TURNS_PAGE), json!("full"), json!("after-t2")),
+        ],
+        "a thread kept the older way, which has no items of a turn alone, is read this way"
+    );
+    assert!(!history.cut);
+    assert_eq!(history.items.len(), 6);
+}
+
+#[test]
+fn the_newest_turn_is_left_open_while_codex_gives_it_no_end() {
+    // A turn that still runs, read from a process of Codex's own, comes
+    // back as interrupted with no time it completed and none it took.
+    let unended = |id: &str, at: u64, message: &str| {
+        let mut turn = turn(
+            id,
+            "interrupted",
+            at,
+            vec![user(
+                &format!("u-{message}"),
+                Some(message),
+                "go",
+                at * 1000,
+            )],
+        );
+        turn["completedAt"] = Value::Null;
+        turn["durationMs"] = Value::Null;
+        turn
+    };
+    let (history, _) = read_all(vec![(
+        "thread/turns/list",
+        page(
+            vec![unended("t2", 2_000, "m-2"), unended("t1", 1_000, "m-1")],
+            None,
+        ),
+    )]);
+    let kinds: Vec<String> = outline(&history)
+        .into_iter()
+        .map(|line| line.split_once(' ').unwrap().1.to_string())
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "message m-1",
+            "turnStarted",
+            "turnEnded",
+            "message m-2",
+            "turnStarted"
+        ],
+        "an older turn with no end was interrupted; the newest is left to the session"
+    );
+    assert!(matches!(
+        history.items[2].event,
+        Event::TurnEnded {
+            outcome: Outcome::Interrupted,
+            ..
+        }
+    ));
+
+    // One that was interrupted has an end, and ends so.
+    let (history, _) = read_all(vec![(
+        "thread/turns/list",
+        page(
+            vec![turn(
+                "t3",
+                "interrupted",
+                3_000,
+                vec![user("u3", Some("m-3"), "three", 3_000_000)],
+            )],
+            None,
+        ),
+    )]);
+    assert!(matches!(
+        history.items.last().unwrap().event,
+        Event::TurnEnded {
+            outcome: Outcome::Interrupted,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -524,6 +655,7 @@ fn a_turn_that_cannot_be_read_ends_the_reading_with_what_was_read() {
                 Some("after-t2"),
             ),
         ),
+        ("thread/turns/list", Answer::TooLong),
         ("thread/turns/list", Answer::TooLong),
         ("thread/turns/list", page(vec![listed], None)),
         (
@@ -549,7 +681,20 @@ fn a_thread_codex_cannot_read_is_an_error_and_a_later_failure_keeps_what_was_rea
         Answer::Refused(format!("thread not loaded: {THREAD}")),
     )]);
     let error = read(&mut codex, THREAD, Path::new("/work/demo")).unwrap_err();
-    assert!(error.contains("thread not loaded"), "{error}");
+    assert_eq!(error, "Codex does not have this conversation");
+    // A Codex too old to page through a thread names every method it has.
+    let older = format!(
+        "Invalid request: unknown variant `thread/turns/list`, expected one of {}",
+        "`a`, ".repeat(2000)
+    );
+    let mut codex = Scripted::new(vec![("thread/turns/list", Answer::Refused(older))]);
+    let error = read(&mut codex, THREAD, Path::new("/work/demo")).unwrap_err();
+    assert_eq!(error, "this version of Codex cannot give them back");
+    // Anything else is said on one short line.
+    let long = format!("{}.\nand more", "x".repeat(500));
+    let mut codex = Scripted::new(vec![("thread/turns/list", Answer::Refused(long))]);
+    let error = read(&mut codex, THREAD, Path::new("/work/demo")).unwrap_err();
+    assert_eq!(error, format!("{}…", "x".repeat(WHY_KEEP)));
 
     let mut codex = Scripted::new(vec![(
         "thread/turns/list",
@@ -692,7 +837,7 @@ fn a_request_that_names_no_project_or_thread_reads_nothing() {
     }
     let error =
         read_within(&nowhere, None, Path::new("/work/demo"), None, THREAD, wait).unwrap_err();
-    assert!(error.contains("codex was not found"), "{error}");
+    assert_eq!(error, "codex is not on your PATH");
 }
 
 #[test]
