@@ -962,6 +962,80 @@ describe("a new conversation put under a workflow", () => {
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toEqual(["gpt-5-codex"]);
   });
 
+  /** Holds every change of the settings the core is asked for until the
+      test answers it, with what the core would answer or what it is told
+      to answer. */
+  function holdConfigures() {
+    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedConfigure: (id: string, change: never) => unknown } })
+      .__WORKBENCH_CORE__;
+    const plain = core.integratedConfigure;
+    const waiting: ((answer?: unknown) => void)[] = [];
+    core.integratedConfigure = (id: string, change: never) =>
+      new Promise((resolve, reject) =>
+        waiting.push((answer) => {
+          if (answer !== undefined) return resolve(answer);
+          try {
+            resolve(plain(id, change));
+          } catch (error) {
+            reject(error);
+          }
+        }),
+      );
+    return {
+      answer: async (answer?: unknown) => {
+        await vi.waitFor(() => expect(waiting.length).toBeGreaterThan(0));
+        waiting.shift()!(answer);
+        await settled();
+      },
+      plain: () => (core.integratedConfigure = plain),
+    };
+  }
+
+  it("starts the new run in a mode asked of the run it leaves and not answered yet, and takes nothing that run answers later", async () => {
+    const { key } = await started();
+    await configure(key, { mode: "acceptEdits" });
+    const held = holdConfigures();
+    void configure(key, { mode: "default" });
+    follow(key, "Build and review");
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-2"));
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "default" } });
+    expect(conversationOf(key).settings.mode).toBe("default");
+    // The run left behind answers late, by its old mode or by having gone:
+    // neither reaches the composer.
+    await held.answer({ model: "claude-sonnet-5-5", mode: "acceptEdits", effort: null });
+    expect(conversationOf(key).settings.mode).toBe("default");
+    void configure(key, { mode: "plan" });
+    follow(key, null);
+    await vi.waitFor(() => expect(handleOf(key)).toBe("int-3"));
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
+    await held.answer();
+    expect(linkFor(key).configureError).toBeNull();
+    expect(conversationOf(key).settings.mode).toBe("plan");
+  });
+
+  it("keeps what is asked while it starts again for the run after, when another pick starts it again at once", async () => {
+    const gate = holdStarts();
+    const row = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    const launching = launch(row.key);
+    await gate.next();
+    await launching;
+    follow(row.key, "Build and review");
+    await configure(row.key, { effort: "high" });
+    await configure(row.key, { mode: "plan" });
+    follow(row.key, null);
+    // The run for the first pick comes up and is left at once for the
+    // second: nothing asked meanwhile goes to it.
+    await gate.next();
+    await vi.waitFor(() => expect(fake.calls.some((call) => call.method === "stop" && call.id === "int-2")).toBe(true));
+    await gate.next();
+    await vi.waitFor(() => expect(linkFor(row.key).restarting).toBe(false));
+    expect(starts().at(-1)).toMatchObject({ options: { mode: "plan" } });
+    expect(handleOf(row.key)).toBe("int-3");
+    expect(fake.calls.filter((call) => call.method === "configure")).toEqual([
+      { method: "configure", id: "int-3", settings: { effort: "high" } },
+    ]);
+  });
+
   it("refuses a workflow whose orchestrator's agent is not here", async () => {
     resetAgent();
     applyDetect(

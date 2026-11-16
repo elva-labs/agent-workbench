@@ -109,8 +109,11 @@ export class Link {
       just picked. The session counts as ready meanwhile: a message sent
       waits for the new run, and a change of model or mode is made on it. */
   restarting = $state(false);
-  /** A change of model or mode asked for while the run starts again. */
-  after: { model?: string; mode?: string; effort?: string } | null = null;
+  /** A change of model, mode or effort to make on the run starting again
+      once it is up. */
+  after: Change | null = null;
+  /** The changes asked of the run behind the row and not answered yet. */
+  unanswered = new Set<Change>();
   /** What the run behind the row was started on. */
   ranOn: Run | null = null;
 
@@ -408,6 +411,9 @@ function startFailed(key: string, link: Link, error: unknown) {
   } else failed(key, message(error));
 }
 
+/** A change of the settings a run is on. */
+type Change = { model?: string; mode?: string; effort?: string };
+
 /** What a run is started on, to tell whether the run behind a row is the
     one the row says: the agent, and the workflow's instructions and
     whether they take the agent's own subagents away. */
@@ -480,6 +486,14 @@ async function restart(key: string, session: Session, link: Link) {
   if (handle === null) return;
   link.busy = true;
   link.restarting = true;
+  const sameAgent = link.ranOn?.agent === session.agent;
+  // The new run starts in the user's last choice of mode: one asked for
+  // while a run started again, else one asked of the run being left and
+  // not answered yet. A model or an effort asked of that run goes with
+  // it, since the pick sets the model and an effort is the model's.
+  const asked: Change = Object.assign({}, ...link.unanswered);
+  link.unanswered.clear();
+  const mode = link.after?.mode ?? asked.mode;
   // Stopped at once, so nothing is sent to the run being left, and what it
   // says from here is let go.
   link.handle = null;
@@ -488,17 +502,39 @@ async function restart(key: string, session: Session, link: Link) {
   core()
     .integratedStop(handle)
     .catch(() => {});
-  link.conversation.restarted(session.model, link.ranOn?.agent === session.agent);
+  link.conversation.restarted(session.model, sameAgent);
+  if (sameAgent && mode !== undefined) link.conversation.settings = { ...link.conversation.settings, mode };
+  // What was asked while a run started again, other than the mode, is
+  // made on the new run once it is up: a model only where no workflow
+  // sets it.
+  const { mode: _mode, model, ...rest } = link.after ?? {};
+  const later: Change = { ...rest, ...(model === undefined || session.workflow !== null ? {} : { model }) };
+  link.after = Object.keys(later).length === 0 ? null : later;
   leaveRun(session);
   try {
     await begin(key, link, session, toldFor(session));
   } catch (error) {
     startFailed(key, link, error);
+    link.after = null;
+    link.restarting = false;
+    return;
   }
-  link.restarting = false;
+  // A pick made while this run came up starts it again at once, and what
+  // was asked meanwhile waits for that run.
+  const row = byKey(key);
+  if (row !== null && link.handle !== null && unspoken(row) && !sameRun(link.ranOn, runOf(row))) {
+    settleRun(key);
+    return;
+  }
   const change = link.after;
   link.after = null;
-  if (change !== null && link.handle !== null) void configure(key, change);
+  if (change !== null && link.handle !== null) {
+    // Made before a message waiting for the new run is sent.
+    link.busy = true;
+    await configure(key, change);
+    link.busy = false;
+  }
+  link.restarting = false;
   settleRun(key);
 }
 
@@ -791,20 +827,26 @@ export function reply(key: string, request: string, answers: string[][] | null) 
 }
 
 /** Switches the model the session runs on. */
-export async function configure(key: string, change: { model?: string; mode?: string; effort?: string }) {
+export async function configure(key: string, change: Change) {
   const link = links.get(key);
   if (link === undefined) return;
-  if (link.handle === null) {
+  const handle = link.handle;
+  if (handle === null) {
     // Made on the new run once it is up.
     if (link.restarting) link.after = { ...link.after, ...change };
     return;
   }
   link.configureError = null;
+  link.unanswered.add(change);
   try {
-    const settings = await core().integratedConfigure(link.handle, change);
-    link.conversation.settings = settings;
+    const settings = await core().integratedConfigure(handle, change);
+    // A run since left behind answers for itself, not for the one now
+    // behind the row.
+    if (link.handle === handle) link.conversation.settings = settings;
   } catch (error) {
-    link.configureError = message(error);
+    if (link.handle === handle) link.configureError = message(error);
+  } finally {
+    link.unanswered.delete(change);
   }
 }
 
