@@ -343,14 +343,18 @@ folder has checked out, and what the session is doing: working, idle,
 asking the user or waiting for a permission. Short of room the project and
 the branch give way before what the session is doing, and each goes with
 its icon once it would show no more than a letter or two. A session another session
-started is named by the name its start gave, or by the first line of its
-prompt; a name that reads as You, in any case or with anything unseen
-around it, is never taken, since the thread says You for the user alone,
-and nor is a name another live session has, ignoring case, spaces,
-accents, anything unseen and letters of other scripts that look like Latin
-ones, or a name whose letters mix scripts, so no message or row can pass for another session's; the start
+started is named by the name its start gave, cut to 60 characters, or by
+the first line of its prompt; a name that reads as You, in any case or
+with anything unseen around it, is never taken, since the thread says You
+for the user alone, and nor is an agent's own name, Claude, Claude Code or
+Codex, whatever marks stand between its words, since the dock names an
+agent's own requests by it, nor a name another live session has, ignoring
+case, spaces, accents, anything unseen and letters of other scripts that
+look like Latin ones, or a name whose letters mix scripts, so no message,
+row or request can pass for another session's or an agent's; the start
 tool says which it was to its caller, and the session is named by its
-prompt instead. Under it is the thread. The user's words sit to the right in a
+prompt instead. A name the start gave is kept by the session's id, so the
+session is called so after a restart too. Under it is the thread. The user's words sit to the right in a
 tinted bubble under You. What another session sent, the prompt it started
 the session with or a message it sent later, sits there in a plain bubble
 under that session's name, with a way to go to it. A message is known as
@@ -460,10 +464,15 @@ them names the session that asks, after the step it was started for when
 it has one, as in "Work: Fix the cache asks to run cargo test", and a
 subagent inside it by both, as in "The subagent for Check every link in Fix
 the broken links"; Open beside it goes to that session, whose own dock
-holds the same request. It is answered exactly as it is there, and every
+holds the same request. A name longer than the line holds is cut wherever
+the dock says it, and the line says in the warning colour how many
+characters are cut. It is answered exactly as it is there, and every
 choice acts on that session: the line under the choices names it, what a
 choice keeps is that session's, and Deny and stop stops that session's
-turn. The answer goes to that session's own request and to no other, it is
+turn. A rule kept for good goes in the local settings of the folder that
+session works in, which every session there reads, so the line names the
+folder and says so, as in "in demo's uncommitted local settings, for every
+session in demo". The answer goes to that session's own request and to no other, it is
 the user's alone, and the agent of the session on screen is neither told
 of it nor given any way to answer. A request answered in one place goes
 from the other at once. A started session that runs in a terminal can be
@@ -476,10 +485,15 @@ its agent asked, then those of the sessions it started, in the order they
 asked. The dock says how many more wait, and from which session when they
 are all one session's. While the pointer is over the dock or the keyboard
 is in it, the request shown stays until it is answered or goes, and what
-arrives meanwhile waits behind it. A request that takes the place of
-another, because the one before was answered, withdrawn or put behind the
-session's own, takes no answer for half a second, its choices faded
-meanwhile, so a click or a key meant for the one before never answers it.
+arrives meanwhile waits behind it; the dock tells again whether the
+pointer is over it whenever what it shows changes, since a smaller request
+can leave the pointer outside without a move. A request that takes the
+place of another, because the one before was answered, withdrawn or put
+behind the session's own, or that comes within half a second of the dock
+emptying, takes no answer for half a second, its choices faded meanwhile,
+so a click or a key meant for the one before never answers it. While an
+answer is on its way to the agent, the request stays with its choices
+faded, and they keep the keyboard until the request goes.
 
 Every text that comes from an agent, a tool or a server is drawn by one
 rule, in the conversation and outside it: a command, a path, a URL, a

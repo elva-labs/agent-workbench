@@ -78,6 +78,9 @@ message, the answer says, with the way to start it again.
 A start can carry a name for the work, which the
 session's row and its worktree take; a name the project already has is
 numbered rather than refused, so the same work twice is fix-it and fix-it-2.
+The row takes the name cut to 60 characters, and not at all when it would
+pass for the user, an agent or another session (see
+[sessions](sessions.md#integrated-sessions)); the answer says which.
 A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
