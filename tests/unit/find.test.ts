@@ -77,6 +77,17 @@ describe("reading what the thread draws", () => {
     expect(readOut([place], "a").text).toBe("ls\nout\n\nmore");
   });
 
+  it("reads a space beside a label left out, or at a block's edge, as a line, and one between words as a space", () => {
+    // As a changed file's head and a plan's step draw them.
+    const head = html(`<div data-find="a"><span data-find-skip>Moved</span> <span>src/a.rs</span> <span data-find-skip>to</span> <span>src/b.rs</span> <span data-find-skip>+1</span></div>`);
+    expect(readOut([head.firstElementChild!], "a").text).toBe("src/a.rs\nsrc/b.rs");
+    const step = html(`<ol><li><span data-find-skip></span> <span>Read the scan</span></li></ol>`);
+    expect(readOut([step]).text).toBe("Read the scan");
+    // Between two pieces of code in a sentence, the space is the words'.
+    const said = html(`<p><code>a</code> <code>b</code><!----> <em>c</em></p>`);
+    expect(readOut([said]).text).toBe("a b c");
+  });
+
   it("puts a range on each match, across the text nodes it runs over", () => {
     const box = html("<p>The <strong>cache</strong> is a Cache</p>");
     const read = readOut([box]);

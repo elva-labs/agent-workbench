@@ -84,7 +84,8 @@ export interface Read {
  * their text, with a line between things that stand apart, a block, a
  * break, a place left out, or the next place. What is marked
  * `data-find-skip`, and the place of another thing, a key other than
- * `key`, are left out. Space between blocks counts as a line.
+ * `key`, are left out. Space that only stands between blocks, or beside
+ * the edge of one or a place left out, counts as a line.
  */
 export function readOut(places: Iterable<Node>, key: string | null = null): Read {
   let text = "";
@@ -94,11 +95,32 @@ export function readOut(places: Iterable<Node>, key: string | null = null): Read
   const apart = () => {
     if (text !== "") line = true;
   };
+  /** Whether what stands beside a space marks where one thing ends:
+      nothing, a block, a break, a place left out or another's place. */
+  const edge = (node: Node | null): boolean => {
+    while (node !== null && node.nodeType === Node.COMMENT_NODE) node = node.previousSibling;
+    if (node === null) return true;
+    if (node.nodeType !== Node.ELEMENT_NODE) return false;
+    const element = node as Element;
+    const own = element.getAttribute("data-find");
+    return (
+      BLOCKS.has(element.tagName) ||
+      element.tagName === "BR" ||
+      element.hasAttribute("data-find-skip") ||
+      (own !== null && key !== null && own !== key)
+    );
+  };
+  const after = (node: Node | null): Node | null => {
+    while (node !== null && node.nodeType === Node.COMMENT_NODE) node = node.nextSibling;
+    return node;
+  };
   const visit = (node: Node, pre: boolean) => {
     if (node.nodeType === Node.TEXT_NODE) {
       const value = (node as Text).data;
       if (value === "") return;
-      if (!pre && value.includes("\n") && value.trim() === "") {
+      // Space between blocks, or beside a place left out, is no part of
+      // the words either side: it is where one thing ends.
+      if (!pre && value.trim() === "" && (value.includes("\n") || edge(node.previousSibling) || edge(after(node.nextSibling)))) {
         apart();
         return;
       }

@@ -45,6 +45,50 @@ const painted = (page: Page) =>
     return { hits: read("find-hit"), current: read("find-current") };
   });
 
+/** How many matches the count says there are. */
+async function counted(page: Page): Promise<number> {
+  const text = (await page.getByTestId("find-count").textContent()) ?? "";
+  if (text === "No matches") return 0;
+  const found = / of (\d+)$/.exec(text);
+  if (found === null) throw new Error(`no count yet: "${text}"`);
+  return Number(found[1]);
+}
+
+/** A turn of every kind find reads: a plan, a subagent with its own
+    commands, read and words, a file moved with its changes, a call the
+    user refused with words of their own, and a last word. */
+async function everyKind(page: Page) {
+  await page.getByTestId("composer-input").fill("Find the slow read in the scan");
+  await page.keyboard.press("Enter");
+  await agent(
+    page,
+    `f.startTurn("${H}");
+     f.plan("${H}", [{ text: "Read the scan", status: "done" }, { text: "Ran the tests", status: "active" }]);
+     const sub = f.startTool("${H}", "Task", { description: "Look for where the scan reads" }, { kind: "agent" });
+     f.tool("${H}", "Bash", { command: "rg -n read src" }, "src/scan.rs:3: read(dir)", { parent: sub, kind: "command" });
+     f.tool("${H}", "Read", { file_path: "${PROJECT}/src/scan.rs" }, "fn read(dir) {}", { parent: sub, kind: "read" });
+     f.turn("${H}", "The subagent ran rg and read scan.rs.", { parent: sub });
+     f.finishTool("${H}", sub, "The subagent ran and found the read in scan.rs.");
+     f.tool("${H}", "Edit", { file_path: "${PROJECT}/src/scan.rs" }, "", { kind: "edit", changes: [{ path: "${PROJECT}/src/scan.rs", kind: "move", to: "${PROJECT}/src/read.rs", content: null, truncated: false, hunks: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ["-read(dir)", "+read_once(dir)", " keep"] }] }] });
+     const run = f.startTool("${H}", "Bash", { command: "cargo run --release" }, { kind: "command" });
+     const asked = f.ask("${H}", "Bash", { command: "cargo run --release" }, { call: run });
+     f.emit("${H}", { type: "answered", request: asked, choice: "deny", answers: null, message: "Ran it already, read the log instead" });
+     f.finishTool("${H}", run, "denied", { error: true });
+     f.emit("${H}", { type: "text", block: "last", parent: null, text: "Done: the scan reads **once**, and ran clean.", done: true });
+     f.endTurn("${H}");`,
+  );
+  await expect(page.getByTestId("agent-text").last()).toContainText("ran clean");
+}
+
+/** Opens every fold and step there is, those inside others too. */
+async function openEverything(page: Page) {
+  for (;;) {
+    const closed = page.locator("[data-testid='work-line'][aria-expanded='false'], [data-testid='step-row'][aria-expanded='false']");
+    if ((await closed.count()) === 0) return;
+    await closed.first().click();
+  }
+}
+
 /** Whether the current match is drawn inside the thread's view. */
 const currentInView = (page: Page) =>
   page.evaluate(() => {
@@ -260,6 +304,27 @@ test.describe("find in the conversation", () => {
     await expect(page.getByTestId("find-bar")).toHaveCount(0);
     // Nor did it go to the files' filter.
     await expect(page.locator("section[data-pane='agent'] .xterm textarea")).toBeFocused();
+  });
+
+  test("paints as many matches as it counts, with every fold open, a subagent's run and a refusal included", async ({ page }) => {
+    await openIntegrated(page);
+    await everyKind(page);
+    await openEverything(page);
+    await page.getByTestId("composer-input").focus();
+    await findChord(page);
+    const input = page.getByTestId("find-input");
+    const all = async () => {
+      const marks = await painted(page);
+      return marks.hits.length + marks.current.length;
+    };
+    // Words in labels the count leaves out, the work line's "ran" and a
+    // step's "Read", and spaces beside them, as well as words in the run.
+    for (const words of ["ran", "read", "scan", "rs ", " read", "the ", "worked", "log", "keep", "once"]) {
+      await input.fill(words);
+      await expect(page.getByTestId("find-count")).toHaveText(/ of \d+$|^No matches$/);
+      const total = await counted(page);
+      await expect.poll(all, { message: `"${words}"` }).toBe(total);
+    }
   });
 
   test("glides to a near match, and is there at once where the system asks for less motion", async ({ page }) => {

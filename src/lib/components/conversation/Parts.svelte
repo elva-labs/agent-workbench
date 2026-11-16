@@ -43,7 +43,7 @@
           <ol class="plan-steps">
             {#each segment.part.steps as step, at (at)}
               <li class={step.status}>
-                <span class="mark">{#if STEP[step.status]}<Icon name={STEP[step.status]} size={12} />{/if}</span>
+                <span class="mark" data-find-skip>{#if STEP[step.status]}<Icon name={STEP[step.status]} size={12} />{/if}</span>
                 <span><Plain text={step.text} /></span>
               </li>
             {/each}

@@ -125,7 +125,7 @@
             </ul>
           {/if}
           {#if part.parts.length > 0}
-            <div class="nested" data-testid="subagent"><Parts parts={part.parts} {root} nested /></div>
+            <div class="nested" data-testid="subagent" data-find-skip><Parts parts={part.parts} {root} nested /></div>
           {/if}
         {:else}
           {#if input !== null}
