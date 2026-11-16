@@ -46,6 +46,8 @@ describe("the seam's integrated sessions", () => {
     await seam.integratedSend("int-1", M1, "look", [{ mediaType: "image/png", data: "AAAA" }]);
     await seam.integratedSend("int-1", M2, "again");
     await seam.integratedInterrupt("int-1");
+    await seam.integratedSendNow("int-1");
+    await seam.integratedWithdraw("int-1", M2);
     await seam.integratedCompact("int-1");
     await seam.integratedCompact("int-1", "keep the API notes");
     await seam.integratedAnswer("int-1", "r-1", "deny", "not that");
@@ -87,6 +89,8 @@ describe("the seam's integrated sessions", () => {
       ],
       ["integrated_send", { id: "int-1", message: M2, text: "again", images: [] }],
       ["integrated_interrupt", { id: "int-1" }],
+      ["integrated_send_now", { id: "int-1" }],
+      ["integrated_withdraw", { id: "int-1", message: M2 }],
       ["integrated_compact", { id: "int-1", instructions: null }],
       ["integrated_compact", { id: "int-1", instructions: "keep the API notes" }],
       [

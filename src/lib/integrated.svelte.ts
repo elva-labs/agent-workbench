@@ -1,7 +1,7 @@
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { unsent, type Sent } from "$lib/mention";
-import { mentionedIn } from "$lib/mentioned.svelte";
+import { mentionedIn, mentionsOf } from "$lib/mentioned.svelte";
 import { reservedName } from "$lib/unseen";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { keepMode, modeOf } from "$lib/sessionModes";
@@ -16,7 +16,7 @@ import {
   type IntegratedState,
   type PermissionChoice,
 } from "$lib/core";
-import { Conversation, type Part } from "$lib/conversation.svelte";
+import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import {
   nameTaken,
@@ -101,6 +101,21 @@ export class Link {
   configureError = $state<string | null>(null);
   /** Why the conversation could not be compacted, until it next is. */
   compactError = $state<string | null>(null);
+  /** The waiting messages were asked to go now, and the core has not
+      answered yet. */
+  sendingNow = $state(false);
+  /** The messages sent now that are still on their way into a turn: each
+      until the agent takes it, drops it, or says it waits again. */
+  sentNow = $state<string[]>([]);
+  /** What is being sent goes now with the messages that wait, once the
+      agent says it waits too. */
+  nowOnQueue = false;
+  /** The messages this window asked to take back, kept whole until the
+      agent lets go of each, when they go back to the composer. */
+  takingBack = new Map<string, Message>();
+  /** Why the waiting messages could not be sent now, or a message taken
+      back, until the waiting messages or the turn next change. */
+  nowError = $state<string | null>(null);
   /** A compaction was asked for while a turn ran, and waits for it to
       end. */
   compactAsked = $state(false);
@@ -261,7 +276,27 @@ function isWork(body: IntegratedEventBody): boolean {
 
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const before = link.conversation.state;
+  // A message this window asked to take back goes back to its composer the
+  // moment the agent lets go of it, whatever the answer to the asking.
+  const back =
+    body.type === "message" && body.state === "withdrawn" ? link.takingBack.get(body.message) : undefined;
+  if (back !== undefined) link.takingBack.delete(back.id);
   link.conversation.apply(body);
+  if (back !== undefined) restore(key, back);
+  // What failed to go now, or to come back, is old news once the waiting
+  // messages or the turn move on.
+  if (body.type === "message" || body.type === "turnStarted" || body.type === "turnEnded") link.nowError = null;
+  if (body.type === "message" && body.state !== "sent" && link.sentNow.includes(body.message))
+    link.sentNow = link.sentNow.filter((id) => id !== body.message);
+  if (body.type === "turnStarted" && link.sentNow.length > 0)
+    link.sentNow = link.sentNow.filter((id) => !body.messages.includes(id));
+  // A message sent to go now: once it waits, everything waiting goes; one
+  // the agent took at once has nothing to wait for.
+  if (body.type === "turnEnded") link.nowOnQueue = false;
+  if (link.nowOnQueue && body.type === "message" && body.text !== null && senderOf({ id: body.message }) === null) {
+    link.nowOnQueue = false;
+    if (body.state === "queued") void sendNow(key);
+  }
   if (isWork(body)) link.worked = true;
   if (
     body.type === "compacting" ||
@@ -903,6 +938,102 @@ export function interrupt(key: string) {
   core()
     .integratedInterrupt(link.handle)
     .catch(() => (link.conversation.interrupting = false));
+}
+
+/** Why the messages that wait cannot be sent now, in the window's words,
+    or null when they can: a turn runs to send them into, nothing waits on
+    the user, and no compaction runs, as the core has it. */
+export function sendNowBlocked(key: string): string | null {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return "The agent is not running";
+  const conversation = link.conversation;
+  if (!conversation.waiting.some((message) => message.state === "queued")) return "No message waits";
+  if (onTheirWay(key)) return "Sending it now";
+  if (conversation.open.length > 0) return "Answer the request below first";
+  if (conversation.compacting) return "It goes once the compaction is done";
+  if (conversation.current === null) return "It goes as soon as the agent takes it";
+  if (conversation.interrupting) return "It goes once the turn has stopped";
+  return null;
+}
+
+/** Whether the waiting messages were sent now and are on their way into a
+    turn: from the asking until the agent takes each, drops it, or says it
+    waits again. */
+export function onTheirWay(key: string): boolean {
+  const link = links.get(key);
+  if (link === undefined) return false;
+  if (link.sendingNow) return true;
+  return link.conversation.waiting.some((message) => message.state === "queued" && link.sentNow.includes(message.id));
+}
+
+/** Sends the messages that wait now, in the order sent, the way the
+    session's agent takes them: Claude Code takes them into its running
+    turn or stops the turn for them, as it decides; Codex has them added to
+    its running turn. They stay on their way until the agent takes them. */
+export async function sendNow(key: string): Promise<boolean> {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null) return false;
+  if (sendNowBlocked(key) !== null) return false;
+  link.nowError = null;
+  link.sendingNow = true;
+  link.sentNow = link.conversation.waiting.filter((said) => said.state === "queued").map((said) => said.id);
+  const turn = link.conversation.current;
+  try {
+    const sent = await core().integratedSendNow(link.handle);
+    // The turn stopped for them ends as interrupted, its end to come; one
+    // that has ended, or the next that has begun, is left as it is.
+    if (sent.sendNow === "stopped" && turn !== null && link.conversation.current === turn)
+      link.conversation.interrupting = true;
+    if (sent.sendNow === "nothingWaiting") link.sentNow = [];
+    return true;
+  } catch (error) {
+    link.sentNow = [];
+    link.nowError = `Not sent now: ${message(error)}`;
+    return false;
+  } finally {
+    link.sendingNow = false;
+  }
+}
+
+/** Takes back a message the agent has not taken yet. Its words and images
+    go back to the composer when the agent lets go of it, whatever comes of
+    the asking, and stay in the thread while it has not. Resolves false,
+    saying why, when the agent took it first. */
+export async function takeBack(key: string, id: string): Promise<boolean> {
+  const link = links.get(key);
+  const said = link?.conversation.messages[id];
+  if (link === undefined || link.handle === null || said === undefined) return false;
+  link.nowError = null;
+  link.takingBack.set(id, { ...said, images: [...said.images] });
+  try {
+    await core().integratedWithdraw(link.handle, id);
+    return true;
+  } catch (error) {
+    link.takingBack.delete(id);
+    // Let go of after all, as when the agent dropped it with others: its
+    // words are back already.
+    if (link.conversation.messages[id] === undefined) return true;
+    link.nowError = `Not taken back: ${message(error)}`;
+    return false;
+  }
+}
+
+/** Puts a message's words, mentions and images back in the session's
+    composer, ahead of what is written there, with the keyboard on it. One
+    that never stood in the thread leaves it. */
+export function restore(key: string, said: Message) {
+  const link = links.get(key);
+  if (link === undefined) return;
+  const back = unsent(spoken(said.text, senderOf(said) === null).text, mentionsOf(said.id));
+  link.draft = link.draft.trim() === "" ? back.draft : `${back.draft}\n${link.draft}`;
+  link.mentions = [...new Set([...link.mentions, ...back.picked])];
+  link.images = [...said.images, ...link.images];
+  if (!said.placed) link.conversation.forget(said.id);
+  queueMicrotask(() =>
+    document
+      .querySelector<HTMLTextAreaElement>(`[data-session="${key}"] [data-testid="composer-input"]`)
+      ?.focus(),
+  );
 }
 
 /** Answers a permission request with one of the choices it offered. */

@@ -743,6 +743,23 @@ impl Core {
             .map(|_| ())
     }
 
+    /// Sends the messages that wait for a turn now, in the order sent, or
+    /// fails saying why they cannot go now.
+    pub fn integrated_send_now(&self, id: &str) -> Result<(), String> {
+        crate::integrated::control(&self.integrated, id, &crate::integrated::Control::SendNow)
+            .map(|_| ())
+    }
+
+    /// Takes back a message the agent has not taken yet.
+    pub fn integrated_withdraw(&self, id: &str, message: &str) -> Result<(), String> {
+        crate::integrated::control(
+            &self.integrated,
+            id,
+            &crate::integrated::Control::Withdraw(message.to_string()),
+        )
+        .map(|_| ())
+    }
+
     /// Compacts the conversation, in the agent's own way, with what the
     /// summary should keep where the agent takes that. Comes back once
     /// asked; the compaction's events follow.

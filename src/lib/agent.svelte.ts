@@ -24,6 +24,10 @@ export interface AgentProfile {
   configVar: string;
   commands: boolean;
   turnModels: boolean;
+  /** What sending waiting messages now does: interrupt the turn, after
+      which the agent takes them all at once, or add them to the turn
+      that runs without stopping it. */
+  sendNow: "interrupts" | "steers";
 }
 
 const PROFILES: Record<AgentId, AgentProfile> = {
@@ -34,6 +38,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CLAUDE_CONFIG_DIR",
     commands: true,
     turnModels: true,
+    sendNow: "interrupts",
   },
   codex: {
     product: "Codex",
@@ -42,6 +47,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CODEX_HOME",
     commands: false,
     turnModels: false,
+    sendNow: "steers",
   },
 };
 
