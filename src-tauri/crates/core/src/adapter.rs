@@ -56,6 +56,11 @@ pub struct LaunchCtx<'a> {
     /// The model to run on, by the name the agent takes on its command
     /// line, when the caller chose one. The agent's own default otherwise.
     pub model: Option<&'a str>,
+    /// The mode to start in, by the name the agent's integrated sessions
+    /// offer it under, when the caller knows the one the conversation last
+    /// ran in. The agent's own settings decide otherwise. Only a mode a
+    /// session can switch to is taken, so never bypassing permissions.
+    pub mode: Option<&'a str>,
     /// Where the agent keeps its configuration and its login, when the
     /// session runs under an account of the user's own: Claude Code reads
     /// it as `CLAUDE_CONFIG_DIR`, Codex as `CODEX_HOME`. The agent's own
@@ -432,6 +437,32 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
         .collect())
 }
 
+/// Claude Code's flag for the mode a session starts in, for a mode its
+/// integrated sessions offer; any other is refused.
+fn claude_mode<'a>(ctx: &LaunchCtx<'a>) -> Result<Vec<&'a str>, String> {
+    match ctx.mode {
+        None => Ok(vec![]),
+        Some(mode) if crate::claude_stream::offers_mode(mode) => {
+            Ok(vec!["--permission-mode", mode])
+        }
+        Some(mode) => Err(format!("{mode:?} is not a mode Claude Code starts in here")),
+    }
+}
+
+/// Codex's flags for the mode a session starts in: the approval policy and
+/// the sandbox its integrated sessions make that mode of. Any other mode is
+/// refused.
+fn codex_mode<'a>(ctx: &LaunchCtx<'a>) -> Result<Vec<&'a str>, String> {
+    match ctx.mode {
+        None => Ok(vec![]),
+        Some(mode) => {
+            let (approval, sandbox) = crate::codex_app_server::mode_flags(mode)
+                .ok_or_else(|| format!("{mode:?} is not a mode Codex runs in"))?;
+            Ok(vec!["--ask-for-approval", approval, "--sandbox", sandbox])
+        }
+    }
+}
+
 /// The model flag and the prompt on the end of an agent's arguments. Both
 /// agents take `--model`, and both take the prompt after `--`: it is the
 /// agent's text, whatever it starts with, and never one of the agent's flags.
@@ -497,6 +528,7 @@ impl AgentAdapter for ClaudeCode {
         let workflow = claude_workflow(ctx);
         let mut args = vec!["--session-id", session];
         args.extend(workflow.iter().map(String::as_str));
+        args.extend(claude_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
 
@@ -504,6 +536,7 @@ impl AgentAdapter for ClaudeCode {
         let workflow = claude_workflow(ctx);
         let mut args = vec!["--resume", session];
         args.extend(workflow.iter().map(String::as_str));
+        args.extend(claude_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
 
@@ -585,7 +618,8 @@ impl AgentAdapter for Codex {
     fn launch(&self, ctx: &LaunchCtx, _session: &str) -> Result<Surface, String> {
         let workflow = codex_workflow(ctx, cfg!(windows), self.script(ctx))?;
         self.names_itself(ctx)?;
-        let args = workflow.iter().map(String::as_str).collect();
+        let mut args: Vec<&str> = workflow.iter().map(String::as_str).collect();
+        args.extend(codex_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
 
@@ -594,6 +628,7 @@ impl AgentAdapter for Codex {
         self.names_itself(ctx)?;
         let mut args = vec!["resume", session];
         args.extend(workflow.iter().map(String::as_str));
+        args.extend(codex_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
 
@@ -705,6 +740,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -754,6 +790,7 @@ mod tests {
             token: None,
             prompt: Some("--dangerously-skip-permissions and fix it"),
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -810,6 +847,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -856,6 +894,7 @@ mod tests {
             token: None,
             prompt: Some("Go on with the cache test"),
             model: Some("sonnet"),
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -913,6 +952,83 @@ mod tests {
     }
 
     #[test]
+    fn a_resume_starts_in_the_mode_named_as_each_agent_spells_it_and_never_in_another() {
+        let dir = Scratch::new("adapter-mode");
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+        }
+        let vars = vars_with_path(&dir);
+        let with = |mode| LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: Some("abc"),
+            token: None,
+            prompt: None,
+            model: Some("sonnet"),
+            mode: Some(mode),
+            orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+        };
+        let argv = |surface: Surface| {
+            let Surface::Pty(command) = surface;
+            command
+                .get_argv()
+                .iter()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            &argv(ClaudeCode.resume(&with("default"), "abc").unwrap())[1..],
+            [
+                "--resume",
+                "abc",
+                "--permission-mode",
+                "default",
+                "--model",
+                "sonnet"
+            ]
+        );
+        assert_eq!(
+            &argv(Codex.resume(&with("read-only"), "abc").unwrap())[1..],
+            [
+                "resume",
+                "abc",
+                "--ask-for-approval",
+                "on-request",
+                "--sandbox",
+                "read-only",
+                "--model",
+                "sonnet"
+            ]
+        );
+        // Bypassing permissions, a mode of the other agent's or anything a
+        // session cannot switch to is refused rather than passed on.
+        for mode in [
+            "bypassPermissions",
+            "read-only",
+            "--dangerously-skip-permissions",
+        ] {
+            assert!(ClaudeCode.resume(&with(mode), "abc").is_err(), "{mode}");
+        }
+        for mode in ["acceptEdits", "danger-full-access", "-c x=y"] {
+            assert!(Codex.resume(&with(mode), "abc").is_err(), "{mode}");
+        }
+    }
+
+    #[test]
     fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
         let dir = Scratch::new("adapter-workflow");
         for name in ["claude", "codex"] {
@@ -936,6 +1052,7 @@ mod tests {
             token: None,
             prompt: Some("Fix the flaky test"),
             model: Some("fable"),
+            mode: None,
             orchestrator: true,
             instructions: Some("1. Direct the work.\n2. Say \"done\"."),
             instructions_file: Some(told),
@@ -1047,6 +1164,7 @@ mod tests {
             server_file: None,
             configured: None,
             model: None,
+            mode: None,
             prompt: None,
             ..ctx
         };
@@ -1243,6 +1361,7 @@ mod tests {
             token: Some("token-1"),
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1280,6 +1399,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1305,6 +1425,7 @@ mod tests {
             token: Some("token-1"),
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             instructions_file: None,
@@ -1379,6 +1500,7 @@ mod tests {
             token: Some("token-1"),
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: true,
             instructions: Some("Direct the work."),
             instructions_file: None,
@@ -1443,6 +1565,7 @@ mod tests {
                 token: None,
                 prompt: None,
                 model: None,
+                mode: None,
                 orchestrator,
                 instructions: None,
                 start_only: false,
@@ -1479,6 +1602,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1505,6 +1629,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1537,6 +1662,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1575,6 +1701,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1610,6 +1737,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
@@ -1640,6 +1768,7 @@ mod tests {
             token: None,
             prompt: None,
             model: None,
+            mode: None,
             orchestrator: false,
             instructions: None,
             start_only: false,
