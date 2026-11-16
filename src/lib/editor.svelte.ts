@@ -41,7 +41,7 @@ import { tick, untrack } from "svelte";
 import { Transaction, type EditorState, type Text, type TransactionSpec } from "@codemirror/state";
 import { isolateHistory } from "@codemirror/commands";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
-import { openSearchPanel } from "@codemirror/search";
+import { openSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { browser } from "$lib/browser.svelte";
 import { onEditorUpdate, stateFor } from "$lib/codeEditor";
 import { core } from "$lib/core";
@@ -301,8 +301,11 @@ export function findInFile() {
   const showing = view;
   openSearchPanel(showing);
   // The panel is drawn after the call that opens it; asked again once it
-  // is there, CodeMirror puts the keyboard in its field.
-  requestAnimationFrame(() => openSearchPanel(showing));
+  // is there, CodeMirror puts the keyboard in its field. One closed in the
+  // meantime, by Escape, stays closed.
+  requestAnimationFrame(() => {
+    if (searchPanelOpen(showing.state)) openSearchPanel(showing);
+  });
 }
 
 /** A buffer's state, for the editor to show. */
