@@ -410,9 +410,9 @@ test.describe("an integrated orchestrator's thread", () => {
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation")).toBeVisible();
-    await expect(words(page)).toHaveText("Plan, work, review");
     await page.getByTestId("composer-input").fill("Fix the flaky cache test");
     await page.keyboard.press("Enter");
+    await expect(words(page)).toHaveText("Plan, work, review");
     await agent(page, `f.startTurn("int-1");`);
 
     await started(page, { prompt: "Fix the flaky cache test", step: "Work", name: "Fix the cache" });
@@ -450,6 +450,9 @@ test.describe("an integrated orchestrator's thread", () => {
     await page.goto("/");
     await page.getByTestId("start-agent").click();
     await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+    // The header's chip comes with the first message.
+    await page.getByTestId("composer-input").fill("Fix the flaky cache test");
+    await page.keyboard.press("Enter");
     await expect(words(page)).toHaveText("Plan, work, review");
     await narrows(page);
   });

@@ -849,3 +849,29 @@ describe("what a conversation said before, read back", () => {
     expect(conversation.began).toEqual({ after: conversation.entries.at(-1)!.key, at: 7 });
   });
 });
+
+describe("a conversation nothing has been said in", () => {
+  it("is untouched until a message is sent, and stays so for a note the agent made as it started", () => {
+    const { fake, conversation, id, send } = played();
+    expect(conversation.untouched).toBe(true);
+    fake.emit(id, { type: "notice", level: "warning", message: "A hook failed to load" });
+    expect(conversation.untouched).toBe(true);
+    send(M1, "hello");
+    expect(conversation.untouched).toBe(false);
+  });
+
+  it("starts again with nothing of its last run, keeping what the same agent offers and the mode chosen", () => {
+    const { fake, conversation, id } = played();
+    fake.emit(id, { type: "notice", level: "warning", message: "A hook failed to load" });
+    conversation.settings = { ...conversation.settings, mode: "plan" };
+    conversation.restarted("fable", true);
+    expect(conversation.entries).toEqual([]);
+    expect(conversation.sessionId).toBeNull();
+    expect(conversation.settings).toMatchObject({ model: "fable", mode: "plan" });
+    expect(conversation.ready?.models.length).toBeGreaterThan(0);
+    expect(conversation.untouched).toBe(true);
+    conversation.restarted(null, false);
+    expect(conversation.ready).toBeNull();
+    expect(conversation.settings).toEqual({ model: null, mode: null, effort: null });
+  });
+});

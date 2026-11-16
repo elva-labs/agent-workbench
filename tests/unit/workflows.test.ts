@@ -30,6 +30,8 @@ import {
   describeWorkflow,
   setStartOnly,
   startsOnly,
+  stepsGist,
+  workflowGist,
 } from "$lib/workflows.svelte";
 import rules from "../fixtures/workflow-rules.json";
 
@@ -472,5 +474,19 @@ describe("the name of a workflow the file cannot use", () => {
     });
     expect(addWorkflow()).toBe("New workflow 2");
     expect(duplicateWorkflow(NAME)).toBe("Build and review copy");
+  });
+});
+
+describe("a workflow in a few words", () => {
+  it("names who directs, works and reviews, and to its orchestrator what the others do", () => {
+    const workflow = defaultWorkflow();
+    expect(workflowGist(workflow)).toBe("Fable directs, Sonnet works, Opus reviews");
+    expect(stepsGist(workflow)).toBe("Sonnet works and Opus reviews");
+    const three: Workflow = {
+      ...workflow,
+      steps: [{ kind: "work", name: "Plan", models: [{ agent: "claude-code", model: "opus" }], parallel: 1 }, ...workflow.steps],
+    };
+    expect(stepsGist(three)).toBe("Opus works, Sonnet works and Opus reviews");
+    expect(stepsGist({ ...workflow, steps: workflow.steps.slice(0, 1) })).toBe("Sonnet works");
   });
 });
