@@ -25,9 +25,12 @@ as two computers connected to one machine, do not take turns.
 
 For Claude Code, entries in the project's `.claude/settings.local.json`:
 one after every tool use, which writes what the agent just did to a file
-the changes pane watches, and one each for prompt submitted, stop and
-notification, which append what the agent reported to a session log under
-the app's own directory in the user's home.
+the changes pane watches, and one each for prompt submitted, stop, a turn
+that an error ended, and notification, which append what the agent
+reported to a session log under the app's own directory in the user's
+home. A project whose settings lack one of these entries reads as not
+having the hooks, so the next install adds what is missing and leaves the
+rest as they are.
 
 For Codex, entries in the project's `.codex/hooks.json` for prompt
 submitted, stop and permission request, appending to the same log.

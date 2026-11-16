@@ -61,7 +61,13 @@ other session has them where its project's hooks are on. See
 `projects` lists the open projects, the caller's own marked, so a session
 names a project the app actually has. `sessions` lists the sessions the
 caller started, each with its id, its name in quotes, its project and
-worktree, its agent, what it is doing and the last line it left. A session
+worktree, its agent, what it is doing and the last line it left. What it is
+doing is working, waiting, asking for permission, at its usage limit until
+the time the agent named, stopped on an error, waiting with its turn
+interrupted by the user, or waiting for a background command, as under
+`wait` below. A session that is not running says why: it ended, the user
+closed its row, or it has not run since the workbench was restarted, each
+with the way back, a start naming it. A session
 that has stopped, ended or asked for permission without the caller having
 been told says so beside what it is doing, and listing it counts as
 telling. `start` starts a session in a project with a first prompt, on a
@@ -76,7 +82,24 @@ the line is. A session that runs integrated is sent the text as a message,
 whole, as the user's own is, and one sent while it works waits for its
 turn.
 `wait` sits until a session stops working, asks for permission or ends, or
-until the seconds it was given run out. The tool server counts those
+until the seconds it was given run out. A session whose hooks report its
+turns stops working when they say its turn ended, and never because its
+screen went quiet: an agent running a long command, or thinking, draws
+nothing but its spinner's clock for minutes on end, and is still at work
+(see [sessions](sessions.md)). How the turn ended is said for what it is.
+A turn the agent ended is "stopped working"; one a usage limit ended is "is
+at its usage limit until 4pm", with the time the agent named, or "stopped
+at a usage limit" where it named none; one another error from the model's
+service ended, such as a connection lost mid-response, is "stopped on an
+error", with the error's line where it is not the session's last line; one
+the user stopped with Escape is "stopped: the user interrupted its turn";
+and one the agent ended with commands of its own still running in the
+background says so, quotes their descriptions, and says the end of each
+starts its next turn by itself. Claude Code reports a turn an error ended
+through its hooks; where nothing reports how a turn ended, as when only
+the agent's idle notice says it is waiting, the last lines of its screen
+are read, from the turn's last bullet down, for a usage limit or an API
+error. The tool server counts those
 seconds from before the window heard of the call, and the call carries a
 time a moment before the tool server stops reading; the core leaves no
 answer past it. A stop a wait answers with counts as
@@ -85,12 +108,22 @@ comes too late for the call is still untold, and the next wait answers
 with it. The window answers that nothing happened two seconds early, or
 halfway through a wait of four seconds or less, so that answer is in time
 as well. A stop is told once: the wait that
-answers with it and a listing that shows it each count, so a session that
-stopped between two waits is answered by the next one at once, and one that
-went back to work in the meantime is waited out as usual. A wait over all
+answers with it, a listing that shows it, a note and a wake each count, so
+a session that stopped between two waits is answered by the next one at
+once, and one that went back to work in the meantime is waited out as
+usual. The next wait after a stop waits for the next thing that happens.
+For a session whose hooks report its turns, a stop is news again only once
+another turn of its own has begun, though it began and ended between two
+looks, or once it comes to rest another way, such as asking for
+permission; being seen at work again within the turn it was told of, as
+when a permission it asked for is granted, does not make the same stop
+news twice. A wait over all
 of a caller's sessions answers first with a stop the caller has not been
 told of; a session that ended or asked, and was told so, is answered again
-only when none of the others is still running. A wait the agent gave up on,
+only when none of the others is still running. A wait naming a session the
+caller started that is not running answers at once with why, as the
+listing gives it, and the way back; a wait over all of them, when none is
+running, says so. A wait the agent gave up on,
 because the user interrupted it or the agent itself is gone, ends without
 telling anything; what the user's message says instead is under [when the
 user writes to it](#when-the-user-writes-to-it). `read` answers with the
@@ -102,7 +135,13 @@ turn, is said to be the user's or the session's that sent it. A message one
 session sends another shows in that session's thread under the sender's
 name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
-their row, rather than leaving a row of it under the project.
+their row, rather than leaving a row of it under the project. A stop
+naming a session the caller started that is not running says why it was
+not, and takes it off the caller's list all the same, since a stop says
+the caller is done with it. `send` and `read` naming such a session say
+why it is not running and how to bring it back, a wait closed by the row
+going says whether the user closed it, and a session the workbench never
+had, or that is not the caller's, is refused as before.
 A session `start` starts runs in a terminal or integrated as the
 agent's own setting says, and every tool acts on it either way; what an
 integrated session cannot do when it is not running, such as take a
@@ -114,7 +153,13 @@ The row takes the name cut to 60 characters, and not at all when it would
 pass for the user, the workbench, an agent or another session (see
 [sessions](sessions.md#integrated-sessions)); the answer says which, with
 the name in quotes as every answer gives a name (see [when the user writes
-to it](#when-the-user-writes-to-it)).
+to it](#when-the-user-writes-to-it)). The name is kept with what the caller
+started, and stays the session's across a close, a resume by its id, a
+change between conversation and terminal, and a restart: its row and every
+answer use it whenever the agent's own title for the session names nothing,
+as when a session resumed in a terminal has not titled itself yet, and a
+resumed conversation is not renamed by its next message. A title of the
+agent's own takes its place while there is one.
 A worktree it starts in is trusted where its project is, with either agent,
 so nothing asks on the way in. It has the project's hooks when the project
 has them on, so `sessions` and `wait` follow the agent's own word for what
@@ -307,7 +352,9 @@ attributes, the cursor's place or its size, is no key at all. While keys
 of the user's hold a wake, the pointer text on the row's not heard yet
 mark says so. A turn the user cut short, with Escape or the stop button, leaves
 the starter unwoken until a turn of the user's has ended as the agent
-ended it. A line typed or sent into it, by `send` or by a wake, leaves it
+ended it. A turn of its own that an error ended, a usage limit among them,
+leaves it unwoken until its agent next ends a turn itself, since a wake
+would meet the same error. A line typed or sent into it, by `send` or by a wake, leaves it
 unwoken until a turn of its agent's ends, and lines go into a terminal one
 at a time, each with its Enter, so a line `send` types and a wake never run
 into each other. A session in a terminal without hooks says nothing of how
@@ -466,7 +513,10 @@ ones still running answer to its tools as before, and a row with one of its
 ids, resumed from the pane by hand, hangs under it all the same. When the
 app itself was closed, the orchestrator comes back with the other sessions
 that were open, and the sessions it started do not. `sessions` then lists
-them as stopped, after the running ones, and `start` with one of those ids
+them as not running since the workbench was restarted, after the running
+ones; one whose row the user closed is listed as closed by the user, and
+one whose row had ended as ended, before a restart and after it. `start`
+with one of those ids
 in place of a project and prompt brings it back where it ran, in its
 worktree with its conversation. A prompt given with it is what the session
 goes on with; without one it comes up waiting for a line. The cap and the
