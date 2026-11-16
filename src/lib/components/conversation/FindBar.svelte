@@ -191,6 +191,27 @@
     };
   });
 
+  // While the bar is open, Escape in the thread, or in the composer with
+  // no menu of its own open, puts the bar away and stops nothing; the next
+  // Escape there does what it always does. The field takes its own.
+  $effect(() => {
+    if (!open || !active || host === null) return;
+    const view = host;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing || e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target instanceof Element ? e.target : null;
+      if (target === null || (bar?.contains(target) ?? false)) return;
+      const composer = target.closest("[data-testid='composer-input']");
+      const thread = target.closest("[data-testid='thread']");
+      if (thread === null && (composer === null || composer.hasAttribute("data-menu"))) return;
+      e.preventDefault();
+      e.stopPropagation();
+      hide();
+    };
+    view.addEventListener("keydown", key, true);
+    return () => view.removeEventListener("keydown", key, true);
+  });
+
   // Off screen, the session leaves the marks to the one on screen.
   $effect(() => {
     if (!active) untrack(() => clearMatches());

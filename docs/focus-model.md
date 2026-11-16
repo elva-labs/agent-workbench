@@ -246,7 +246,9 @@ a terminal keeps <kbd>Ctrl</kbd><kbd>W</kbd> and
   is open, Esc puts it away wherever the keyboard is and reaches nothing
   else, since a click does not move the keyboard on every platform and the
   key that closes a popover must never also stop the agent's turn. With no popover open, Esc is the
-  terminal's or the composer's again.
+  terminal's or the composer's again. Find in an integrated session's
+  conversation is put away the same way from its thread and its composer,
+  before the composer would stop a turn with it.
 - **A pane that goes away does not keep the keyboard.** When the window
   narrows past the sessions or changes pane while it has focus, the keyboard
   goes to the agent pane; when editing hides the agent, it goes to the files
@@ -332,7 +334,7 @@ reached.
 | --- | --- |
 | <kbd>Enter</kbd> | Sends the message; while the agent works it waits for the turn |
 | <kbd>Shift</kbd><kbd>Enter</kbd> | Breaks the line |
-| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover is open it puts that away instead, and stops nothing |
+| <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover or find is open it puts that away instead, and stops nothing |
 | <kbd>↑</kbd> in an empty composer | Goes to the dock, when the agent waits on something there |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
@@ -342,11 +344,12 @@ reached.
 | <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Tab</kbd> or <kbd>Enter</kbd>, <kbd>Esc</kbd> in the files menu | As in the slash menu: the file goes in as its path, a space after it |
 | <kbd>Backspace</kbd> right after a mentioned file | Takes the whole mention out |
 | <kbd>Tab</kbd> | Moves between the thread, the dock's folds and choices, and the composer's controls, in reading order |
-| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer |
+| <kbd>↑</kbd> <kbd>↓</kbd> in the thread | Moves through its folds, steps, links and Copy buttons; <kbd>Home</kbd> and <kbd>End</kbd> go to the first and the last of the whole conversation, the thread following its foot again after <kbd>End</kbd>, and <kbd>Esc</kbd> goes back to the composer, once find is closed |
 | <kbd>Cmd</kbd><kbd>F</kbd> | Opens find over the thread with the keyboard in its field; with find open, selects the words in it |
 | <kbd>Enter</kbd> / <kbd>Shift</kbd><kbd>Enter</kbd> in find | The next match, or the one before, coming round at the ends |
 | <kbd>Cmd</kbd><kbd>G</kbd> / <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>G</kbd> | The same, from anywhere in the session's pane while find is open, unless an action holds the chord |
 | <kbd>Esc</kbd> in find | Closes it and gives the keyboard back where it was; it stops nothing |
+| <kbd>Esc</kbd> while find is open | In the thread, or in the composer with no menu open, closes find and stops nothing; the next <kbd>Esc</kbd> does what it does there |
 
 Every control of the view is reached by keyboard alone, by the rule in
 [Tab and the controls](#tab-and-the-controls). The lists in it are one stop

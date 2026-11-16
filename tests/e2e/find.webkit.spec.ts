@@ -331,6 +331,42 @@ test.describe("find in the conversation", () => {
     await expect.poll(async () => (await painted(page)).current).toEqual(["the log instead"]);
   });
 
+  test("puts the bar away on Escape from the thread or the composer, and stops nothing", async ({ page }) => {
+    await openIntegrated(page);
+    await aboutTheCache(page);
+    const line = page.getByTestId("work-line");
+    await line.focus();
+    await findChord(page);
+    await page.getByTestId("find-input").fill("cache");
+    await expect(page.getByTestId("find-count")).toHaveText("1 of 5");
+    // From the thread: the bar goes and the keyboard stays.
+    await line.focus();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(line).toBeFocused();
+    expect(await painted(page)).toEqual({ hits: [], current: [] });
+    // The next one does what it always does there.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+
+    // From the composer while a turn runs: the bar goes and the turn runs on.
+    await agent(page, `f.send("${H}", crypto.randomUUID(), "And now?"); f.startTurn("${H}");`);
+    await expect(page.getByTestId("stop")).toBeVisible();
+    await findChord(page);
+    await page.getByTestId("find-input").fill("cache");
+    await page.getByTestId("composer-input").focus();
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("find-bar")).toHaveCount(0);
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+    const interrupts = async () =>
+      (await page.evaluate(() => (window as unknown as { __integrated: { calls: { method: string }[] } }).__integrated.calls)).filter(
+        (call) => call.method === "interrupt",
+      ).length;
+    expect(await interrupts()).toBe(0);
+    await page.keyboard.press("Escape");
+    await expect.poll(interrupts).toBe(1);
+  });
+
   test("glides to a near match, and is there at once where the system asks for less motion", async ({ page }) => {
     await page.setViewportSize({ width: 1100, height: 600 });
     await openIntegrated(page);
