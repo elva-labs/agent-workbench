@@ -206,6 +206,14 @@ pub fn resolve(page: &Path, file: &str, home: Option<&Path>) -> Result<PathBuf, 
     Ok(target)
 }
 
+fn too_large(size: u64) -> String {
+    format!(
+        "is {} MB, more than the {} MB a page loads",
+        size.div_ceil(1024 * 1024),
+        PAGE_FILE_CAP / (1024 * 1024)
+    )
+}
+
 /// What a file the page names is, or why the page may not load it.
 pub fn check(page: &Path, file: &str, home: Option<&Path>) -> Result<PageFileInfo, String> {
     let target = resolve(page, file, home)?;
@@ -214,11 +222,7 @@ pub fn check(page: &Path, file: &str, home: Option<&Path>) -> Result<PageFileInf
         .map_err(|e| format!("could not be read: {e}"))?
         .len();
     if size > PAGE_FILE_CAP && !streamed(mime) {
-        return Err(format!(
-            "is {} MB, more than the {} MB a page loads",
-            size.div_ceil(1024 * 1024),
-            PAGE_FILE_CAP / (1024 * 1024)
-        ));
+        return Err(too_large(size));
     }
     Ok(PageFileInfo {
         mime: mime.to_string(),
@@ -245,16 +249,19 @@ pub fn read(
         .len();
     let Some((from, to)) = range else {
         if total > PAGE_FILE_CAP {
-            return Err(format!(
-                "is {} MB, more than the {} MB a page loads",
-                total.div_ceil(1024 * 1024),
-                PAGE_FILE_CAP / (1024 * 1024)
-            ));
+            return Err(too_large(total));
         }
+        // Read no further than the cap, whatever the file has grown to
+        // since its size was taken.
         let mut bytes = Vec::with_capacity(total as usize);
-        handle
+        (&mut handle)
+            .take(PAGE_FILE_CAP + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| format!("could not be read: {e}"))?;
+        let total = bytes.len() as u64;
+        if total > PAGE_FILE_CAP {
+            return Err(too_large(total));
+        }
         return Ok(PageFile {
             mime,
             bytes,
