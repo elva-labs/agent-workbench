@@ -30,11 +30,16 @@ async function boxOf(page: Page, selector: string) {
     left edge or the frame's padding. */
 async function slidIn(page: Page) {
   await expect(page.locator(SESSIONS)).toBeVisible();
+  // At rest where its slot stands: the window's edge, or the frame's
+  // padding in the terminal look.
   await expect
-    .poll(async () => {
-      const x = (await boxOf(page, SESSIONS)).x;
-      return x >= 0 && x <= 10;
-    })
+    .poll(() =>
+      page.evaluate((selector) => {
+        const pane = document.querySelector(selector)!;
+        const slot = document.querySelector("[data-testid='sessions-slot']")!;
+        return Math.abs(pane.getBoundingClientRect().left - slot.getBoundingClientRect().left) < 0.5;
+      }, SESSIONS),
+    )
     .toBe(true);
 }
 
@@ -374,4 +379,115 @@ test("takes a question in the pane away with it, by the chord, Cmd+B or a change
   await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
   await slidOut(page);
   await expect(question).toHaveCount(0);
+});
+
+/** The window's traffic lights as the real window places them on macOS:
+    the close button's left edge 18 points in, three 14-point buttons 8
+    apart, so to 76, on the middle of the header that leads the window,
+    which the app measures and reports. A browser has no such buttons, so
+    the room is reckoned the same way and checked to hold nothing. */
+async function lights(page: Page) {
+  return page.evaluate(() => {
+    const header = document.querySelector("section[data-pane] header")!.getBoundingClientRect();
+    const centre = header.top + header.height / 2;
+    return { left: 0, right: 84, top: centre - 10, bottom: centre + 10 };
+  });
+}
+
+/** What a person could reach or read in the lights' room: controls, tab
+    stops, fields and pane titles that are drawn and not inert. */
+function underLights(page: Page, room: { left: number; right: number; top: number; bottom: number }) {
+  return page.evaluate((room) => {
+    const found: string[] = [];
+    const selector = "button, a[href], input, textarea, select, [role='button'], [tabindex]:not([tabindex='-1']), header .title";
+    for (const element of document.querySelectorAll<HTMLElement>(selector)) {
+      if (element.closest("[inert]") !== null) continue;
+      const style = getComputedStyle(element);
+      if (style.visibility === "hidden" || style.display === "none" || style.pointerEvents === "none") continue;
+      const box = element.getBoundingClientRect();
+      if (box.width === 0 || box.height === 0) continue;
+      if (box.right <= room.left || box.left >= room.right || box.bottom <= room.top || box.top >= room.bottom) continue;
+      found.push(`${element.tagName.toLowerCase()} ${element.dataset.testid ?? element.className} at ${Math.round(box.left)}`);
+    }
+    return found;
+  }, room);
+}
+
+for (const look of ["modern", "terminal"] as const)
+  test(`keeps the traffic lights' corner clear in every state, in the ${look} look`, async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
+    await installFakeCore(page, { settings: { look, keys: { "focus.sessions": BOUND } } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("new-session").click();
+    const room = await lights(page);
+    const clear = async (state: string) => expect(await underLights(page, room), state).toEqual([]);
+
+    await clear("open");
+    await page.keyboard.press(`${MOD}+b`);
+    await expect.poll(async () => (await boxOf(page, "section[data-pane='sessions']")).width).toBeLessThan(100);
+    await clear("folded");
+    await page.keyboard.press(`${MOD}+b`);
+
+    await page.keyboard.press(`${MOD}+,`);
+    await page.getByTestId("compact-on").click();
+    await page.keyboard.press("Escape");
+    await slidOut(page);
+    await clear("compact, hidden");
+    await page.mouse.move(2, 400, { steps: 2 });
+    await slidIn(page);
+    await clear("compact, slid in");
+    await page.mouse.move(900, 400, { steps: 3 });
+    await slidOut(page);
+    await page.keyboard.press(`${MOD}+Shift+E`);
+    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await clear("compact, editing");
+    await page.keyboard.press(PRESS_BOUND);
+    await slidIn(page);
+    await clear("compact, editing, slid in");
+  });
+
+// Where the app draws the window's own buttons, the menu button that stands
+// in for a menu bar leads the window in compact mode, clear of the pane's
+// edge, and the pane slid in over it holds its own in the same place.
+test("puts the menu button at the start of the leading header off macOS", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "Win32" }));
+  await start(page);
+  const menu = page.locator(`${AGENT} [data-testid='app-menu']`);
+  await expect(menu).toBeVisible();
+  const box = await menu.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(6);
+  expect(box!.x).toBeLessThan(20);
+  await page.mouse.move(2, 400, { steps: 2 });
+  await slidIn(page);
+  const own = await page.locator(`${SESSIONS} [data-testid='app-menu']`).boundingBox();
+  expect(Math.abs(own!.y - box!.y)).toBeLessThanOrEqual(1);
+});
+
+// The peek while reviewing, the one the window had before compact mode,
+// stands over the focused card's mark as the slid-in pane does.
+test("peeks over the focused card's mark while reviewing", async ({ page }) => {
+  await installFakeCore(page, { settings: { appearance: "light" } });
+  // A pane wide enough to reach well over the agent's card.
+  await page.addInitScript(() => localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 420 })));
+  await page.goto("/");
+  await expect(page.locator(AGENT)).toBeVisible();
+  await page.getByTestId("new-session").click();
+  await page.locator("[data-testid='file-tree']").getByText("mod.rs", { exact: true }).click();
+  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await page.keyboard.press(`${MOD}+2`);
+  await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  const card = await boxOf(page, `${AGENT} > .body`);
+  const y = Math.round(card.y) + 1;
+  const mark = await pixel(page, Math.round(card.x + card.width - 30), y);
+  // The pointer resting on the folded column peeks it, the keyboard left
+  // in the agent.
+  await page.mouse.move(30, 500, { steps: 2 });
+  const pane = "section[data-pane='sessions']";
+  await expect.poll(async () => Math.round((await boxOf(page, pane)).width)).toBe(420);
+  // Read where the peeked pane stands over the agent's card.
+  const x = Math.round(card.x + 30);
+  expect(x).toBeLessThan((await boxOf(page, pane)).x + (await boxOf(page, pane)).width);
+  await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  expect(await pixel(page, x, y)).not.toBe(mark);
 });

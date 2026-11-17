@@ -2518,13 +2518,14 @@
      edge, and the dots of the sessions under it. Nothing moves when the pane
      opens again. */
   .nav.folded {
-    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 14px), transparent calc(var(--folded) - 3px));
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 9px), transparent calc(var(--folded) - 2px));
   }
 
   /* Folded wide, the start of each session's name shows beside its dot,
-     fading out at the column's edge. */
+     fading out over the last few pixels before the column's edge, so the
+     rows read whole up to it rather than dimmed. */
   .nav.folded.wide {
-    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 20px), transparent calc(var(--folded) - 2px));
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 10px), transparent calc(var(--folded) - 2px));
   }
 
   .nav.folded .project-row .name {

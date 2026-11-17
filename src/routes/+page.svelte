@@ -1252,7 +1252,9 @@
   .sessions-slot.peeking :global(.pane) {
     flex: none;
     width: var(--peek-w);
-    box-shadow: 12px 0 28px rgba(0, 0, 0, 0.3);
+    box-shadow:
+      1px 0 0 var(--compact-rim),
+      6px 0 16px -10px color-mix(in srgb, black var(--compact-cast), transparent);
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -1285,8 +1287,7 @@
     border-radius: 0 var(--compact-radius) var(--compact-radius) 0;
     box-shadow:
       1px 0 0 var(--compact-rim),
-      4px 0 12px -6px color-mix(in srgb, black calc(var(--compact-cast) * 0.65), transparent),
-      16px 0 40px -12px color-mix(in srgb, black var(--compact-cast), transparent);
+      6px 0 16px -10px color-mix(in srgb, black var(--compact-cast), transparent);
   }
 
   .sessions-slot.compact.out :global([data-pane="sessions"]) {
@@ -1311,7 +1312,7 @@
   .frame {
     --compact-radius: 0px;
     --compact-rim: transparent;
-    --compact-cast: 34%;
+    --compact-cast: 22%;
   }
 
   :global(:root[data-look="modern"]) .frame {
@@ -1320,9 +1321,9 @@
   }
 
   /* In the dark the pane's ground is the window's darkest tone, so its
-     edge and its shadow are drawn stronger to lift it off the cards. */
+     rim and its lift are drawn a little stronger to read on the cards. */
   :global(:root[data-theme="dark"]) .frame {
-    --compact-cast: 60%;
+    --compact-cast: 45%;
   }
 
   :global(:root[data-theme="dark"][data-look="modern"]) .frame {
@@ -1331,7 +1332,7 @@
 
   @media (prefers-color-scheme: dark) {
     :global(:root:not([data-theme="light"])) .frame {
-      --compact-cast: 60%;
+      --compact-cast: 45%;
     }
 
     :global(:root:not([data-theme="light"])[data-look="modern"]) .frame {
