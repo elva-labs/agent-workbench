@@ -237,8 +237,10 @@ them at an address of their own for each drawing of the page, named by a
 token drawn at random rather than by the page's path, and reads each file
 when the page asks for it, four at a time, where the page is, a remote
 included: up to eight megabytes each, audio and video a part at a time.
-The webview keeps what it was given while that drawing stands, and a page
-drawn again asks afresh. A path that climbs above the folder or leaves it
+The webview keeps what it was given while that drawing stands. A page is
+drawn again, and asks afresh, whenever it changes and whenever it is
+presented again, changed or not, so screenshots made again under the same
+names show. A path that climbs above the folder or leaves it
 by a symlink, a hidden file or one in a hidden folder, a file of any other
 kind, and any file at all for a page that sits in the home directory or
 above it are not served, and a page's scripts can read none of the files'

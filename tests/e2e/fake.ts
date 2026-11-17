@@ -1147,10 +1147,14 @@ export async function installFakeCore(
           };
         },
 
-        // A page's folder at an address of its own, as the app serves it on
-        // Windows, so a test can answer for its files with a route.
-        pageFilesBase: async (page: string) =>
-          `http://awb-page.localhost/${btoa(page).replace(/[^a-z0-9]/gi, "")}/`,
+        // A page's folder at an address of its own for each drawing, as the
+        // app serves it on Windows, so a test can answer for its files with
+        // a route: the page's path in base64, then the drawing's number.
+        pageFilesBase: async (page: string) => {
+          const w = window as unknown as { __drawings?: number };
+          w.__drawings = (w.__drawings ?? 0) + 1;
+          return `http://awb-page.localhost/${btoa(page).replace(/[^a-z0-9]/gi, "")}-${w.__drawings}/`;
+        },
         // Why a page may not load a file, from `__pageRefusals` by the path
         // the page gave; any other is there.
         checkPageFile: async (_page: string, file: string) => {

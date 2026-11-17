@@ -185,6 +185,11 @@ describe("presenting", () => {
     expect(itemsFor("s1")[0].caption).toBe("Second.");
     expect(itemsFor("s1")[0].at).toBe(1_700_000_002);
     expect(files.media?.id).toBe(first.id);
+    // Each call is counted, however soon after the last, and the count is
+    // not kept with the list.
+    presented(mine(["/one/draft.md"], "Second."), 1_700_000_002_200);
+    expect(media.calls[first.id]).toBe(3);
+    expect(localStorage.getItem("workbench.media")).not.toContain("calls");
     // A set is the same set in any order; a different set is another item.
     presented(mine(["/one/b.png", "/one/a.png"]), 1_700_000_003_000);
     presented(mine(["/one/a.png", "/one/b.png"]), 1_700_000_004_000);

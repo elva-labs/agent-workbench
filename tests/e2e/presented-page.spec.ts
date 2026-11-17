@@ -3,19 +3,22 @@ import { PROJECT, installFakeCore } from "./fake";
 
 /**
  * A presented HTML page loads the files in its own folder and nothing
- * else. The fake core gives the page a base address of the form the app
- * serves a page's folder at on Windows, and this spec answers for that
- * address with a route, as the app's protocol answers for it: a request
- * that reaches the route at all was let through by the page's policy.
+ * else. The fake core gives each drawing of the page a base address of the
+ * form the app serves a page's folder at on Windows, and this spec answers
+ * for those addresses with a route, as the app's protocol answers for
+ * them: a request that reaches the route at all was let through by the
+ * page's policy.
  */
 
 const PAGE = `${PROJECT}/out/report.html`;
-const BASE = `http://awb-page.localhost/${Buffer.from(PAGE).toString("base64").replace(/[^a-z0-9]/gi, "")}/`;
+const TOKEN = Buffer.from(PAGE).toString("base64").replace(/[^a-z0-9]/gi, "");
+/** An address in a drawing of the page's folder: the drawing, the file. */
+const DRAWN = new RegExp(`^http://awb-page\\.localhost/${TOKEN}-(\\d+)/(.*)$`);
 const SHOT = "after-owner-modern-dark-100-window.jpg";
 
-/** A screenshot's shape, 1600 by 1000. */
-const SHOT_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000"><rect width="1600" height="1000" fill="#3f56b5"/></svg>';
+/** A screenshot's shape, 1600 wide unless it is made again. */
+const shotSvg = (width: number) =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="1000"><rect width="${width}" height="1000" fill="#3f56b5"/></svg>`;
 
 /** One red pixel. */
 const PNG = Buffer.from(
@@ -46,14 +49,16 @@ addEventListener("load", function () {
 </script>
 </body></html>`;
 
-/** What reached the network, and what reached the page's folder. */
+/** What reached the network, and what reached the page's folder. The
+    shot is served at `shotWidth`, which a test changes to make it again. */
 async function serve(page: Page) {
-  const asked = { files: [] as string[], remote: [] as string[] };
+  const asked = { files: [] as string[], remote: [] as string[], shotWidth: 1600 };
   await page.route("http://awb-page.localhost/**", (route) => {
     const url = route.request().url();
     asked.files.push(url);
-    if (url === `${BASE}${SHOT}`) return route.fulfill({ contentType: "image/svg+xml", body: SHOT_SVG });
-    if (url === `${BASE}shots/b%20c.png`) return route.fulfill({ contentType: "image/png", body: PNG });
+    const file = DRAWN.exec(url)?.[2];
+    if (file === SHOT) return route.fulfill({ contentType: "image/svg+xml", body: shotSvg(asked.shotWidth) });
+    if (file === "shots/b%20c.png") return route.fulfill({ contentType: "image/png", body: PNG });
     return route.fulfill({ status: 404, contentType: "text/plain", body: "is not there" });
   });
   await page.route("https://remote.example/**", (route) => {
@@ -146,8 +151,8 @@ test("loads the images in the page's folder and nothing from above it or the web
   // Nothing reached the web, and nothing above the page's own folder was
   // asked for: the policy stopped both before a request was made.
   expect(asked.remote).toEqual([]);
-  expect(asked.files.filter((url) => !url.startsWith(BASE))).toEqual([]);
-  expect(asked.files).toContain(`${BASE}${SHOT}`);
+  expect(asked.files.filter((url) => !DRAWN.test(url))).toEqual([]);
+  expect(asked.files.some((url) => DRAWN.exec(url)?.[2] === SHOT)).toBe(true);
 
   // With the keyboard in the page but no click or key from the user, a
   // script cannot open a picture. Every call the driver makes counts as
@@ -185,7 +190,8 @@ test("opens a linked image over the window and leaves a link to the web closed",
   await expect(opened).toBeVisible();
   await expect(opened).toContainText(SHOT);
   const big = opened.locator("img");
-  await expect(big).toHaveAttribute("src", `${BASE}${SHOT}`);
+  const src = (await big.getAttribute("src")) ?? "";
+  expect(DRAWN.exec(src)?.[2]).toBe(SHOT);
   await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1600);
   // Fitted to the window, whole, and in the middle of it.
   const box = (await big.boundingBox())!;
@@ -218,6 +224,26 @@ test("opens a linked image over the window and leaves a link to the web closed",
   }, SHOT);
   await expect(page.getByTestId("media-page-missed")).toContainText("https://later.example");
   await expect(opened).toHaveCount(0);
+});
+
+test("draws a page presented again afresh, so a shot made again shows", async ({ page }) => {
+  const asked = await serve(page);
+  await present(page);
+  const inner = page.frameLocator("[data-testid='media-page']").frameLocator("iframe");
+  const width = () => inner.locator("#beside").evaluate((img: HTMLImageElement) => img.naturalWidth);
+  await expect.poll(width).toBe(1600);
+  const drawings = () =>
+    new Set(asked.files.filter((url) => DRAWN.exec(url)?.[2] === SHOT).map((url) => DRAWN.exec(url)![1]))
+      .size;
+  expect(drawings()).toBe(1);
+
+  // The agent makes the shot again under the same name and presents the
+  // page, unchanged, straight away: it is drawn under a fresh base, so
+  // nothing the webview kept stands in for the new shot.
+  asked.shotWidth = 800;
+  await present(page);
+  await expect.poll(width).toBe(800);
+  expect(drawings()).toBe(2);
 });
 
 /** A page whose script asks the window about files and tries to write in

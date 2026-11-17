@@ -28,9 +28,13 @@
     title: string;
     /** The page itself, where it is: its folder is what it may load from. */
     page: string;
+    /** Changes each time the page is presented: it is then drawn again
+        under a fresh base, whether or not its HTML changed, so nothing the
+        webview kept of the last drawing stands in for a file made again. */
+    again?: string;
   }
 
-  let { html, title, page }: Props = $props();
+  let { html, title, page, again = "" }: Props = $props();
 
   /** How many misses a drawing of the page is answered for; past that
       they are counted. */
@@ -68,6 +72,7 @@
   $effect(() => {
     const shown = page;
     const markup = html;
+    void again;
     let current = true;
     core()
       .pageFilesBase(shown)
