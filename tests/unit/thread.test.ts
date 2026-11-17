@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Conversation, type Part, type TextPart, type ToolCall } from "$lib/conversation.svelte";
 import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
 import { REPORTS_HEAD } from "$lib/instructions";
@@ -17,12 +17,14 @@ import {
   inputPath,
   lastRun,
   mcpName,
+  nameSessionsBy,
   requestPaths,
   revealed,
   place,
   phraseText,
   replyMarkdown,
   address,
+  drawnPart,
   nowDoing,
   runningCall,
   segments,
@@ -219,6 +221,77 @@ describe("a step's title", () => {
         call({ done: false, inputDone: false, input: null, inputText: '{"command":"cargo test","timeout":' }),
       ),
     ).toEqual({ lead: ["Running"], object: "cargo test" });
+  });
+});
+
+describe("the workbench's wait and notify in a run", () => {
+  const WAIT = "mcp__agent-workbench__wait";
+  const NOTIFY = "mcp__agent-workbench__notify";
+  const shape = (parts: Part[]) =>
+    segments(parts).map((segment) =>
+      segment.kind === "work" ? `work:${segment.parts.map((part) => (part.kind === "tool" ? part.name : part.kind)).join("+")}` : segment.kind,
+    );
+  const running = () => {
+    const c = new Conversation(() => 0);
+    c.apply({ type: "turnStarted", messages: [] });
+    return c;
+  };
+
+  it("are not drawn, while every other call is, the workbench's others included", () => {
+    expect(drawnPart(call({ name: WAIT, tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: NOTIFY, tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: "mcp__agent-workbench__send", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call({ name: "mcp__other__wait", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call())).toBe(true);
+    expect(drawnPart(text())).toBe(true);
+  });
+
+  it("leave a message followed only by them the last thing in its run, while the wait runs and after", () => {
+    const answer = text({ text: "The cache races on its clock." });
+    const waiting: Part[] = [answer, call({ name: WAIT, tool: "mcp", done: false })];
+    expect(shape(waiting)).toEqual(["text"]);
+    expect(runningCall(waiting)).toBeNull();
+    // A turn that is only waiting says on what, with no step of its own.
+    expect(nowDoing(running(), waiting)).toBe("Waiting on the sessions it started");
+    const onOne: Part[] = [answer, call({ name: WAIT, tool: "mcp", done: false, input: { session: "s-9" } })];
+    expect(nowDoing(running(), onOne)).toBe("Waiting on a session");
+    // A note on the row only flashes past, and says nothing of its own.
+    expect(nowDoing(running(), [answer, call({ name: NOTIFY, tool: "mcp", done: false })])).toBe("Working");
+    const done: Part[] = [answer, call({ name: WAIT, tool: "mcp" }), call({ name: NOTIFY, tool: "mcp" }), call({ name: WAIT, tool: "mcp" })];
+    expect(shape(done)).toEqual(["text"]);
+  });
+
+  it("do not join the work before and after a message, nor count in it", () => {
+    const parts: Part[] = [
+      text({ block: "a" }),
+      call({ name: "Bash", call: "real" }),
+      call({ name: WAIT, tool: "mcp" }),
+      text({ block: "b" }),
+      call({ name: WAIT, tool: "mcp", done: false }),
+    ];
+    expect(shape(parts)).toEqual(["text", "work:Bash", "text"]);
+    const work = segments(parts)[1];
+    expect(work.kind === "work" && workSummary(work.parts, 0).detail).toBe("ran 1 command");
+    expect(nowDoing(running(), parts)).toBe("Waiting on the sessions it started");
+  });
+
+  it("keep a message whole across a wake that comes between two waits", () => {
+    const c = new Conversation(() => 0);
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "Is the cache fixed?", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "text", block: "b-1", parent: null, text: "Not yet: the review is still running.", done: true },
+      { type: "toolStarted", call: "w-1", parent: null, name: WAIT, kind: "mcp" },
+      { type: "toolFinished", call: "w-1", parent: null, output: "Fix the cache stopped.", error: false, truncated: false, changes: [] },
+      { type: "message", message: "wake", state: "taken", error: null, text: "From the workbench: Fix the cache stopped.", images: [] },
+      { type: "toolStarted", call: "w-2", parent: null, name: WAIT, kind: "mcp" },
+    ];
+    for (const event of events) c.apply(event);
+    const runs = c.entries.filter((entry) => entry.kind === "agent");
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => (run.kind === "agent" ? shape(run.parts) : []))).toEqual([["text"], []]);
+    const last = runs[1];
+    expect(last.kind === "agent" && nowDoing(c, last.parts)).toBe("Waiting on the sessions it started");
   });
 });
 
@@ -588,6 +661,140 @@ describe("a name an MCP server gave", () => {
     expect(what.lead).toEqual(["use ", { name: server }, "'s"]);
     expect(stepTitle(call({ tool: "mcp", name: "mcp__" + server + "__push" })).lead).toEqual(["Used ", { name: server }, "'s"]);
     expect(phraseText(what)).toBe(`use ${server}'s push`);
+  });
+});
+
+describe("the workbench's own tools in a step's title", () => {
+  const rows: Record<string, string> = { "s-1": "Fix the flake", "s-2": "Tidy the docs" };
+  let watching: string[] | null = null;
+  const own = (tool: string, input: unknown, over: Partial<ToolCall> = {}) =>
+    phraseText(stepTitle(call({ tool: "mcp", name: `mcp__agent-workbench__${tool}`, input, ...over })));
+
+  beforeEach(() => {
+    watching = null;
+    nameSessionsBy({ named: (id) => rows[id] ?? null, watching: () => watching });
+  });
+  afterEach(() => nameSessionsBy({ named: () => null, watching: () => null }));
+
+  it("names a session by its row, running and done", () => {
+    expect(own("wait", { session: "s-1" }, { done: false })).toBe("Waiting on “Fix the flake”");
+    expect(own("wait", { session: "s-1" })).toBe("Waited on “Fix the flake”");
+    expect(own("send", { session: "s-2", text: "go" }, { done: false })).toBe("Writing to “Tidy the docs”");
+    expect(own("send", { session: "s-2", text: "go" })).toBe("Wrote to “Tidy the docs”");
+    expect(own("read", { session: "s-1" }, { done: false })).toBe("Reading “Fix the flake”");
+    expect(own("read", { session: "s-1" })).toBe("Read “Fix the flake”");
+    expect(own("stop", { session: "s-1" }, { done: false })).toBe("Stopping “Fix the flake”");
+    expect(own("stop", { session: "s-1" })).toBe("Stopped “Fix the flake”");
+  });
+
+  it("never shows an id no row answers to", () => {
+    expect(own("wait", { session: "s-9" }, { done: false })).toBe("Waiting on a session");
+    expect(own("wait", { session: "s-9" })).toBe("Waited on a session");
+    expect(own("send", { session: "s-9", text: "go" })).toBe("Wrote to a session");
+    expect(own("read", {}, { done: false })).toBe("Reading a session");
+    expect(own("stop", { session: "s-9" }, { done: false })).toBe("Stopping a session");
+  });
+
+  it("words a wait that names no session by what it watches", () => {
+    expect(own("wait", {}, { done: false })).toBe("Waiting on the sessions it started");
+    watching = ["Fix the flake"];
+    expect(own("wait", { seconds: 60 }, { done: false })).toBe("Waiting on “Fix the flake”");
+    watching = ["a", "b", "c", "d"];
+    expect(own("wait", {}, { done: false })).toBe("Waiting on 4 sessions");
+    expect(own("wait", {})).toBe("Waited on the sessions it started");
+  });
+
+  it("names a start by its row once it answered, else by the name it was given", () => {
+    expect(own("start", { name: "Fix the flake", prompt: "p" }, { done: false })).toBe("Starting “Fix the flake”");
+    expect(own("start", { prompt: "p" }, { done: false })).toBe("Starting a session");
+    expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-2 in demo. " })).toBe("Started “Tidy the docs”");
+    expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-9 in demo. " })).toBe("Started “Given”");
+    expect(own("start", { prompt: "p" })).toBe("Started a session");
+    // The answer says the mode it begins in, and so does the line.
+    expect(
+      own(
+        "start",
+        { name: "Given", prompt: "p" },
+        { result: "Started session s-2 in demo. It has the prompt. It begins in Plan mode. Keep calling wait." },
+      ),
+    ).toBe("Started “Tidy the docs” in Plan mode");
+    expect(own("start", { session: "s-1" }, { done: false })).toBe("Resuming “Fix the flake”");
+    expect(own("start", { session: "s-1" })).toBe("Resumed “Fix the flake”");
+  });
+
+  it("words the other tools for a person", () => {
+    expect(own("sessions", {}, { done: false })).toBe("Listing the sessions it started");
+    expect(own("sessions", {})).toBe("Listed the sessions it started");
+    expect(own("projects", {})).toBe("Listed the open projects");
+    expect(own("notify", { text: "Tests green" }, { done: false })).toBe("Leaving a note on its row: “Tests green”");
+    expect(own("show", { path: "/a/b.ts" })).toBe("Showed /a/b.ts");
+    expect(own("diff", { path: "/a/b.ts" }, { done: false })).toBe("Showing the changes in /a/b.ts");
+    expect(own("present", { files: ["/a/one.png", "/a/two.pdf"] })).toBe("Presented /a/one.png and 1 more");
+    expect(own("selection", {}, { done: false })).toBe("Looking at what you have open");
+    expect(own("terminal", { command: "npm run dev" })).toBe("Opened a terminal for npm run dev");
+    expect(own("browser_open", { url: "https://a.b" }, { done: false })).toBe("Opening https://a.b");
+    expect(own("browser_navigate", { url: "https://a.b" })).toBe("Went to https://a.b");
+    expect(own("browser_navigate", { action: "reload" }, { done: false })).toBe("Reloading the page");
+    expect(own("browser_navigate", { action: "back" })).toBe("Went back a page");
+    expect(own("browser_click", { ref: "e1" }, { done: false })).toBe("Clicking in the page");
+    expect(own("browser_type", { ref: "e1", text: "secret" })).toBe("Typed in the page");
+    expect(own("browser_snapshot", {})).toBe("Read the page");
+    expect(own("browser_screenshot", {}, { done: false })).toBe("Taking a screenshot of the page");
+    expect(own("browser_console", {})).toBe("Read the page's console");
+    expect(own("browser_eval", { script: "1" })).toBe("Ran a script in the page");
+    expect(own("browser_tabs", {})).toBe("Listed the open tabs");
+    expect(own("browser_close", { tab: 1 }, { done: false })).toBe("Closing a tab");
+    expect(own("settings", {})).toBe("Read the workbench's settings");
+    expect(own("settings_change", {}, { done: false })).toBe("Changing the workbench's settings");
+    expect(own("theme_save", { name: "dusk", label: "Dusk" })).toBe("Saved the theme “Dusk”");
+    expect(own("styles_write", { css: "" })).toBe("Wrote the workbench's stylesheet");
+    expect(own("git_status", {}, { done: false })).toBe("Checking the git status");
+    expect(own("git_log", {})).toBe("Read the git log");
+    expect(own("git_commit", { message: "fix: a" })).toBe("Committed “fix: a”");
+    expect(own("todos_add", { text: "Ship" }, { done: false })).toBe("Adding a todo “Ship”");
+    expect(own("todos_finish", {})).toBe("Finished a todo");
+    expect(own("todos_list", {})).toBe("Listed the todos");
+  });
+
+  it("draws a name in the text's own type between quotes, and a count after the thing", () => {
+    const named = stepTitle(call({ tool: "mcp", name: "mcp__agent-workbench__send", input: { session: "s-1" } }));
+    expect(named).toEqual({ lead: ["Wrote to"], object: "Fix the flake", quoted: true });
+    const files = stepTitle(call({ tool: "mcp", name: "mcp__agent-workbench__present", input: { files: ["/a/one.png", "/a/two.pdf", "/a/three.svg"] } }));
+    expect(files).toEqual({ lead: ["Presented"], object: "/a/one.png", tail: "and 2 more" });
+  });
+
+  it("asks in the same words, as what the agent would do", () => {
+    const ask = (tool: string, input: unknown) =>
+      phraseText(
+        asks({
+          type: "permissionAsked",
+          request: "r",
+          call: null,
+          parent: null,
+          tool,
+          input,
+          truncated: false,
+          description: null,
+          path: null,
+          choices: [],
+        }),
+      );
+    expect(ask("mcp__agent-workbench__start", { name: "Fix the flake", prompt: "p" })).toBe("start “Fix the flake”");
+    expect(ask("mcp__agent-workbench__send", { session: "s-2", text: "go" })).toBe("write to “Tidy the docs”");
+    expect(ask("mcp__agent-workbench__browser_open", { url: "https://a.b/c" })).toBe("open https://a.b/c");
+    expect(ask("mcp__agent-workbench__show", { path: "/a/b/c/d.ts" })).toBe("show /a/b/c/d.ts");
+    expect(ask("mcp__agent-workbench__sessions", {})).toBe("list the sessions it started");
+    expect(ask("mcp__claude_ai_Linear__list_issues", {})).toBe("use Linear's list_issues");
+    expect(ask("mcp__agent-workbench__no_such_tool", {})).toBe("use agent-workbench's no_such_tool");
+  });
+
+  it("leaves other servers' tools in the general wording", () => {
+    expect(stepTitle(call({ tool: "mcp", name: "mcp__github__list_issues", done: false }))).toEqual({
+      lead: ["Using ", { name: "github" }, "'s"],
+      object: "list_issues",
+    });
+    expect(stepTitle(call({ tool: "mcp", name: "mcp__claude_ai_Linear__list_issues" })).lead).toEqual(["Used ", { name: "Linear" }, "'s"]);
+    expect(own("no_such_tool", {})).toBe("Used agent-workbench's no_such_tool");
   });
 });
 

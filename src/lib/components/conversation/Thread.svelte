@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
+  import { clock, drawnPart, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -494,7 +494,7 @@
   function visible(entry: Entry): boolean {
     if (entry.key === endedWith) return false;
     if (entry.kind !== "agent") return true;
-    if (entry.parts.length > 0 || entry.key === liveKey) return true;
+    if (entry.parts.some(drawnPart) || entry.key === liveKey) return true;
     const turn = conversation.turns[entry.turn];
     return lastOfTurn.has(entry.key) && (turn?.outcome === "interrupted" || turn?.outcome === "failed");
   }
@@ -1200,10 +1200,10 @@
     data-copy-host="message"
   >
     <header class="who">
-      {#if words.text !== ""}
-        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" testid="copy-message" />
-      {/if}
       {#if from === null}
+        {#if words.text !== ""}
+          <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" testid="copy-message" />
+        {/if}
         <b>You</b>
       {:else}
         <span>From</span><span class="sender" data-testid="message-sender"><Plain text={from.name} /></span>
@@ -1212,6 +1212,9 @@
           >{/if}
       {/if}
       {#if at !== null}<time class="num">{written.get(`m:${said.id}`) ?? clock(at)}</time>{/if}
+      {#if from !== null && words.text !== ""}
+        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" place="end" testid="copy-message" />
+      {/if}
     </header>
     <div class="bubble">
       {#if said.images.length > 0}
@@ -1320,12 +1323,15 @@
      size. Its room, less in a narrow pane, comes with the pane's width in
      the same layout, so a change of width moves the rows once. */
   .thread {
+    /* The thread's rhythm: the room between two messages, which is also
+       the room under the last before the dock or the composer. */
+    --thread-gap: 22px;
     position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: calc(max(16px, min(22px, var(--conv-wide))) + var(--room, 0px))
-      max(14px, min(var(--conv-gutter), var(--conv-wide))) max(10px, min(12px, var(--conv-wide)));
+      max(14px, min(var(--conv-gutter), var(--conv-wide))) var(--thread-gap);
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1359,7 +1365,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: var(--thread-gap);
     font-size: var(--conv-size);
     line-height: 1.58;
     color: var(--ink);
@@ -1374,7 +1380,7 @@
   .row {
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: var(--thread-gap);
     min-width: 0;
   }
 
@@ -1480,14 +1486,42 @@
     object-fit: cover;
   }
 
-  /* Another session's words: a plain bubble, so they never read as the
-     user's own. */
-  .you.from .bubble {
-    background: var(--surface-2);
-    box-shadow: inset 0 0 0 1px var(--rule);
+  /* What the workbench or another session sent stands on the left, with
+     everything not the user's: no bubble, in the quieter ink of the
+     thread's own notes, lined up with the agent's text, so it reads as a
+     notice from the app rather than as the user's words or the agent's. */
+  .you.from {
+    align-items: stretch;
+    padding-left: 18px;
   }
 
+  .you.from .bubble {
+    max-width: none;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--ink-2);
+  }
+
+  .you.from.waiting .bubble {
+    box-shadow: none;
+  }
+
+  .you.from .state {
+    text-align: left;
+  }
+
+  .you.from .link.instructions {
+    align-self: flex-start;
+  }
+
+  /* A long sender's name gives way on one line, and the way to it and the
+     time keep theirs whole. */
   .who .sender {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-weight: 600;
     color: var(--ink);
     text-transform: none;
@@ -1496,6 +1530,13 @@
 
   .who .go {
     margin-left: 0;
+  }
+
+  .who .go,
+  .who time,
+  .who > span:first-child {
+    flex: none;
+    white-space: nowrap;
   }
 
   .link.instructions {

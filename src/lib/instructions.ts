@@ -59,7 +59,7 @@ export function reportsShown(reports: string, name: (id: string) => string | nul
     .split("\n")
     .map((line) => {
       const session = SESSION_LINE.exec(line);
-      if (session !== null) return `${name(session[1]) ?? `Session ${session[1]}`} ${session[2]}`;
+      if (session !== null) return `${name(session[1]) ?? unnamed(session[1], "A session", "Session")} ${session[2]}`;
       if (line.startsWith(STILL_OUT) && line.endsWith(STILL_OUT_END))
         return `Still at work when you wrote: ${namesShown(line.slice(STILL_OUT.length, -STILL_OUT_END.length), name)}.`;
       if (line.startsWith(AT_WORK) && line.endsWith(AT_WORK_END))
@@ -69,9 +69,21 @@ export function reportsShown(reports: string, name: (id: string) => string | nul
     .join("\n");
 }
 
-/** A list of sessions by id, "a, b and c", by the names their rows have. */
+/** A list of sessions by id, "a, b and c", by the names they go by; one
+    with no name kept is a session, never its id. */
 const namesShown = (ids: string, name: (id: string) => string | null) =>
-  ids.replace(/[^\s,]+/g, (id) => (id === "and" ? id : (name(id) ?? id)));
+  ids.replace(/[^\s,]+/g, (id) => (id === "and" ? id : (name(id) ?? unnamed(id, "a session", null))));
+
+/** The shape of an agent's own id for a session, as the workbench writes
+    one into a report. Anything else there is a session's name, quoted. */
+const PLAIN_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A session no name is kept for: an id is no word for a person, so it is
+    a session; a quoted name stays as it was written, after `lead`. */
+function unnamed(token: string, session: string, lead: string | null): string {
+  if (PLAIN_ID.test(token)) return session;
+  return lead === null ? token : `${lead} ${token}`;
+}
 
 /** The workbench's message to a session it woke, as the user reads it: a
     line for each session it started that stopped, asked or ended, by the

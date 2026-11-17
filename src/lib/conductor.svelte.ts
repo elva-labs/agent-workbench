@@ -66,6 +66,7 @@ import {
   defaultAgent,
   drafting,
   isLive,
+  keepName,
   reopeningRow,
   isViewed,
   keysStillIn,
@@ -108,11 +109,11 @@ import {
   userWaiting,
   userWriting,
 } from "$lib/integrated.svelte";
-import { lastRun } from "$lib/thread";
+import { lastRun, nameSessionsBy } from "$lib/thread";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
-import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
+import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
+import { mixesScripts, readsAsWorkbench, readsAsYou, reservedName, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -260,6 +261,8 @@ export function stopStarted(key: string): void {
   if (session === null) return;
   const { project, id } = session;
   const owner = startedFor(key);
+  // What the caller's reports said of it keeps its name.
+  keepName(session);
   close(key);
   if (id === null) return;
   disown(project, id);
@@ -3325,6 +3328,38 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+
+/** What a person knows a session by, by its id: its row's name, and once
+    the row has gone the name its caller gave it, or the one it was known
+    by, so what the thread said of it stays said. Null when none is kept. */
+function nameOf(id: string): string | null {
+  const row = byId(id);
+  if (row !== null) return label(row);
+  // A name that would read as the user's or the workbench's is no name for
+  // a session, as a row's never is.
+  const fit = (name: string | null | undefined) =>
+    name !== null && name !== undefined && name.trim() !== "" && !reservedName(name) ? shown(name) : null;
+  for (const list of Object.values(conductor.started)) {
+    const name = fit(list.find((entry) => entry.id === id)?.name);
+    if (name !== null) return name;
+  }
+  return fit(sessions.names[id]);
+}
+
+nameKeptBy(nameOf);
+
+// The thread words a call on the workbench's tools by the rows' names: a
+// session by its id, and the sessions a wait that names none is watching
+// when exactly one caller is waiting.
+nameSessionsBy({
+  named: nameOf,
+  watching: () => {
+    const holding = Object.keys(conductor.listening);
+    if (holding.length !== 1) return null;
+    const rows = startedBy(holding[0]).filter((row) => isLive(row));
+    return rows.length === 0 ? null : rows.map((row) => label(row));
+  },
+});
 
 // The name a start gave a session is kept on its caller's list, and is the
 // session's row's name while its agent's own title names nothing.

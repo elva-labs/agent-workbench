@@ -5,11 +5,6 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import {
-  isPermissionGranted,
-  requestPermission,
-  sendNotification,
-} from "@tauri-apps/plugin-notification";
-import {
   openUrl as openWithSystem,
   revealItemInDir,
 } from "@tauri-apps/plugin-opener";
@@ -1322,9 +1317,20 @@ export interface Core {
   onFullScreen(handler: (fullScreen: boolean) => void): Promise<() => void>;
   /** A count on the app's icon, or none. Sessions waiting for the user. */
   setBadge(count: number | null): Promise<void>;
-  /** A notification from the system, asking for leave to show one first
-      if the system has not been asked yet. */
-  notify(title: string, body: string): Promise<void>;
+  /** A notification from the system, under a name of the window's own.
+      Where the system allows, one sent again under the same name takes
+      the place of the last, a click on one brings the window forward and
+      is told through `onNoticeClicked`, and `unnotify` takes one away;
+      elsewhere it is shown and left as the system leaves it. */
+  notify(title: string, body: string, id: string): Promise<void>;
+  /** Takes the notification of that name away from the system's list. */
+  unnotify(id: string): Promise<void>;
+  /** A notification was clicked, by its name, with the window brought
+      forward. */
+  onNoticeClicked(handler: (id: string) => void): Promise<() => void>;
+  /** The window became the one in front, with true, or stopped being it,
+      with false, as the system says. */
+  onWindowFocus(handler: (focused: boolean) => void): Promise<() => void>;
   /** A short, quiet chime. */
   chime(): Promise<void>;
   spawn(
@@ -1466,6 +1472,13 @@ export interface Core {
   readMedia(path: string): Promise<Media>;
   /** How big a file is, and whether it is a folder, read where it is. */
   fileInfo(path: string): Promise<FileInfo>;
+  /** The address an HTML page's relative references resolve against:
+      its own folder's files, served by the app under a token for the
+      page, wherever the page is. */
+  pageFilesBase(page: string): Promise<string>;
+  /** What a file a page names beside it is, or rejects with why the page
+      may not load it. `file` is relative to the page's folder, decoded. */
+  checkPageFile(page: string, file: string): Promise<{ mime: string; size: number }>;
   onDiffRequest(handler: (request: DiffRequest) => void): Promise<() => void>;
   onTerminalRequest(
     handler: (request: TerminalRequest) => void,
@@ -1832,9 +1845,13 @@ const tauriCore: Core = {
     await getCurrentWindow().setBadgeCount(count === null ? undefined : count);
   },
 
-  async notify(title, body) {
-    if (!(await isPermissionGranted()) && (await requestPermission()) !== "granted") return;
-    sendNotification({ title, body });
+  notify: (title, body, id) => invoke("notice_show", { id, title, body }),
+  unnotify: (id) => invoke("notice_clear", { id }),
+  async onNoticeClicked(handler) {
+    return listen<string>("notice_clicked", (event) => handler(event.payload));
+  },
+  async onWindowFocus(handler) {
+    return getCurrentWindow().onFocusChanged((event) => handler(event.payload));
   },
 
   async chime() {
@@ -1965,6 +1982,9 @@ const tauriCore: Core = {
   },
   readMedia: (path) => invoke<Media>("read_media", { path }),
   fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
+  pageFilesBase: (page) => invoke<string>("page_files_base", { page }),
+  checkPageFile: (page, file) =>
+    invoke<{ mime: string; size: number }>("check_page_file", { page, file }),
   async onDiffRequest(handler) {
     return listen<DiffRequest>("diff_request", (event) =>
       handler(event.payload),
@@ -2194,6 +2214,13 @@ const detachedCore: Core = {
   },
   async setBadge() {},
   async notify() {},
+  async unnotify() {},
+  async onNoticeClicked() {
+    return () => {};
+  },
+  async onWindowFocus() {
+    return () => {};
+  },
   async chime() {},
   async spawn() {
     throw new Error("not connected to the workbench core");
@@ -2306,6 +2333,12 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async fileInfo() {
+    throw new Error("no core");
+  },
+  async pageFilesBase() {
+    throw new Error("no core");
+  },
+  async checkPageFile() {
     throw new Error("no core");
   },
   async onDiffRequest() {

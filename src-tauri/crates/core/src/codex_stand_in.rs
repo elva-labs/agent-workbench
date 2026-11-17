@@ -388,7 +388,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
         json!({
             "command": server.to_string_lossy(),
             "args": ["mcp"],
-            "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator"},
+            "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"},
             "tools": approved,
         })
     );
@@ -439,7 +439,7 @@ fn a_session_under_a_workflow_is_told_it_in_the_thread_and_delegates_only_throug
         assert_eq!(params["config"]["features"], no_subagents, "{method}");
         assert_eq!(
             params["config"]["mcp_servers"]["agent_workbench"]["env"],
-            json!({"WORKBENCH_SESSION": "token-flow", "WORKBENCH_ROLE": "orchestrator"}),
+            json!({"WORKBENCH_SESSION": "token-flow", "WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"}),
             "{method}"
         );
         // Nothing of the workflow is on the command line, so a command

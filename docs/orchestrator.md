@@ -384,8 +384,9 @@ its turns end, and is never woken; the row and the next wait still say
 what it has not heard.
 
 The message is the workbench's, never the user's. An integrated starter is
-sent it as the workbench's own message, which its thread shows under From
-Workbench, each session by the name its row has. A starter in a terminal
+sent it as the workbench's own message, which its thread shows on the left
+as a notice under From Workbench, each session by the name the user knows
+it by, kept once its row has gone. A starter in a terminal
 has it typed in on one line, as `send` types one, starting with the note's
 own words, From the workbench, not the user, with the sessions kept apart
 by bars. Each last line and each name in it is quoted and cut as in a
