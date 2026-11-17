@@ -279,16 +279,20 @@ export function readQuietNext() {
 /** The projects split into the active and the inactive, each in the
     order chosen. A project that is not active by what is known, and whose
     transcripts have not been read yet, is in neither until they are: they
-    may well make it active, and it would move as soon as it was drawn. */
+    may well make it active, and it would move as soon as it was drawn.
+    The project a new session is being asked for in, `asking`, is drawn
+    among the active ones while it is asked, as the one on screen is,
+    without counting as used. */
 export function splitProjects(
   paths: string[],
   current: string | null,
   sort: ProjectSort,
   now = Date.now(),
+  asking: string | null = null,
 ): { active: string[]; inactive: string[] } {
   const ordered = sortProjects(paths, sort);
   const active = new Set(
-    ordered.filter((path) => isActive(path, current, now)),
+    ordered.filter((path) => path === asking || isActive(path, current, now)),
   );
   return {
     active: ordered.filter((path) => active.has(path)),
