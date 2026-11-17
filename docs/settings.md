@@ -424,11 +424,14 @@ and no model for Codex's own default, and name, for a review, the session
 whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
 first as the one to use, how many of its sessions may run at once and to
-stop each once its piece is done with, or for a review when the work
-passes, that it goes back with `send` to the piece's own session for the
-step it returns to, which steps the piece is taken through again, that it
-is reviewed again by a new review or a line to the reviewer, how many
-times, and that the user is asked after that. The last sentence says to
+stop each once its work is taken up and nothing more is wanted from it,
+or for a review when the work passes and to stop the review once it does,
+that it goes back with `send` to the piece's own session for the step it
+returns to, resumed first if it is not running or carried on in a new
+session that names it where the orchestrator stopped it, which steps the
+piece is taken through again, that it is reviewed again by a new review or
+a line to the reviewer, how many times, and that the user is asked after
+that. The last sentence says to
 report to the user once every piece has come out of or passed the last
 step.
 
