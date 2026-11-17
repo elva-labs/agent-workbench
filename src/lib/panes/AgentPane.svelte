@@ -42,7 +42,7 @@
   import { referenced } from "$lib/show.svelte";
   import type { SessionKind } from "$lib/sessionKind.svelte";
   import type { Session } from "$lib/sessions.svelte";
-  import { handleOf, launch as launchIntegrated, linkFor, unspoken } from "$lib/integrated.svelte";
+  import { handleOf, launch as launchIntegrated, linkFor, linkOf, unspoken } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -132,9 +132,10 @@
   let refusal = $derived(current === null ? null : (conductor.refusals[current.key] ?? null));
 
   // A session that was open when the app quit starts once it is the one
-  // this pane shows.
+  // this pane shows, and once a run of it the core may still have is known
+  // to be there or not.
   $effect(() => {
-    if (current?.status === "dormant") wake(current.key);
+    if (current?.status === "dormant" && linkOf(current.key)?.busy !== true) wake(current.key);
   });
 
   // An integrated session starts as soon as its row is starting, as a

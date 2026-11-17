@@ -4,12 +4,15 @@ import { isInstalled } from "$lib/hook.svelte";
 import { linkOf } from "$lib/integrated.svelte";
 import { agentVisible } from "$lib/layout.svelte";
 import { kindFor, sessionKinds, type SessionKind } from "$lib/sessionKind.svelte";
+import { agent } from "$lib/agent.svelte";
 import {
   drafting,
   isLive,
+  onWake,
   otherWayFor,
   reopenOtherWay,
   sessions,
+  turnDormant,
   type Session,
 } from "$lib/sessions.svelte";
 
@@ -61,14 +64,40 @@ export function dueTo(session: Session): SessionKind | null {
   return other !== null && other === kindFor(session.agent) ? other : null;
 }
 
+/** The way each row left from the last quit was due to move to when the
+    app quit, by its key, from the record of the sessions open then: what it
+    starts as while the setting or its agent is not known yet. */
+const recorded = new Map<string, SessionKind>();
+
+/** A row brought back from the last quit was due to move this way. */
+export function recordMove(key: string, to: SessionKind) {
+  recorded.set(key, to);
+}
+
+/** The way a row is due to move to, as far as the window can say yet: by
+    the setting once it and the row's agent are known, else by what was
+    recorded at the last quit. */
+export function pendingMove(session: Session): SessionKind | null {
+  if (sessionKinds.known && agent.asked.includes(session.agent)) return dueTo(session);
+  const to = recorded.get(session.key) ?? null;
+  return to !== null && to !== session.kind && !session.ownWay ? to : null;
+}
+
+// A row left from the last quit starts the way it is to run, so it never
+// starts one way only to move the other a moment later.
+onWake((session) => {
+  const to = pendingMove(session);
+  recorded.delete(session.key);
+  if (to !== null && holdOf(session) === null) turnDormant(session.key, to);
+});
+
 /** What keeps a row due to move from moving now, or null when nothing
     does. A row left from the last quit has nothing running to hold it. */
 export function holdOf(session: Session): Hold | null {
   if (session.status === "dormant") {
     // A run the window is taking up again after a reload is not the row's
     // to turn until it has.
-    const link = linkOf(session.key);
-    return link !== null && (link.busy || link.attaching !== null) ? busy("starting") : null;
+    return linkOf(session.key)?.busy === true ? busy("starting") : null;
   }
   if (session.status !== "running") return busy("starting");
   const held = session.kind === "integrated" ? conversationHold(session) : terminalHold(session);
@@ -215,7 +244,10 @@ export function followSetting(): () => void {
           continue;
         }
         if (session.status === "dormant") {
-          untrack(() => move(key));
+          untrack(() => {
+            recorded.delete(key);
+            turnDormant(key, kindFor(session.agent));
+          });
           continue;
         }
         const since = restSince.get(key) ?? now;

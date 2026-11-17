@@ -25,6 +25,7 @@ import {
   sessions,
   started as startedTerminal,
   typed,
+  wake,
   type Session,
 } from "$lib/sessions.svelte";
 import { adoptSessionKinds, resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
@@ -398,6 +399,41 @@ describe("switching how an agent's sessions run", () => {
       ["conversation-2", undefined],
     ]);
     stop();
+  });
+
+  it("keeps a move not yet made on record, and starts the row that way after a restart before the setting is known", async () => {
+    workspace.open.push({ path: PROJECT, name: "demo", repository: PROJECT, isGit: true });
+    const stop = reopen();
+    const row = await conversation();
+    const h = handleOf(row.key)!;
+    fake.send(h, crypto.randomUUID(), "Keep going");
+    fake.startTurn(h);
+    setKind("claude-code", "terminal");
+    flushSync();
+    // At work, so not moved: on record as due to.
+    const kept = JSON.parse(localStorage.getItem("workbench.open")!) as { open: { id: string; kind: string; moves?: string }[] };
+    expect(kept.open).toMatchObject([{ id: row.id, kind: "integrated", moves: "terminal" }]);
+    stop();
+
+    // The app starts again, with a core that runs nothing from before:
+    // the setting and the agent are not known yet when the row on screen
+    // wakes.
+    resetSessions();
+    resetIntegrated();
+    resetSessionKinds();
+    resetAgent();
+    stopListening();
+    fake = fakeIntegrated();
+    stopListening = await listenIntegrated();
+    const again = reopen();
+    flushSync();
+    const back = sessions.all.find((one) => one.id === row.id)!;
+    expect(back).toMatchObject({ kind: "integrated", status: "dormant" });
+    // The run it had is not there to take up.
+    await vi.waitFor(() => expect(linkFor(back.key).busy).toBe(false));
+    wake(back.key);
+    expect(byKey(back.key)).toMatchObject({ kind: "terminal", status: "starting", resumedFrom: row.id, ownWay: false });
+    again();
   });
 });
 

@@ -1641,11 +1641,20 @@ export function reopened(
   return live;
 }
 
+/** Who hears that a row left from the last quit is about to start, while
+    it can still be turned the way it is to run. */
+let waking: (session: Session) => void = () => {};
+
+export function onWake(handler: (session: Session) => void) {
+  waking = handler;
+}
+
 /** Starts the process behind a row that was open when the app last quit:
     from here it is a resumed session like any other. */
 export function wake(key: string) {
   const session = byKey(key);
   if (session?.status !== "dormant") return;
+  waking(session);
   renewToken(session);
   session.status = "starting";
   changed(session);
@@ -2037,6 +2046,16 @@ export async function reopenOtherWay(key: string, bySetting = false): Promise<bo
   });
   if (!stopped) runUp(key);
   return stopped;
+}
+
+/** Turns a row left from the last quit the way it is to start, as its
+    agent's setting says: nothing runs behind it to stop. False for a row
+    that is not left from the last quit, or already runs that way. */
+export function turnDormant(key: string, to: SessionKind): boolean {
+  const row = byKey(key);
+  if (row === null || row.status !== "dormant" || row.kind === to || row.id === null) return false;
+  swap(row, to, true);
+  return true;
 }
 
 /** Turns a row whose run has ended, or that has none, the other way, to

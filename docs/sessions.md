@@ -1001,7 +1001,10 @@ its menu, runs its own way, and a later switch leaves it as it is, since
 the user chose that for the session. Reopened back to the setting's way, it
 follows the setting again. Which sessions run their own way is kept with
 the record of those open, so it holds after a restart; a record from a
-version before says nothing, and its sessions follow the setting. A
+version before says nothing, and its sessions follow the setting. So is a
+move not yet made when the app quits: the row comes back as it was and
+starts the new way when it is woken, so it never starts one way and moves
+a moment later, even before the window has the setting again. A
 session that has ended stays as it ended, and an agent that runs only in a
 terminal has nothing to move. A session on another machine moves as one
 here does.
