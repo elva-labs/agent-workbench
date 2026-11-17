@@ -272,7 +272,21 @@ else. A session that goes unread while the
 window is in the background also says so through the system, once each time
 it goes unread: a notification with the project, the session and what it
 waits on, the line the agent left when there is one, and a chime if that is
-turned on. Both are switched
+turned on. A question that waits on the user says so the same way, once for
+each question, when it comes while the window is in the background: an
+integrated session's permission or question, one asked by a session another
+started included, the workbench's question when a session wants to start
+another, and an agent's change to the settings. The notification names the
+project and the session that asks, and says what for in a line. One asked
+while the window has focus is not told of later, and one answered without
+the user, by a standing answer or the agent's own rules, never waits. A
+click on a notification brings the window forward at what it was about:
+the session, or the dock where a question is answered, which for a session
+another started is its starter's. A session's notification is taken away
+once the session is looked at, and a question's once it is answered or
+gone. Where the system does not tell the app of a click or let it take a
+notification away, the notification is left as the system leaves it; see
+[platforms](platforms.md). Both are switched
 in the [settings](settings.md#notifications). A session an orchestrator
 started goes unread only when it needs a permission, which no agent can
 grant for it: its stopping, ending, ringing or leaving a line is the

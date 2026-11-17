@@ -1,0 +1,166 @@
+//! The system's notifications.
+//!
+//! The window names each notification it sends. On macOS, run from the
+//! app's bundle, the name goes with the notification: one sent again under
+//! the same name takes the place of the one before, a click on one brings
+//! the window forward and tells the window its name, and the window takes
+//! one away by its name once what it said is over. Elsewhere, and in a
+//! build run outside a bundle, a notification goes through the
+//! notification plugin and is left as the system leaves it.
+
+use tauri::AppHandle;
+
+/// The event that tells the window which notification was clicked.
+pub const CLICKED: &str = "notice_clicked";
+
+/// Shows a notification under the window's name for it.
+#[tauri::command]
+pub fn notice_show(app: AppHandle, id: String, title: String, body: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if mac::bundled() {
+        let handle = app.clone();
+        return app
+            .run_on_main_thread(move || mac::show(&handle, &id, &title, &body))
+            .map_err(|error| error.to_string());
+    }
+    let _ = id;
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+/// Takes the notification of that name away from the system's list, where
+/// the system lets the app do so.
+#[tauri::command]
+pub fn notice_clear(app: AppHandle, id: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if mac::bundled() {
+        return app
+            .run_on_main_thread(move || mac::clear(&id))
+            .map_err(|error| error.to_string());
+    }
+    let _ = (app, id);
+    Ok(())
+}
+
+/// The notification centre of AppKit, which takes a notification's name as
+/// its identifier and tells a delegate of a click. It needs the app's own
+/// bundle; a build run outside one has none.
+#[cfg(target_os = "macos")]
+#[allow(deprecated)]
+mod mac {
+    use std::cell::OnceCell;
+    use std::sync::OnceLock;
+
+    use objc2::rc::Retained;
+    use objc2::runtime::ProtocolObject;
+    use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+    use objc2_foundation::{
+        NSBundle, NSObject, NSObjectProtocol, NSString, NSUserNotification,
+        NSUserNotificationCenter, NSUserNotificationCenterDelegate,
+    };
+    use tauri::{AppHandle, Emitter, Manager};
+
+    define_class!(
+        /// Hears a click on one of the app's notifications, and has the
+        /// notifications shown while the app is in front as well.
+        #[unsafe(super(NSObject))]
+        #[thread_kind = MainThreadOnly]
+        #[name = "WorkbenchNoticeDelegate"]
+        #[ivars = AppHandle]
+        struct Delegate;
+
+        unsafe impl NSObjectProtocol for Delegate {}
+
+        unsafe impl NSUserNotificationCenterDelegate for Delegate {
+            #[unsafe(method(userNotificationCenter:didActivateNotification:))]
+            fn did_activate(
+                &self,
+                centre: &NSUserNotificationCenter,
+                notification: &NSUserNotification,
+            ) {
+                centre.removeDeliveredNotification(notification);
+                let app = self.ivars();
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.unminimize();
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                if let Some(id) = notification.identifier() {
+                    let _ = app.emit(super::CLICKED, id.to_string());
+                }
+            }
+
+            #[unsafe(method(userNotificationCenter:shouldPresentNotification:))]
+            fn should_present(
+                &self,
+                _centre: &NSUserNotificationCenter,
+                _notification: &NSUserNotification,
+            ) -> bool {
+                true
+            }
+        }
+    );
+
+    thread_local! {
+        /// The delegate, kept for as long as the app runs: the centre holds
+        /// it unretained.
+        static DELEGATE: OnceCell<Retained<Delegate>> = const { OnceCell::new() };
+    }
+
+    /// Whether the app runs from its bundle, decided once: the notification
+    /// plugin, used outside one, makes the bundle seem to be another app's.
+    pub fn bundled() -> bool {
+        static BUNDLED: OnceLock<bool> = OnceLock::new();
+        *BUNDLED
+            .get_or_init(|| !tauri::is_dev() && NSBundle::mainBundle().bundleIdentifier().is_some())
+    }
+
+    fn centre(app: &AppHandle, mtm: MainThreadMarker) -> Retained<NSUserNotificationCenter> {
+        let centre = NSUserNotificationCenter::defaultUserNotificationCenter();
+        DELEGATE.with(|kept| {
+            kept.get_or_init(|| {
+                let delegate: Retained<Delegate> =
+                    unsafe { msg_send![super(Delegate::alloc(mtm).set_ivars(app.clone())), init] };
+                unsafe { centre.setDelegate(Some(ProtocolObject::from_ref(&*delegate))) };
+                delegate
+            });
+        });
+        centre
+    }
+
+    fn remove(centre: &NSUserNotificationCenter, id: &str) {
+        for delivered in centre.deliveredNotifications().to_vec() {
+            if delivered
+                .identifier()
+                .is_some_and(|named| named.to_string() == id)
+            {
+                centre.removeDeliveredNotification(&delivered);
+            }
+        }
+    }
+
+    pub fn show(app: &AppHandle, id: &str, title: &str, body: &str) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let centre = centre(app, mtm);
+        remove(&centre, id);
+        let notification = NSUserNotification::new();
+        notification.setIdentifier(Some(&NSString::from_str(id)));
+        notification.setTitle(Some(&NSString::from_str(title)));
+        notification.setInformativeText(Some(&NSString::from_str(body)));
+        centre.deliverNotification(&notification);
+    }
+
+    pub fn clear(id: &str) {
+        remove(
+            &NSUserNotificationCenter::defaultUserNotificationCenter(),
+            id,
+        );
+    }
+}

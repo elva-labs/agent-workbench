@@ -502,10 +502,11 @@ may claim and why is in [focus](focus-model.md).
 
 ## Notifications
 
-Two switches for a session that starts waiting for you while the window is
-in the background, as [sessions](sessions.md) describes. System
-notifications are on to begin with: the system shows the project and the
-session, and what it waits on. The chime is off to begin with: a short,
+Two switches for a session that starts waiting for you, or a question that
+waits on you, while the window is in the background, as
+[sessions](sessions.md) describes. System notifications are on to begin
+with: the system shows the project and the session, and what it waits on or
+asks. The chime is off to begin with: a short,
 quiet tone, played once as it is turned on. Each is kept with the rest of
 the settings.
 

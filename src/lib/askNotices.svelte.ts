@@ -1,0 +1,137 @@
+import { attention } from "$lib/attention.svelte";
+import { conductor, startedFor, type Ask as ConductAsk } from "$lib/conductor.svelte";
+import type { Conversation, Request } from "$lib/conversation.svelte";
+import { linkOf } from "$lib/integrated.svelte";
+import { tell, titleFor, untell } from "$lib/notify.svelte";
+import { byToken, runningByToken, sessions, type Session } from "$lib/sessions.svelte";
+import { settingsAsk, type Ask as SettingsAsk } from "$lib/settingsTools.svelte";
+import { asks, phraseText } from "$lib/thread";
+import { shown } from "$lib/unseen";
+import { projectLabel } from "$lib/workspace.svelte";
+
+/**
+ * The questions that wait on the user, as the system's notifications say
+ * them.
+ *
+ * Every question an integrated session's agent puts, a permission or a
+ * question of its own, those of the sessions another started included; the
+ * workbench's question when a session wants to start another, or another
+ * round of a review; and an agent's change to the settings. A question
+ * answered without the user, by a standing answer or the agent's own
+ * rules, never waits here, so it is never told of.
+ *
+ * Each is told of once, when it comes while the window is in the
+ * background, by which session asks and what for, and a click on it goes
+ * to where it is answered. One that came while the window had focus is not
+ * told of later. Once a question is answered, or goes, its notification is
+ * taken away.
+ */
+
+/** A question waiting on the user, as a notification says it. */
+export interface Waiting {
+  /** Its name, unique to the question. */
+  name: string;
+  title: string;
+  body: string;
+  /** The row a click goes to, where it is answered; null for one put over
+      the whole window. */
+  at: string | null;
+}
+
+/** How long a notification's line may run before it is cut. */
+const LINE = 100;
+
+/** Every question waiting on the user now. */
+export function openAsks(): Waiting[] {
+  const out: Waiting[] = [];
+  for (const row of sessions.all) {
+    if (row.kind !== "integrated") continue;
+    // Read so a row whose link is made after it was last looked at is
+    // looked at again: a link is made as its run starts.
+    void row.status;
+    const conversation = linkOf(row.key)?.conversation ?? null;
+    if (conversation === null) continue;
+    for (const request of conversation.open) out.push(fromRequest(row, request, conversation));
+  }
+  if (conductor.asking !== null) out.push(fromConduct(conductor.asking));
+  if (settingsAsk.asking !== null) out.push(fromSettings(settingsAsk.asking));
+  return out;
+}
+
+/** The questions open as last looked at, by name. */
+let open = new Set<string>();
+
+/** Looks at the questions again: each new one is told of while the window
+    is in the background, and each one gone is taken away. */
+export function heedAsks(now: Waiting[]) {
+  const names = new Set(now.map((waiting) => waiting.name));
+  for (const waiting of now) {
+    if (open.has(waiting.name) || attention.focused) continue;
+    tell(waiting.name, waiting.title, waiting.body, waiting.at);
+  }
+  for (const name of open) if (!names.has(name)) untell(name);
+  open = names;
+}
+
+function fromRequest(row: Session, request: Request, conversation: Conversation): Waiting {
+  const asked = request.asked;
+  const body =
+    asked.type === "permissionAsked"
+      ? `Asks to ${phraseText(asks(asked, asked.call === null ? null : conversation.call(asked.call)))}`
+      : `Asks: ${asked.questions[0]?.question ?? "a question"}`;
+  return {
+    name: JSON.stringify(["ask", row.key, request.request]),
+    title: titleFor(row),
+    body: line(body),
+    at: answeredIn(row),
+  };
+}
+
+/** The row a session's question is answered in: the dock of the
+    integrated session that started it, while that runs, else its own. */
+function answeredIn(row: Session): string {
+  const starter = byToken(startedFor(row.key));
+  return starter !== null && starter.kind === "integrated" && starter.status === "running" ? starter.key : row.key;
+}
+
+function fromConduct(ask: ConductAsk): Waiting {
+  const body =
+    ask.round !== null
+      ? `Wants another round of ${ask.round.step} on ${ask.round.name}`
+      : ask.prompt.trim() === ""
+        ? "Wants to start a session"
+        : `Wants to start a session: ${ask.prompt}`;
+  return {
+    name: JSON.stringify(["conduct", ask.request.id]),
+    title: `${projectLabel(ask.project)} · ${ask.caller}`,
+    body: line(body),
+    at: null,
+  };
+}
+
+function fromSettings(ask: SettingsAsk): Waiting {
+  const row = runningByToken(ask.request.session);
+  return {
+    name: JSON.stringify(["settings", ask.request.id]),
+    title: row === null ? ask.caller : titleFor(row),
+    body: line(ask.reason === null ? "Wants to change the settings" : `Wants to change the settings: ${ask.reason}`),
+    at: null,
+  };
+}
+
+/** One line of what may be an agent's text, as the user may safely read
+    it, cut where it runs long. */
+function line(text: string): string {
+  const first =
+    shown(text)
+      .split("\n")
+      .find((candidate) => candidate.trim() !== "")
+      ?.trim() ?? "";
+  const chars = Array.from(first);
+  return chars.length > LINE ? `${chars.slice(0, LINE - 1).join("")}…` : first;
+}
+
+/** Test seam. */
+export function resetAskNotices() {
+  open = new Set();
+}

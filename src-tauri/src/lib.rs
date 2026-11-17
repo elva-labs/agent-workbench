@@ -15,6 +15,7 @@ mod chrome;
 mod launch;
 mod leaving;
 mod menu;
+mod notices;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
 pub mod remote;
@@ -1899,6 +1900,8 @@ pub fn run() {
             leaving::leave_running,
             leaving::leave_heard,
             leaving::leave_confirmed,
+            notices::notice_show,
+            notices::notice_clear,
             launch::take_opened,
             browser::browser_open,
             browser::browser_focus,
