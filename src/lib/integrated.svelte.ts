@@ -1,3 +1,4 @@
+import { tick } from "svelte";
 import { dirFor } from "$lib/accounts.svelte";
 import { spoken } from "$lib/instructions";
 import { unsent, type Sent } from "$lib/mention";
@@ -121,6 +122,15 @@ export class Link {
   /** The messages this window asked to take back, kept whole until the
       agent lets go of each, when they go back to the composer. */
   takingBack = new Map<string, Message>();
+  /** The messages Up took back, oldest first, with the words, mentions
+      and images of each the agent has let go of, and the composer's words
+      as Up last left them: while they stand there unchanged, Up takes the
+      one before, and each comes back in the order sent. */
+  upChain = $state<{
+    ids: string[];
+    back: Record<string, { draft: string; mentions: string[]; images: IntegratedImage[] }>;
+    draft: string;
+  } | null>(null);
   /** Why the waiting messages could not be sent now, or a message taken
       back, until the waiting messages or the turn next change. */
   nowError = $state<string | null>(null);
@@ -155,6 +165,15 @@ export class Link {
   /** The agent the row was started on, once a workflow picked for it may
       have put it on another: no workflow puts it back. */
   startedOn = $state<AgentId | null>(null);
+  /** Going back is on its way: the message gone back to, as it stood,
+      and how it goes back, until the core has answered. */
+  goingBack = $state<{ message: Message; way: BackWay } | null>(null);
+  /** What the composer says of the last going back, until the next message
+      is sent: the files put back, or why it did not go back. */
+  backSaid = $state<string | null>(null);
+  /** The composer's words as going back left them, so undoing it takes
+      them out again where they stand unchanged. */
+  backDraft: string | null = null;
   /** What the user allowed for the rest of this run alone, in the words
       the offer said it keeps: what the run ends with it. A permission mode
       allowed so is not here, since the conversation's mode goes on into
@@ -288,6 +307,10 @@ function isWork(body: IntegratedEventBody): boolean {
 }
 
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
+  if (body.type === "rewound") {
+    wentBack(key, link, body);
+    return;
+  }
   const before = link.conversation.state;
   // A message this window asked to take back goes back to its composer the
   // moment the agent lets go of it, whatever the answer to the asking.
@@ -862,10 +885,13 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
 
 /** What goes ahead of the user's words in a message to a session, and
     what counts it as told once the agent takes the message, from the
-    module that knows what the sessions it started have done: told by it. */
+    module that knows what the sessions it started have done: told by it.
+    `untold` counts it as not told again, for a message the conversation
+    went back on. */
 export interface Note {
   text: string;
   deliver: () => void;
+  untold?: () => void;
 }
 
 let noteFor: (key: string) => Note | null = () => null;
@@ -877,7 +903,11 @@ export function notesFrom(how: (key: string) => Note | null) {
 /** What follows a message the agent has not taken yet, by the message's
     id, with the row it went to: what happens once the agent takes it into
     a turn, and what happens when it never reaches the agent. */
-const notes = new Map<string, { key: string; taken: () => void; lost: () => void }>();
+const notes = new Map<string, { key: string; taken: () => void; lost: () => void; untold: () => void }>();
+
+/** What counts the note a taken message carried as not told again, by the
+    message's id, for a conversation that goes back on it. */
+const toldBy = new Map<string, () => void>();
 
 /** Settles what follows each message the agent has taken into a turn, or
     that never reaches it: it failed, was dropped, or the session went
@@ -889,6 +919,7 @@ function settleNotes(key: string, link: Link | undefined) {
     if (state === "taken") {
       notes.delete(id);
       held.taken();
+      toldBy.set(id, held.untold);
     } else if (state === undefined || state === "dropped" || state === "failed") {
       notes.delete(id);
       held.lost();
@@ -921,7 +952,7 @@ export function userWriting(key: string): boolean {
     Null when there is no agent to send it to. */
 export function sendAsWorkbench(key: string, text: string, lost: () => void): string | null {
   const id = send(key, text, [], WORKBENCH);
-  if (id !== null) notes.set(id, { key, taken: () => {}, lost });
+  if (id !== null) notes.set(id, { key, taken: () => {}, lost, untold: lost });
   return id;
 }
 
@@ -947,7 +978,8 @@ export function send(
   const id = crypto.randomUUID();
   mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
-  if (note !== null) notes.set(id, { key, taken: note.deliver, lost: () => {} });
+  link.backSaid = null;
+  if (note !== null) notes.set(id, { key, taken: note.deliver, lost: () => {}, untold: note.untold ?? (() => {}) });
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
@@ -1089,21 +1121,256 @@ export async function takeBack(key: string, id: string): Promise<boolean> {
 }
 
 /** Puts a message's words, mentions and images back in the session's
-    composer, ahead of what is written there, with the keyboard on it. One
-    that never stood in the thread leaves it. */
-export function restore(key: string, said: Message) {
+    composer, ahead of what is written there, with the keyboard on it and
+    the caret where `caret` says. One that never stood in the thread leaves
+    it. One Up took back, while the composer holds only what Up took back,
+    goes among those in the order they were sent, with the caret at the
+    start. */
+export function restore(key: string, said: Message, caret: "start" | "end" | null = null) {
   const link = links.get(key);
   if (link === undefined) return;
   const back = unsent(spoken(said.text, senderOf(said) === null).text, mentionsOf(said.id));
-  link.draft = link.draft.trim() === "" ? back.draft : `${back.draft}\n${link.draft}`;
-  link.mentions = [...new Set([...link.mentions, ...back.picked])];
-  link.images = [...said.images, ...link.images];
+  const chain = link.upChain;
+  if (chain !== null && chain.ids.includes(said.id) && link.draft === chain.draft) {
+    chain.back[said.id] = { draft: back.draft, mentions: back.picked, images: [...said.images] };
+    const kept = chain.ids.flatMap((id) => chain.back[id] ?? []);
+    link.draft = kept.map((one) => one.draft).join("\n");
+    link.mentions = [...new Set(kept.flatMap((one) => one.mentions))];
+    link.images = kept.flatMap((one) => one.images);
+    chain.draft = link.draft;
+    caret = "start";
+  } else {
+    if (chain !== null && link.draft !== chain.draft) link.upChain = null;
+    link.draft = link.draft.trim() === "" ? back.draft : `${back.draft}\n${link.draft}`;
+    link.mentions = [...new Set([...link.mentions, ...back.picked])];
+    link.images = [...said.images, ...link.images];
+  }
   if (!said.placed) link.conversation.forget(said.id);
-  queueMicrotask(() =>
-    document
-      .querySelector<HTMLTextAreaElement>(`[data-session="${key}"] [data-testid="composer-input"]`)
-      ?.focus(),
+  void tick().then(() => {
+    const field = document.querySelector<HTMLTextAreaElement>(
+      `[data-session="${key}"] [data-testid="composer-input"]`,
+    );
+    field?.focus();
+    if (field !== null && caret !== null) {
+      const at = caret === "start" ? 0 : field.value.length;
+      field.setSelectionRange(at, at);
+    }
+  });
+}
+
+/**
+ * Up in the composer takes a waiting message of the user's own back: with
+ * the composer holding nothing, the newest; with it holding only what Up
+ * took back, unchanged, the one before those. `own` says which messages
+ * are the user's own. None that is on its way already, or being taken
+ * back, is taken. False when there is none to take, or the composer holds
+ * something else, and Up does what it does in a field.
+ */
+export function takeBackUp(key: string, own: (message: Message) => boolean): boolean {
+  const link = links.get(key);
+  if (link === undefined || link.handle === null || onTheirWay(key)) return false;
+  const empty = link.draft.trim() === "" && link.images.length === 0 && link.files.length === 0;
+  const chain = link.upChain;
+  const going = chain !== null && link.draft === chain.draft && (chain.draft !== "" || chain.ids.length > 0);
+  if (!going && !empty) return false;
+  const order = link.conversation.order;
+  const oldest = going && chain.ids.length > 0 ? order.indexOf(chain.ids[0]) : order.length;
+  const next = link.conversation.waiting.findLast(
+    (message) =>
+      message.state === "queued" &&
+      own(message) &&
+      !link.takingBack.has(message.id) &&
+      order.indexOf(message.id) < oldest,
   );
+  if (next === undefined) return false;
+  link.upChain = going ? { ...chain, ids: [next.id, ...chain.ids] } : { ids: [next.id], back: {}, draft: link.draft };
+  void takeBack(key, next.id);
+  return true;
+}
+
+/** Whether Up, pressed again, has one before to take back: the composer
+    holds only what Up took back, and an older message of the user's own
+    waits that is not being taken back. */
+export function upHasMore(key: string, own: (message: Message) => boolean): boolean {
+  const link = links.get(key);
+  const chain = link?.upChain ?? null;
+  if (link === undefined || chain === null || link.draft !== chain.draft || chain.ids.length === 0) return false;
+  const order = link.conversation.order;
+  const oldest = order.indexOf(chain.ids[0]);
+  return link.conversation.waiting.some(
+    (message) =>
+      message.state === "queued" && own(message) && !link.takingBack.has(message.id) && order.indexOf(message.id) < oldest,
+  );
+}
+
+/** Whether the composer holds only what Up took back, as Up left it. */
+export function upHolds(key: string): boolean {
+  const link = links.get(key);
+  const chain = link?.upChain ?? null;
+  return link !== undefined && chain !== null && chain.draft !== "" && link.draft === chain.draft;
+}
+
+/** How a conversation goes back to before a message, as the user chose:
+    the conversation alone, the conversation and the files, or only the
+    files. */
+export type BackWay = "conversation" | "both" | "files";
+
+/** Files by their names, the last part of each path, joined with an and,
+    the rest counted past three. */
+export function fileNames(files: string[]): string {
+  const names = files.map((file) => file.replaceAll("\\", "/").split("/").pop() ?? file);
+  if (names.length > 3) return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+}
+
+/** The time of day a message was sent, as the thread shows it. */
+function timeOf(at: number | null): string {
+  if (at === null) return "then";
+  const when = new Date(at);
+  return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Takes a session at rest back to before a message of the user's, the way
+ * chosen, with `shown` the files a preview showed the user, which are those
+ * put back. While the core goes back the session takes no message: what is
+ * sent waits, as for a session starting again. What the run says meanwhile
+ * waits too: a Claude Code session is started again under a new id, and
+ * the run gone back from has ended by the time the core answers. The
+ * conversation is cut where `rewound` says, and the message's words come
+ * back to the composer. Resolves to why it did not go back, or null.
+ */
+export async function goBack(key: string, id: string, way: BackWay, shown: string[]): Promise<string | null> {
+  const link = links.get(key);
+  const session = byKey(key);
+  const said = link?.conversation.messages[id];
+  if (link === undefined || session === null || link.handle === null) return "The session is not running.";
+  if (said === undefined) return "That message is not in the conversation.";
+  if (link.goingBack !== null) return "It is going back already.";
+  const handle = link.handle;
+  const conversation = way !== "files";
+  const restarts = conversation && session.agent === "claude-code";
+  link.goingBack = { message: { ...said, images: [...said.images] }, way };
+  link.nowError = null;
+  link.backSaid = null;
+  link.held = [];
+  if (restarts) link.restarting = true;
+  let went: Awaited<ReturnType<ReturnType<typeof core>["integratedRewind"]>>;
+  try {
+    went = await core().integratedRewind(handle, id, { conversation, files: way === "conversation" ? null : shown });
+  } catch (error) {
+    settleBack(key, link, link.held ?? []);
+    link.goingBack = null;
+    return message(error);
+  }
+  const held = link.held ?? [];
+  if (went.id !== handle) {
+    // The run gone back from has ended; what it said last is let go.
+    byHandle.delete(handle);
+    link.handle = null;
+    if (went.id === null) {
+      settleBack(key, link, held);
+      link.goingBack = null;
+      const why = `${agentName(session)} could not start again: ${went.error ?? "no reason was given"}.`;
+      link.conversation.apply({ type: "error", kind: "process", message: why });
+      return why;
+    }
+    link.handle = went.id;
+    byHandle.set(went.id, key);
+    settleBack(key, link, claim(went.id));
+    if (went.sessionId !== null) identify(session, went.sessionId);
+  } else settleBack(key, link, held);
+  link.goingBack = null;
+  const at = timeOf(said.at);
+  if (went.fallback !== null) {
+    link.backSaid = `It did not go back: ${went.fallback}. The conversation goes on as it was.`;
+    return went.fallback;
+  }
+  if (went.files.length > 0)
+    link.backSaid = `${fileNames(went.files)} ${went.files.length === 1 ? "is" : "are"} as ${went.files.length === 1 ? "it was" : "they were"} at ${at}. What commands changed stays.`;
+  // Claude Code's going back of the conversation alone can be undone, until
+  // anything is said from there.
+  if (restarts && went.files.length === 0) link.conversation.undoable(true);
+  return null;
+}
+
+/** The name the agent goes by, for what the window says of it. */
+function agentName(session: Session): string {
+  return session.agent === "codex" ? "Codex" : "Claude Code";
+}
+
+/** Plays what a run said while going back was asked, and lets the session
+    take messages again. */
+function settleBack(key: string, link: Link, events: IntegratedEventBody[]) {
+  link.held = null;
+  link.restarting = false;
+  for (const body of events) deliver(key, link, body);
+}
+
+/** The session went back: the conversation is cut before the message, the
+    reports the messages that left carried count as not told again, and in
+    the window that asked, the message's words come back to the composer,
+    the caret at their end. */
+function wentBack(key: string, link: Link, body: Extract<IntegratedEventBody, { type: "rewound" }>) {
+  if (!body.conversation) return;
+  const asked = link.goingBack?.message.id === body.message ? link.goingBack.message : null;
+  const gone = link.conversation.rewound(body.message, clock());
+  for (const id of gone) {
+    toldBy.get(id)?.();
+    toldBy.delete(id);
+  }
+  if (asked === null) return;
+  link.draft = "";
+  link.images = [];
+  link.mentions = [];
+  link.files = [];
+  link.upChain = null;
+  restore(key, { ...asked, placed: true }, "end");
+  link.backDraft = link.draft;
+}
+
+/** Undoes going back that started the session again: it starts again on
+    the conversation as it was, which comes back to the thread, and the
+    words going back put in the composer leave it where they stand
+    unchanged. Resolves to why it was not undone, or null. */
+export async function undoGoBack(key: string): Promise<string | null> {
+  const link = links.get(key);
+  const session = byKey(key);
+  if (link === undefined || session === null || link.handle === null) return "The session is not running.";
+  const handle = link.handle;
+  link.held = [];
+  link.restarting = true;
+  let went: Awaited<ReturnType<ReturnType<typeof core>["integratedRewindUndo"]>>;
+  try {
+    went = await core().integratedRewindUndo(handle);
+  } catch (error) {
+    settleBack(key, link, link.held ?? []);
+    link.nowError = `Not undone: ${message(error)}`;
+    return message(error);
+  }
+  const held = link.held ?? [];
+  byHandle.delete(handle);
+  link.handle = null;
+  if (went.id === null) {
+    settleBack(key, link, held);
+    const why = `${agentName(session)} could not start again: ${went.error ?? "no reason was given"}.`;
+    link.conversation.apply({ type: "error", kind: "process", message: why });
+    return why;
+  }
+  link.handle = went.id;
+  byHandle.set(went.id, key);
+  link.conversation.unrewound();
+  settleBack(key, link, claim(went.id));
+  if (went.sessionId !== null) identify(session, went.sessionId);
+  if (link.backDraft !== null && link.draft === link.backDraft) {
+    link.draft = "";
+    link.images = [];
+    link.mentions = [];
+  }
+  link.backDraft = null;
+  link.backSaid = null;
+  return null;
 }
 
 /** Answers a permission request with one of the choices it offered. */
@@ -1221,5 +1488,6 @@ export function resetIntegrated(time: () => number = Date.now) {
   early.clear();
   stopped.clear();
   notes.clear();
+  toldBy.clear();
   clock = time;
 }

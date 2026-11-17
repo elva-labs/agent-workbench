@@ -1524,11 +1524,13 @@ function atWork(session: Session): boolean {
   return isLive(session) && stops.get(session.key)?.rest === null;
 }
 
-/** A note for a caller, and what counts it as told once it has reached
-    the agent. */
+/** A note for a caller, what counts it as told once it has reached the
+    agent, and what counts it as not told again once the conversation went
+    back on the message that carried it. */
 export interface Note {
   text: string;
   deliver: () => void;
+  untold: () => void;
 }
 
 /**
@@ -1558,14 +1560,25 @@ function reportNote(caller: string, ending: boolean): Note | null {
       `Still at work when the user wrote: ${either(out.map(namedAs), "and")}. Call wait to hear from them once you have answered.`,
     );
   if (lines.length === 0) return null;
+  // What each report was counted as before it was told, to count it so
+  // again should the conversation go back on the message.
+  let before: { key: string; rest: Rest | null; told: Rest | null; turn: number | null }[] = [];
   return {
     text: [REPORTS_HEAD, ...lines].join("\n"),
     deliver: () => {
+      before = reported.map(([key, rest]) => {
+        const mark = stops.get(key);
+        return { key, rest, told: mark?.told ?? null, turn: mark?.toldTurn ?? null };
+      });
       for (const [key, rest] of reported) tellAs(key, rest);
       cut.delete(caller);
       // A wait the message is about to cut short has had its still-out
       // line.
       for (const wait of holding) wait.noted = true;
+    },
+    untold: () => {
+      for (const { key, rest, told, turn } of before) untell(key, rest, told, turn);
+      before = [];
     },
   };
 }

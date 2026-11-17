@@ -42,7 +42,10 @@
    *
    * Enter sends and Shift+Enter breaks the line. Escape stops a running
    * turn; with none running it is the app's. Up from an empty composer
-   * reaches what the agent waits on, when it waits on something.
+   * reaches what the agent waits on, when it waits on something, and
+   * otherwise takes the newest of the user's own waiting messages back;
+   * Up again, while the composer holds only what Up took back with the
+   * caret at its start, takes the one before.
    *
    * A slash typed as the first thing in a message opens the agent's
    * commands and skills over the composer, for an agent that lists them:
@@ -107,6 +110,10 @@
     /** Takes the newest of the user's waiting messages back into the
         composer; false when there is none to take. */
     onTakeBack?: () => boolean;
+    /** Up from an empty composer, or one holding only what Up took back:
+        takes the next of the user's waiting messages back; false when
+        there is none to take, and Up does what it does in a field. */
+    onUp?: () => boolean;
     /** What the composer says of the messages that wait, or null. */
     nowHint?: string | null;
   }
@@ -130,6 +137,7 @@
     choosable = false,
     onSendNow,
     onTakeBack,
+    onUp,
     nowHint = null,
   }: Props = $props();
 
@@ -592,8 +600,11 @@
         e.stopPropagation();
         stop();
       }
-    } else if (e.key === "ArrowUp" && link.draft === "" && onDock?.()) {
-      e.preventDefault();
+    } else if (e.key === "ArrowUp" && !e.isComposing) {
+      const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+      const atStart = field !== null && field.selectionStart === 0 && field.selectionEnd === 0;
+      if (link.draft === "" && onDock?.()) e.preventDefault();
+      else if (plain && !e.repeat && atStart && onUp?.()) e.preventDefault();
     }
   }
 
