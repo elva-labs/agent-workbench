@@ -116,6 +116,10 @@ struct SpawnParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    /// The user agreed to bring back what a conversation held at the point
+    /// it went back to left out.
+    #[serde(default)]
+    bring_back: bool,
     cols: u16,
     rows: u16,
 }
@@ -492,6 +496,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.bring_back,
                 p.cols,
                 p.rows,
                 make_output,

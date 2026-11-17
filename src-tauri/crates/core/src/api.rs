@@ -54,6 +54,14 @@ struct Prepared {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
+/// What a terminal resume of a conversation held at the point it went back
+/// to fails with, before the reason: the window asks the user, and on a yes
+/// starts it again saying the user agreed.
+pub const HELD: &str = "held";
+
+/// Why a terminal resume of a held conversation is refused.
+const TERMINAL_HELD: &str = "This conversation went back to an earlier message, and a terminal would bring back what that left out. Send it a message in the workbench first, or agree to bring that back.";
+
 /// Why a message cannot be gone back to: it is not in the conversation.
 const UNSAID: &str = "That message is not in the conversation as the agent keeps it.";
 
@@ -443,6 +451,7 @@ impl Core {
         instructions: Option<&str>,
         start_only: bool,
         afresh: bool,
+        bring_back: bool,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -464,6 +473,7 @@ impl Core {
             instructions,
             start_only,
             afresh,
+            bring_back,
             &env::environment().vars,
         )?;
         // The project a session belongs to is the one that is open, which
@@ -529,9 +539,22 @@ impl Core {
         instructions: Option<&str>,
         start_only: bool,
         afresh: bool,
+        bring_back: bool,
         vars: &HashMap<String, String>,
     ) -> Result<Prepared, String> {
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
+        // A Claude Code conversation held at the point it went back to would
+        // go on in its terminal with what that left out, since the terminal
+        // does not take the point: only where the user agreed, which lets
+        // the point go. Refused before anything is made.
+        if let Some(session) = session.as_deref() {
+            if self.held_in(agent, project, cwd, session, config_dir, vars) {
+                if !bring_back {
+                    return Err(format!("{HELD}: {TERMINAL_HELD}"));
+                }
+                self.held.release(session);
+            }
+        }
         let instructions = instructions.filter(|text| !text.trim().is_empty());
         let token = token.filter(|token| !token.trim().is_empty());
         let orchestrator = instructions.is_some();
@@ -1265,13 +1288,34 @@ impl Core {
         session: &str,
         config_dir: Option<&str>,
     ) -> bool {
+        self.held_in(
+            agent,
+            project,
+            cwd,
+            session,
+            config_dir,
+            &env::environment().vars,
+        )
+    }
+
+    /// Whether a conversation is held, its account's directory found in
+    /// `vars` where none is named.
+    fn held_in(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: &str,
+        config_dir: Option<&str>,
+        vars: &HashMap<String, String>,
+    ) -> bool {
         if agent != crate::claude_stream::AGENT {
             return false;
         }
         let Some(home) = self.home.as_deref() else {
             return false;
         };
-        let dir = account::claude_dir(home, config_dir, &env::environment().vars);
+        let dir = account::claude_dir(home, config_dir, vars);
         let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
             return false;
         };
@@ -2089,6 +2133,7 @@ mod tests {
                     instructions,
                     true,
                     false,
+                    false,
                     &vars,
                 )
                 .unwrap();
@@ -2119,6 +2164,7 @@ mod tests {
             None,
             Some("1. Direct the work."),
             true,
+            false,
             false,
             80,
             24,
@@ -2220,6 +2266,77 @@ mod tests {
         assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4", "m-6"]);
         assert_eq!(core.held.at(session, Some("a-6")), None, "let go");
         assert!(!held());
+    }
+
+    /// A terminal does not take the point a held conversation goes on from,
+    /// so resuming one in a terminal is refused, before anything is made,
+    /// unless the user agreed to bring back what it left out, which lets
+    /// the point go.
+    #[test]
+    fn a_terminal_resumes_a_held_conversation_only_where_the_user_agreed() {
+        let home = Scratch::new("api-held-terminal");
+        let claude = home.join(".claude-work");
+        let folder = home.join("demo");
+        std::fs::create_dir_all(&folder).unwrap();
+        let dir = crate::transcripts::directory_for(&claude, &folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let session = "5f0c2b1e-7a4d-4c1b-9e3f-2a6b8c0d1e2f";
+        std::fs::write(
+            dir.join(format!("{session}.jsonl")),
+            include_str!("../fixtures/claude-history/rewind-compacted.jsonl"),
+        )
+        .unwrap();
+        let bin = home.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for agent in ["claude", "codex"] {
+            std::fs::write(bin.join(agent), b"#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(bin.join(agent), std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+        }
+        let vars = HashMap::from([("PATH".to_string(), bin.to_string_lossy().to_string())]);
+        let config = claude.to_string_lossy().to_string();
+        let core = core_at(&home);
+        let resume = |agent: &str, session: Option<&str>, bring_back: bool| {
+            core.prepare(
+                agent,
+                &folder,
+                None,
+                session.map(str::to_string),
+                Some("token-1"),
+                None,
+                None,
+                None,
+                Some(&config),
+                None,
+                false,
+                false,
+                bring_back,
+                &vars,
+            )
+            .map(|_| ())
+        };
+        let held = || core.integrated_held("claude-code", &folder, None, session, Some(&config));
+        // Not held: resumed as ever.
+        assert_eq!(resume("claude-code", Some(session), false), Ok(()));
+        core.held.hold(session, "a-5", "a-6");
+        let refused = resume("claude-code", Some(session), false).unwrap_err();
+        assert!(refused.starts_with(&format!("{HELD}: ")), "{refused}");
+        assert!(
+            refused.contains("went back to an earlier message"),
+            "{refused}"
+        );
+        assert!(held(), "still held after a refusal");
+        // A new conversation, and another agent, are none of its concern.
+        assert_eq!(resume("claude-code", None, false), Ok(()));
+        assert_eq!(resume("codex", Some(session), false), Ok(()));
+        // Agreed: resumed, and the point let go.
+        assert_eq!(resume("claude-code", Some(session), true), Ok(()));
+        assert!(!held());
+        assert_eq!(resume("claude-code", Some(session), false), Ok(()));
     }
 
     /// A conversation started again goes on from the entry asked for, or,

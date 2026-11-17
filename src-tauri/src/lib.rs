@@ -114,6 +114,7 @@ async fn pty_spawn(
     instructions: Option<String>,
     start_only: Option<bool>,
     afresh: Option<bool>,
+    bring_back: Option<bool>,
     cols: u16,
     rows: u16,
     on_output: Channel,
@@ -141,6 +142,7 @@ async fn pty_spawn(
                 instructions.as_deref(),
                 start_only.unwrap_or(false),
                 afresh.unwrap_or(false),
+                bring_back.unwrap_or(false),
                 cols,
                 rows,
                 |_| to_channel(on_output),
@@ -151,7 +153,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "bringBack": bring_back.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));

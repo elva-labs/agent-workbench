@@ -625,12 +625,17 @@ read as it is. A transcript that cannot be read for the moment keeps the
 point held.
 
 Claude Code's terminal does not take the point a stream session is started
-from: resumed at one, it shows and goes on with the newest entry. So a
-terminal that opens the conversation while it is held shows what was gone
-back on, as Claude Code's own terminal does when it is quit before the
-next message, and a line typed there hangs off the newest entry, which lets
-the point go and makes what was gone back on the conversation again for
-good. The held command says whether a conversation is held, so that a
+from: resumed at one, it shows and goes on with the newest entry. Opened
+and left, it writes nothing that moves the newest entry, but it shows what
+was gone back on, as Claude Code's own terminal does when it is quit before
+the next message, and a line typed there hangs off the newest entry, which
+lets the point go and makes what was gone back on the conversation again
+for good. So a terminal start that resumes a held conversation, from a row,
+from the list of past sessions or from the start tool, is refused with a
+reason of its own kind, which the window can tell from other failures,
+unless it says the user agreed to bring that back; then the point is let
+go and the terminal starts. The start tool answers the agent with the
+reason. The held command says whether a conversation is held, so that a
 window can say so before it opens one in a terminal, and offer to send a
 message first.
 

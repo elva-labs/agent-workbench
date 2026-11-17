@@ -174,6 +174,11 @@ export interface FakeIntegrated {
   /** Whether a Claude Code conversation is held at the point it went back
       to: from going back until a turn takes a message in it, or undo. */
   held(options: IntegratedHistoryOptions): boolean;
+  /** What the core does as a terminal resumes a Claude Code conversation:
+      one held at the point it went back to is refused, as the core refuses
+      it, unless `bringBack` says the user agreed, which lets the point
+      go. */
+  terminalResume(session: string, bringBack: boolean): void;
   /** Undoes the going back that started a Claude Code session, while
       nothing has gone on in it since: it ends, and one is started again on
       the conversation as it was. */
@@ -444,6 +449,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const OLDER = "This conversation was kept by an older Codex and cannot go back.";
   const NO_FILES = "Codex cannot put files back.";
   const UNSHOWN = "The files to put back changed since they were shown. Look at them again.";
+  const TERMINAL_HELD =
+    "This conversation went back to an earlier message, and a terminal would bring back what that left out. Send it a message in the workbench first, or agree to bring that back.";
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
   /** What takes the messages steered while `holdSteers` holds. */
@@ -869,6 +876,12 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     held(heldOptions) {
       fake.calls.push({ method: "held", options: heldOptions });
       return heldOptions.agent === "claude-code" && heldConversations.has(heldOptions.session);
+    },
+
+    terminalResume(session, bringBack) {
+      if (!heldConversations.has(session)) return;
+      if (!bringBack) throw new Error(`held: ${TERMINAL_HELD}`);
+      heldConversations.delete(session);
     },
 
     stop(id) {

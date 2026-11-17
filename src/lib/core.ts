@@ -144,6 +144,12 @@ export interface SpawnOptions {
       or none, differs from what its conversation was first given, so an
       agent that records the first lets go of it. */
   afresh?: boolean;
+  /** For a Claude Code conversation resumed in a terminal while it is held
+      at the point it went back to (`integratedHeld`): the user agreed to
+      bring back what that point left out, which the terminal shows and
+      goes on with, and the point is let go. Without it such a start fails
+      with an error `isHeld` knows. */
+  bringBack?: boolean;
   cols: number;
   rows: number;
 }
@@ -220,6 +226,19 @@ export const INTEGRATED_UNTRUSTED = "untrusted";
 export function isUntrusted(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.startsWith(`${INTEGRATED_UNTRUSTED}:`);
+}
+
+/** What a terminal start of a Claude Code conversation held at the point
+    it went back to fails with, before the reason, unless the user agreed to
+    bring back what that left out: the window asks, and on a yes starts it
+    again with `bringBack`. */
+export const HELD = "held";
+
+/** Whether a failed `spawn` failed because the conversation is held at the
+    point it went back to. */
+export function isHeld(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith(`${HELD}:`);
 }
 
 /** An image attached to a message: base64 data and its media type, one of

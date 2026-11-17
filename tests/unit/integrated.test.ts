@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isUntrusted, type IntegratedEvent } from "$lib/core";
+import { isHeld, isUntrusted, type IntegratedEvent } from "$lib/core";
 import { fakeIntegrated } from "../fakeIntegrated";
 
 const M1 = "11111111-1111-4111-8111-111111111111";
@@ -139,6 +139,16 @@ describe("the seam's integrated sessions", () => {
       ["integrated_held", { agent: "claude-code", project: "/repo", session: "s-1" }],
       ["integrated_stop", { id: "int-1" }],
     ]);
+  });
+
+  it("tell a conversation held where it went back from other failures of a terminal start", () => {
+    expect(
+      isHeld(
+        new Error("held: This conversation went back to an earlier message, and a terminal would bring back what that left out."),
+      ),
+    ).toBe(true);
+    expect(isHeld("untrusted: /repo has not been trusted in claude yet")).toBe(false);
+    expect(isHeld(new Error("claude was not found on your PATH"))).toBe(false);
   });
 
   it("tell a folder that is not trusted from other failures", () => {
@@ -724,6 +734,12 @@ describe("the scripted integrated session", () => {
     const held = () => fake.held({ agent: "claude-code", project: "/repo", session: conversation });
     expect(held()).toBe(true);
     expect(fake.held({ agent: "codex", project: "/repo", session: conversation })).toBe(false);
+    // A terminal resume is refused while it is held, unless the user agreed,
+    // which lets the point go.
+    expect(() => fake.terminalResume(conversation, false)).toThrow(/^held: /);
+    fake.terminalResume(conversation, true);
+    expect(held()).toBe(false);
+    fake.terminalResume(conversation, false);
     fake.send(went.id!, M3, "instead");
     fake.turn(went.id!, "ok");
     expect(held()).toBe(false);
