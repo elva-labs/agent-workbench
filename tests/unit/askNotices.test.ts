@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { attention, resetAttention } from "$lib/attention.svelte";
-import { heedAsks, openAsks, program, resetAskNotices } from "$lib/askNotices.svelte";
+import { bareAddress, heedAsks, openAsks, program, resetAskNotices } from "$lib/askNotices.svelte";
 import { conductor, resetConductor, type Ask as ConductAsk } from "$lib/conductor.svelte";
 import { handleOf, launch, listenIntegrated, resetIntegrated } from "$lib/integrated.svelte";
 import { announce, clicked, notify, resetNotify } from "$lib/notify.svelte";
@@ -265,6 +265,15 @@ describe("the other questions that wait on the user", () => {
     expect(told[0].body).toBe("Asks to use Bash to run curl");
     expect(program("cargo test --workspace")).toBe("cargo");
     expect(program("FOO=1 BAR=2 ./scripts/run.sh --all")).toBe("run.sh");
+  });
+
+  it("an address without its query or fragment, which may carry a token", async () => {
+    const session = await integrated("Fix the cache");
+    fake.ask(handleOf(session.key)!, "WebFetch", { url: "https://ada:pw@api.example.com/v1/items?token=abc#frag", prompt: "read" });
+    look();
+    expect(told[0].body).toBe("Asks to fetch https://api.example.com/v1/items");
+    expect(bareAddress("list_issues")).toBe("list_issues");
+    expect(bareAddress("file:///tmp/a.txt?x=1")).toBe("file:///tmp/a.txt");
   });
 
   it("a long line, cut to one line of the notification", async () => {

@@ -279,10 +279,11 @@ started included, the workbench's question when a session wants to start
 another, and an agent's change to the settings. The notification names the
 project and the session that asks, and says what for in a line, with no
 more than the row would show of what is asked: a question's own words, a
-command by its program alone, a session another wants to start by the name
-it would have, and a change to the settings by what kind of setting it
-touches, without the agent's reason. A notification can be read on a locked
-screen and stays in the system's list, and a command's arguments are where
+command by its program alone, an address without its query or fragment, a
+session another wants to start by the name it would have, and a change to
+the settings by what kind of setting it touches, without the agent's
+reason. A notification can be read on a locked screen and stays in the
+system's list, and a command's arguments and an address's query are where
 a secret would be. One asked
 while the window has focus is not told of later, and one answered without
 the user, by a standing answer or the agent's own rules, never waits. The

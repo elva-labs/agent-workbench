@@ -78,9 +78,17 @@ function fromRequest(row: Session, request: Request, conversation: Conversation)
   let body: string;
   if (asked.type === "permissionAsked") {
     const what = asks(asked, asked.call === null ? null : conversation.call(asked.call));
-    // A command names its program and no more: its arguments are where a
-    // token or a password would be.
-    const phrase = what.shape === "command" && what.object !== null ? { ...what, object: program(what.object) } : what;
+    // A command names its program and no more, and an address its place
+    // without the query or the fragment: that is where a token or a
+    // password would be.
+    const phrase =
+      what.object === null
+        ? what
+        : what.shape === "command"
+          ? { ...what, object: program(what.object) }
+          : what.shape === "name"
+            ? { ...what, object: bareAddress(what.object) }
+            : what;
     body = `Asks to ${phraseText(phrase)}`;
   } else body = `Asks: ${asked.questions[0]?.question ?? "a question"}`;
   return {
@@ -96,6 +104,19 @@ function fromRequest(row: Session, request: Request, conversation: Conversation)
 function answeredIn(row: Session): string {
   const starter = byToken(startedFor(row.key));
   return starter !== null && starter.kind === "integrated" && starter.status === "running" ? starter.key : row.key;
+}
+
+/** An address without what it carries past its path: its query, its
+    fragment, and a name and password before its host. Anything that is not
+    an address is left as it is. */
+export function bareAddress(text: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text.trim())) return text;
+  try {
+    const url = new URL(text.trim());
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return text.trim().split(/[?#]/)[0];
+  }
 }
 
 /** The program a command runs, without the settings put before it or the
