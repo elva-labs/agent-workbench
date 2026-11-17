@@ -973,13 +973,16 @@ describe("SessionsPane", () => {
 
     const choice = (path: string) =>
       document.querySelector<HTMLElement>(`[data-row="project:${path}"]`)!.closest("section")!;
+    const heads = () =>
+      [...document.querySelectorAll<HTMLElement>("[data-row^='project:'] .name")].map((name) => name.textContent);
 
     it("opens the choice from the header's + and changes nothing else until one is picked", async () => {
       const { here, left } = twoProjects();
       touch("/here");
-      touch("/there", Date.now() - 3600 * 1000);
+      const asked = Date.now() - 3600 * 1000;
+      touch("/there", asked);
       render(SessionsPane);
-      await waitFor(() => expect(document.querySelector('[data-row="project:/there"]')).not.toBeNull());
+      await waitFor(() => expect(heads()).toEqual(["here", "there"]));
       const head = document.querySelector<HTMLElement>('[data-row="project:/there"]')!;
       await fireEvent.click(within(head).getByTestId("project-new-session"));
 
@@ -987,7 +990,11 @@ describe("SessionsPane", () => {
       expect(workspace.active).toBe("/here");
       expect(sessions.active).toBe(here.key);
       expect(left.status).toBe("dormant");
-      expect(projects.used["/there"]).toBeDefined();
+      // Asking is not using the project yet: it keeps its place, after the
+      // pointer has left the pane as well.
+      expect(projects.used["/there"]).toBe(asked);
+      await fireEvent.pointerLeave(document.querySelector<HTMLElement>('[data-pane="sessions"]')!);
+      expect(heads()).toEqual(["here", "there"]);
 
       await fireEvent.click(within(choice("/there")).getAllByTestId("agent-option")[1]);
       const made = sessions.all.at(-1)!;
@@ -996,12 +1003,14 @@ describe("SessionsPane", () => {
       expect(workspace.active).toBe("/there");
       expect(sessions.active).toBe(made.key);
       expect(left.status).toBe("dormant");
+      expect(projects.used["/there"]).toBeGreaterThan(asked);
     });
 
     it("opens the choice from an inactive project's menu among the active ones, and scrolls to it", async () => {
       const { here, left } = twoProjects();
       touch("/here");
-      touch("/there", Date.now() - 30 * 24 * 3600 * 1000);
+      const asked = Date.now() - 30 * 24 * 3600 * 1000;
+      touch("/there", asked);
       render(SessionsPane);
       await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
       await fireEvent.click(screen.getByTestId("inactive-fold"));
@@ -1015,6 +1024,16 @@ describe("SessionsPane", () => {
       expect(within(choice("/there")).getByTestId("agent-choice")).toBeInTheDocument();
       expect(screen.queryByTestId("inactive-fold")).toBeNull();
       expect(workspace.active).toBe("/here");
+      expect(sessions.active).toBe(here.key);
+      expect(left.status).toBe("dormant");
+      expect(projects.used["/there"]).toBe(asked);
+
+      // Backing out puts it back under Inactive, as nothing used it.
+      await fireEvent.click(screen.getByTestId("choice-cancel"));
+      expect(screen.queryByTestId("agent-choice")).toBeNull();
+      expect(heads()).toEqual(["here"]);
+      expect(screen.getByTestId("inactive-project")).toHaveTextContent("there");
+      expect(projects.used["/there"]).toBe(asked);
       expect(sessions.active).toBe(here.key);
       expect(left.status).toBe("dormant");
     });

@@ -116,18 +116,17 @@
   /** New session from a project's own button or menu: with nothing to
       choose it starts; otherwise the choice opens under the project's
       name, the cursor on the agent the project used last and the account
-      the project runs under. Asking is using the project, which keeps it
-      among the active ones while the choice is open. Nothing else changes
-      until the session starts: the session on screen stays, and none of
-      the project's own is put on screen, since a row left from the last
-      quit starts once it is. */
+      the project runs under. The project is drawn among the active ones
+      while the choice is open. Nothing else changes until the session
+      starts, which is when the project counts as used: the session on
+      screen stays, and none of the project's own is put on screen, since
+      a row left from the last quit starts once it is. */
   function offer(path: string) {
     if (!startsIn(path)) return;
     if (!choosable) {
       startSession(path);
       return;
     }
-    touch(path);
     choosing = path;
     picked = accountOf(path);
     cursor =
@@ -248,7 +247,7 @@
   let split = $derived.by(() => {
     const byPath = new Map(workspace.open.map((project) => [project.path, project]));
     if (folder !== null && !byPath.has(folder.path)) byPath.set(folder.path, folder);
-    const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now);
+    const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now, choosing);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
     const nextActive = resorted ? active : held(shownActive, active);
@@ -326,8 +325,8 @@
   }
 
   /** New session in a project's menu, an inactive project's as well: what
-      its header's + does, and the pane scrolls to the project, which
-      asking for a session has made one of the active ones. */
+      its header's + does, and the pane scrolls to the project, which is
+      among the active ones while a session is asked for in it. */
   function startIn(path: string) {
     offer(path);
     void reveal(path);
@@ -413,8 +412,8 @@
               label: other === "integrated" ? "New integrated session" : "New session in a terminal",
               disabled: !isReady(),
               run: () => {
-                wake(path);
                 startSession(path, agent, accountOf(path), null, other);
+                void reveal(path);
               },
             },
           ]),

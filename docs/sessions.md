@@ -53,12 +53,12 @@ pushes it out, and the list's scroll bar is drawn over the headers as it is
 over the rows. A hairline separates one project from the next. With more
 than one agent installed, a new session from a project's own button or menu
 opens the choice in place under the project's name, a row per agent; see
-[agents](adapters.md). Asking counts as using the project, and nothing else
-changes until a session is picked: the session on screen stays, and the
-project comes forward with the new session once it starts. None of the
-project's other sessions is put on screen on the way, so none of them
-starts. Backing out of the choice leaves the screen as it was. The
-`orchestrator` folder an earlier version kept sessions in is listed among
+[agents](adapters.md). Nothing else changes until a session is picked: the
+session on screen stays, the list keeps its order, and the project comes
+forward with the new session once it starts, which is when it counts as
+used. None of the project's other sessions is put on screen on the way, so
+none of them starts. Backing out of the choice leaves everything as it was.
+The `orchestrator` folder an earlier version kept sessions in is listed among
 the projects while it holds past sessions, with no button for a new session
 and Close project alone in its menu; see [orchestrator](orchestrator.md).
 
@@ -104,7 +104,8 @@ past sessions and its row of earlier ones.
 
 The projects split by themselves into two. A project is active while a
 session drawn under it is running or waiting for you, while it is the one
-on screen, and for a span after anything last happened in it; the span is a
+on screen, while the choice for a new session in it is open, and for a span
+after anything last happened in it; the span is a
 [setting](settings.md#sessions), a week to begin with, and Never keeps
 every project active. The active projects are the list. The rest fold
 under one row at the foot of the pane, Inactive with how many there are,
@@ -115,8 +116,9 @@ stand behind a row that says how many more. Picking one brings it forward,
 which is using it, and it is active again, and the pane scrolls to where it
 lands among the others. Its ⋯, in the place of its time while the pointer is
 on it, opens the same menu as a header's. Its New session does what a
-header's does, which makes the project active, and the pane scrolls to
-where it lands among the others. Nothing is filed by hand.
+header's does, and the pane scrolls to the project, which stands among the
+active ones while its choice is open and goes back under Inactive if
+nothing is picked. Nothing is filed by hand.
 
 What happens in a project is the user using it, a row drawn under it
 changing what it says, and one of its own transcripts being written, which
@@ -131,11 +133,10 @@ The order of the projects is the user's own: the order button on the title
 row is a menu of two, Last used, the latest first, which is where every
 setup starts, or Name. Last used is when the user last opened the project or
 brought it forward, or started or picked a session in it, from the pane, the
-palette or the chord that goes to the next session needing them, or asked
-for a new session from its own button or menu; for a project with no such
-record, when one of its own transcripts was last written. The window putting
-a project in front as it opens, and an agent asking to show something in
-one, is not the user using it. What the agents do keeps a project out of
+palette or the chord that goes to the next session needing them; for a
+project with no such record, when one of its own transcripts was last
+written. The window putting a project in front as it opens, and an agent
+asking to show something in one, is not the user using it. What the agents do keeps a project out of
 Inactive but never moves it. When each project was last used is kept in the
 window's own storage, and a project's record goes when it is closed. The
 choice of order is kept there too, and Inactive is listed in the same order.
