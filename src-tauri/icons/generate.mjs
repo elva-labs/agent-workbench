@@ -10,10 +10,19 @@
 // larger one: the small sources cut the circle wider and draw the mark
 // larger, so the cut still shows at 16 px. The SVGs are rasterised by the
 // Chromium that Playwright installs for the browser tests, through a
-// canvas, and the containers (.icns, .ico, .bmp) are written here, so the
-// script runs the same on every platform with nothing else installed.
+// canvas, and the containers (.icns, .ico, .bmp) are written here.
+//
+// It writes into the tree, over the files checked in. It needs the
+// project's packages and Playwright's Chromium (`npx playwright install
+// chromium`). The disk image's background is a TIFF holding both of its
+// resolutions, which macOS's tiffutil makes, so that one file is skipped
+// elsewhere. Run on macOS on Apple silicon, the output is the same byte
+// for byte from run to run; Chromium's rasteriser may differ by a shade on
+// another platform or processor, so the checked-in files come from there.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "@playwright/test";
@@ -21,9 +30,14 @@ import { chromium } from "@playwright/test";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
 
-/** The source for each size: 16 and 32 px, 64 and 128 px, and larger. */
-const macos = (dir) => (size) =>
-  join(dir, size <= 32 ? "macos-32.svg" : size <= 128 ? "macos-128.svg" : "macos.svg");
+/** The source for each size, by its size in points and in pixels: 16 px
+    on a screen of 1x has one of its own, then 16 and 32 points, 64 and 128
+    points, and larger. */
+const macos = (dir) => (points, pixels = points) =>
+  join(
+    dir,
+    pixels <= 16 ? "macos-16.svg" : points <= 32 ? "macos-32.svg" : points <= 128 ? "macos-128.svg" : "macos.svg",
+  );
 const tile = (dir) => (size) => join(dir, size <= 32 ? "tile-32.svg" : "tile.svg");
 
 const browser = await chromium.launch();
@@ -101,9 +115,9 @@ async function icns(source) {
   ];
   for (const [type, size] of types) {
     // A Retina size is drawn as its point size would be, at twice the
-    // pixels: 16@2x from the source for 16, not from the one for 32.
+    // pixels: 16@2x from the source for 16 points, not from the one for 32.
     const points = ["ic11", "ic12", "ic13", "ic14"].includes(type) ? size / 2 : size;
-    chunks.push(chunk(type, await png(source(points), size)));
+    chunks.push(chunk(type, await png(source(points, size), size)));
   }
   return chunk("icns", Buffer.concat(chunks));
 }
@@ -189,11 +203,21 @@ for (const [name, size] of [["menubar-template.png", 18], ["menubar-template@2x.
   write(join(here, "mark", name), await png(mark(size), size));
 for (const size of [16, 32, 64, 128]) write(join(here, "mark", `mark-${size}.png`), await png(mark(size), size));
 
-// The installers' art. The disk image's window is 660 by 400 points.
+// The installers' art. The disk image's window is 660 by 400 points, and
+// Finder draws its background sharp on a Retina screen only from a TIFF
+// that holds both resolutions, which is the one file the bundle takes.
 const art = join(here, "installer");
 const dmg = join(art, "dmg-background.svg");
-write(join(art, "dmg-background.png"), Buffer.from((await draw(dmg, 660, 400)).png, "base64"));
-write(join(art, "dmg-background@2x.png"), Buffer.from((await draw(dmg, 1320, 800)).png, "base64"));
+if (process.platform === "darwin") {
+  const scratch = mkdtempSync(join(tmpdir(), "chord-dmg-"));
+  writeFileSync(join(scratch, "background.png"), Buffer.from((await draw(dmg, 660, 400)).png, "base64"));
+  writeFileSync(join(scratch, "background@2x.png"), Buffer.from((await draw(dmg, 1320, 800)).png, "base64"));
+  const tiff = join(scratch, "background.tiff");
+  execFileSync("tiffutil", ["-cathidpicheck", join(scratch, "background.png"), join(scratch, "background@2x.png"), "-out", tiff], { stdio: "ignore" });
+  write(join(art, "dmg-background.tiff"), readFileSync(tiff));
+} else {
+  console.log("skipped the disk image's background, which needs macOS's tiffutil");
+}
 write(join(art, "nsis-header.bmp"), await bmp(join(art, "nsis-header.svg"), 150, 57, "#ffffff"));
 write(join(art, "nsis-sidebar.bmp"), await bmp(join(art, "nsis-sidebar.svg"), 164, 314, "#ffffff"));
 write(join(art, "wix-banner.bmp"), await bmp(join(art, "wix-banner.svg"), 493, 58, "#ffffff"));
