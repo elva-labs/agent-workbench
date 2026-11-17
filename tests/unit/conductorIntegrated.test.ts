@@ -10,7 +10,7 @@ import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
-import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
+import { outsideCaller, resetSenders, senderOf, sentBy, sessionName } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken, wakeShown } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { BOUNDED, FORGED } from "../forgedName";
@@ -187,12 +187,14 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(senderOf(mine)).toBeNull();
   });
 
-  it("names a sender the window has no row for by its kept id, else as another session, never by its token", () => {
+  it("names a sender the window has no row for by the name it went by, else as another session, never by its id or token", () => {
     sentBy("m-gone", "token-of-no-row");
     expect(senderOf({ id: "m-gone" })).toEqual({ id: null, key: null, name: "another session" });
     sessions.tokens["kept-id"] = { token: "token-kept", project: A };
     sentBy("m-kept", "token-kept");
-    expect(senderOf({ id: "m-kept" })).toEqual({ id: "kept-id", key: null, name: "session kept-id" });
+    expect(senderOf({ id: "m-kept" })).toEqual({ id: "kept-id", key: null, name: "another session" });
+    sessions.names["kept-id"] = "Plan the release";
+    expect(senderOf({ id: "m-kept" })).toEqual({ id: "kept-id", key: null, name: "Plan the release" });
     // An agent the workbench did not start is named by its folder.
     sentBy("m-outside", outsideCaller("/home/ada/dev/one"));
     expect(senderOf({ id: "m-outside" })).toEqual({ id: null, key: null, name: "an agent in one" });
@@ -655,6 +657,32 @@ describe("a name a start gave", () => {
     expect(label(byKey(back.key)!)).toBe("send-now-review");
     titled(back.key, "Claude Code");
     expect(label(byKey(back.key)!)).toBe("Confirm review of send now");
+  });
+
+  it("names the session in what was said of it after the stop tool files it away", async () => {
+    // Recorded: a session started with a name, in a worktree, was named by
+    // its id in its starter's reports once the starter had stopped it.
+    setKind("claude-code", "integrated");
+    const request = call("start", { project: A, prompt: "Hold the clock still", name: "Fix the cache" });
+    const answering = handle(request);
+    if (conductor.asking !== null) allow();
+    await settle();
+    const row = forProject(A).at(-1)!;
+    await launch(row.key);
+    flushSync();
+    await answering;
+    const id = byKey(row.key)!.id!;
+    const report = `${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.\n${"Still at work: "}${id}. Call wait to hear from it.`;
+    expect(wakeShown(`${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.`, sessionName)).toBe(
+      "Fix the cache stopped working. It has left no line.",
+    );
+    await handle(call("stop", { session: id }));
+    expect(byKey(row.key)).toBeNull();
+    expect(sessionName(id)).toBe("Fix the cache");
+    expect(wakeShown(`${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.`, sessionName)).toBe(
+      "Fix the cache stopped working. It has left no line.",
+    );
+    expect(report).toContain(id);
   });
 
   it("is not replaced by the first words of a message to a resumed conversation", async () => {

@@ -65,6 +65,7 @@ import {
   defaultAgent,
   drafting,
   isLive,
+  keepName,
   reopeningRow,
   isViewed,
   keysStillIn,
@@ -109,7 +110,7 @@ import {
 import { lastRun, nameSessionsBy } from "$lib/thread";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
-import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
+import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
@@ -255,6 +256,8 @@ export function stopStarted(key: string): void {
   if (session === null) return;
   const { project, id } = session;
   const owner = startedFor(key);
+  // What the caller's reports said of it keeps its name.
+  keepName(session);
   close(key);
   if (id === null) return;
   disown(project, id);
@@ -3130,22 +3133,27 @@ export function startedFor(key: string | null): string | null {
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
 
+/** What a person knows a session by, by its id: its row's name, and once
+    the row has gone the name its caller gave it, or the one it was known
+    by, so what the thread said of it stays said. Null when none is kept. */
+function nameOf(id: string): string | null {
+  const row = byId(id);
+  if (row !== null) return label(row);
+  for (const list of Object.values(conductor.started)) {
+    const name = list.find((entry) => entry.id === id)?.name ?? null;
+    if (name !== null && name.trim() !== "") return shown(name);
+  }
+  const kept = sessions.names[id] ?? null;
+  return kept === null || kept.trim() === "" ? null : shown(kept);
+}
+
+nameKeptBy(nameOf);
+
 // The thread words a call on the workbench's tools by the rows' names: a
 // session by its id, and the sessions a wait that names none is watching
-// when exactly one caller is waiting. A session whose row has gone keeps
-// the name its caller gave it, or the one it was listed under, so what
-// the thread said of it stays said.
+// when exactly one caller is waiting.
 nameSessionsBy({
-  named: (id) => {
-    const row = byId(id);
-    if (row !== null) return label(row);
-    for (const list of Object.values(conductor.started)) {
-      const name = list.find((entry) => entry.id === id)?.name ?? null;
-      if (name !== null && name.trim() !== "") return shown(name);
-    }
-    const kept = sessions.names[id] ?? null;
-    return kept === null || kept.trim() === "" ? null : shown(kept);
-  },
+  named: nameOf,
   watching: () => {
     const holding = Object.keys(conductor.listening);
     if (holding.length !== 1) return null;

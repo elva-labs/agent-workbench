@@ -2287,6 +2287,50 @@ test("wakes an idle integrated starter with what a session it started said, as t
   await expect(woken).toHaveCount(0);
 });
 
+test("draws the workbench's report on the left as a notice, naming a session the starter stopped as it was started", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
+  const view = page.locator("[data-testid='conversation']:visible");
+  await expect(view.getByTestId("composer-input")).toBeEnabled();
+  const starter = (await view.getAttribute("data-session"))!;
+  const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, tool, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool,
+          arguments: args,
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, tool, args },
+    );
+  await conduct("o-1", "start", { project: PROJECT, prompt: "Hold the clock still", name: "Fix the cache", worktree: true });
+  await page.getByTestId("conduct-allow").click();
+  await expect(page.getByTestId("started-session")).toContainText("Fix the cache");
+  await agent(page, `f.turn("int-1", "Started it.");`);
+  await agent(page, `f.turn("int-2", "Done: the clock is held still.");`);
+  const message = view.locator("[data-testid='user-message'][data-from='workbench']");
+  await expect(message).toHaveCount(1);
+  const said = 'Fix the cache stopped working. Its last line: "Done: the clock is held still."';
+  await expect(message.locator(".bubble")).toHaveText(said);
+  await expect(message.getByTestId("message-sender")).toHaveText("Workbench");
+  // On the left, where the agent's text starts, with no bubble of the
+  // user's.
+  const words = (await message.locator(".bubble p").boundingBox())!;
+  const agentText = (await view.getByTestId("agent-text").first().boundingBox())!;
+  expect(Math.abs(words.x - agentText.x)).toBeLessThanOrEqual(1);
+  expect(await message.locator(".bubble").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+  // The starter stops it, which files its row away: what was said of it
+  // keeps its name, and never shows its id.
+  await conduct("o-2", "stop", { session: "integrated-session-2" });
+  await expect(page.getByTestId("started-session")).toHaveCount(0);
+  await page.locator(`[data-row="session:${starter}"] > [data-testid='session-row']`).click();
+  await expect(message.locator(".bubble")).toHaveText(said);
+  await expect(message).not.toContainText("integrated-session-2");
+});
+
 test.describe("a request too long for its line", () => {
   /** Whether an element sits wholly inside the dock's box, in sight. */
   const inSight = (page: Page, testid: string) =>

@@ -1200,10 +1200,10 @@
     data-copy-host="message"
   >
     <header class="who">
-      {#if words.text !== ""}
-        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" testid="copy-message" />
-      {/if}
       {#if from === null}
+        {#if words.text !== ""}
+          <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" testid="copy-message" />
+        {/if}
         <b>You</b>
       {:else}
         <span>From</span><span class="sender" data-testid="message-sender"><Plain text={from.name} /></span>
@@ -1212,6 +1212,9 @@
           >{/if}
       {/if}
       {#if at !== null}<time class="num">{written.get(`m:${said.id}`) ?? clock(at)}</time>{/if}
+      {#if from !== null && words.text !== ""}
+        <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" place="end" testid="copy-message" />
+      {/if}
     </header>
     <div class="bubble">
       {#if said.images.length > 0}
@@ -1483,11 +1486,33 @@
     object-fit: cover;
   }
 
-  /* Another session's words: a plain bubble, so they never read as the
-     user's own. */
+  /* What the workbench or another session sent stands on the left, with
+     everything not the user's: no bubble, in the quieter ink of the
+     thread's own notes, lined up with the agent's text, so it reads as a
+     notice from the app rather than as the user's words or the agent's. */
+  .you.from {
+    align-items: stretch;
+    padding-left: 18px;
+  }
+
   .you.from .bubble {
-    background: var(--surface-2);
-    box-shadow: inset 0 0 0 1px var(--rule);
+    max-width: none;
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    color: var(--ink-2);
+  }
+
+  .you.from.waiting .bubble {
+    box-shadow: none;
+  }
+
+  .you.from .state {
+    text-align: left;
+  }
+
+  .you.from .link.instructions {
+    align-self: flex-start;
   }
 
   .who .sender {

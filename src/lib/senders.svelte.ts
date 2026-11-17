@@ -82,17 +82,26 @@ export interface Sender {
     sender: no session's token and no folder can be it. */
 export const WORKBENCH = "workbench:";
 
-/** What the user knows a session by, by its id, while the window has its
-    row. */
+let kept: (id: string) => string | null = () => null;
+
+/** Who names a session whose row has gone, by its id: the conductor, by
+    the name its caller gave it or the one it was known by. */
+export function nameKeptBy(how: ((id: string) => string | null) | null) {
+  kept = how ?? (() => null);
+}
+
+/** What the user knows a session by, by its id: its row's name while the
+    window has its row, and after that the name it went by, where that is
+    kept. */
 export function sessionName(id: string): string | null {
   const row = sessions.all.find((candidate) => candidate.id === id);
-  return row === undefined ? null : label(row);
+  return row === undefined ? kept(id) : label(row);
 }
 
 /** Who sent a message: null for the user. A sender the window has no row
-    for is named by the id the tools know it by, where the window still
-    keeps it, and otherwise as another session: what the message was sent
-    under may be a token, which no one is shown. */
+    for is named by the name it went by, where that is kept, and otherwise
+    as another session: neither its id nor the token the message was sent
+    under is anything a person reads. */
 export function senderOf(message: { id: string }): Sender | null {
   const from = senders.byMessage[message.id] ?? null;
   if (from === null) return null;
@@ -114,9 +123,7 @@ export function senderOf(message: { id: string }): Sender | null {
         ? label(row)
         : folder !== null
           ? `an agent in ${lastSegment(folder)}`
-          : id !== null
-            ? `session ${id}`
-            : "another session",
+          : ((id === null ? null : kept(id)) ?? "another session"),
   };
 }
 

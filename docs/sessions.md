@@ -541,13 +541,19 @@ with a margin that grows a little with the pane and narrows in a narrow
 one. Code, diffs, what a command printed and tables use the whole width;
 words wrap at about 140 characters, so a line still reads in a wide pane.
 The user's words sit to the right in a
-tinted bubble under You. What another session sent, the prompt it started
-the session with or a message it sent later, sits there in a plain bubble
-under that session's name, with a way to go to it. What the workbench
-sends of its own, to wake a session that started others, sits the same way
-under Workbench, each session in it by the name its row has, with nothing
-to go to and nothing to put back in the composer; see
-[orchestrator](orchestrator.md#when-it-is-idle). A message is known as
+tinted bubble under You, and nothing else does. What another session sent,
+the prompt it started the session with or a message it sent later, stands
+on the left with everything not the user's, as a notice rather than a
+message: no bubble, lined up with the agent's text, in the quieter ink of
+the thread's own notes, under From and that session's name, its time and a
+way to go to it. What the workbench sends of its own, to wake a session
+that started others, stands the same way under Workbench, with nothing to
+go to and nothing to put back in the composer; see
+[orchestrator](orchestrator.md#when-it-is-idle). Each session in it is
+named as the user knows it: by its row's name, and once its row has gone,
+as it does when the starter stops it, by the name it was started with or
+known by, and as a session where none is kept. Its id is for the agent
+alone. A message is known as
 another session's by the id it was sent under, never by its words, so the
 user's own message reads as theirs whatever another session sent; the sentence the
 workbench adds to a started session's prompt, asking it to call notify, is
