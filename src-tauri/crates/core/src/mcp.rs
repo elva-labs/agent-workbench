@@ -28,23 +28,45 @@ use crate::show::{
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// The general instructions as a literal. A macro so that the
-/// orchestrator's, which are these and more, are one constant rather than
-/// something put together at run time.
-macro_rules! general_instructions {
+/// What every session is told before how its turns end: the viewer, its
+/// tools and the notify tool. A macro, as the parts below are, so each set
+/// of instructions is one constant rather than something put together at
+/// run time.
+macro_rules! instructions_head {
     () => {
-        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait and notify calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait."
+        "The user works in Agent Workbench, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. "
     };
 }
 
-/// What a session is told when it connects.
-pub const INSTRUCTIONS: &str = general_instructions!();
+/// How a turn ends in a terminal. Claude Code's own view folds what is
+/// written before a tool call into one line, so the answer goes after the
+/// last call, written again there when a call had to follow it.
+macro_rules! turn_in_a_terminal {
+    () => {
+        "What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait or notify; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. "
+    };
+}
 
-/// What a session that directs the others is told: the general
-/// instructions and what directing work means here.
-pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
-    general_instructions!(),
-    " This session directs work rather than doing it here. When the user asks \
+/// How a turn ends in the workbench's conversation, which draws an agent's
+/// text whole and draws no wait or notify call.
+macro_rules! turn_in_a_conversation {
+    () => {
+        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait and notify calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. "
+    };
+}
+
+/// What every session is told after how its turns end: the browser, the
+/// settings and the sessions it started.
+macro_rules! instructions_tail {
+    () => {
+        "The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait."
+    };
+}
+
+/// What a session that directs the others is told besides.
+macro_rules! orchestrator_instructions {
+    () => {
+        " This session directs work rather than doing it here. When the user asks \
      for work, start a session for each piece with the start tool, in the \
      project that piece belongs to, with the whole of the task in its prompt \
      and a name for the work, on a worktree of its own when pieces touch the \
@@ -70,14 +92,49 @@ pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
      to relay a question or to report, call the notify tool with one line \
      saying why, before your final message rather than after it, so the \
      user sees it on this session's row while they are in another one."
+    };
+}
+
+/// What a session in a terminal is told when it connects.
+pub const INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_terminal!(),
+    instructions_tail!()
 );
 
-/// The instructions for a session with this role, which is the role the
+/// What a session the workbench draws as a conversation is told.
+pub const CONVERSATION_INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_conversation!(),
+    instructions_tail!()
+);
+
+/// What a session in a terminal that directs the others is told: the
+/// general instructions and what directing work means here.
+pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_terminal!(),
+    instructions_tail!(),
+    orchestrator_instructions!()
+);
+
+/// The same for one the workbench draws as a conversation.
+pub const ORCHESTRATOR_CONVERSATION_INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_conversation!(),
+    instructions_tail!(),
+    orchestrator_instructions!()
+);
+
+/// The instructions for a session with this role and this view, which the
 /// workbench put in the agent's environment and the agent passed on.
-pub fn instructions_for(role: Option<&str>) -> &'static str {
-    match role {
-        Some(crate::adapter::ORCHESTRATOR_ROLE) => ORCHESTRATOR_INSTRUCTIONS,
-        _ => INSTRUCTIONS,
+pub fn instructions_for(role: Option<&str>, view: Option<&str>) -> &'static str {
+    let conversation = view == Some(crate::adapter::CONVERSATION_VIEW);
+    match (role, conversation) {
+        (Some(crate::adapter::ORCHESTRATOR_ROLE), false) => ORCHESTRATOR_INSTRUCTIONS,
+        (Some(crate::adapter::ORCHESTRATOR_ROLE), true) => ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        (_, false) => INSTRUCTIONS,
+        (_, true) => CONVERSATION_INSTRUCTIONS,
     }
 }
 
@@ -85,7 +142,8 @@ pub fn instructions_for(role: Option<&str>) -> &'static str {
 /// session is told follows the environment it was started in.
 fn instructions() -> &'static str {
     let role = std::env::var(crate::adapter::ROLE_VAR).ok();
-    instructions_for(role.as_deref())
+    let view = std::env::var(crate::adapter::VIEW_VAR).ok();
+    instructions_for(role.as_deref(), view.as_deref())
 }
 
 /// The app's own tools, as the agent sees them.
@@ -1868,13 +1926,32 @@ mod tests {
     }
 
     #[test]
-    fn tells_an_agent_an_answer_before_a_wait_stays_in_sight() {
-        for instructions in [INSTRUCTIONS, ORCHESTRATOR_INSTRUCTIONS] {
-            assert!(
-                instructions.contains("a message followed only by them stays on screen in full")
-            );
-            assert!(instructions.contains("then call wait again"));
-            assert!(!instructions.contains("folded into one line"));
+    fn tells_how_a_turn_ends_where_the_user_reads_it() {
+        // In a conversation the wait and notify calls are not drawn, so an
+        // answer before them stays in sight.
+        for told in [
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
+            assert!(told.contains("a message followed only by them stays on screen in full"));
+            assert!(told.contains("then call wait again"));
+            assert!(!told.contains("folded into one line"));
+        }
+        // In a terminal Claude Code's own view folds what comes before a
+        // call, so the answer goes after the last one.
+        for told in [INSTRUCTIONS, ORCHESTRATOR_INSTRUCTIONS] {
+            assert!(told.contains("folded into one line on screen"));
+            assert!(told.contains("write the answer again in full after it"));
+            assert!(!told.contains("then call wait again"));
+        }
+        for told in [
+            INSTRUCTIONS,
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
+            assert!(told.contains("call the notify tool with one line"));
+            assert!(told.contains("keep calling wait until all of them are done"));
         }
     }
 
@@ -2073,16 +2150,29 @@ mod tests {
         // The role comes from the environment the workbench started the
         // agent in, which a test cannot set without reaching into every
         // other test running beside it, so the picking is what is checked.
-        let general = instructions_for(None);
+        let general = instructions_for(None, None);
         assert!(general.contains("show tool"));
         assert!(!general.contains("start tool"));
         // A session that started others, as any session may, keeps waiting
         // on them rather than handing its turn back.
         assert!(general.contains("keep calling wait until all of them are done"));
-        assert_eq!(instructions_for(Some("something else")), general);
+        assert_eq!(instructions_for(Some("something else"), None), general);
 
-        let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE));
+        let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), None);
         assert!(directing.starts_with(general));
+        // A session drawn as a conversation is told the same, but for how
+        // its turns end.
+        let conversation = Some(crate::adapter::CONVERSATION_VIEW);
+        assert_eq!(
+            instructions_for(None, conversation),
+            CONVERSATION_INSTRUCTIONS
+        );
+        assert_eq!(
+            instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), conversation),
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS
+        );
+        assert!(ORCHESTRATOR_CONVERSATION_INSTRUCTIONS.starts_with(CONVERSATION_INSTRUCTIONS));
+        assert_eq!(instructions_for(None, Some("something else")), general);
         for expected in [
             "directs work rather than doing it here",
             "start tool",
