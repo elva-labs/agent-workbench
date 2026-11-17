@@ -345,4 +345,95 @@ test.describe("a long conversation", () => {
     await expect(rows).toHaveCSS("font-size", "13.5px");
     await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(2);
   });
+
+  test("reads the block at the top of the view once the block it kept has shrunk above it", async ({ page }) => {
+    await openLong(page);
+    await wheel(page, -600, 6);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
+    const rows = page.getByTestId("thread-rows");
+    const thread = page.getByTestId("thread");
+    // A question's bubble a little below the top of the view, and how much
+    // of its height the terminal look's smaller type takes off.
+    const height = () => thread.evaluate((node) => node.querySelector("[data-bubble]")!.getBoundingClientRect().height);
+    await thread.evaluate((node) => {
+      const top = node.getBoundingClientRect().top;
+      const bubble = [...node.querySelectorAll("[data-testid='user-message'] .bubble")].find(
+        (one) => one.getBoundingClientRect().bottom > top + 40,
+      )!;
+      bubble.setAttribute("data-bubble", "");
+    });
+    const large = await height();
+    await switchLook(page, "terminal");
+    await expect(rows).toHaveCSS("font-size", "12.5px");
+    const small = await height();
+    await switchLook(page, "modern");
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    const shrinks = large - small;
+    expect(shrinks).toBeGreaterThan(0);
+    // The view's top inside the bubble's foot by less than it shrinks, so
+    // the smaller type takes it wholly above the view.
+    const inside = await thread.evaluate(async (node, by) => {
+      const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+      const foot = () => node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
+      await frames();
+      node.scrollTop += foot() - by;
+      await frames();
+      return foot();
+    }, shrinks / 2);
+    expect(inside).toBeGreaterThan(0);
+    expect(inside).toBeLessThan(shrinks);
+    await markTop(page);
+    await expect(thread.locator("[data-bubble]")).toHaveAttribute("data-mark", "");
+    // The type smaller in one frame, and in the next, before the thread
+    // looks again, the view moving and the type back: the thread keeps the
+    // block at the top of the view by then, not the bubble it kept before.
+    const { left, held } = await thread.evaluate(
+      (node, key) =>
+        new Promise<{ left: boolean; held: number }>((answer) => {
+          const look = (to: string) => {
+            const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look: to };
+            localStorage.setItem(key, JSON.stringify(next));
+            (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
+              appearance: "system",
+              look: "modern",
+              palette: "teal",
+              terminalFont: "system",
+              interfaceFont: "system",
+              keys: {},
+              hooks: { everywhere: true, overrides: {} },
+              themes: {},
+              ...next,
+            });
+          };
+          requestAnimationFrame(() => {
+            look("terminal");
+            // Asked for before the thread's own frame is, this runs first
+            // in that frame.
+            requestAnimationFrame(() => {
+              const top = node.getBoundingClientRect().top;
+              const left = node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom <= top;
+              node.querySelector("[data-mark]")?.removeAttribute("data-mark");
+              let at: Element = node.querySelector("[data-testid='thread-rows']")!;
+              for (;;) {
+                const next = [...at.children].find((child) => {
+                  const box = child.getBoundingClientRect();
+                  return box.height > 0 && box.bottom > top;
+                });
+                if (next === undefined) break;
+                at = next;
+              }
+              at.setAttribute("data-mark", "");
+              const held = at.getBoundingClientRect().top - top;
+              node.scrollTop -= 200;
+              look("modern");
+              answer({ left, held });
+            });
+          });
+        }),
+      SETTINGS_FILE,
+    );
+    expect(left).toBe(true);
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(1);
+  });
 });
