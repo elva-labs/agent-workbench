@@ -640,7 +640,7 @@ fn background_schema(description: &str) -> Value {
                 }
             },
             "harmony": { "type": "string", "enum": crate::settings::HARMONIES.iter().map(|(name, _)| *name).collect::<Vec<_>>(), "description": "single holds one dot, complementary two, analogous and triad three, each a fixed turn of the hue from the first; free, the default, any number placed at will." },
-            "strength": { "type": "number", "description": "How strongly it shows, 0.1 to 1: a calm tint up to 0.75, where it shows whole; above it the colours rise to the lightness the pad shows them in, and at 1 the chrome is the colours themselves; on the way up, in dark most of all, text may read under 4.5:1. The settings show it on an even slider: 0.6 at 10%, 0.75 at 16%, 0.85 at 50%, 0.9 at 67%. 0.6 when left out." },
+            "strength": { "type": "number", "description": "How strongly it shows, 0.1 to 1: a calm tint up to 0.75, where it shows whole; above it the colours rise to the lightness the pad shows them in, and at 1 the chrome is the colours themselves; on the way up, in dark most of all, text may read under 4.5:1. The settings show it on an even slider: 0.6 at 10%, 0.75 at 16%, 0.85 at 50%, 0.9 at 66%. 0.6 when left out." },
             "grain": { "type": "number", "description": "A fine speckle over it, 0 to 1; 0.25 when left out." }
         },
         "required": ["dots"]

@@ -143,7 +143,7 @@ The settings file keeps the strength as a number from 0.1 to 1, in
 thousandths, along the same path at its own pace: up to 0.6 it is the share
 of the calm tint that shows through, at 0.75 the tint shows whole, and at 1
 the colours are the pad's. The slider shows 0.6, where a new background
-starts, at 10%, 0.75 at 16%, 0.85 at 50% and 0.9 at 67%.
+starts, at 10%, 0.75 at 16%, 0.85 at 50% and 0.9 at 66%.
 
 Text on a tinted part is judged at the worst point of the gradient behind
 it, grain included. Where it would fall under a contrast of 4.5 to 1 it is
