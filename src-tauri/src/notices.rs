@@ -4,11 +4,26 @@
 //! app's bundle, the name goes with the notification: one sent again under
 //! the same name takes the place of the one before, a click on one brings
 //! the window forward and tells the window its name, and the window takes
-//! one away by its name once what it said is over. Elsewhere, and in a
-//! build run outside a bundle, a notification goes through the
-//! notification plugin and is left as the system leaves it.
+//! one away by its name once what it said is over. A notification never
+//! shows as a banner while the window is the one in front, and none from
+//! an earlier run is left at launch, since no question of that run is
+//! still open. Elsewhere, and in a build run outside a bundle, a
+//! notification goes through the notification plugin and is left as the
+//! system leaves it.
 
 use tauri::AppHandle;
+
+/// Readies the notifications at launch: on macOS, run from the bundle, the
+/// app hears a click on one from now on, and those an earlier run left in
+/// the system's list are taken away.
+pub fn install(app: &AppHandle) {
+    #[cfg(target_os = "macos")]
+    if mac::bundled() {
+        mac::install(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
 
 /// The event that tells the window which notification was clicked.
 pub const CLICKED: &str = "notice_clicked";
@@ -59,6 +74,7 @@ mod mac {
     use objc2::rc::Retained;
     use objc2::runtime::ProtocolObject;
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
+    use objc2_app_kit::NSWindow;
     use objc2_foundation::{
         NSBundle, NSObject, NSObjectProtocol, NSString, NSUserNotification,
         NSUserNotificationCenter, NSUserNotificationCenterDelegate,
@@ -66,8 +82,8 @@ mod mac {
     use tauri::{AppHandle, Emitter, Manager};
 
     define_class!(
-        /// Hears a click on one of the app's notifications, and has the
-        /// notifications shown while the app is in front as well.
+        /// Hears a click on one of the app's notifications, and says
+        /// whether one is shown as a banner.
         #[unsafe(super(NSObject))]
         #[thread_kind = MainThreadOnly]
         #[name = "WorkbenchNoticeDelegate"]
@@ -91,17 +107,20 @@ mod mac {
                     let _ = window.set_focus();
                 }
                 if let Some(id) = notification.identifier() {
-                    let _ = app.emit(super::CLICKED, id.to_string());
+                    let _ = app.emit_to("main", super::CLICKED, id.to_string());
                 }
             }
 
+            /// A banner only while the window is not the one in front: not
+            /// key, or put away in the Dock or hidden. In front, the
+            /// window already says what the notification would.
             #[unsafe(method(userNotificationCenter:shouldPresentNotification:))]
             fn should_present(
                 &self,
                 _centre: &NSUserNotificationCenter,
                 _notification: &NSUserNotification,
             ) -> bool {
-                true
+                !in_front(self.ivars())
             }
         }
     );
@@ -118,6 +137,26 @@ mod mac {
         static BUNDLED: OnceLock<bool> = OnceLock::new();
         *BUNDLED
             .get_or_init(|| !tauri::is_dev() && NSBundle::mainBundle().bundleIdentifier().is_some())
+    }
+
+    /// Whether the main window is the one the user is in: key, shown and
+    /// not in the Dock.
+    fn in_front(app: &AppHandle) -> bool {
+        let Some(window) = app.get_webview_window("main") else {
+            return false;
+        };
+        let Ok(ptr) = window.ns_window() else {
+            return false;
+        };
+        let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+        ns_window.isKeyWindow() && ns_window.isVisible() && !ns_window.isMiniaturized()
+    }
+
+    pub fn install(app: &AppHandle) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        centre(app, mtm).removeAllDeliveredNotifications();
     }
 
     fn centre(app: &AppHandle, mtm: MainThreadMarker) -> Retained<NSUserNotificationCenter> {

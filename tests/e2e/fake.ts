@@ -692,6 +692,11 @@ export async function installFakeCore(
           (window as unknown as Record<string, unknown>).__noticeClicked = handler;
           return () => {};
         },
+        // The system saying the window came to the front or left it.
+        onWindowFocus: async (handler: (focused: boolean) => void) => {
+          (window as unknown as Record<string, unknown>).__windowFocus = handler;
+          return () => {};
+        },
         chime: async () => {
           const fake = window as unknown as { __chimes?: number };
           fake.__chimes = (fake.__chimes ?? 0) + 1;

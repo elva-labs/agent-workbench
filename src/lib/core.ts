@@ -1317,6 +1317,9 @@ export interface Core {
   /** A notification was clicked, by its name, with the window brought
       forward. */
   onNoticeClicked(handler: (id: string) => void): Promise<() => void>;
+  /** The window became the one in front, with true, or stopped being it,
+      with false, as the system says. */
+  onWindowFocus(handler: (focused: boolean) => void): Promise<() => void>;
   /** A short, quiet chime. */
   chime(): Promise<void>;
   spawn(
@@ -1829,6 +1832,9 @@ const tauriCore: Core = {
   async onNoticeClicked(handler) {
     return listen<string>("notice_clicked", (event) => handler(event.payload));
   },
+  async onWindowFocus(handler) {
+    return getCurrentWindow().onFocusChanged((event) => handler(event.payload));
+  },
 
   async chime() {
     playChime();
@@ -2189,6 +2195,9 @@ const detachedCore: Core = {
   async notify() {},
   async unnotify() {},
   async onNoticeClicked() {
+    return () => {};
+  },
+  async onWindowFocus() {
     return () => {};
   },
   async chime() {},

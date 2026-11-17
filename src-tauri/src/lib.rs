@@ -1809,6 +1809,7 @@ pub fn run() {
                 }
             }
             browser_keys::install(app);
+            notices::install(app.handle());
             #[cfg(all(debug_assertions, target_os = "macos"))]
             probe::maybe_run_probe(app.handle());
             let cwd = std::env::current_dir().unwrap_or_default();

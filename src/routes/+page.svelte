@@ -111,7 +111,7 @@
     unreadCount,
     viewed,
   } from "$lib/sessions.svelte";
-  import { attention, badge, followFocus } from "$lib/attention.svelte";
+  import { attention, badge, followFocus, tabFocused, windowFocused } from "$lib/attention.svelte";
   import { askForSession, followLimits, lookAtWork } from "$lib/limitsPoll";
   import { primeChime } from "$lib/chime";
   import { announce, clicked, seen } from "$lib/notify.svelte";
@@ -247,7 +247,13 @@
       .onSettingsRequest((request) => void settingsRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
-      .onBrowserFocused(() => browserFocused())
+      .onBrowserFocused(() => {
+        browserFocused();
+        tabFocused();
+      })
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onWindowFocus((focused) => windowFocused(focused))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))

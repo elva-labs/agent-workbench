@@ -13,11 +13,13 @@ Following a session into a worktree reads the process's working directory
 through the kernel's process information. The embedded browser has all of
 it here: tabs, and the tools an agent reads and drives a page with alike.
 See [browser](browser.md).
-A notification goes through the system's notification centre under a name
-of the app's own: a click on it brings the window forward at what it was
-about, and the app takes it away once that is over. This needs the app run
-from its bundle; a development build shows its notifications as the
-Terminal's and leaves them be.
+Each notification carries an identifier of the app's own, so the app can
+take it away or tell which was clicked: a click brings the window forward
+at what it was about, and the app takes it away once that is over. None
+shows as a banner while the window is the one in front, and those an
+earlier run left are taken away at launch. This needs the app run from its
+bundle; a development build shows its notifications as the Terminal's and
+leaves them be.
 
 ## Linux
 

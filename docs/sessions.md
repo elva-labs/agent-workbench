@@ -279,7 +279,9 @@ started included, the workbench's question when a session wants to start
 another, and an agent's change to the settings. The notification names the
 project and the session that asks, and says what for in a line. One asked
 while the window has focus is not told of later, and one answered without
-the user, by a standing answer or the agent's own rules, never waits. A
+the user, by a standing answer or the agent's own rules, never waits. The
+window counts as in front while its page or one of its browser tabs has the
+keyboard. A
 click on a notification brings the window forward at what it was about:
 the session, or the dock where a question is answered, which for a session
 another started is its starter's. A session's notification is taken away
