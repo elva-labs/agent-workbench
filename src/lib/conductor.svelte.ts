@@ -119,7 +119,7 @@ import { projectLabel, workspace } from "$lib/workspace.svelte";
 import { startsIn } from "$lib/orchestratorFolder.svelte";
 import { kindFor } from "$lib/sessionKind.svelte";
 import { startAsk } from "$lib/startAsk.svelte";
-import { fitMode, narrowerOf } from "$lib/modeFit";
+import { fitMode, modeName, narrowerOf } from "$lib/modeFit";
 
 /** How many sessions one caller may have running at a time. */
 export const CAP = 8;
@@ -2073,6 +2073,7 @@ async function startFitted(
   // It begins in its starter's mode, the narrower of the one asked about
   // and the one now where the starter's changed meanwhile.
   session.modeGiven = narrowerOf(agent, given, givenMode(callingSession(request), agent));
+  const begins = session.modeGiven === null ? "" : ` It begins in ${modeName(agent, session.modeGiven)} mode.`;
   conductor.startedBy[session.key] = caller;
   if (fit !== null) {
     conductor.places[session.key] = fit.place;
@@ -2129,14 +2130,14 @@ async function startFitted(
         : "";
   if (fit === null)
     return said(
-      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${begins}${notCalled} ${KEEP_WAITING}`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${notCalled} ${KEEP_WAITING}`,
+    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${begins}${notCalled} ${KEEP_WAITING}`,
   );
 }
 

@@ -25,6 +25,24 @@ const STARTED_IN: Record<AgentId, readonly string[]> = {
   codex: ["full-access", "auto", "read-only"],
 };
 
+/** What each mode is called, as the agents' own lists of modes name it. */
+const NAMES: Record<AgentId, Record<string, string>> = {
+  "claude-code": {
+    plan: "Plan",
+    dontAsk: "Don't ask",
+    default: "Default",
+    acceptEdits: "Accept edits",
+    auto: "Auto",
+    bypassPermissions: "Bypass permissions",
+  },
+  codex: { "read-only": "Read only", auto: "Auto", "full-access": "Full access" },
+};
+
+/** What a mode is called, else the agent's own name for it. */
+export function modeName(agent: AgentId, mode: string): string {
+  return Object.hasOwn(NAMES[agent], mode) ? NAMES[agent][mode] : mode;
+}
+
 function standing(agent: AgentId, mode: string): number | null {
   return Object.hasOwn(STANDING[agent], mode) ? STANDING[agent][mode] : null;
 }

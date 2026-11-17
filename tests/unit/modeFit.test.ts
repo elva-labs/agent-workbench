@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitMode, narrowerOf, nextNarrower } from "$lib/modeFit";
+import { fitMode, modeName, narrowerOf, nextNarrower } from "$lib/modeFit";
 
 // The mode a session another started begins in: its starter's own as far
 // as its agent has it, and never a wider one.
@@ -25,6 +25,12 @@ describe("the mode a started session is given", () => {
     expect(fitMode("codex", "read-only", "claude-code")).toBe("default");
     // Codex has nothing as narrow as Plan: its narrowest.
     expect(fitMode("claude-code", "plan", "codex")).toBe("read-only");
+  });
+
+  it("is called as the agents' own lists call it, or by its own name", () => {
+    expect(modeName("claude-code", "acceptEdits")).toBe("Accept edits");
+    expect(modeName("codex", "read-only")).toBe("Read only");
+    expect(modeName("claude-code", "constructor")).toBe("constructor");
   });
 
   it("is none for a mode not on the scale", () => {

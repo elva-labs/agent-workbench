@@ -1513,7 +1513,7 @@ describe("a start in the caller's own project", () => {
     live(A, "pty-caller", "caller-1");
     heard("caller-1");
     const row = await unasked({ project: A }, "sid-1");
-    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. ${KEEP_WAITING}`);
+    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. It begins in Default mode. ${KEEP_WAITING}`);
     expect(startedFor(row.key)).toBe(tok("caller-1"));
     const tree = await unasked({ project: A, worktree: true, name: "Fix it" }, "sid-2");
     expect(tree.startIn).toBe(`${A}/.worktrees/fix-it`);
@@ -1666,6 +1666,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect(await asks({ project: A })).toBe(true);
     const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
     expect(row.modeGiven).toBeNull();
+    expect(last().content).not.toContain("It begins in");
   });
 
   it("asks for a Claude Code terminal caller started in a kept mode whose hooks have not said one, and caps the session at it", async () => {
@@ -1675,6 +1676,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect(await asks({ project: A })).toBe(true);
     const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
     expect(row.modeGiven).toBe("acceptEdits");
+    expect(last().content).toContain("It has the prompt. It begins in Accept edits mode.");
   });
 
   it("goes ahead for a Claude Code terminal caller once its hooks have said its mode, over the one it was started in", async () => {
@@ -1682,6 +1684,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     caller.modeNamed = "acceptEdits";
     heard("caller-1", "plan");
     expect((await unasked({ project: A }, "sid-1")).modeGiven).toBe("plan");
+    expect(last().content).toContain("It begins in Plan mode.");
   });
 
   it("gives the narrower of the caller's mode when the start was asked about and when its session is made", async () => {
@@ -1699,6 +1702,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     flushSync();
     await answering;
     expect(row.modeGiven).toBe("read-only");
+    expect(last().content).toContain("It begins in Read only mode.");
   });
 
   it("gives a session started on another agent the caller's mode as far as that agent's modes go", async () => {
