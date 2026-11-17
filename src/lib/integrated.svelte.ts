@@ -32,6 +32,9 @@ import {
   renewToken,
   loadHistory,
   named,
+  newTurnLine,
+  lineComing,
+  userWrote,
   leaveRun,
   noted,
   onIntegratedClose,
@@ -380,6 +383,7 @@ function settle(
     link.worked = false;
     if (!worked) return;
     const line = lastWords(link.conversation.entries);
+    lineComing(session.key);
     if (session.note === null && line !== null) noted(session.key, line);
     else rang(session.key);
   }
@@ -914,7 +918,10 @@ export function send(
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
-  session.note = null;
+  // The user's own message reads the session and ends a mark on it; a
+  // director's leaves the user's mark as it is.
+  if (from === null) userWrote(key);
+  newTurnLine(session);
   if (from !== null) sentBy(id, from);
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a

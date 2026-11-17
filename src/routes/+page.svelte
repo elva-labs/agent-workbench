@@ -112,6 +112,7 @@
     sessions,
     unreadCount,
     viewed,
+    onScreenNow,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus, tabFocused, windowFocused } from "$lib/attention.svelte";
   import { askForSession, followLimits, lookAtWork } from "$lib/limitsPoll";
@@ -358,9 +359,11 @@
 
   // Looking at a session is what reads it, and what takes away the
   // notification that it waits: the one on screen, in a window that has
-  // focus. Either changing is a look.
+  // focus. Either changing is a look, except that a session marked unread
+  // while on screen is read only once another has been on screen.
   $effect(() => {
     const key = sessions.active;
+    onScreenNow(key);
     if (attention.focused && key !== null) {
       viewed(key);
       untrack(() => seen(key));
