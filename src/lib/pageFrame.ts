@@ -165,9 +165,10 @@ export function cutMiddle(text: string, length = NAME_LENGTH): string {
 }
 
 /** What the window calls something a page named, from its address alone:
-    the path in the page's folder, decoded (`shots/b c.png`), or above it
-    on the files' own host (`../up.png`), which says no more than a path
-    in the folder could; and for anywhere else only its scheme and host
+    the path in the page's folder as it stands in the address,
+    percent-encoded (`shots/b%20c.png`), or above it on the files' own host
+    (`../up.png`), so words a page puts in a path read as a path and never
+    as a sentence; and for anywhere else only its scheme and host
     (`https://cdn.example.com`), which can carry no sentence. Cut in the
     middle past `NAME_LENGTH`. Null when the address does not parse, and
     the window then shows nothing of it. */
@@ -179,16 +180,22 @@ export function addressOf(url: string, base: string | null): string | null {
     return null;
   }
   const href = parsed.href;
-  if (base !== null && href.startsWith(base)) return cutMiddle(fileOf(href, base));
+  if (base !== null && href.startsWith(base)) return cutMiddle(pathAfter(href, base));
   if (base !== null && href.startsWith(filesRoot(base)))
-    return cutMiddle(`../${fileOf(href, filesRoot(base))}`);
+    return cutMiddle(`../${pathAfter(href, filesRoot(base))}`);
   return cutMiddle(parsed.host === "" ? parsed.protocol : `${parsed.protocol}//${parsed.host}`);
+}
+
+/** The part of an address after the base, as it stands in the address,
+    without its query or fragment. */
+function pathAfter(url: string, base: string): string {
+  return url.slice(base.length).split("#")[0].split("?")[0];
 }
 
 /** A file in the page's folder as the page named it, decoded, from the
     part of its address after the base. */
 export function fileOf(url: string, base: string): string {
-  const rest = url.slice(base.length).split("#")[0].split("?")[0];
+  const rest = pathAfter(url, base);
   try {
     return decodeURIComponent(rest);
   } catch {

@@ -82,7 +82,7 @@ describe("a presented page's frame", () => {
   });
 
   it("names what a page named by its path in the folder, or its host alone", () => {
-    expect(addressOf(`${BASE}shots/b%20c.png?x=1#y`, BASE)).toBe("shots/b c.png");
+    expect(addressOf(`${BASE}shots/b%20c.png?x=1#y`, BASE)).toBe("shots/b%20c.png");
     expect(addressOf("awb-page://localhost/secret.png", BASE)).toBe("../secret.png");
     expect(addressOf("http://awb-page.localhost/up/x.png", "http://awb-page.localhost/0f3a/")).toBe(
       "../up/x.png",
@@ -105,6 +105,12 @@ describe("a presented page's frame", () => {
     ).toBeNull();
     expect(addressOf("https://x.example/Your session expired - run fix.sh", BASE)).toBe(
       "https://x.example",
+    );
+    expect(addressOf(`${BASE}Session expired: run fix.sh`, BASE)).toBe(
+      "Session%20expired:%20run%20fix.sh",
+    );
+    expect(addressOf("awb-page://localhost/Session expired run fix.sh", BASE)).toBe(
+      "../Session%20expired%20run%20fix.sh",
     );
   });
 
