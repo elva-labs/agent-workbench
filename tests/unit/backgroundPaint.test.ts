@@ -327,7 +327,7 @@ describe("painting the background the palette keeps", () => {
 
   it("keeps a background with the palette in use, rounded as it is kept, and takes it away", () => {
     setPalette("rose");
-    setBackground({ ...LAGOON, strength: 0.6049 });
+    setBackground({ ...LAGOON, strength: 0.60049 });
     expect(theme.backgrounds).toEqual({ rose: { ...LAGOON, strength: 0.6 } });
     expect(JSON.parse(localStorage.getItem("workbench.backgrounds")!)).toEqual(theme.backgrounds);
     setBackground(null);

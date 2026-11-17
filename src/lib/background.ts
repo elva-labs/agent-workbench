@@ -14,7 +14,9 @@
  * is how far a tint at about the chrome's darkest lightness shows through
  * the chrome's own ground; by FULL_TINT that tint shows whole; from there
  * to the top the colours rise to the lightness and colour the pad shows
- * them in, so at full strength the window is the colours on the pad.
+ * them in, so at full strength the window is the colours on the pad. The
+ * Strength slider shows it along SLIDER, so each of its steps changes the
+ * picture by about as much as any other.
  *
  * Two or three colours make a gradient across the window: the first two run
  * from the top left down to the foot, mixed in OKLCH so the middle never
@@ -113,11 +115,52 @@ export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
 /** The colours as the pad shows them on a light and a dark chrome, which
     is what the window paints at full strength: light and full enough to
     read as the hue they are, as much colour at the rim as the screen
-    shows. */
-export const PAD: Record<Appearance, { lightness: number; chroma: number }> = {
-  light: { lightness: 0.8, chroma: 0.15 },
-  dark: { lightness: 0.7, chroma: 0.15 },
+    shows. Each hue is as light as its fullest colour on the screen,
+    CUSP_BELOW under it, held between `lightness` and `most`: pinks, reds,
+    blues and violets are fullest darker and sit at `lightness`, while
+    yellows, limes, greens and cyans are fullest much lighter, and at
+    `lightness` would read as olive and teal rather than as themselves. */
+export const PAD: Record<Appearance, { lightness: number; most: number; chroma: number }> = {
+  light: { lightness: 0.8, most: 0.9, chroma: 0.15 },
+  dark: { lightness: 0.7, most: 0.86, chroma: 0.15 },
 };
+const CUSP_BELOW = 0.05;
+
+/** The lightness at which each hue shows the most colour the screen can,
+    every two degrees, worked out once. */
+let cusps: Float64Array | null = null;
+
+function cuspOf(hue: number): number {
+  if (cusps === null) {
+    cusps = new Float64Array(181);
+    const fullest = (L: number, h: number) => {
+      const [, a, b] = fitLch(L, 0.4, h);
+      return Math.hypot(a, b);
+    };
+    for (let at = 0; at <= 180; at++) {
+      // The colour the screen shows rises and then falls with lightness.
+      let low = 0.3;
+      let high = 0.99;
+      for (let step = 0; step < 40; step++) {
+        const one = low + (high - low) / 3;
+        const two = high - (high - low) / 3;
+        if (fullest(one, at * 2) < fullest(two, at * 2)) low = one;
+        else high = two;
+      }
+      cusps[at] = (low + high) / 2;
+    }
+  }
+  const at = turn(hue) / 2;
+  const below = Math.floor(at);
+  const above = Math.min(below + 1, 180);
+  return cusps[below] + (cusps[above] - cusps[below]) * (at - below);
+}
+
+/** How light a hue paints at full strength on a light or a dark chrome. */
+export function padLightness(hue: number, tone: Appearance): number {
+  const pad = PAD[tone];
+  return clamp(cuspOf(hue) - CUSP_BELOW, pad.lightness, pad.most);
+}
 
 /** The strength up to which the calm tint shows through the ground by as
     much as the strength says, and the strength at which it shows whole;
@@ -138,6 +181,46 @@ export function throughAt(strength: number): number {
 export function vividAt(strength: number): number {
   return clamp((strength - FULL_TINT) / (1 - FULL_TINT), 0, 1);
 }
+
+/** Where each strength sits on the Strength slider, from 0 at no
+    background to 1 at the colours themselves, with a straight run
+    between each pair. The slider is even to the eye: each step of it
+    changes what the window paints by about the same amount, measured in
+    OKLab over every hue at the rim, on a light chrome and a dark one
+    alike. Up to CALM the calm tint is a small change, on a dark chrome
+    most of all, so it takes the first tenth of the slider; the rest of
+    the calm tint takes the next sixteenth, and the rise to the colours
+    the rest. */
+export const SLIDER: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [CALM, 0.098],
+  [FULL_TINT, 0.161],
+  [1, 1],
+];
+
+/** Where a strength sits on the Strength slider, 0 to 1. */
+export function positionOf(strength: number): number {
+  const at = clamp(strength, 0, 1);
+  const upper = SLIDER.findIndex(([knot]) => knot >= at);
+  if (upper <= 0) return SLIDER[0][1];
+  const [s0, p0] = SLIDER[upper - 1];
+  const [s1, p1] = SLIDER[upper];
+  return p0 + ((at - s0) * (p1 - p0)) / (s1 - s0);
+}
+
+/** The strength at a place on the Strength slider, 0 to 1, never under
+    LEAST_STRENGTH. */
+export function strengthAt(position: number): number {
+  const at = clamp(position, 0, 1);
+  const upper = SLIDER.findIndex(([, place]) => place >= at);
+  if (upper <= 0) return LEAST_STRENGTH;
+  const [s0, p0] = SLIDER[upper - 1];
+  const [s1, p1] = SLIDER[upper];
+  return Math.max(LEAST_STRENGTH, s0 + ((at - p0) * (s1 - s0)) / (p1 - p0));
+}
+
+/** A strength as the slider shows it, in whole percent. */
+export const strengthPercent = (strength: number) => Math.round(positionOf(strength) * 100);
 
 /** How far either side of the first dot a close colour sits, in degrees. */
 export const NEAR = 50;
@@ -288,7 +371,8 @@ export function validCards(value: unknown): Record<string, number> {
 export const roundedCards = (share: number) => Math.round(Math.min(MOST_CARDS, Math.max(0, share)) * 100) / 100;
 
 /** A background with its numbers rounded as they are kept: whole degrees,
-    and hundredths for the rest. */
+    thousandths for the strength, fine enough for each step of the even
+    slider where the colours rise, and hundredths for the rest. */
 export function rounded(background: Background): Background {
   const hundredths = (value: number) => Math.round(value * 100) / 100;
   return {
@@ -297,7 +381,7 @@ export function rounded(background: Background): Background {
       chroma: hundredths(Math.min(1, Math.max(0, dot.chroma))),
     })),
     harmony: background.harmony,
-    strength: hundredths(Math.min(1, Math.max(LEAST_STRENGTH, background.strength))),
+    strength: Math.round(Math.min(1, Math.max(LEAST_STRENGTH, background.strength)) * 1000) / 1000,
     grain: hundredths(Math.min(1, Math.max(0, background.grain))),
   };
 }
@@ -325,8 +409,7 @@ export function describeBackground(background: Background | null): string {
   const ready = READY_MADE.find((known) => known.name === readyMadeOf(background));
   const colours =
     ready?.label ?? (background.dots.length === 1 ? "One colour" : `${background.dots.length} colours`);
-  const percent = (value: number) => `${Math.round(value * 100)}%`;
-  return `${colours}, strength ${percent(background.strength)}, grain ${percent(background.grain)}`;
+  return `${colours}, strength ${strengthPercent(background.strength)}%, grain ${Math.round(background.grain * 100)}%`;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -523,7 +606,7 @@ export function dotColour(dot: Dot, tone: Appearance, strength = 0): Lab {
   const band = BAND[tone];
   const pad = PAD[tone];
   const vivid = vividAt(strength);
-  const lightness = band.lightness + (pad.lightness - band.lightness) * vivid;
+  const lightness = vivid === 0 ? band.lightness : band.lightness + (padLightness(dot.hue, tone) - band.lightness) * vivid;
   const chroma = band.chroma + (pad.chroma - band.chroma) * vivid;
   return fitLch(lightness, clamp(dot.chroma, 0, 1) * chroma, dot.hue);
 }
@@ -532,7 +615,7 @@ export function dotColour(dot: Dot, tone: Appearance, strength = 0): Lab {
     strength. */
 export function padColour(dot: Dot, appearance: Appearance): string {
   const pad = PAD[appearance];
-  return rgbToHex(labToRgb(fitLch(pad.lightness, clamp(dot.chroma, 0, 1) * pad.chroma, dot.hue)));
+  return rgbToHex(labToRgb(fitLch(padLightness(dot.hue, appearance), clamp(dot.chroma, 0, 1) * pad.chroma, dot.hue)));
 }
 
 /** A background as a small swatch shows it: its colours laid over a
@@ -549,9 +632,11 @@ export function swatchOf(background: Background, palette: Record<string, string>
 /** The pad as pixels, RGBA: hue around it and colour out to the rim, as
     padColour shows a dot, edged smoothly. */
 export function padPixels(size: number, appearance: Appearance): Uint8ClampedArray {
-  const { lightness, chroma: rim } = PAD[appearance];
-  // The most colour the screen shows at each half degree of hue.
-  const most = Array.from({ length: 720 }, (_, at) => {
+  const { chroma: rim } = PAD[appearance];
+  // How light each half degree of hue is, and the most colour the screen
+  // shows there.
+  const light = Array.from({ length: 720 }, (_, at) => padLightness(at / 2, appearance));
+  const most = light.map((lightness, at) => {
     const [, a, b] = fitLch(lightness, rim, at / 2);
     return Math.hypot(a, b);
   });
@@ -564,8 +649,9 @@ export function padPixels(size: number, appearance: Appearance): Uint8ClampedArr
       const r = Math.hypot(dx, dy) / radius;
       if (r > 1.01) continue;
       const hue = turn((Math.atan2(dy, dx) * 180) / Math.PI);
-      const chroma = Math.min(Math.min(r, 1) * rim, most[Math.round(hue * 2) % 720]);
-      const rgb = labToRgb(lchToLab(lightness, chroma, hue));
+      const at = Math.round(hue * 2) % 720;
+      const chroma = Math.min(Math.min(r, 1) * rim, most[at]);
+      const rgb = labToRgb(lchToLab(light[at], chroma, hue));
       const offset = (y * size + x) * 4;
       pixels[offset] = rgb[0];
       pixels[offset + 1] = rgb[1];

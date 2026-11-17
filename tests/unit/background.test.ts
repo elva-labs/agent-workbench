@@ -10,6 +10,7 @@ import {
   LEAST_CONTRAST,
   PAD,
   READY_MADE,
+  SLIDER,
   TEXT_TOKENS,
   addDot,
   checkBackground,
@@ -27,13 +28,17 @@ import {
   mix,
   moveDot,
   padColour,
+  padLightness,
   paintOf,
+  positionOf,
   ratio,
   readyMadeOf,
   removeDot,
   rgbToLab,
   rounded,
   sameBackground,
+  strengthAt,
+  strengthPercent,
   throughAt,
   toneOf,
   validBackgrounds,
@@ -153,9 +158,9 @@ describe("a background as the rules keep it", () => {
     expect(validBackgrounds([1])).toEqual({});
   });
 
-  it("is kept in whole degrees and hundredths", () => {
-    const kept = rounded(background([[359.7, 0.333]], { strength: 0.555, grain: 0.004 }));
-    expect(kept).toEqual({ dots: [{ hue: 0, chroma: 0.33 }], harmony: "single", strength: 0.56, grain: 0 });
+  it("is kept in whole degrees, thousandths for the strength and hundredths for the rest", () => {
+    const kept = rounded(background([[359.7, 0.333]], { strength: 0.5555, grain: 0.004 }));
+    expect(kept).toEqual({ dots: [{ hue: 0, chroma: 0.33 }], harmony: "single", strength: 0.556, grain: 0 });
     expect(sameBackground(background([[10.2, 0.5]]), background([[10, 0.501]]))).toBe(true);
     expect(sameBackground(background([[10, 0.5]]), null)).toBe(false);
   });
@@ -165,8 +170,10 @@ describe("a background as the rules keep it", () => {
     const own = { dots: lagoon.dots, harmony: lagoon.harmony, strength: 0.3, grain: 0 };
     expect(readyMadeOf(own)).toBe("lagoon");
     expect(readyMadeOf(moveDot(own, 1, { hue: 10, chroma: 0.8 }))).toBeNull();
-    expect(describeBackground(own)).toBe("Lagoon, strength 30%, grain 0%");
-    expect(describeBackground(background([[10, 0.4], [40, 1]]))).toBe("2 colours, strength 60%, grain 25%");
+    // The strength in words is where the slider shows it.
+    expect(describeBackground(own)).toBe("Lagoon, strength 5%, grain 0%");
+    expect(describeBackground(background([[10, 0.4], [40, 1]]))).toBe("2 colours, strength 10%, grain 25%");
+    expect(describeBackground({ ...own, strength: 1 })).toBe("Lagoon, strength 100%, grain 0%");
     expect(describeBackground(null)).toBe("None");
   });
 });
@@ -240,6 +247,70 @@ describe("moving the dots", () => {
   });
 });
 
+describe("the Strength slider", () => {
+  it("runs from the least strength kept to the colours themselves, each place one strength and back", () => {
+    expect(positionOf(0)).toBe(0);
+    expect(positionOf(1)).toBe(1);
+    expect(strengthAt(0)).toBe(0.1);
+    expect(strengthAt(1)).toBe(1);
+    for (let place = strengthPercent(0.1); place <= 100; place++) {
+      // A strength kept in thousandths shows at the place it was set from.
+      const kept = Math.round(strengthAt(place / 100) * 1000) / 1000;
+      expect(strengthPercent(kept), `${place}%`).toBe(place);
+    }
+    for (let at = 1; at < SLIDER.length; at++) {
+      expect(SLIDER[at][0]).toBeGreaterThan(SLIDER[at - 1][0]);
+      expect(SLIDER[at][1]).toBeGreaterThan(SLIDER[at - 1][1]);
+    }
+  });
+
+  it("shows a background kept before at the place its picture now sits", () => {
+    const shown = (strength: number) => strengthPercent(strength);
+    expect([0.1, 0.25, 0.5, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95, 1].map(shown)).toEqual([2, 4, 8, 10, 16, 33, 50, 66, 83, 100]);
+  });
+
+  /** How far the window's ground has come on its way from no background,
+      at each of N + 1 strengths, as a share of the whole way: measured in
+      OKLab, over every hue at the rim, on one chrome. */
+  function travelled(tone: Appearance, N: number): number[] {
+    const ground = deepOf(coloursOf("teal", tone));
+    const sums = new Array<number>(N + 1).fill(0);
+    for (let hue = 0; hue < 360; hue += 30) {
+      const at = (strength: number) =>
+        rgbToLab(mix(ground, labToRgb(dotColour({ hue, chroma: 0.9 }, tone, strength)), throughAt(strength)));
+      let before = at(0);
+      for (let i = 1; i <= N; i++) {
+        const now = at(i / N);
+        sums[i] += Math.hypot(now[0] - before[0], now[1] - before[1], now[2] - before[2]);
+        before = now;
+      }
+    }
+    for (let i = 1; i <= N; i++) sums[i] += sums[i - 1];
+    return sums.map((sum) => sum / sums[N]);
+  }
+
+  it("changes the picture by about as much at every step, light and dark taken together, with no dead stretch and no jump", () => {
+    const N = 1000;
+    const ways = { light: travelled("light", N), dark: travelled("dark", N) };
+    const read = (way: number[], strength: number) => way[Math.round(strength * N)];
+    for (let place = 0.1; place <= 1.0001; place += 0.1) {
+      // The slider's first tenth starts from no background at all.
+      const [from, to] = [place < 0.15 ? 0 : strengthAt(place - 0.1), strengthAt(place)];
+      const light = read(ways.light, to) - read(ways.light, from);
+      const dark = read(ways.dark, to) - read(ways.dark, from);
+      const said = `from ${Math.round((place - 0.1) * 100)}% to ${Math.round(place * 100)}%`;
+      // A tenth of the slider is about a tenth of the way, on the average.
+      expect((light + dark) / 2, said).toBeGreaterThan(0.085);
+      expect((light + dark) / 2, said).toBeLessThan(0.115);
+      // On either chrome it is never under half nor over half again as much.
+      for (const [tone, step] of [["light", light], ["dark", dark]] as const) {
+        expect(step, `${tone} ${said}`).toBeGreaterThan(0.05);
+        expect(step, `${tone} ${said}`).toBeLessThan(0.15);
+      }
+    }
+  });
+});
+
 describe("the ready-made backgrounds", () => {
   it("hold colours that belong together: none spread wider than a third of a turn from the first", () => {
     for (const ready of READY_MADE) {
@@ -305,7 +376,7 @@ describe("the colours a background paints", () => {
         const dot = { hue, chroma: 0.9 };
         expect(dotColour(dot, tone, FULL_TINT)).toEqual(dotColour(dot, tone));
         expect(labToRgb(dotColour(dot, tone, 1)).map(Math.round)).toEqual(hexToRgb(padColour(dot, tone)));
-        expect(dotColour(dot, tone, 1)[0]).toBeCloseTo(PAD[tone].lightness, 6);
+        expect(dotColour(dot, tone, 1)[0]).toBeCloseTo(padLightness(hue, tone), 6);
         // On the way the lightness moves steadily from the one to the other.
         let before = BAND[tone].lightness;
         for (const strength of [0.8, 0.85, 0.9, 0.95, 1]) {
@@ -315,6 +386,31 @@ describe("the colours a background paints", () => {
         }
       }
     }
+  });
+
+  it("rise to as light as each hue is fullest, so yellows and limes read clean, within the pad's floor and cap", () => {
+    for (const tone of ["light", "dark"] as Appearance[]) {
+      const { lightness, most } = PAD[tone];
+      let before = padLightness(0, tone);
+      for (let hue = 0; hue <= 360; hue += 1) {
+        const now = padLightness(hue, tone);
+        expect(now).toBeGreaterThanOrEqual(lightness);
+        expect(now).toBeLessThanOrEqual(most);
+        // It follows the hue smoothly round the wheel.
+        expect(Math.abs(now - before)).toBeLessThan(0.02);
+        before = now;
+      }
+      // Pinks, reds, blues and violets sit at the floor; yellows and limes
+      // are lifted to where they are fullest, which at the floor they are
+      // far from.
+      for (const hue of [355, 20, 260, 305]) expect(padLightness(hue, tone)).toBe(lightness);
+      for (const hue of [100, 112, 125]) expect(padLightness(hue, tone)).toBeGreaterThan(lightness + 0.05);
+    }
+    // In dark the Zen pick's lime is light enough to read as lime: as much
+    // green as red, and well over half of each.
+    const lime = labToRgb(dotColour({ hue: 112, chroma: 1 }, "dark", 1));
+    expect(lime[1]).toBeGreaterThan(200);
+    expect(lime[0]).toBeGreaterThan(190);
   });
 
   it("take the band of the chrome they lie on, whatever the appearance is called", () => {
@@ -596,7 +692,9 @@ describe("the guard", () => {
 
       // Above the calm tint the colours are the user's to make too strong:
       // nothing is held back, and the text has the most contrast there is.
-      for (const strength of [0.9, 1]) {
+      // The stretch where a dark chrome's text turns from white to black
+      // runs between 0.85 and 0.95, so it is read a step at a time.
+      for (const strength of [0.8, 0.85, 0.9, 0.95, 1]) {
         it(`gives every text 4.5:1 where black or white can, and else the better of them, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
           const colours = coloursOf(palette, appearance, THEMES);
           const texts = textGrounds(colours, look);

@@ -10,6 +10,7 @@
     FIRST,
     HARMONIES,
     LEAST_CONTRAST,
+    LEAST_STRENGTH,
     MOST_CARDS,
     MOST_DOTS,
     READY_MADE,
@@ -25,6 +26,8 @@
     removeDot,
     rgbToHex,
     rgbToLab,
+    strengthAt,
+    strengthPercent,
     withHarmony,
     type Appearance,
     type Background,
@@ -59,6 +62,10 @@
    * them, or a terminal colour on the panes, under 4.5:1, a line under the
    * controls says so; nothing is held back.
    */
+
+  /** Where the Strength slider starts: the least strength kept, along
+      the even scale. */
+  const LEAST_PLACE = strengthPercent(LEAST_STRENGTH);
 
   /** How far an arrow key moves a dot: degrees of hue and a share of the
       rim, and further with Shift. */
@@ -378,8 +385,8 @@
   function slide(field: "strength" | "grain", event: Event, kept: boolean) {
     const from = latest();
     if (from === null) return;
-    const value = Number((event.target as HTMLInputElement).value) / 100;
-    const next = { ...from, [field]: value };
+    const place = Number((event.target as HTMLInputElement).value) / 100;
+    const next = { ...from, [field]: field === "strength" ? strengthAt(place) : place };
     if (kept) keep(next);
     else showSoon(next);
   }
@@ -392,6 +399,21 @@
       drop();
       setCards(value);
     } else showSoon(from, value);
+  }
+
+  /** Shift with an arrow moves a slider a tenth of its range, as Page Up
+      and Page Down do; the arrows alone move it a step. */
+  function farStep(event: KeyboardEvent) {
+    if (!event.shiftKey) return;
+    const way = { ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1 }[event.key];
+    if (way === undefined) return;
+    event.preventDefault();
+    const input = event.currentTarget as HTMLInputElement;
+    const [least, most] = [Number(input.min), Number(input.max)];
+    const far = Math.max(1, Math.round((most - least) / 10));
+    input.value = String(Math.min(most, Math.max(least, Number(input.value) + way * far)));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
   /** The arrows walk a row of choices and choose as they go, as a row of
@@ -620,17 +642,18 @@
       <input
         id="background-strength"
         type="range"
-        min="10"
+        min={LEAST_PLACE}
         max="100"
-        step="5"
-        value={Math.round((shown?.strength ?? FIRST.strength) * 100)}
-        style:--fill="{((shown?.strength ?? FIRST.strength) * 100 - 10) / 0.9}%"
+        step="1"
+        value={strengthPercent(shown?.strength ?? FIRST.strength)}
+        style:--fill="{((strengthPercent(shown?.strength ?? FIRST.strength) - LEAST_PLACE) / (100 - LEAST_PLACE)) * 100}%"
         disabled={shown === null}
         oninput={(event) => slide("strength", event, false)}
         onchange={(event) => slide("strength", event, true)}
+        onkeydown={farStep}
         data-testid="background-strength"
       />
-      <span class="value">{percent(shown?.strength ?? FIRST.strength)}</span>
+      <span class="value" data-testid="background-strength-value">{strengthPercent(shown?.strength ?? FIRST.strength)}%</span>
     </div>
     <div class="row">
       <label class="what" for="background-grain">Grain</label>
@@ -639,12 +662,13 @@
         type="range"
         min="0"
         max="100"
-        step="5"
+        step="1"
         value={Math.round((shown?.grain ?? FIRST.grain) * 100)}
         style:--fill="{(shown?.grain ?? FIRST.grain) * 100}%"
         disabled={shown === null || terminal}
         oninput={(event) => slide("grain", event, false)}
         onchange={(event) => slide("grain", event, true)}
+        onkeydown={farStep}
         data-testid="background-grain"
       />
       <span class="value">
@@ -664,6 +688,7 @@
         disabled={shown === null || setAside}
         oninput={(event) => slideCards(event, false)}
         onchange={(event) => slideCards(event, true)}
+        onkeydown={farStep}
         aria-valuetext={cards === 0 ? "None" : cardsPercent(cards)}
         data-testid="background-cards"
       />

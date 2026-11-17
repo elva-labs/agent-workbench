@@ -122,14 +122,28 @@ each, walked with the arrows.
 One choice serves light and dark. The pad sets the hue and how much
 colour, and the chrome it lies on sets how light it paints, read from the
 palette's own colours, so a theme that is dark in both appearances is
-painted dark in both. Up to 60% the strength is how much of a calm tint
-shows through the chrome's own ground: light on a light chrome and dark on
-a dark one, at about the lightness of the chrome's darkest tone, so the
+painted dark in both. The Strength slider runs from a calm tint to the
+colours themselves, and is even to the eye: each step changes the picture
+by about as much as any other, light and dark taken together, from the
+faintest tint to the full colours. Its first sixth is the calm tint
+showing through the chrome's own ground: light on a light chrome and dark
+on a dark one, at about the lightness of the chrome's darkest tone, so the
 tinted ground stays below the cards, with more colour at the rim on a dark
-chrome, since near black the screen shows little of it. By 75% the calm
+chrome, since near black the screen shows little of it. At 16% the calm
 tint shows whole. From there to 100% the colours rise to the lightness and
 the colour the pad shows them in, so at full strength the chrome is plainly
-the colours on the pad, in light and in dark, and in either look.
+the colours on the pad, in light and in dark, and in either look. Each hue
+rises as far as the screen shows it fullest, within a limit: pinks, reds,
+blues and violets to a middle lightness, and yellows, limes, greens and
+cyans lighter, where they read as themselves rather than as olive or teal.
+The arrow keys move the slider a step, and with <kbd>Shift</kbd>, or Page
+Up and Page Down, a tenth of the way, as with grain and cards.
+
+The settings file keeps the strength as a number from 0.1 to 1, in
+thousandths, along the same path at its own pace: up to 0.6 it is the share
+of the calm tint that shows through, at 0.75 the tint shows whole, and at 1
+the colours are the pad's. The slider shows 0.6, where a new background
+starts, at 10%, 0.75 at 16%, 0.85 at 50% and 0.9 at 67%.
 
 Text on a tinted part is judged at the worst point of the gradient behind
 it, grain included. Where it would fall under a contrast of 4.5 to 1 it is
@@ -138,7 +152,8 @@ quiet text included. Where that cannot reach 4.5 to 1, as on a dark chrome
 whose colours have risen to a middle lightness, the text turns to black or
 white, whichever reads better there, and so do the lines, a chosen row
 and a chip on a tinted part, such as the switch at the top of the changes
-pane. Up to 75% every text holds 4.5 to 1. Above it the colours are never
+pane. Up to 16%, while the calm tint rises, every text holds 4.5 to 1.
+Above it the colours are never
 held back for the text: where even black or white reads under 4.5 to 1, a
 quiet line under the section's controls says how low and in which
 appearance, and the choice stays as it is. A hovered or chosen row on a
@@ -168,9 +183,9 @@ Cards, under strength and grain, lets a little of the background show
 through the cards as well: the panes in the modern look, the boxes in the
 terminal look, and what stands over the window, such as the settings, the
 palette and a menu. It runs from none, the default, to 100%, where a card
-shows the calm tint as fully as the chrome shows it at 75% strength. A
+shows the calm tint as fully as the chrome shows it at 16% strength. A
 card keeps its own lightness while it takes on the colour, and takes it
-from the calm tint at every strength, so above 75%, where the chrome takes
+from the calm tint at every strength, so above 16%, where the chrome takes
 the colours themselves, the cards keep what they hold on their own ground.
 It does nothing while there is no background, and each palette and theme
 keeps its own share with its background. The settings file keeps it as a

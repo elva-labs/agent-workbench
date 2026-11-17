@@ -198,8 +198,10 @@ test("chooses a ready-made background keeping the strength, and None takes it aw
 
 test("sets the strength and grain, and the terminal look takes the strength with no grain", async ({ page }) => {
   await open(page, { backgrounds: { teal: { dots: [{ hue: 200, chroma: 0.8 }], harmony: "single", strength: 0.6, grain: 0.25 } } });
+  // The slider is even to the eye; 90% along it keeps a strength of 0.97.
   await page.getByTestId("background-strength").fill("90");
-  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.9 });
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.97 });
+  await expect(page.getByTestId("background-strength-value")).toHaveText("90%");
   await page.getByTestId("background-grain").fill("0");
   await expect.poll(() => kept(page)).toMatchObject({ grain: 0 });
   await page.getByTestId("look-terminal").click();
@@ -212,15 +214,16 @@ test("sets the strength and grain, and the terminal look takes the strength with
 test("says quietly when text on the colours reads under 4.5 to 1, and shows them all the same", async ({ page }) => {
   await open(page, {
     appearance: "dark",
-    backgrounds: { teal: { dots: [{ hue: 200, chroma: 0.9 }], harmony: "single", strength: 0.85, grain: 1 } },
+    backgrounds: { teal: { dots: [{ hue: 200, chroma: 0.9 }], harmony: "single", strength: 0.821, grain: 1 } },
   });
+  await expect(page.getByTestId("background-strength-value")).toHaveText("40%");
   await expect(page.getByTestId("background-low")).toHaveCount(0);
-  await page.getByTestId("background-strength").fill("90");
+  await page.getByTestId("background-strength").fill("60");
   await expect(page.getByTestId("background-low")).toHaveText(
-    "Text on it reads at 3.8 to 1 in dark, under the 4.5 to 1 that reads easily.",
+    "Text on it reads at 3.5 to 1 in dark, under the 4.5 to 1 that reads easily.",
   );
   // The colours are not held back for it: the window paints what is kept.
-  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.9 });
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.881 });
   await expect(page.getByTestId("background-note")).toContainText("Text on it is drawn as clear as the colours allow.");
 });
 
