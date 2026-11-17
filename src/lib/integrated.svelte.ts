@@ -33,6 +33,7 @@ import {
   loadHistory,
   named,
   leaveRun,
+  movingBySetting,
   noted,
   onIntegratedClose,
   onIntegratedHalt,
@@ -150,6 +151,11 @@ export class Link {
   /** The agent the row was started on, once a workflow picked for it may
       have put it on another: no workflow puts it back. */
   startedOn = $state<AgentId | null>(null);
+  /** What the user allowed for the rest of this run alone, in the words
+      the offer said it keeps: what the run ends with it. A permission mode
+      allowed so is not here, since the conversation's mode goes on into
+      its next run. */
+  granted = $state<string[]>([]);
 
   constructor(clock: () => number) {
     this.conversation = new Conversation(clock);
@@ -284,7 +290,9 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const back =
     body.type === "message" && body.state === "withdrawn" ? link.takingBack.get(body.message) : undefined;
   if (back !== undefined) link.takingBack.delete(back.id);
+  const granting = body.type === "answered" && body.choice === "allowSession" ? grantOf(link, body.request) : null;
   link.conversation.apply(body);
+  if (granting !== null) link.granted = [...link.granted, granting];
   if (back !== undefined) restore(key, back);
   // What failed to go now, or to come back, is old news once the waiting
   // messages or the turn move on.
@@ -347,6 +355,25 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       break;
   }
 }
+
+/** The words of what allowing a request for the session keeps, while the
+    request is open: null for a request this run did not ask, and for a
+    permission mode, which the conversation keeps into its next run. */
+function grantOf(link: Link, id: string): string | null {
+  const request = link.conversation.requests.find((known) => known.request === id);
+  if (request === undefined || request.state !== "open" || request.asked.type !== "permissionAsked") return null;
+  const kept = request.asked.choices.find((offer) => offer.choice === "allowSession")?.remembers ?? null;
+  if (kept === null || !kept.endsWith(FOR_SESSION) || KEEPS_MODE.test(kept)) return null;
+  return kept.slice(0, -FOR_SESSION.length);
+}
+
+/** How an offer says it keeps what it allows until the run ends. One that
+    keeps it for the rest of a turn has let go of it by the time the
+    session is at rest. */
+const FOR_SESSION = " for the rest of this session";
+/** How Claude Code's offer to switch the permission mode for the rest of
+    the session says what it keeps. */
+const KEEPS_MODE = /permission mode for the rest of this session$/;
 
 /** The conversation's id is the row's: what resuming takes, and what the
     agent's own tools name the session by. */
@@ -465,6 +492,7 @@ export async function launch(key: string): Promise<void> {
     told what it is told, and takes the run up once it is. */
 async function begin(key: string, link: Link, starting: Session, told: Told) {
   link.ranOn = { agent: starting.agent, told: toldText(told.instructions, told.startOnly) };
+  link.granted = [];
   const mode = startMode(starting, link);
   starting.modeNamed = mode ?? null;
   const started = await core().integratedStart({
@@ -493,7 +521,8 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
   byHandle.set(started.id, key);
   if (row.status !== "running") {
     row.status = "running";
-    row.changedAt = Date.now();
+    // A row its agent's setting moved says nothing new.
+    if (!movingBySetting(key)) row.changedAt = Date.now();
   }
   runUp(key);
   row.error = null;

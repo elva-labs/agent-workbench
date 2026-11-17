@@ -31,6 +31,7 @@
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
+  import { followSetting } from "$lib/sessionMoves.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen, settleWhen } from "$lib/reopen.svelte";
@@ -57,6 +58,9 @@
     // Tab reaches every control in WebKit as it does elsewhere.
     const stopTabStops = followTabStops();
     const stopStops = watchStops();
+    // The open sessions move when the setting of how their agent's
+    // sessions run is switched.
+    const stopMoves = followSetting();
     let closed = false;
     let stopSettings = () => {};
     void followSettings().then((stop) => {
@@ -94,6 +98,7 @@
       closed = true;
       stopSettings();
       stopStops();
+      stopMoves();
       stopOpening();
       stopReopen();
       stopIntegrated();

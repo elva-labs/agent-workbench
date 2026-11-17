@@ -58,6 +58,9 @@ interface Open {
       says it has earlier messages only when it has. A record from before
       says nothing, which reads as spoken to. */
   spoken?: boolean;
+  /** It ran its own way, whatever its agent's setting says. A record from
+      before says nothing, which reads as following the setting. */
+  own?: boolean;
 }
 
 function onRecord(session: Session): boolean {
@@ -72,7 +75,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind, handle, spoken, token } =
+  const { project, id, agent, startIn, model, account, kind, handle, spoken, token, own } =
     entry as Record<string, unknown>;
   return (
     typeof project === "string" &&
@@ -84,7 +87,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     (kind === undefined || kind === "terminal" || kind === "integrated") &&
     (handle === undefined || handle === null || typeof handle === "string") &&
     (spoken === undefined || typeof spoken === "boolean") &&
-    (token === undefined || (typeof token === "string" && token !== ""))
+    (token === undefined || (typeof token === "string" && token !== "")) &&
+    (own === undefined || typeof own === "boolean")
   );
 }
 
@@ -171,6 +175,7 @@ export function reopen(
       null,
       true,
       running,
+      entry.own === true,
     );
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
@@ -243,6 +248,7 @@ export function reopen(
             model: session.model,
             account: session.account,
             kind: session.kind,
+            ...(session.ownWay ? { own: true } : {}),
             ...(session.kind === "integrated"
               ? { handle: handleOf(session.key), spoken: session.engaged, token: session.token }
               : {}),

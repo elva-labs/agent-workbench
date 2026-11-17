@@ -30,6 +30,7 @@
     otherWay,
     launch,
     belled,
+    reopeningRow,
     sessions,
     statusLabel,
     resumeWithout,
@@ -40,6 +41,7 @@
   } from "$lib/sessions.svelte";
   import { referenced } from "$lib/show.svelte";
   import type { SessionKind } from "$lib/sessionKind.svelte";
+  import type { Session } from "$lib/sessions.svelte";
   import { handleOf, launch as launchIntegrated, linkFor, unspoken } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
@@ -66,6 +68,12 @@
   }
 
   let integrated = $derived(current?.kind === "integrated");
+
+  /** A terminal session on its way to being a conversation: its agent is
+      being quit, which the window does not show, and the conversation
+      takes its place once it has. */
+  const leaving = (session: Session) =>
+    session.kind === "terminal" && session.status === "running" && reopeningRow(session.key);
 
   // An integrated session's header names it, its project and its branch.
   let title = $derived(
@@ -305,7 +313,7 @@
         <TerminalView
           id={session.key}
           ptyId={session.ptyId}
-          active={session.key === sessions.active}
+          active={session.key === sessions.active && !leaving(session)}
           shown={agentVisible()}
           focused={layout.focus === "agent"}
           start={(cols, rows, onOutput) => launch(session.key, cols, rows, onOutput)}
@@ -341,6 +349,10 @@
       <div class="overlay" data-testid="agent-status">
         <p class="message">No session open. Resume a past one from the list, or start a new one.</p>
         {@render starters()}
+      </div>
+    {:else if leaving(current)}
+      <div class="overlay" data-testid="agent-status">
+        <p class="message">Reopening as a conversation…</p>
       </div>
     {:else if current.kind === "integrated"}
       <!-- The conversation says itself how it stands. -->

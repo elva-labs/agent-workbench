@@ -70,6 +70,10 @@ export interface Session {
   /** How it runs: the agent's own interface in a pty, or integrated, the
       conversation drawn by the window. */
   kind: SessionKind;
+  /** It runs its own way, whatever its agent's setting says: the user
+      started it the other way, or reopened it the other way from its menu.
+      Otherwise it follows the setting, and moves when that is switched. */
+  ownWay: boolean;
   ptyId: string | null;
   status: SessionStatus;
   /** The Claude Code session id. Known from the start when resuming, and from
@@ -1337,7 +1341,8 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  *
  * It runs the way the agent's setting says, unless started the other way,
  * under a workflow as under none: either way of running tells the
- * orchestrator its workflow as it starts.
+ * orchestrator its workflow as it starts. Started the other way, it runs its
+ * own way from then on, and a switch of the setting leaves it as it is.
  */
 export function create(
   project: string,
@@ -1390,6 +1395,7 @@ export function create(
     ),
   );
   if (missing !== null) live.error = missing;
+  live.ownWay = runsAs !== kindFor(runs);
   if (resolving) pending.add(live.key);
   sessions.active = live.key;
   return live;
@@ -1504,6 +1510,9 @@ export function putUnder(key: string, workflow: Workflow | null, alone: AgentId)
     session.model = orchestratorModel(workflow);
   }
   session.workflowGone = false;
+  // A conversation stays one on an agent whose setting is a terminal: it
+  // runs its own way from here.
+  if (session.kind !== kindFor(session.agent)) session.ownWay = true;
   return true;
 }
 
@@ -1585,10 +1594,12 @@ export function resumeWithout(key: string): Session | null {
     project,
   };
   saveKept();
-  // The row resumed in its place runs the way this one did, and keeps the
-  // shells opened beside it.
+  // The row resumed in its place runs the way this one did, its own way
+  // only where this one ran so, and keeps the shells opened beside it.
+  const ownWay = session.ownWay;
   close(key, true);
   const next = create(project, id, agent, startIn, null, model, account, null, kind);
+  next.ownWay = ownWay;
   handOver(key, { project, session: next.key });
   return next;
 }
@@ -1618,10 +1629,13 @@ export function reopened(
   /** The token of a run the core may still be running from before the
       window was reloaded, which the row takes up with it. */
   running: string | null = null,
+  /** It ran its own way, whatever its agent's setting says. */
+  ownWay = false,
 ): Session {
   const live = added(
     row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind, running),
   );
+  live.ownWay = ownWay;
   if (resolve) pending.add(live.key);
   return live;
 }
@@ -1656,6 +1670,7 @@ function row(
     project,
     agent,
     kind,
+    ownWay: false,
     ptyId: null,
     status,
     id: resumedFrom,
@@ -1782,8 +1797,9 @@ export function started(
   session.ptyId = ptyId;
   session.startedAt = Date.now();
   session.status = "running";
+  const quiet = quietly.has(key);
   runUp(key);
-  changed(session);
+  if (!quiet) changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
     // A run in the mode kept for the conversation holds that record until
@@ -1925,9 +1941,21 @@ export function reopeningRow(key: string): boolean {
   return reopening.has(key);
 }
 
+/** The rows being moved the other way because their agent's setting was
+    switched, until the next run is up. Nothing the row says has changed,
+    so such a move keeps its place in the list and its time. */
+const quietly = new SvelteSet<string>();
+
+/** Whether the row is being moved by its agent's setting rather than by
+    the user's hand. */
+export function movingBySetting(key: string): boolean {
+  return quietly.has(key);
+}
+
 /** The next run of a row is up, or did not start: a reopen of it is over. */
 export function runUp(key: string) {
   reopening.delete(key);
+  quietly.delete(key);
 }
 
 /** What a reopen does once the run it stopped has ended, by the row's key. */
@@ -1981,20 +2009,26 @@ export function midTurn(session: Session): boolean {
  * started it hears of an end. A row left from the last quit only changes
  * the way it will start. False when the run did not stop in time: the row
  * is left as it was.
+ *
+ * Reopened by the user's hand, the row runs its own way from then on where
+ * that is not its agent's setting, and follows the setting again where it
+ * is. Moved `bySetting`, it goes on following the setting, and keeps its
+ * time and its place in the list.
  */
-export async function reopenOtherWay(key: string): Promise<boolean> {
+export async function reopenOtherWay(key: string, bySetting = false): Promise<boolean> {
   const session = byKey(key);
   if (session === null) return false;
   const to = otherWayFor(session);
   if (to === null) return false;
   reopening.add(key);
+  if (bySetting) quietly.add(key);
   if (session.status !== "running") {
-    swap(session, to);
+    swap(session, to, bySetting);
     return true;
   }
   const stopped = await stopRun(session, () => {
     const row = byKey(key);
-    if (row !== null) swap(row, to);
+    if (row !== null) swap(row, to, bySetting);
   });
   if (!stopped) runUp(key);
   return stopped;
@@ -2002,7 +2036,8 @@ export async function reopenOtherWay(key: string): Promise<boolean> {
 
 /** Turns a row whose run has ended, or that has none, the other way, to
     start again there on the same conversation. */
-function swap(row: Session, to: SessionKind) {
+function swap(row: Session, to: SessionKind, bySetting: boolean) {
+  if (!bySetting) row.ownWay = to !== kindFor(row.agent);
   // The conversation the stopped run had, which the other way lets go of:
   // the next run reads it back from the agent's own record.
   if (row.kind === "integrated") stopIntegrated(row);
@@ -2028,7 +2063,7 @@ function swap(row: Session, to: SessionKind) {
     renewToken(row);
     row.status = "starting";
   }
-  changed(row);
+  if (!bySetting) changed(row);
 }
 
 /** Stops the row's run, and once it has ended, does `then` inside the end.
@@ -2901,6 +2936,7 @@ export function nextNeedingYou(): Session | null {
 export function reset() {
   pendingActivity.clear();
   reopening.clear();
+  quietly.clear();
   endings.clear();
   closedRuns.clear();
   pressed.clear();

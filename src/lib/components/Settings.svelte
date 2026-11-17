@@ -692,8 +692,10 @@
               {/each}
             </div>
             <p class="note quiet" data-testid="session-kind-when">
-              A change applies to sessions started after it. To move one that is running, right-click
-              its row and choose Reopen.
+              A change moves the sessions already open too, each with its conversation the next time
+              it is on screen and idle. One you started or reopened the other way stays so. One that
+              would lose a command running in the background, or what you allowed it for the session,
+              says so on its row: right-click it and choose Reopen to move it.
             </p>
             <h3>When a session starts another</h3>
             <UnreadEntries field="askEveryStart" />
