@@ -273,11 +273,14 @@ column, so a window too narrow for the changes pane beside the fold holds
 it in compact mode.
 
 The pane comes back over the panes rather than beside them. The pointer
-resting a moment on a strip a few pixels wide along the window's left
-edge, or leaving the window by that edge, slides it in from the edge at
+moving onto a strip a few pixels wide along the window's left edge and
+resting there a moment, or leaving the window by that edge, slides it in
+from the edge at
 its open width, as tall as the panes, on its own ground with a soft
 shadow and, in the modern look, rounded corners on its free side; it
-pushes nothing. Once the pointer has been away from it for a little under
+pushes nothing. A pointer that was already resting where the strip comes
+to stand, as compact mode comes on, brings nothing until it moves. Once
+the pointer has been away from it for a little under
 half a second it slides back out, and so it does at once on a press
 anywhere outside it. While a menu of its own is open, the new-session
 choice stands under a project, a question is up in it, a press that began

@@ -13,9 +13,11 @@
   import { layout, peekSessions } from "$lib/layout.svelte";
   import { sessions } from "$lib/sessions.svelte";
 
-  /** Where the pointer was last seen, and whether it went out of the window
-      by its left edge and has not come back. */
+  /** Where the pointer was last seen and where it was the time before, and
+      whether it went out of the window by its left edge and has not come
+      back. */
   let at = { x: -1, y: -1 };
+  let before = { x: -1, y: -1 };
   let outLeft = false;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -70,6 +72,7 @@
   // it.
   $effect(() => {
     const move = (e: PointerEvent) => {
+      before = at;
       at = { x: e.clientX, y: e.clientY };
       outLeft = false;
       if (!layout.sessionsPeek) return;
@@ -79,7 +82,9 @@
     const out = (e: PointerEvent) => {
       if (e.relatedTarget !== null) return;
       const { x, y } = at;
-      outLeft = x >= 0 && x <= 24 && x <= y && x <= window.innerHeight - y;
+      // The left edge is the nearest one, and not by a corner: a pointer
+      // known only at the window's corner says nothing of where it went.
+      outLeft = x >= 0 && x <= 24 && x < y && x < window.innerHeight - y;
       if (!layout.sessionsPeek) {
         if (outLeft) slideIn();
         else cancel();
@@ -141,9 +146,14 @@
     });
   });
 
-  function enterEdge() {
-    if (layout.sessionsPeek) return;
-    later(slideIn, EDGE_AFTER);
+  /** The pointer moving onto the edge brings the pane. Only a move does:
+      a pointer that rests where the edge comes to stand under it, as when
+      compact mode comes on or a window opens under it, is told it entered
+      and has not gone anywhere. */
+  function moveEdge(e: PointerEvent) {
+    if (layout.sessionsPeek || timer !== null) return;
+    const moved = before.x >= 0 && (before.x !== e.clientX || before.y !== e.clientY);
+    if (moved) later(slideIn, EDGE_AFTER);
   }
 
   function leaveEdge() {
@@ -163,7 +173,7 @@
   <div
     class="edge"
     style:--edge-w="{EDGE_WIDTH}px"
-    onpointerenter={enterEdge}
+    onpointermove={moveEdge}
     onpointerleave={leaveEdge}
     aria-hidden="true"
     data-testid="compact-edge"

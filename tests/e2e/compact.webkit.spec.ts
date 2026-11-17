@@ -95,6 +95,26 @@ test("slides the pane in at the left edge, and back a moment after the pointer l
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
 });
 
+// A pointer resting where the edge comes to stand under it has not moved
+// there: the edge waits for a move. On Linux the browser reports the
+// pointer it starts with, at the window's corner, entering what comes
+// under it.
+test("does not slide the pane in for a pointer the edge comes under", async ({ page }) => {
+  await page.clock.install();
+  await start(page);
+  await page.evaluate(() => {
+    const edge = document.querySelector("[data-testid='compact-edge']")!;
+    for (const type of ["pointerover", "pointerenter", "pointermove"])
+      edge.dispatchEvent(new PointerEvent(type, { bubbles: type !== "pointerenter", clientX: 0, clientY: 0 }));
+  });
+  await page.clock.runFor(1000);
+  await expect(page.locator(SESSIONS)).toBeHidden();
+  // A move along the edge brings it.
+  await page.mouse.move(3, 300);
+  await page.mouse.move(3, 320);
+  await slidIn(page);
+});
+
 test("slides the pane in when the pointer leaves the window by its left edge", async ({ page }) => {
   await start(page);
   await page.mouse.move(400, 400);
@@ -416,6 +436,9 @@ function underLights(page: Page, room: { left: number; right: number; top: numbe
 for (const look of ["modern", "terminal"] as const)
   test(`keeps the traffic lights' corner clear in every state, in the ${look} look`, async ({ page }) => {
     await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
+    // The page takes itself for macOS, so its chords are Cmd's whatever the
+    // machine the test runs on.
+    const CMD = "Meta";
     await installFakeCore(page, { settings: { look, keys: { "focus.sessions": BOUND } } });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
@@ -424,12 +447,12 @@ for (const look of ["modern", "terminal"] as const)
     const clear = async (state: string) => expect(await underLights(page, room), state).toEqual([]);
 
     await clear("open");
-    await page.keyboard.press(`${MOD}+b`);
+    await page.keyboard.press(`${CMD}+b`);
     await expect.poll(async () => (await boxOf(page, "section[data-pane='sessions']")).width).toBeLessThan(100);
     await clear("folded");
-    await page.keyboard.press(`${MOD}+b`);
+    await page.keyboard.press(`${CMD}+b`);
 
-    await page.keyboard.press(`${MOD}+,`);
+    await page.keyboard.press(`${CMD}+,`);
     await page.getByTestId("compact-on").click();
     await page.keyboard.press("Escape");
     await slidOut(page);
@@ -439,10 +462,10 @@ for (const look of ["modern", "terminal"] as const)
     await clear("compact, slid in");
     await page.mouse.move(900, 400, { steps: 3 });
     await slidOut(page);
-    await page.keyboard.press(`${MOD}+Shift+E`);
+    await page.keyboard.press(`${CMD}+Shift+E`);
     await expect(page.getByTestId("mode-readout")).toHaveText("editing");
     await clear("compact, editing");
-    await page.keyboard.press(PRESS_BOUND);
+    await page.keyboard.press(`${CMD}+y`);
     await slidIn(page);
     await clear("compact, editing, slid in");
   });
