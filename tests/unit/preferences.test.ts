@@ -45,6 +45,7 @@ const DEFAULTS: Settings = {
   notifications: true,
   chime: false,
   askEveryStart: false,
+  compact: false,
 };
 
 vi.mock("$lib/core", () => ({
@@ -693,6 +694,7 @@ describe("adopt", () => {
       interfaceFont: "inter",
       keys: { ...PRESETS.vim },
       hooks: { everywhere: false, overrides: { "/x": true } },
+      compact: true,
     };
     adopt(settings);
     expect(currentSettings()).toEqual(settings);

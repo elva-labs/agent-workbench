@@ -277,6 +277,11 @@ pub struct Settings {
     /// the starter's own project on its agent and account is not asked.
     #[serde(default)]
     pub ask_every_start: bool,
+    /// Whether the sessions pane leaves the layout and slides in over the
+    /// panes from the window's left edge. A file from before has none,
+    /// which reads as off.
+    #[serde(default)]
+    pub compact: bool,
     /// What the file holds that is not used. Not a setting: it is read from the file and written back to it.
     #[serde(default)]
     pub unread_entries: Vec<UnreadEntry>,
@@ -307,6 +312,7 @@ impl Default for Settings {
             notifications: true,
             chime: false,
             ask_every_start: false,
+            compact: false,
             unread_entries: Vec::new(),
         }
     }
@@ -1105,6 +1111,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "askEveryStart" => {
             settings.ask_every_start = value.as_bool().ok_or("askEveryStart is true or false")?;
         }
+        "compact" => settings.compact = value.as_bool().ok_or("compact is true or false")?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => {
@@ -2956,6 +2963,22 @@ mod tests {
         let next = apply(&Settings::default(), &json!({ "userStyles": true })).unwrap();
         assert!(next.user_styles);
         assert!(apply(&next, &json!({ "userStyles": "yes" })).is_err());
+    }
+
+    #[test]
+    fn compact_mode_is_off_until_turned_on() {
+        let defaults = Settings::default();
+        assert!(!defaults.compact);
+        let next = apply(&defaults, &json!({ "compact": true })).unwrap();
+        assert!(next.compact);
+        assert!(apply(&next, &json!({ "compact": "yes" })).is_err());
+        assert!(parse(r#"{ "compact": true }"#).unwrap().compact);
+        // A file from before the setting reads as off, and a value that is
+        // not one is set aside and kept as written.
+        assert!(!parse(r#"{ "chime": true }"#).unwrap().compact);
+        let odd = parse(r#"{ "compact": "yes" }"#).unwrap();
+        assert!(!odd.compact);
+        assert_eq!(odd.unread_entries[0].field, "compact");
     }
 
     #[test]
