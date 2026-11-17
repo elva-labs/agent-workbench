@@ -251,9 +251,12 @@ describe("the workbench's wait and notify in a run", () => {
     const waiting: Part[] = [answer, call({ name: WAIT, tool: "mcp", done: false })];
     expect(shape(waiting)).toEqual(["text"]);
     expect(runningCall(waiting)).toBeNull();
-    // A turn that is only waiting says what a turn at work with nothing to
-    // say does.
-    expect(nowDoing(running(), waiting)).toBe("Working");
+    // A turn that is only waiting says on what, with no step of its own.
+    expect(nowDoing(running(), waiting)).toBe("Waiting on the sessions it started");
+    const onOne: Part[] = [answer, call({ name: WAIT, tool: "mcp", done: false, input: { session: "s-9" } })];
+    expect(nowDoing(running(), onOne)).toBe("Waiting on a session");
+    // A note on the row only flashes past, and says nothing of its own.
+    expect(nowDoing(running(), [answer, call({ name: NOTIFY, tool: "mcp", done: false })])).toBe("Working");
     const done: Part[] = [answer, call({ name: WAIT, tool: "mcp" }), call({ name: NOTIFY, tool: "mcp" }), call({ name: WAIT, tool: "mcp" })];
     expect(shape(done)).toEqual(["text"]);
   });
@@ -269,7 +272,7 @@ describe("the workbench's wait and notify in a run", () => {
     expect(shape(parts)).toEqual(["text", "work:Bash", "text"]);
     const work = segments(parts)[1];
     expect(work.kind === "work" && workSummary(work.parts, 0).detail).toBe("ran 1 command");
-    expect(nowDoing(running(), parts)).toBe("Working");
+    expect(nowDoing(running(), parts)).toBe("Waiting on the sessions it started");
   });
 
   it("keep a message whole across a wake that comes between two waits", () => {
@@ -288,7 +291,7 @@ describe("the workbench's wait and notify in a run", () => {
     expect(runs).toHaveLength(2);
     expect(runs.map((run) => (run.kind === "agent" ? shape(run.parts) : []))).toEqual([["text"], []]);
     const last = runs[1];
-    expect(last.kind === "agent" && nowDoing(c, last.parts)).toBe("Working");
+    expect(last.kind === "agent" && nowDoing(c, last.parts)).toBe("Waiting on the sessions it started");
   });
 });
 

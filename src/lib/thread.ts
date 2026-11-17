@@ -529,6 +529,17 @@ export function runningCall(parts: Part[]): ToolCall | null {
   return null;
 }
 
+/** The workbench's own wait the run is in, when it is in one. */
+function runningWait(parts: Part[]): ToolCall | null {
+  for (let at = parts.length - 1; at >= 0; at--) {
+    const part = parts[at];
+    if (part.kind !== "tool" || part.done) continue;
+    const named = mcpName(part.name);
+    if (named !== null && named.server === WORKBENCH && named.tool === "wait") return part;
+  }
+  return null;
+}
+
 /** What the agent is doing now, in a few words, or null when what it is
     doing is in sight: text streaming in, or nothing at all. */
 export function nowDoing(conversation: Conversation, parts: Part[]): string | null {
@@ -543,6 +554,10 @@ export function nowDoing(conversation: Conversation, parts: Part[]): string | nu
   }
   const call = runningCall(parts);
   if (call !== null) return phraseText(stepTitle(call));
+  // A wait is no step of the run, but while the agent is only waiting its
+  // foot says on what.
+  const waiting = runningWait(parts);
+  if (waiting !== null) return phraseText(stepTitle(waiting));
   const last = parts[parts.length - 1];
   if (last !== undefined && last.kind === "thinking" && !last.done) return "Thinking";
   if (last !== undefined && last.kind === "text" && !last.done) return null;

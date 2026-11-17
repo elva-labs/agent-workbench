@@ -599,8 +599,9 @@ count in the line work folds into, or a line at the foot of its own, and
 neither folds anything: what the agent wrote before them stays the last
 thing in its run, in full, so an answer it gives while it waits on its
 sessions is read where it is written, and a wait that follows a wake leaves
-it so as well. While a turn is only waiting, its foot says Working, as it
-does for any turn at work with nothing else to say. A plan is drawn
+it so as well. While a turn is only waiting, its foot says on what, in the
+wait's own words: waiting on a session by its name, or on the sessions it
+started. A plan is drawn
 where it came and changed in place, a question the user answered with the
 answer, a secret one without it, and a compaction, a notice or an error
 where it happened. The sessions an agent started with the workbench's start

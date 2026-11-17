@@ -150,7 +150,7 @@ test.describe("an integrated session", () => {
     // Only the command is work: the wait and the notify make no line.
     await expect(run.getByTestId("work-line")).toHaveCount(1);
     await expect(run.getByTestId("work-line")).toContainText(/ran 1 command$/);
-    await expect(page.getByTestId("now")).toHaveText("Working");
+    await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
     const answer = (await run.getByTestId("agent-text").boundingBox())!;
     const now = (await page.getByTestId("now").boundingBox())!;
     expect(answer.y + answer.height).toBeLessThanOrEqual(now.y);
