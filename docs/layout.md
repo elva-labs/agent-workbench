@@ -260,6 +260,51 @@ puts the pane back; so does the pointer leaving it, <kbd>Esc</kbd>,
 viewer. A pane peeked
 from the keyboard stays while the pointer wanders.
 
+## Compact mode
+
+Compact mode, a setting under Appearance, takes the sessions pane out of
+the layout: the other panes take the window's width, with the same gap of
+ground before the first card as after the last in the modern look, and
+only the frame's padding in the terminal look. The header that leads the
+window keeps the room the window's buttons need: on macOS its title clears
+the traffic lights, and on Windows and Linux the menu button stands at its
+start. The widths at which panes give way are reckoned without the folded
+column, so a window too narrow for the changes pane beside the fold holds
+it in compact mode.
+
+The pane comes back over the panes rather than beside them. The pointer
+resting a moment on a strip a few pixels wide along the window's left
+edge, or leaving the window by that edge, slides it in from the edge at
+its open width, as tall as the panes, on its own ground with a soft
+shadow and, in the modern look, rounded corners on its free side; it
+pushes nothing. Once the pointer has been away from it for a little under
+half a second it slides back out, and so it does at once on a press
+anywhere outside it. While a menu of its own is open, the new-session
+choice stands under a project, a question is up in it, a press that began
+in it is held, or the keyboard came to it by its chord or walks its rows,
+it stays wherever the pointer goes. The pointer that left the window by
+the left edge finds it there on the way back. The slide is the panes'
+own motion, and none where the system asks for reduced motion.
+
+<kbd>Cmd</kbd><kbd>1</kbd>, or whatever chord the focus on the sessions
+pane is bound to, slides it in with the keyboard in it, on the session on
+screen; <kbd>Cmd</kbd><kbd>B</kbd> does the same. <kbd>Esc</kbd> or the
+chord again sends it back and gives the keyboard to the pane that had it.
+Picking a session sends it back with the keyboard in that session's
+agent, as a pick does anywhere; picking a project sends it back with the
+keyboard where it was. Going to a session or project from the palette
+leaves the pane where it is, out of sight.
+
+What the pane would tell is not lost while it is out of sight. The status
+bar counts the sessions waiting for you, as it always does, and while one
+other than the session on screen is unread or asks for a permission, a
+short bar in the accent stands on the window's left edge, where the pane
+comes from.
+
+Compact mode is a state of its own. The fold the toggle chose and the
+pane's width are left as they were, and stand again when it is turned off,
+which lays the window out again in one step.
+
 ## Forced is not chosen
 
 A pane can be folded or missing for two reasons, and they are kept apart:

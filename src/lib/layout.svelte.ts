@@ -23,6 +23,11 @@
  * they stand when it is open. While reviewing it can also be peeked: drawn
  * at its open width over the agent pane, with the column still folded, so
  * a session can be picked without the viewer closing or anything moving.
+ * In compact mode it is not in the layout at all: the other panes take the
+ * window's width, and the pane is drawn over them from the window's left
+ * edge while it is peeked. The fold and the pane's width are left as they
+ * are, so turning compact mode off finds them as they were.
+ *
  * Two kinds of collapse, for it and the changes pane, and they must not be
  * confused:
  *
@@ -36,6 +41,7 @@
 import { Tween } from "svelte/motion";
 import { isMac } from "$lib/platform";
 import { theme } from "$lib/theme.svelte";
+import { compact } from "$lib/compact.svelte";
 
 export type PaneId = "sessions" | "agent" | "changes" | "terminal";
 export type Mode = "working" | "reviewing" | "editing";
@@ -146,12 +152,6 @@ export function folded(): number {
   return isMac() ? FOLDED_WIDE[theme.look] : FOLDED;
 }
 
-/** What the folded column takes here beyond the narrow one, which the
-    widths the layout needs grow by. */
-function foldedStep(): number {
-  return folded() - FOLDED;
-}
-
 /** Content width below which the sessions pane cannot open alongside the rest. */
 export const NEEDS_SESSIONS =
   MIN.sessions + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
@@ -160,6 +160,19 @@ export const NEEDS_SESSIONS =
 export const NEEDS_CHANGES =
   FOLDED + SPLITTER + MIN.changes + SPLITTER + MIN.agent;
 
+/** What stands before the panes in compact mode, where the sessions pane is
+    not in the layout: in the modern look the same gap of ground as at the
+    window's right edge, in the terminal look nothing past the frame's
+    padding. */
+export const COMPACT_EDGE = { modern: SPLITTER, terminal: 0 } as const;
+
+/** What the sessions pane takes in the layout while it is not open, the
+    gap beside it included: the folded column, or in compact mode only the
+    edge before the panes. */
+export function foldedColumn(): number {
+  return compact.on ? COMPACT_EDGE[theme.look] : folded() + SPLITTER;
+}
+
 /** `NEEDS_SESSIONS` and `NEEDS_CHANGES` on this platform, where the
     changes pane's least width and the folded column are its own. */
 function needsSessions(): number {
@@ -167,12 +180,13 @@ function needsSessions(): number {
 }
 
 function needsChanges(): number {
-  return NEEDS_CHANGES - MIN.changes + minChanges() + foldedStep();
+  return foldedColumn() + minChanges() + SPLITTER + MIN.agent;
 }
 
-/** `NEEDS_AGENT_WHILE_REVIEWING` beside this platform's folded column. */
+/** `NEEDS_AGENT_WHILE_REVIEWING` beside this platform's folded column, or
+    beside nothing in compact mode. */
 function needsAgentWhileReviewing(): number {
-  return NEEDS_AGENT_WHILE_REVIEWING + foldedStep();
+  return foldedColumn() + MIN.agent + SPLITTER + MIN_REVIEW;
 }
 /**
  * Content width below which reviewing hides the agent rather than squeezing it.
@@ -257,35 +271,61 @@ export const layout = $state({
 
 export type ProjectSort = "used" | "name";
 
+/** Whether the sessions pane is open in its column. Never in compact mode,
+    where it has no column. */
 export function sessionsVisible() {
-  return layout.sessionsChosen && !layout.sessionsForced;
+  return !compact.on && layout.sessionsChosen && !layout.sessionsForced;
 }
 
 /** Whether the sessions pane is drawn open: in its column, or peeked over
-    the agent while reviewing. */
+    the panes beside it. */
 export function sessionsShown() {
   return sessionsVisible() || layout.sessionsPeek;
 }
 
-/** Whether the folded sessions pane peeks rather than opens: while
-    reviewing, where the fold is the shape's and opening the pane for real
-    would close the viewer, and while editing in a window that folds it to
-    keep the editor's room, where there is nothing to open it into. */
+/** Whether the folded sessions pane peeks rather than opens: in compact
+    mode, where it has no column to open into; while reviewing, where the
+    fold is the shape's and opening the pane for real would close the
+    viewer; and while editing in a window that folds it to keep the
+    editor's room, where there is nothing to open it into. */
 export function peekable(): boolean {
-  return layout.mode === "reviewing" || (layout.mode === "editing" && layout.sessionsForced);
+  return (
+    compact.on ||
+    layout.mode === "reviewing" ||
+    (layout.mode === "editing" && layout.sessionsForced)
+  );
 }
+
+/** The pane that had the focus when the pane peeked, which in compact mode
+    takes the keyboard back when it goes. */
+let peekedFrom: PaneId | null = null;
 
 /** Peeks the folded sessions pane over the pane beside it, or puts it
     back. Only where `peekable` says. Putting it back takes the keyboard
-    with it, to the files pane: the viewer or the editor. */
+    with it: in compact mode back to the pane it came from, otherwise to
+    the files pane, the viewer or the editor. */
 export function peekSessions(on: boolean) {
   if (on && (!peekable() || sessionsVisible())) return;
   if (layout.sessionsPeek === on) return;
   layout.sessionsPeek = on;
-  if (!on && layout.focus === "sessions") {
-    layout.focus = "changes";
+  if (on) {
+    peekedFrom = layout.focus === "sessions" ? null : layout.focus;
+    return;
+  }
+  if (layout.focus === "sessions") {
+    layout.focus = compact.on ? cameFrom() : "changes";
     layout.focusRequest += 1;
   }
+}
+
+/** The pane the keyboard goes back to from a compact pane: the one it came
+    from while that is still there, else the agent, else the files pane. */
+function cameFrom(): PaneId {
+  const from = peekedFrom;
+  if (from === "changes" && changesVisible()) return from;
+  if (from === "terminal" && terminalVisible()) return from;
+  if (from === "agent" && agentVisible()) return from;
+  return agentVisible() ? "agent" : "changes";
 }
 
 /**
@@ -439,7 +479,7 @@ function resolveLayout(width: number, height: number) {
     layout.sessionsPeek &&= !sessionsVisible();
     layout.agentHidden = width < needsAgentWhileReviewing();
 
-    const beside = width - folded() - SPLITTER;
+    const beside = width - foldedColumn();
     const room = layout.agentHidden ? beside : beside - SPLITTER - MIN.agent;
     layout.review = Math.min(
       Math.max(layout.review, MIN_REVIEW),
@@ -456,8 +496,8 @@ function resolveLayout(width: number, height: number) {
   }
 
   layout.agentHidden = false;
-  layout.sessionsPeek = false;
-  layout.sessionsForced = width < needsSessions();
+  if (!compact.on) layout.sessionsPeek = false;
+  layout.sessionsForced = !compact.on && width < needsSessions();
   layout.changesForced = width < needsChanges();
 
   const showSessions = sessionsVisible();
@@ -470,12 +510,11 @@ function resolveLayout(width: number, height: number) {
     ? Math.max(minChanges(), layout.changes)
     : layout.changes;
 
-  // The sessions column is there either way, folded or open.
-  const splitters = SPLITTER + (showChanges ? SPLITTER : 0);
+  // The sessions column is there either way, folded or open, or only its
+  // edge in compact mode.
   let overflow =
-    (showSessions ? sessions : folded()) +
-    (showChanges ? changes : 0) +
-    splitters +
+    (showSessions ? sessions + SPLITTER : foldedColumn()) +
+    (showChanges ? changes + SPLITTER : 0) +
     MIN.agent -
     width;
 
@@ -503,7 +542,7 @@ function resolveLayout(width: number, height: number) {
  */
 function resolveEditing(width: number) {
   layout.changesForced = false;
-  const beside = width - folded() - SPLITTER;
+  const beside = width - foldedColumn();
 
   layout.agentHidden = beside - SPLITTER - MIN.agent < MIN.editor;
   layout.editAgentDrawn = layout.agentHidden
@@ -517,8 +556,9 @@ function resolveEditing(width: number) {
     : clamp(layout.editTree, MIN.tree, beside - agent - INNER - MIN.editor);
   const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + INNER;
 
-  layout.sessionsForced = width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
-  layout.sessionsPeek &&= !sessionsVisible() && layout.sessionsForced;
+  layout.sessionsForced =
+    !compact.on && width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
+  layout.sessionsPeek &&= compact.on || (!sessionsVisible() && layout.sessionsForced);
 }
 
 function clamp(value: number, least: number, most: number) {
@@ -527,7 +567,7 @@ function clamp(value: number, least: number, most: number) {
 
 /** What the sessions column takes while editing, the splitter included. */
 function sessionsColumn() {
-  return (sessionsVisible() ? layout.sessions : folded()) + SPLITTER;
+  return sessionsVisible() ? layout.sessions + SPLITTER : foldedColumn();
 }
 
 /** Drags the agent pane's edge while editing, from where it is drawn: the

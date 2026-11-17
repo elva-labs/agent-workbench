@@ -3,6 +3,7 @@
   import Corner from "$lib/components/Corner.svelte";
   import { core } from "$lib/core";
   import { isMac } from "$lib/keymap";
+  import { compact } from "$lib/compact.svelte";
   import { keeps, letters } from "$lib/giveWay";
   import {
     WINDOW_CONTROLS,
@@ -41,12 +42,14 @@
   // move the window. Open, the sessions pane's header holds them; the header
   // of the pane beside its column clears them by whatever the column, folded
   // or on its way, leaves short of them, so its title stands still as the
-  // column moves. In full screen the lights are in a bar of their own, and
-  // no header keeps room for them.
+  // column moves. In compact mode the pane beside its edge leads the
+  // window and clears them in the same way, and the pane drawn over it
+  // keeps their room whether it is in or on its way out. In full screen the
+  // lights are in a bar of their own, and no header keeps room for them.
   const mac = isMac();
   let beside = $derived(id === besideSessions());
   let inset = $derived(
-    mac && !layout.fullScreen && (id === "sessions" ? sessionsShown() : beside),
+    mac && !layout.fullScreen && (id === "sessions" ? compact.on || sessionsShown() : beside),
   );
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.
@@ -56,8 +59,9 @@
   let corner = $derived(!bare && rightmost() === id);
   // And a menu button at the start of the sessions pane's header, where
   // macOS has its lights, open or folded: the native popup that stands in
-  // for a menu bar.
-  let appMenu = $derived(!mac && !bare && id === "sessions");
+  // for a menu bar. In compact mode the header that leads the window holds
+  // it too, and the pane drawn over it holds its own in the same place.
+  let appMenu = $derived(!mac && !bare && (id === "sessions" || (compact.on && beside)));
 
   function openAppMenu() {
     core()

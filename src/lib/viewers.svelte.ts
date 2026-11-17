@@ -9,6 +9,7 @@
  */
 
 import { tick } from "svelte";
+import { compact } from "$lib/compact.svelte";
 import type { MediaItem } from "$lib/media.svelte";
 import {
   activate as activateTab,
@@ -142,8 +143,10 @@ async function restore(what: Viewed) {
 /** Opens the sessions pane from its folded column. Reviewing is what folds
     it, so the viewer closes first, parked for its session, and the pane
     comes back with the working shape. A window too narrow for the pane
-    leaves it folded. */
+    leaves it folded, and compact mode, where it has no column, leaves the
+    fold as it is. */
 export function unfoldSessions() {
+  if (compact.on) return;
   if (layout.mode === "reviewing") {
     parked = snapshot();
     closeViewer();

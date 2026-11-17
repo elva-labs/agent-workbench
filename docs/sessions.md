@@ -258,7 +258,8 @@ pane's header spells the state out. A session that goes quiet, ends, or
 rings for attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
 while a session asks for a permission, `waiting for you` in the agent pane,
-a count in the status bar,
+a count in the status bar, a mark on the window's left edge while
+[compact mode](layout.md#compact-mode) keeps the pane out of sight,
 and the same count on the app's icon. Having it on
 screen in a focused window reads it. A session read stays read until the
 agent does something new: a turn that ends, a permission it asks for, a
