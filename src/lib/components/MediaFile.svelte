@@ -74,7 +74,7 @@
     {@html loaded.html}
   </div>
 {:else if "page" in loaded}
-  <MediaPage html={loaded.page} title={alt} />
+  <MediaPage html={loaded.page} title={alt} page={path} />
 {:else if "diagram" in loaded}
   {#if drawn === null}
     <p class="empty">Drawing…</p>

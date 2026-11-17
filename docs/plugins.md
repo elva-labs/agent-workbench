@@ -282,7 +282,7 @@ when it has none of the three.
 ## The view
 
 A plugin's view is a page it sends, written out or read from a file in its
-own directory, shown in the changes pane's viewer in the frame the present tool uses for HTML: scripts run,
+own directory, shown in the changes pane's viewer in a frame sandboxed as a presented page's is: scripts run,
 but the frame has no origin, no storage and no way at the window or the
 machine. A bridge passes a fixed set of messages between the frame and the
 plugin, through the app: data from the plugin to the page, and from the
