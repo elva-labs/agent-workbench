@@ -88,6 +88,7 @@
   } from "$lib/layout.svelte";
   import { lastUsed, splitProjects, steady, touch } from "$lib/projects.svelte";
   import { unfoldSessions } from "$lib/viewers.svelte";
+  import { compact } from "$lib/compact.svelte";
   import { shown } from "$lib/unseen";
   import { beginNew, closePalette, openCommands, openGoTo } from "$lib/palette.svelte";
   import { openSettings } from "$lib/settings.svelte";
@@ -196,6 +197,15 @@
   /** Whether a press of the pointer in the pane is under way, which is
       how the keyboard arriving with a click is told from a chord. */
   let pressing = false;
+
+  /** Whether the keyboard came to the pane by a chord or has walked its
+      rows since the pointer last pressed in it: then it is the keyboard's,
+      and in compact mode stays while the pointer is away. A menu closed
+      with Escape leaves it the pointer's. */
+  let keyed = $state(false);
+  $effect(() => {
+    if (!layout.sessionsPeek) keyed = false;
+  });
 
   function onFocusin(e: FocusEvent) {
     if (nav.contains(e.relatedTarget as Node | null)) return;
@@ -849,7 +859,7 @@
     if (workspace.open.length === 0) out.push({ id: "open", run: () => void pick() });
     for (const project of split.active) {
       const path = project.path;
-      out.push({ id: `project:${path}`, run: () => bringForward(path) });
+      out.push({ id: `project:${path}`, run: () => pickProject(path) });
       out.push(...body(path));
     }
     if (split.inactive.length > 0) {
@@ -1099,11 +1109,17 @@
     }
   }
 
-  // The question about closing a session or a project is answered in the
-  // pane: when the pane folds, a peek put away above all, it goes, and
-  // nothing is closed.
+  // A question in the pane, about closing a session or a project or about
+  // reopening a session the other way, is answered in the pane: when the
+  // pane folds, a peek put away above all, or in compact mode goes out of
+  // sight by any way at all, the question goes with it, and nothing is
+  // closed or reopened.
   $effect(() => {
-    if (folded && editor.closing !== null) untrack(closingCancel);
+    if (!(folded || (compact.on && !layout.sessionsPeek))) return;
+    untrack(() => {
+      if (editor.closing !== null) closingCancel();
+      reopenAsk = null;
+    });
   });
 
   /** The question about closing a session or a project, while it is up. */
@@ -1192,6 +1208,7 @@
     const header = nav.closest("section")?.querySelector(":scope > header");
     if (owner instanceof HTMLElement && owner.tabIndex >= 0 && header?.contains(owner)) return;
     if (arrived) cursor = null;
+    if (arrived && !pressing) keyed = true;
     nav.focus();
   });
 
@@ -1219,6 +1236,7 @@
 
   function onKeydown(e: KeyboardEvent) {
     walking = true;
+    if (/^(Arrow|Home$|End$)/.test(e.key)) keyed = true;
     if (
       (sortOpen && onSortKeydown(e)) ||
       (menuOpen && onMenuKeys(e)) ||
@@ -1431,8 +1449,38 @@
   });
 
   /** Folded to its narrow column: the rows keep their places, and the pane
-      is one button that opens it. Peeked over the agent, it is open. */
-  let folded = $derived(!sessionsShown());
+      is one button that opens it. Peeked over the agent, it is open. In
+      compact mode it is never folded: it is drawn open over the panes, or
+      not at all. */
+  let folded = $derived(!compact.on && !sessionsShown());
+
+  /** Picking a project brings it forward. In compact mode that is done with
+      the pane, which goes back with the keyboard, as picking a session
+      does. */
+  function pickProject(path: string) {
+    bringForward(path);
+    if (compact.on) peekSessions(false);
+  }
+
+  /** A press that began in the pane and is not yet let go: a click, or a
+      drag of a scroll bar or a selection. */
+  let pressHeld = $state(false);
+
+  // What holds the pane in compact mode while the pointer is away from it:
+  // a menu, the new-session choice, a question in the pane, a press under
+  // way, or the keyboard walking it.
+  $effect(() => {
+    compact.held =
+      menuOpen ||
+      sortOpen ||
+      projectMenu !== null ||
+      sessionMenu !== null ||
+      choosing !== null ||
+      reopenQuestion !== null ||
+      editor.closing !== null ||
+      pressHeld ||
+      (keyed && layout.focus === "sessions");
+  });
   /** Folded wide enough to show the start of each session's name, where
       the column holds the window's buttons. */
   let wide = $derived(foldedWidth() > FOLDED);
@@ -1503,10 +1551,18 @@
     };
     const press = () => {
       pressing = true;
+      pressHeld = true;
       walking = false;
+      keyed = false;
     };
     const release = () => {
+      pressHeld = false;
       setTimeout(() => (pressing = false));
+    };
+    // A press let go outside the window may never be reported: the pointer
+    // moving with no button down is the press over.
+    const moved = (e: PointerEvent) => {
+      if (pressHeld && e.buttons === 0) pressHeld = false;
     };
     const leave = () => {
       pointerIn = false;
@@ -1515,6 +1571,8 @@
         clearTimeout(timer);
         timer = null;
       }
+      // In compact mode the edge decides when the pane goes.
+      if (compact.on) return;
       if (!layout.sessionsPeek || layout.focus === "sessions") return;
       later(() => peekSessions(false), UNPEEK_AFTER);
     };
@@ -1522,12 +1580,16 @@
     pane.addEventListener("pointerleave", leave);
     pane.addEventListener("pointerdown", press, true);
     window.addEventListener("pointerup", release, true);
+    window.addEventListener("pointercancel", release, true);
+    window.addEventListener("pointermove", moved, true);
     return () => {
       if (timer !== null) clearTimeout(timer);
       pane.removeEventListener("pointerenter", enter);
       pane.removeEventListener("pointerleave", leave);
       pane.removeEventListener("pointerdown", press, true);
       window.removeEventListener("pointerup", release, true);
+      window.removeEventListener("pointercancel", release, true);
+      window.removeEventListener("pointermove", moved, true);
     };
   });
 
@@ -2006,7 +2068,7 @@
     <button
       class="row project-row"
       tabindex="-1"
-      onclick={() => bringForward(project.path)}
+      onclick={() => pickProject(project.path)}
       oncontextmenu={(e) => openProjectMenu(project.path, e)}
       title={project.path}
     >
@@ -2513,13 +2575,14 @@
      edge, and the dots of the sessions under it. Nothing moves when the pane
      opens again. */
   .nav.folded {
-    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 14px), transparent calc(var(--folded) - 3px));
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 9px), transparent calc(var(--folded) - 2px));
   }
 
   /* Folded wide, the start of each session's name shows beside its dot,
-     fading out at the column's edge. */
+     fading out over the last few pixels before the column's edge, so the
+     rows read whole up to it rather than dimmed. */
   .nav.folded.wide {
-    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 20px), transparent calc(var(--folded) - 2px));
+    mask-image: linear-gradient(to right, #000 calc(var(--folded) - 10px), transparent calc(var(--folded) - 2px));
   }
 
   .nav.folded .project-row .name {

@@ -88,13 +88,13 @@
 
 <style>
   /* Over the agent pane, near the top, where the question is read before
-     the terminal under it. */
+     the terminal under it, and over a peeked sessions pane. */
   .ask {
     position: fixed;
     top: 24px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 5;
+    z-index: 7;
     width: min(420px, calc(100vw - 48px));
     padding: 10px 12px 12px;
     border: 1px solid var(--accent);

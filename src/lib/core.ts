@@ -1271,6 +1271,10 @@ export interface Settings {
       starts, one in the starter's own project included. A file from
       before has none, which reads as off. */
   askEveryStart: boolean;
+  /** Whether the sessions pane leaves the layout and slides in over the
+      panes from the window's left edge. A file from before has none,
+      which reads as off. */
+  compact?: boolean;
 }
 
 /** The user's own stylesheet: its text, or none and why the one on disk

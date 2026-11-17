@@ -275,6 +275,7 @@ test("walks the settings, every section and its controls, and never leaves them"
     "settings-tab-appearance",
     "theme-system",
     "look-modern",
+    "compact-off",
     "mono-system",
     "sans-system",
     "palette-teal",
