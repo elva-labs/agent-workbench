@@ -12,12 +12,13 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::json;
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 use workbench_core::page_files::{PageFile, PageFileWire};
 use workbench_core::Core;
 
@@ -32,43 +33,76 @@ pub const SCHEME: &str = "awb-page";
 const DOCUMENT_POLICY: &str =
     "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox";
 
-/// How many files are read at once, for every page together. The rest
-/// wait their turn, so a page that asks for files over and over holds no
-/// more than this many reads, and their bytes, in the app or on the wire.
+/// How many of one drawing's files are read at once. The rest wait their
+/// turn, so a page that asks for files over and over holds no more than
+/// this many reads, and their bytes, in the app or on the wire, and keeps
+/// no other page waiting.
 const READS_AT_ONCE: usize = 4;
+
+/// How many of one drawing's requests may wait for a turn; one more is
+/// refused at once. A page asks for every picture it holds as it loads, so
+/// the line holds a gallery of screenshots, while a page asking for files
+/// over and over is turned away rather than queued without end.
+const READS_WAITING: usize = 256;
 
 /// How long the webview may reuse an answer. A page is drawn under a fresh
 /// token each time, so an answer is never reused past the drawing it was
 /// for, and a file changed on disk shows when the page is drawn again.
 const KEPT: &str = "private, max-age=3600";
 
-/// The pages drawn, by token, and the reads under way.
-pub struct Pages {
-    known: Mutex<HashMap<String, String>>,
+/// One drawing of a page: the page, and its reads under way and waiting.
+struct Drawing {
+    page: String,
     reads: Semaphore,
+    waiting: AtomicUsize,
+    waiting_at_most: usize,
 }
 
-impl Default for Pages {
-    fn default() -> Self {
-        Pages {
-            known: Mutex::default(),
-            reads: Semaphore::new(READS_AT_ONCE),
+impl Drawing {
+    fn new(page: &str, at_once: usize, waiting_at_most: usize) -> Self {
+        Drawing {
+            page: page.to_string(),
+            reads: Semaphore::new(at_once),
+            waiting: AtomicUsize::new(0),
+            waiting_at_most,
         }
     }
+
+    /// A turn to read, at once or after those ahead in line; None when the
+    /// line is full.
+    async fn turn(&self) -> Option<SemaphorePermit<'_>> {
+        if let Ok(turn) = self.reads.try_acquire() {
+            return Some(turn);
+        }
+        if self.waiting.fetch_add(1, Ordering::SeqCst) >= self.waiting_at_most {
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        let turn = self.reads.acquire().await.ok();
+        self.waiting.fetch_sub(1, Ordering::SeqCst);
+        turn
+    }
+}
+
+/// The drawings of pages, by token.
+#[derive(Default)]
+pub struct Pages {
+    known: Mutex<HashMap<String, Arc<Drawing>>>,
 }
 
 impl Pages {
     /// A token for one drawing of a page.
     fn give(&self, page: &str) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string();
+        let drawing = Drawing::new(page, READS_AT_ONCE, READS_WAITING);
         self.known
             .lock()
             .expect("pages lock")
-            .insert(token.clone(), page.to_string());
+            .insert(token.clone(), Arc::new(drawing));
         token
     }
 
-    fn page(&self, token: &str) -> Option<String> {
+    fn drawing(&self, token: &str) -> Option<Arc<Drawing>> {
         self.known.lock().expect("pages lock").get(token).cloned()
     }
 }
@@ -187,18 +221,20 @@ async fn answer(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> 
     }
     let path = request.uri().path().trim_start_matches('/');
     let (token, rest) = path.split_once('/').unwrap_or((path, ""));
-    let pages = Arc::clone(&app.state::<Arc<Pages>>());
-    let Some(page) = pages.page(token) else {
+    let Some(drawing) = app.state::<Arc<Pages>>().drawing(token) else {
         return refused(StatusCode::NOT_FOUND, "is outside the page's folder");
     };
     let Some(file) = decoded(rest) else {
         return refused(StatusCode::NOT_FOUND, "is not a plain relative path");
     };
     let range = range(&request);
-    let Ok(_turn) = pages.reads.acquire().await else {
-        return refused(StatusCode::SERVICE_UNAVAILABLE, "could not be read now");
+    let Some(_turn) = drawing.turn().await else {
+        return refused(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "was not read: the page asked for too many files at once",
+        );
     };
-    match read(app, page, file, range).await {
+    match read(app, drawing.page.clone(), file, range).await {
         Ok(file) => answered(file, range.is_some()),
         Err(why) => refused(StatusCode::NOT_FOUND, &why),
     }
@@ -259,9 +295,35 @@ mod tests {
         let first = pages.give("/p/site/page.html");
         let again = pages.give("/p/site/page.html");
         assert_ne!(again, first);
-        assert_eq!(pages.page(&first).as_deref(), Some("/p/site/page.html"));
-        assert_eq!(pages.page(&again).as_deref(), Some("/p/site/page.html"));
-        assert_eq!(pages.page("up.png"), None);
+        let page = |token: &str| pages.drawing(token).map(|drawing| drawing.page.clone());
+        assert_eq!(page(&first).as_deref(), Some("/p/site/page.html"));
+        assert_eq!(page(&again).as_deref(), Some("/p/site/page.html"));
+        assert_eq!(page("up.png"), None);
         assert!(base(&first).ends_with(&format!("/{first}/")));
+    }
+
+    #[test]
+    fn reads_a_drawing_a_few_at_a_time_and_turns_away_past_a_short_line() {
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+        use tauri::async_runtime::block_on;
+
+        let drawing = Drawing::new("/p/site/page.html", 1, 1);
+        let other = Drawing::new("/p/other/page.html", 1, 1);
+
+        let first = block_on(drawing.turn());
+        assert!(first.is_some());
+        // The next waits in line.
+        let mut second = Box::pin(drawing.turn());
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(matches!(second.as_mut().poll(&mut cx), Poll::Pending));
+        // One past the line is turned away at once, and another drawing
+        // reads as if this one were idle.
+        assert!(block_on(drawing.turn()).is_none());
+        assert!(block_on(other.turn()).is_some());
+        // When the first is done, the one in line reads.
+        drop(first);
+        assert!(block_on(second).is_some());
+        assert_eq!(drawing.waiting.load(Ordering::SeqCst), 0);
     }
 }

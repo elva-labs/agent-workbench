@@ -235,8 +235,11 @@ it, named by a relative path: images, stylesheets, fonts, audio and video,
 so screenshots the agent saved beside the page show in it. The app serves
 them at an address of their own for each drawing of the page, named by a
 token drawn at random rather than by the page's path, and reads each file
-when the page asks for it, four at a time, where the page is, a remote
-included: up to eight megabytes each, audio and video a part at a time.
+when the page asks for it, where the page is, a remote included: up to
+eight megabytes each, audio and video a part at a time. Each drawing reads
+four at a time, with a line of up to 256 waiting behind them, which holds
+a gallery of screenshots; a request past that is turned away at once, and
+one page asking over and over keeps no other waiting.
 The webview keeps what it was given while that drawing stands. A page is
 drawn again, and asks afresh, whenever it changes and whenever it is
 presented again, changed or not, so screenshots made again under the same
