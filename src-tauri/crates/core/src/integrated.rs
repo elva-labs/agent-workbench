@@ -3122,7 +3122,7 @@ pub fn preview(sessions: &Sessions, id: &str, message: &str) -> Result<Preview, 
 /// the files put back first where `files` asks: while the message is still
 /// part of the conversation, which is where the agent finds what it kept
 /// of them. `rewound` goes out on the session that goes on, once it has
-/// gone back.
+/// gone back, and before the answer.
 ///
 /// A conversation that goes back in the running process goes on in the
 /// same session. One that goes back by starting again is stopped, which
@@ -3393,18 +3393,27 @@ fn ready(sessions: &Sessions, id: &str) -> Result<String, String> {
 }
 
 /// Tells an event on a session, through its tracker, as the agent's own
-/// are told.
+/// are told, and comes back once it has gone out, with every event before
+/// it, so that what answers after it answers after its events, as a change
+/// of settings does. A window too slow to take it in a request's time is
+/// not waited for longer.
 fn tell(sessions: &Sessions, id: &str, event: Event) {
     let Ok(live) = sessions.get(id) else {
         return;
     };
-    let mut machine = live.machine.lock().expect("machine lock");
-    if machine.ended {
-        return;
-    }
-    let mut out = Vec::new();
-    machine.tracker.observe(event, &mut out);
-    live.emit(&out);
+    let gone_out = {
+        let mut machine = live.machine.lock().expect("machine lock");
+        if machine.ended {
+            return;
+        }
+        let mut out = Vec::new();
+        machine.tracker.observe(event, &mut out);
+        live.emit(&out);
+        let (passed, gone_out) = mpsc::channel();
+        live.put(Out::Reply(passed, Ok(Value::Null)));
+        gone_out
+    };
+    let _ = gone_out.recv_timeout(live.deadlines.control);
 }
 
 /// Ends a session: its stdin closes, which the agent takes as the end of

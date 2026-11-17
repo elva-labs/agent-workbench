@@ -338,7 +338,8 @@ fn a_thread_goes_back_to_before_a_turn_and_the_session_goes_on_with_it() {
         h.sent("thread/revert")[0]["params"],
         json!({"threadId": THREAD, "beforeTurnId": "turn-1"})
     );
-    let told = h.until_type("rewound");
+    // Told before the answer.
+    let told = h.events();
     assert_eq!(
         told.last().unwrap(),
         &json!({"id": h.id, "type": "rewound", "message": first, "conversation": true, "files": []})

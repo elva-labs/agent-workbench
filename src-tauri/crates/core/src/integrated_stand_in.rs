@@ -1451,7 +1451,7 @@ fn going_back_starts_the_conversation_again_from_the_entry_before_the_message() 
         value_after(&args, "--permission-mode").as_deref(),
         Some("default")
     );
-    // It says so once it is ready, and goes on.
+    // It says so once it is ready, before the answer, and goes on.
     let events = h.events_of(&next);
     assert_eq!(events[0]["type"], "ready");
     assert_eq!(
@@ -1526,7 +1526,8 @@ fn only_the_files_go_back_in_the_same_session() {
     assert_eq!(went.id.as_deref(), Some(h.id.as_str()));
     assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
     assert_eq!(went.files, ["/w/a.txt", "/w/b.txt"]);
-    let told = rewound(&h.until_type("rewound"));
+    // Told before the answer.
+    let told = rewound(&h.events());
     assert_eq!(told[0]["conversation"], false);
     assert!(h.sessions.holds(&h.id));
     assert!(!h.dir.join("args.2").exists(), "nothing started again");

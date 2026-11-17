@@ -1483,8 +1483,9 @@ export interface Core {
       files go back first, as they were before it. Claude Code is stopped
       and started again under a new id, keeping the row's token and the
       settings it runs on, and the session it went back from ends before
-      this resolves; Codex goes on in the same session. `rewound` follows on
-      the session that goes on. Until this resolves the session refuses
+      this resolves; Codex goes on in the same session. `rewound` has gone
+      out on the session that goes on before this resolves, where the
+      conversation or the files went back. Until this resolves the session refuses
       messages and compaction, saying "the session is going back", whoever
       sends them, and once a Claude Code session has ended for its restart,
       "no such session": a window holds what it sends meanwhile, either way,

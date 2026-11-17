@@ -428,7 +428,7 @@ naming the session and its kind:
 - **rewound**: the session went back to before a message of the user's,
   whether the conversation went back with it, and the files put back. It
   is told on the session that goes on, after its ready where it was
-  started again.
+  started again, and before going back answers.
 - **state**, **error** and **ended**.
 
 For Codex, a file change's input comes whole again each time the patch it
@@ -949,8 +949,10 @@ has to do itself:
 
 - **Order.** A session's events come in order. The first ones can arrive
   before the start answers, so the window keeps the events of an id it
-  does not know yet. A change of settings and a snapshot answer after the
-  events they caused. The other commands answer once what they wrote
+  does not know yet. A change of settings, a snapshot and going back
+  answer after the events they caused, going back after its rewound and,
+  for a session started again, after the end of the one it went back
+  from. The other commands answer once what they wrote
   reached the agent, or the agent said it took it, and what they cause
   can come after, such as the end of an interrupted turn.
 - **The conversation's id.** The session's row, and resuming it, need the
