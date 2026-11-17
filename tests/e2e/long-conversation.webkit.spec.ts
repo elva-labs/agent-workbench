@@ -337,8 +337,10 @@ test.describe("a long conversation", () => {
     await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
     // The type changing in the frame the view moves, as a font or a width
     // can come in during a fling: the block moves with the view and by
-    // nothing else.
-    const held = await markedAt(page);
+    // nothing else. The line read is what stands at the top of the view
+    // now: the smaller type can have taken the block marked before wholly
+    // above it.
+    const held = await markTop(page);
     await switchLook(page, "modern", -200);
     await expect(rows).toHaveCSS("font-size", "13.5px");
     await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(2);

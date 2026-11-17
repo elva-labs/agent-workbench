@@ -287,11 +287,17 @@ is told. Looking at the session clears it. A line from an agent run by
 hand in the project's directory, which has the same tools but no row of
 its own, goes nowhere. The agent is told to call it in
 every turn it hands back, just before its final message rather than after
-it. What an agent writes before a tool call is folded into one line on
+it. Where its answer goes follows where the user reads it, which the
+workbench puts in the agent's environment for the tool server to read. In a
+terminal, what an agent writes before a tool call is folded into one line on
 screen, whatever the call is, and only the message after the last call of
 the turn shows in full; so the agent is told that its answer belongs in
 that message, written again there when a call had to follow it, and that a
-notify after the answer would fold the answer away. It cannot tell whether
+notify after the answer would fold the answer away. A session drawn as a
+conversation draws neither notify nor wait and folds no text, so an agent
+there is told that a message followed only by them stays in full, and that
+it can answer the user while it waits on the sessions it started and then
+go back to waiting. It cannot tell whether
 the user is watching, so it calls regardless, and never for progress. A
 turn that ends without the call leaves a line all the same: the stop hook
 brings the agent's last message, and the row takes its first line.

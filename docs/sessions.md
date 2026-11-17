@@ -272,7 +272,30 @@ else. A session that goes unread while the
 window is in the background also says so through the system, once each time
 it goes unread: a notification with the project, the session and what it
 waits on, the line the agent left when there is one, and a chime if that is
-turned on. Both are switched
+turned on. A question that waits on the user says so the same way, once for
+each question, when it comes while the window is in the background: an
+integrated session's permission or question, one asked by a session another
+started included, the workbench's question when a session wants to start
+another, and an agent's change to the settings. The notification names the
+project and the session that asks, and says what for in a line, with no
+more than the row would show of what is asked: a question's own words, a
+command by its program alone, an address without its query or fragment, a
+session another wants to start by the name it would have, and a change to
+the settings by what kind of setting it touches, without the agent's
+reason. A notification can be read on a locked screen and stays in the
+system's list, and a command's arguments and an address's query are where
+a secret would be. One asked
+while the window has focus is not told of later, and one answered without
+the user, by a standing answer or the agent's own rules, never waits. The
+window counts as in front while its page or one of its browser tabs has the
+keyboard. A
+click on a notification brings the window forward at what it was about:
+the session, or the dock where a question is answered, which for a session
+another started is its starter's. A session's notification is taken away
+once the session is looked at, and a question's once it is answered or
+gone. Where the system does not tell the app of a click or let it take a
+notification away, the notification is left as the system leaves it; see
+[platforms](platforms.md). Both are switched
 in the [settings](settings.md#notifications). A session an orchestrator
 started goes unread only when it needs a permission, which no agent can
 grant for it: its stopping, ending, ringing or leaving a line is the
@@ -518,13 +541,19 @@ with a margin that grows a little with the pane and narrows in a narrow
 one. Code, diffs, what a command printed and tables use the whole width;
 words wrap at about 140 characters, so a line still reads in a wide pane.
 The user's words sit to the right in a
-tinted bubble under You. What another session sent, the prompt it started
-the session with or a message it sent later, sits there in a plain bubble
-under that session's name, with a way to go to it. What the workbench
-sends of its own, to wake a session that started others, sits the same way
-under Workbench, each session in it by the name its row has, with nothing
-to go to and nothing to put back in the composer; see
-[orchestrator](orchestrator.md#when-it-is-idle). A message is known as
+tinted bubble under You, and nothing else does. What another session sent,
+the prompt it started the session with or a message it sent later, stands
+on the left with everything not the user's, as a notice rather than a
+message: no bubble, lined up with the agent's text, in the quieter ink of
+the thread's own notes, under From and that session's name, its time and a
+way to go to it. What the workbench sends of its own, to wake a session
+that started others, stands the same way under Workbench, with nothing to
+go to and nothing to put back in the composer; see
+[orchestrator](orchestrator.md#when-it-is-idle). Each session in it is
+named as the user knows it: by its row's name, and once its row has gone,
+as it does when the starter stops it, by the name it was started with or
+known by, and as a session where none is kept. Its id is for the agent
+alone. A message is known as
 another session's by the id it was sent under, never by its words, so the
 user's own message reads as theirs whatever another session sent; the sentence the
 workbench adds to a started session's prompt, asking it to call notify, is
@@ -563,7 +592,24 @@ each tool call with what it did to what, its input, a command's output as it
 came, the files it changed as diffs, and a subagent's own run under the call
 that started it. The changes pane stays the place to review changes. While a
 turn runs, a line at its foot says what the agent is doing now: running a
-command, reading a file, thinking, waiting for an answer. A plan is drawn
+command, reading a file, thinking, waiting for an answer. The workbench's own
+tools are worded for a person, by the session's name in the sessions list
+where a call names one, between quotes: starting a session, writing to it,
+reading what it did, and the same in the past tense once the call is done,
+a start then with the mode the session begins in, as its answer says.
+A session whose row has gone keeps the name its caller gave it. An agent's
+request to use one of them reads the same way in the dock, as what it would
+do: asks to start a session, to write to one. Another server's tool reads as
+using that server's tool, by the server's own name. Two of the workbench's tools are not
+drawn at all: wait, which an agent calls to hear from the sessions it
+started, and notify, which leaves a line on its row. Neither has a step, a
+count in the line work folds into, or a line at the foot of its own, and
+neither folds anything: what the agent wrote before them stays the last
+thing in its run, in full, so an answer it gives while it waits on its
+sessions is read where it is written, and a wait that follows a wake leaves
+it so as well. While a turn is only waiting, its foot says on what, in the
+wait's own words: waiting on a session by its name, or on the sessions it
+started. A plan is drawn
 where it came and changed in place, a question the user answered with the
 answer, a secret one without it, and a compaction, a notice or an error
 where it happened. The sessions an agent started with the workbench's start

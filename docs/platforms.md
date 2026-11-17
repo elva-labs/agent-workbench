@@ -13,6 +13,16 @@ Following a session into a worktree reads the process's working directory
 through the kernel's process information. The embedded browser has all of
 it here: tabs, and the tools an agent reads and drives a page with alike.
 See [browser](browser.md).
+Each notification carries an identifier of the app's own, so the app can
+take it away or tell which was clicked: a click brings the window forward
+at what it was about, and the app takes it away once that is over. None
+shows as a banner while the window is the one in front, and those an
+earlier run left are taken away at launch. The app first reaches the
+system's notification centre with its first notification, which is when
+macOS asks a new user whether to allow them, or at launch when an earlier
+run left some. This needs the app run from its
+bundle; a development build shows its notifications as the Terminal's and
+leaves them be.
 
 ## Linux
 
@@ -23,7 +33,8 @@ undecorated and the app draws its own controls. A process's working
 directory comes from procfs. A browser tab opens, navigates and closes
 through WebKitGTK, in a layer the app lays over its own page, and gives
 Escape and the app's chords back, but the tools that read or drive its page
-are not supported there.
+are not supported there. A notification is shown and left: a click on it
+does what the desktop does, and the app does not take it away.
 
 ## Windows
 
@@ -39,7 +50,8 @@ the changes pane stays on the project. The driver tier attaches to a running
 app rather than launching one; [testing](testing.md) says why. A browser
 tab opens, navigates and closes through WebView2, but its back and forward
 buttons stay usable, a page keeps every key typed into it, and the tools
-that read or drive its page are not supported.
+that read or drive its page are not supported. A notification is shown and
+left, as on Linux.
 
 ## Opening folders from a terminal
 

@@ -101,7 +101,7 @@
         <span class="verb"
           >{#each title.lead as piece, at (at)}{#if typeof piece === "string"}{piece}{:else}<Plain text={piece.name} />{/if}{/each}</span
         >
-        {#if title.object !== null}<code class="object" data-find={part.kind === "tool" ? part.call : null}><Plain text={title.object} /></code>{/if}
+        {#if title.object !== null && title.quoted}<span class="named" data-find={part.kind === "tool" ? part.call : null}>“<Plain text={title.object} />”</span>{:else if title.object !== null}<code class="object" data-find={part.kind === "tool" ? part.call : null}><Plain text={title.object} /></code>{/if}{#if title.tail}<span class="tail">{title.tail}</span>{/if}
         {#if part.kind === "tool" && part.inputTruncated}<span class="cut-mark" data-testid="step-cut">cut short</span>{/if}
       </span>
     </button>
@@ -293,6 +293,19 @@
   .command {
     unicode-bidi: isolate;
     direction: ltr;
+  }
+
+  /* A name the agent chose, in the row's own type between quotes. */
+  .named {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    unicode-bidi: isolate;
+    color: var(--ink);
+  }
+
+  .tail {
+    flex: none;
   }
 
   .object {

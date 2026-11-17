@@ -19,8 +19,8 @@ use std::time::Instant;
 use serde_json::{json, Value};
 
 use crate::adapter::{
-    prepare_process, process, CLAUDE_CONFIG_VAR, CLAUDE_SUBAGENT_TOOLS, ORCHESTRATOR_ROLE,
-    ROLE_VAR, SESSION_VAR,
+    prepare_process, process, CLAUDE_CONFIG_VAR, CLAUDE_SUBAGENT_TOOLS, CONVERSATION_VIEW,
+    ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR, VIEW_VAR,
 };
 use crate::env::find_on_path;
 use crate::hook;
@@ -224,13 +224,15 @@ impl Protocol for ClaudeStream {
         prepare_process(&mut command, launch.project, launch.env);
         command.env(SESSION_STATE_VAR, "1");
         // The tool server the agent starts reads which session it serves,
-        // and whether that session directs the others, from these.
+        // whether that session directs the others, and that it is drawn as
+        // a conversation, from these.
         if let Some(token) = launch.token {
             command.env(SESSION_VAR, token);
         }
         if launch.orchestrator {
             command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
         }
+        command.env(VIEW_VAR, CONVERSATION_VIEW);
         if let Some(dir) = launch.config_dir {
             command.env(CLAUDE_CONFIG_VAR, dir);
         }

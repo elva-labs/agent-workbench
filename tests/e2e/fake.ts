@@ -679,10 +679,24 @@ export async function installFakeCore(
           return () => {};
         },
         setBadge: async () => {},
-        // What the window asked the system to say, for a test to read.
-        notify: async (title: string, body: string) => {
-          const fake = window as unknown as { __notified?: { title: string; body: string }[] };
-          (fake.__notified ??= []).push({ title, body });
+        // What the window asked the system to say and to take away, for a
+        // test to read, and the click a test gives one of them.
+        notify: async (title: string, body: string, id: string) => {
+          const fake = window as unknown as { __notified?: { title: string; body: string; id: string }[] };
+          (fake.__notified ??= []).push({ title, body, id });
+        },
+        unnotify: async (id: string) => {
+          const fake = window as unknown as { __unnotified?: string[] };
+          (fake.__unnotified ??= []).push(id);
+        },
+        onNoticeClicked: async (handler: (id: string) => void) => {
+          (window as unknown as Record<string, unknown>).__noticeClicked = handler;
+          return () => {};
+        },
+        // The system saying the window came to the front or left it.
+        onWindowFocus: async (handler: (focused: boolean) => void) => {
+          (window as unknown as Record<string, unknown>).__windowFocus = handler;
+          return () => {};
         },
         chime: async () => {
           const fake = window as unknown as { __chimes?: number };

@@ -15,6 +15,7 @@ mod chrome;
 mod launch;
 mod leaving;
 mod menu;
+mod notices;
 mod page_files;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
@@ -1832,6 +1833,7 @@ pub fn run() {
                 }
             }
             browser_keys::install(app);
+            notices::install(app.handle());
             #[cfg(all(debug_assertions, target_os = "macos"))]
             probe::maybe_run_probe(app.handle());
             let cwd = std::env::current_dir().unwrap_or_default();
@@ -1925,6 +1927,8 @@ pub fn run() {
             leaving::leave_running,
             leaving::leave_heard,
             leaving::leave_confirmed,
+            notices::notice_show,
+            notices::notice_clear,
             launch::take_opened,
             browser::browser_open,
             browser::browser_focus,

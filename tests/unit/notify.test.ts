@@ -2,17 +2,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const told = {
   notified: [] as { title: string; body: string }[],
+  names: [] as string[],
+  taken: [] as string[],
   chimes: 0,
 };
 vi.mock("$lib/core", () => ({
   core: () => ({
-    notify: async (title: string, body: string) => {
+    notify: async (title: string, body: string, name: string) => {
       told.notified.push({ title, body });
+      told.names.push(name);
+    },
+    unnotify: async (name: string) => {
+      told.taken.push(name);
     },
     chime: async () => {
       told.chimes += 1;
     },
     settingsSet: async (change: object) => change,
+    setWindowTitle: async () => {},
   }),
 }));
 
@@ -21,12 +28,14 @@ import { conductor, resetConductor } from "$lib/conductor.svelte";
 import {
   announce,
   bodyFor,
+  clicked,
   notify,
   resetNotify,
+  seen,
   setChime,
   titleFor,
 } from "$lib/notify.svelte";
-import { create, exact, onWaiting, reset, started, type Session } from "$lib/sessions.svelte";
+import { create, exact, onWaiting, reset, sessions, started, type Session } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 
 const A = "/home/ada/dev/one";
@@ -44,6 +53,8 @@ beforeEach(() => {
   resetWorkspace();
   resetNotify();
   told.notified = [];
+  told.names = [];
+  told.taken = [];
   told.chimes = 0;
   workspace.open = [{ path: A, name: "one", repository: A, isGit: true }];
   attention.focused = false;
@@ -96,6 +107,36 @@ describe("a session that starts waiting while the window is in the background", 
     exact("session-pty-2", "prompt");
     exact("session-pty-2", "permission");
     expect(told.notified.map((n) => n.body)).toEqual(["Needs permission"]);
+  });
+});
+
+describe("a session's notification once sent", () => {
+  it("goes to the session on a click", () => {
+    const behind = live(A, "pty-1");
+    const other = live(A, "pty-2");
+    sessions.active = other.key;
+    exact("session-pty-1", "stop");
+    clicked(told.names[0]);
+    expect(sessions.active).toBe(behind.key);
+  });
+
+  it("takes the place of the last for the same session", () => {
+    live(A, "pty-1");
+    exact("session-pty-1", "stop");
+    exact("session-pty-1", "prompt");
+    exact("session-pty-1", "permission");
+    expect(told.names).toHaveLength(2);
+    expect(told.names[1]).toBe(told.names[0]);
+  });
+
+  it("is taken away once the session is looked at, and only then", () => {
+    const behind = live(A, "pty-1");
+    seen(behind.key);
+    expect(told.taken).toEqual([]);
+    exact("session-pty-1", "stop");
+    seen(behind.key);
+    seen(behind.key);
+    expect(told.taken).toEqual([told.names[0]]);
   });
 });
 

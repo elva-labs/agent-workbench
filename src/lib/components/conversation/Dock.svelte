@@ -641,7 +641,7 @@
       <div class="what">
         <span class="ring"></span>
         <p>
-          {@render asking(asked.parent)} asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.shape === "command"}{@const parts = lines(what.object)}<code
+          {@render asking(asked.parent)} asks to {@render pieces(what.lead)}{#if what.object !== null}{" "}{#if what.quoted}“<Plain text={cut(what.object)} />”{@render cutOff(what.object)}{:else if what.shape === "command"}{@const parts = lines(what.object)}<code
                 class="exact"><Plain text={cut(parts.first)} /></code
               >{@render cutOff(parts.first)}{#if parts.rest > 0}<span class="also" data-testid="permission-more-lines"
                   >{" "}and {parts.rest} more {parts.rest === 1 ? "line" : "lines"}</span
@@ -650,7 +650,7 @@
                   data-testid="permission-outside">{AWAY[at.where]}</span
                 >{" "}{/if}<code class="exact"><Plain text={cut(at.text)} /></code>{@render cutOff(at.text)}{:else}<code
                 class="exact"><Plain text={cut(what.object)} /></code
-              >{@render cutOff(what.object)}{@render leadsTo(what.object)}{/if}{/if}{@render awayCount(away, headAway)}{#if asked.truncated}<span
+              >{@render cutOff(what.object)}{@render leadsTo(what.object)}{/if}{/if}{#if what.tail}{" "}{what.tail}{/if}{@render awayCount(away, headAway)}{#if asked.truncated}<span
                   class="warn flow"
                   data-testid="permission-truncated"
                   >. The request is longer than the workbench can show, and its end is hidden</span

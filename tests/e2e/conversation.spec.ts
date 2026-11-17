@@ -133,6 +133,31 @@ test.describe("an integrated session", () => {
     expect(steps.y + steps.height).toBeLessThanOrEqual(after.y);
   });
 
+  test("keeps an answer whole while the agent waits on its sessions, and draws no wait", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Is the cache fixed?");
+       f.startTurn("${H}");
+       f.tool("${H}", "Bash", { command: "npm test" }, "ok", { kind: "command" });
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: "Not yet: the review is still running.", done: true });
+       const n = f.startTool("${H}", "mcp__agent-workbench__notify", { text: "Answered" }, { kind: "mcp" });
+       f.finishTool("${H}", n, "Left on the session's row.");
+       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+    );
+    const run = page.getByTestId("agent-run");
+    await expect(run.getByTestId("agent-text")).toHaveText("Not yet: the review is still running.");
+    // Only the command is work: the wait and the notify make no line.
+    await expect(run.getByTestId("work-line")).toHaveCount(1);
+    await expect(run.getByTestId("work-line")).toContainText(/ran 1 command$/);
+    await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
+    const answer = (await run.getByTestId("agent-text").boundingBox())!;
+    const now = (await page.getByTestId("now").boundingBox())!;
+    expect(answer.y + answer.height).toBeLessThanOrEqual(now.y);
+    await run.getByTestId("work-line").click();
+    await expect(run.getByTestId("step")).toHaveCount(1);
+  });
+
   test("grows streaming text in place and says what the agent does meanwhile", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "cargo build" }, { kind: "command" });`);
@@ -2260,6 +2285,50 @@ test("wakes an idle integrated starter with what a session it started said, as t
   // turn is over.
   await agent(page, `f.turn("int-1", "Merged the count.");`);
   await expect(woken).toHaveCount(0);
+});
+
+test("draws the workbench's report on the left as a notice, naming a session the starter stopped as it was started", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT, LEAD], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
+  const view = page.locator("[data-testid='conversation']:visible");
+  await expect(view.getByTestId("composer-input")).toBeEnabled();
+  const starter = (await view.getAttribute("data-session"))!;
+  const conduct = (id: string, tool: string, args: Record<string, unknown>) =>
+    page.evaluate(
+      ({ project, id, tool, args }) =>
+        (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+          id,
+          tool,
+          arguments: args,
+          cwd: project,
+          session: "integrated-session-1",
+        }),
+      { project: PROJECT, id, tool, args },
+    );
+  await conduct("o-1", "start", { project: PROJECT, prompt: "Hold the clock still", name: "Fix the cache", worktree: true });
+  await page.getByTestId("conduct-allow").click();
+  await expect(page.getByTestId("started-session")).toContainText("Fix the cache");
+  await agent(page, `f.turn("int-1", "Started it.");`);
+  await agent(page, `f.turn("int-2", "Done: the clock is held still.");`);
+  const message = view.locator("[data-testid='user-message'][data-from='workbench']");
+  await expect(message).toHaveCount(1);
+  const said = 'Fix the cache stopped working. Its last line: "Done: the clock is held still."';
+  await expect(message.locator(".bubble")).toHaveText(said);
+  await expect(message.getByTestId("message-sender")).toHaveText("Workbench");
+  // On the left, where the agent's text starts, with no bubble of the
+  // user's.
+  const words = (await message.locator(".bubble p").boundingBox())!;
+  const agentText = (await view.getByTestId("agent-text").first().boundingBox())!;
+  expect(Math.abs(words.x - agentText.x)).toBeLessThanOrEqual(1);
+  expect(await message.locator(".bubble").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+  // The starter stops it, which files its row away: what was said of it
+  // keeps its name, and never shows its id.
+  await conduct("o-2", "stop", { session: "integrated-session-2" });
+  await expect(page.getByTestId("started-session")).toHaveCount(0);
+  await page.locator(`[data-row="session:${starter}"] > [data-testid='session-row']`).click();
+  await expect(message.locator(".bubble")).toHaveText(said);
+  await expect(message).not.toContainText("integrated-session-2");
 });
 
 test.describe("a request too long for its line", () => {
