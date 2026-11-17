@@ -17,7 +17,10 @@ Each notification carries an identifier of the app's own, so the app can
 take it away or tell which was clicked: a click brings the window forward
 at what it was about, and the app takes it away once that is over. None
 shows as a banner while the window is the one in front, and those an
-earlier run left are taken away at launch. This needs the app run from its
+earlier run left are taken away at launch. The app first reaches the
+system's notification centre with its first notification, which is when
+macOS asks a new user whether to allow them, or at launch when an earlier
+run left some. This needs the app run from its
 bundle; a development build shows its notifications as the Terminal's and
 leaves them be.
 

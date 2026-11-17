@@ -5,17 +5,19 @@
 //! the same name takes the place of the one before, a click on one brings
 //! the window forward and tells the window its name, and the window takes
 //! one away by its name once what it said is over. A notification never
-//! shows as a banner while the window is the one in front, and none from
-//! an earlier run is left at launch, since no question of that run is
-//! still open. Elsewhere, and in a build run outside a bundle, a
-//! notification goes through the notification plugin and is left as the
-//! system leaves it.
+//! shows as a banner while the window is the one in front, and those an
+//! earlier run left are taken away at launch, since no question of that
+//! run is still open. The app connects to the notification centre at
+//! launch only then, and otherwise with its first notification, which is
+//! when macOS asks a new user whether to allow them. Elsewhere, and in a
+//! build run outside a bundle, a notification goes through the
+//! notification plugin and is left as the system leaves it.
 
 use tauri::AppHandle;
 
-/// Readies the notifications at launch: on macOS, run from the bundle, the
-/// app hears a click on one from now on, and those an earlier run left in
-/// the system's list are taken away.
+/// Readies the notifications at launch: on macOS, run from the bundle,
+/// those an earlier run left in the system's list are taken away, and the
+/// app hears a click on one from then on.
 pub fn install(app: &AppHandle) {
     #[cfg(target_os = "macos")]
     if mac::bundled() {
@@ -76,7 +78,7 @@ mod mac {
     use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
     use objc2_app_kit::NSWindow;
     use objc2_foundation::{
-        NSBundle, NSObject, NSObjectProtocol, NSString, NSUserNotification,
+        NSBundle, NSObject, NSObjectProtocol, NSString, NSUserDefaults, NSUserNotification,
         NSUserNotificationCenter, NSUserNotificationCenterDelegate,
     };
     use tauri::{AppHandle, Emitter, Manager};
@@ -152,11 +154,36 @@ mod mac {
         ns_window.isKeyWindow() && ns_window.isVisible() && !ns_window.isMiniaturized()
     }
 
+    /// The app's own default that says a run of it delivered a
+    /// notification the system may still list.
+    const DELIVERED: &str = "WorkbenchNoticesDelivered";
+
+    fn delivered() -> bool {
+        NSUserDefaults::standardUserDefaults().boolForKey(&NSString::from_str(DELIVERED))
+    }
+
+    fn mark_delivered(delivered: bool) {
+        let defaults = NSUserDefaults::standardUserDefaults();
+        let key = NSString::from_str(DELIVERED);
+        if delivered {
+            defaults.setBool_forKey(true, &key);
+        } else {
+            defaults.removeObjectForKey(&key);
+        }
+    }
+
+    /// Only a run after one that delivered connects at launch: connecting
+    /// is what has macOS ask a new user, which belongs with the first
+    /// notification.
     pub fn install(app: &AppHandle) {
         let Some(mtm) = MainThreadMarker::new() else {
             return;
         };
+        if !delivered() {
+            return;
+        }
         centre(app, mtm).removeAllDeliveredNotifications();
+        mark_delivered(false);
     }
 
     fn centre(app: &AppHandle, mtm: MainThreadMarker) -> Retained<NSUserNotificationCenter> {
@@ -194,6 +221,7 @@ mod mac {
         notification.setTitle(Some(&NSString::from_str(title)));
         notification.setInformativeText(Some(&NSString::from_str(body)));
         centre.deliverNotification(&notification);
+        mark_delivered(true);
     }
 
     pub fn clear(id: &str) {
