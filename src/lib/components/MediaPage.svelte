@@ -1,17 +1,26 @@
 <script lang="ts">
   import { core } from "$lib/core";
   import { putAway } from "$lib/popover";
-  import { fileOf, openedKind, outerDocument, plainWhy, type Opened } from "$lib/pageFrame";
+  import {
+    addressOf,
+    fileOf,
+    openedKind,
+    outerDocument,
+    plainWhy,
+    type Opened,
+  } from "$lib/pageFrame";
 
   /**
    * An HTML page the agent presented, in a frame of its own: scripts may
    * run, but with no origin, no storage, no network, no navigation and no
    * forms. It may load the images, stylesheets, fonts, audio and video in
    * its own folder and the folders under it, and nothing else. What it
-   * names and cannot load is listed under it with why, and an image of
-   * those says so where it stands. A link to a picture, a film or a sound
-   * in its folder opens it over the window. The frame takes the page's
-   * height, which the page reports.
+   * names and cannot load is listed under it by its address, with why; an
+   * image among those says where it stands that it did not load, and no
+   * more, since the page can read what is drawn in it. A link to a
+   * picture, a film or a sound in its folder opens it over the window when
+   * the user clicked it. The frame takes the page's height, which the page
+   * reports.
    */
 
   interface Props {
@@ -23,7 +32,8 @@
 
   let { html, title, page }: Props = $props();
 
-  /** How many misses a page is answered for; past that they are counted. */
+  /** How many misses a drawing of the page is answered for; past that
+      they are counted. */
   const ANSWERED = 100;
   /** How many are listed under the page. */
   const LISTED = 12;
@@ -36,29 +46,37 @@
 
   let frame = $state<HTMLIFrameElement>();
   let height = $state(360);
-  /** The page's base address, once the app has given it; "" when it has
-      none to give, and the page then loads nothing from its folder. */
-  let base = $state<string | null>(null);
+  /** One drawing of the page: its HTML and the base address the app gave
+      for it, "" when it gave none and the page loads nothing from its
+      folder. A drawing has a base of its own, so what the webview keeps of
+      one never stands in for a file changed since. */
+  let drawing = $state<{ html: string; base: string } | null>(null);
   let missed = $state<Missed[]>([]);
   let uncounted = $state(0);
-  let opened = $state<{ url: string; name: string; kind: Opened; failed: string | null } | null>(
-    null,
-  );
+  /** The addresses this drawing has asked about or listed. */
+  let asked = new Set<string>();
+  let opened = $state<{
+    url: string;
+    name: string;
+    file: string;
+    kind: Opened;
+    failed: string | null;
+  } | null>(null);
   let look = $state<HTMLDialogElement>();
   let played = $state<HTMLMediaElement>();
 
   $effect(() => {
-    const asked = page;
+    const shown = page;
+    const markup = html;
     let current = true;
-    base = null;
     core()
-      .pageFilesBase(asked)
+      .pageFilesBase(shown)
       .then(
         (given) => {
-          if (current) base = given;
+          if (current) drawing = { html: markup, base: given };
         },
         () => {
-          if (current) base = "";
+          if (current) drawing = { html: markup, base: "" };
         },
       );
     return () => {
@@ -66,14 +84,15 @@
     };
   });
 
-  let own = $derived(base === null || base === "" ? null : base);
-  let srcdoc = $derived(base === null ? null : outerDocument(html, own, title));
+  let own = $derived(drawing === null || drawing.base === "" ? null : drawing.base);
+  let srcdoc = $derived(drawing === null ? null : outerDocument(drawing.html, own, title));
 
   // A page drawn again misses afresh.
   $effect(() => {
     void srcdoc;
     missed = [];
     uncounted = 0;
+    asked = new Set();
   });
 
   /** The page's own window, inside the frame that holds it. */
@@ -85,50 +104,65 @@
     return error instanceof Error ? error.message : String(error);
   }
 
-  /** Something the page named did not load: listed, and the page told why. */
-  async function tell(url: string, how: string, said: string | null) {
-    if (missed.some((one) => one.url === url)) return;
-    if (missed.length >= ANSWERED) {
+  /** Something the page named did not load, or so its script says: listed
+      under its address with why. The page is told only what the window
+      knows without the disk, at once, whatever the core will say: that it
+      is outside the folder or on the network, or that it did not load.
+      Why a file in the folder did not load is for the user alone, since a
+      script in the page can ask about any name it likes. */
+  async function tell(url: string, how: string) {
+    if (asked.has(url)) return;
+    if (asked.size >= ANSWERED) {
       uncounted += 1;
       return;
     }
+    asked.add(url);
     const drawn = srcdoc;
     const plain = plainWhy(url, how, own);
-    const name = own !== null && url.startsWith(own) ? fileOf(url, own) : (said ?? url);
-    let why: string;
-    if (plain !== null || own === null) {
-      why = plain ?? "is outside the page's folder";
-    } else {
+    const name = addressOf(url, own);
+    inner()?.postMessage({ workbenchWhy: { url, name, why: plain ?? "did not load" } }, "*");
+    let why = plain ?? "is outside the page's folder";
+    if (plain === null && own !== null) {
       why = await core()
-        .checkPageFile(page, name)
+        .checkPageFile(page, fileOf(url, own))
         .then(
           () => "could not be loaded",
           (error: unknown) => reasonOf(error),
         );
     }
-    if (drawn !== srcdoc || missed.some((one) => one.url === url)) return;
+    if (drawn !== srcdoc) return;
     missed = [...missed, { url, name, why }];
-    inner()?.postMessage({ workbenchWhy: { url, name, why } }, "*");
+  }
+
+  /** Whether the user has just clicked or pressed a key, in the window or
+      in a frame of it: a click in the page counts here too. */
+  function activated(): boolean {
+    const activation = (navigator as Navigator & { userActivation?: { isActive: boolean } })
+      .userActivation;
+    return activation?.isActive === true;
   }
 
   /** A link to a file in the page's folder was clicked. Opened over the
-      window when it is a picture, a film or a sound, and only while the
-      user is in the page: a script cannot open one on its own. */
-  function open(file: string) {
-    if (own === null || file === "" || document.activeElement !== frame) return;
-    const url = new URL(file, own).href;
+      window when it is a picture, a film or a sound, and only when the
+      user is in the page and has just clicked or pressed a key: a script
+      cannot open one on its own. */
+  function open(link: string) {
+    if (own === null || link === "" || document.activeElement !== frame || !activated()) return;
+    const url = new URL(link, own).href;
     if (!url.startsWith(own)) return;
-    const name = fileOf(url, own);
-    const kind = openedKind(name);
+    const name = addressOf(url, own);
+    const file = fileOf(url, own);
+    const kind = openedKind(file);
     if (kind === null) {
-      if (!missed.some((one) => one.url === url))
-        missed = [
-          ...missed,
-          { url, name, why: "is not a picture, a film or a sound, which is all a link from a page opens" },
-        ];
+      if (asked.has(url)) return;
+      asked.add(url);
+      missed = [
+        ...missed,
+        { url, name, why: "is not a picture, a film or a sound, which is all a link from a page opens" },
+      ];
       return;
     }
-    opened = { url, name, kind, failed: null };
+    opened = { url, name, file, kind, failed: null };
   }
 
   /** The opened file did not load: why, from where the files are. */
@@ -136,7 +170,7 @@
     const now = opened;
     if (now === null) return;
     const why = await core()
-      .checkPageFile(page, now.name)
+      .checkPageFile(page, now.file)
       .then(
         () => "could not be loaded",
         (error: unknown) => reasonOf(error),
@@ -155,9 +189,9 @@
         height = Math.max(120, Math.min(2400, Math.ceil(reported) + 2));
         return;
       }
-      const miss = data.workbenchMissed as { url?: unknown; how?: unknown; said?: unknown } | undefined;
+      const miss = data.workbenchMissed as { url?: unknown; how?: unknown } | undefined;
       if (miss !== undefined && typeof miss?.url === "string" && typeof miss.how === "string") {
-        void tell(miss.url, miss.how, typeof miss.said === "string" ? miss.said : null);
+        void tell(miss.url, miss.how);
         return;
       }
       if (typeof data.workbenchOpen === "string") open(data.workbenchOpen);
@@ -200,7 +234,7 @@
     <h4>Not loaded</h4>
     <ul>
       {#each missed.slice(0, LISTED) as one (one.url)}
-        <li><span class="name" title={one.url}>{one.name}</span> {one.why}</li>
+        <li><code>{one.name}</code> {one.why}</li>
       {/each}
     </ul>
     {#if missed.length + uncounted > LISTED}
@@ -218,7 +252,7 @@
     data-testid="media-page-opened"
   >
     {#if opened.failed !== null}
-      <p class="failed">{opened.name} {opened.failed}</p>
+      <p class="failed"><code>{opened.name}</code> {opened.failed}</p>
     {:else if opened.kind === "image"}
       <img src={opened.url} alt={opened.name} onerror={failed} />
     {:else if opened.kind === "video"}
@@ -227,7 +261,7 @@
     {:else}
       <audio bind:this={played} src={opened.url} controls autoplay onerror={failed}></audio>
     {/if}
-    <p class="caption"><span>{opened.name}</span><kbd>Esc</kbd></p>
+    <p class="caption"><code>{opened.name}</code><kbd>Esc</kbd></p>
   </dialog>
 {/if}
 
@@ -265,7 +299,7 @@
     overflow-wrap: anywhere;
   }
 
-  .missed .name {
+  .missed code {
     font-family: var(--mono);
     font-size: 11.5px;
     color: var(--ink);
@@ -322,6 +356,12 @@
     font-family: var(--chrome);
     font-size: 12px;
     color: rgb(255 255 255 / 90%);
+  }
+
+  .caption code,
+  .failed code {
+    font-family: var(--mono);
+    font-size: 11.5px;
   }
 
   .caption kbd {

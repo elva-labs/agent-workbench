@@ -50,24 +50,24 @@ function attribute(text: string): string {
 const PRELUDE = String.raw`(function(){
 var host=parent.parent,base=document.querySelector("base[data-workbench]");base=base?base.href:null;
 function post(m){host.postMessage(m,"*")}
-function h(){var c=document.body?document.body.children:[],m=0;for(var i=0;i<c.length;i++){var b=c[i].getBoundingClientRect().bottom;if(b>m)m=b}return m>0?m+16:document.documentElement.scrollHeight}
+function px(v){return parseFloat(v)||0}
+function h(){var body=document.body,c=body?body.children:[],m=0,last=null;for(var i=0;i<c.length;i++){var b=c[i].getBoundingClientRect().bottom+scrollY;if(b>m){m=b;last=c[i]}}if(!last)return document.documentElement.scrollHeight;
+var s=getComputedStyle(body),under=px(getComputedStyle(last).marginBottom)+px(s.paddingBottom)+px(s.borderBottomWidth)+px(s.marginBottom)+px(getComputedStyle(document.documentElement).paddingBottom);return m+Math.max(16,under)}
 function r(){post({workbenchHeight:h()})}
 addEventListener("load",r);if(window.ResizeObserver&&document.documentElement)new ResizeObserver(r).observe(document.documentElement);setTimeout(r,0);
 var told={};
-function said(t){return t&&t.getAttribute?t.getAttribute("src")||t.getAttribute("href")||t.getAttribute("poster")||null:null}
-function whose(u){var all=document.querySelectorAll("[src],[href],[poster]");for(var i=0;i<all.length;i++){var t=all[i];if(t.src===u||t.href===u||t.poster===u)return said(t)}return null}
 function whole(u){try{return new URL(u,document.baseURI).href}catch(x){return u}}
-function missed(url,how,as){if(!url||told[url])return;told[url]=1;post({workbenchMissed:{url:String(url),how:how,said:as||null}})}
-document.addEventListener("securitypolicyviolation",function(e){if(e.blockedURI==="inline"||e.blockedURI==="eval")return;missed(e.blockedURI,"blocked:"+e.effectiveDirective,said(e.target)||whose(e.blockedURI))});
-addEventListener("error",function(e){var t=e.target;if(!t||t===window||!t.tagName)return;var u=t.src||t.currentSrc||t.href;if(typeof u!=="string"||u===""||/^(data|blob):/.test(u))return;missed(whole(u),"failed",said(t))},true);
+function missed(url,how){if(!url||told[url])return;told[url]=1;post({workbenchMissed:{url:String(url),how:how}})}
+document.addEventListener("securitypolicyviolation",function(e){if(e.blockedURI==="inline"||e.blockedURI==="eval")return;missed(e.blockedURI,"blocked:"+e.effectiveDirective)});
+addEventListener("error",function(e){var t=e.target;if(!t||t===window||!t.tagName)return;var u=t.src||t.currentSrc||t.href;if(typeof u!=="string"||u===""||/^(data|blob):/.test(u))return;missed(whole(u),"failed")},true);
 addEventListener("click",function(e){if(e.defaultPrevented||e.button!==0)return;var a=e.target&&e.target.closest?e.target.closest("a[href]"):null;if(!a)return;var raw=a.getAttribute("href")||"";if(/^\s*javascript:/i.test(raw))return;e.preventDefault();
 if(raw.charAt(0)==="#"){var id=raw.slice(1);try{id=decodeURIComponent(id)}catch(x){}var to=id?document.getElementById(id)||document.getElementsByName(id)[0]:document.body;if(to)to.scrollIntoView();return}
 var u;try{u=new URL(raw,document.baseURI).href}catch(x){return}
-if(base&&u.indexOf(base)===0)post({workbenchOpen:u.slice(base.length).split("#")[0].split("?")[0]});else{delete told[u];missed(u,"link",raw)}});
+if(base&&u.indexOf(base)===0)post({workbenchOpen:u.slice(base.length).split("#")[0].split("?")[0]});else{delete told[u];missed(u,"link")}});
 function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;")}
 function cut(t,n){t=String(t);return t.length>n?"…"+t.slice(t.length-n+1):t}
 function stand(img,name,why){var b=img.getBoundingClientRect(),w=b.width>=160?Math.round(b.width):320,v=b.height>=48?Math.round(b.height):64,n=Math.max(8,Math.floor((w-24)/7));
-var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+v+'"><rect x="0.5" y="0.5" width="'+(w-1)+'" height="'+(v-1)+'" rx="4" fill="#f4f4f5" stroke="#a1a1aa" stroke-dasharray="4 3"/><text y="50%" font-family="system-ui,sans-serif" font-size="12" fill="#3f3f46"><tspan x="12" dy="-0.3em">'+esc(cut(name,n))+'</tspan><tspan x="12" dy="1.4em" fill="#71717a">'+esc(cut(String(why).split(/[,:]/)[0],n))+'</tspan></text></svg>';
+var s='<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+v+'"><rect x="0.5" y="0.5" width="'+(w-1)+'" height="'+(v-1)+'" rx="4" fill="#808080" fill-opacity="0.08" stroke="#808080" stroke-opacity="0.7" stroke-dasharray="4 3"/><text y="50%" font-family="system-ui,sans-serif" font-size="12" fill="#808080"><tspan x="12" dy="-0.3em">'+esc(cut(name,n))+'</tspan><tspan x="12" dy="1.4em" fill-opacity="0.85">'+esc(cut(String(why).split(/[,:]/)[0],n))+'</tspan></text></svg>';
 img.removeAttribute("srcset");img.title=name+" "+why;img.src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(s)}
 addEventListener("message",function(e){if(e.source!==host)return;var d=e.data&&e.data.workbenchWhy;if(!d)return;var all=document.images;for(var i=0;i<all.length;i++){var g=all[i];if((g.src===d.url||g.currentSrc===d.url)&&g.complete&&g.naturalWidth===0)stand(g,d.name,d.why)}});
 })()`;
@@ -151,6 +151,29 @@ function filesRoot(base: string): string {
   const host = base.indexOf("//");
   const path = host < 0 ? -1 : base.indexOf("/", host + 2);
   return path < 0 ? base : base.slice(0, path + 1);
+}
+
+/** How long a name in the window may be before its middle is cut. */
+export const NAME_LENGTH = 60;
+
+/** Text cut in the middle to `length`, with an ellipsis where it was cut. */
+export function cutMiddle(text: string, length = NAME_LENGTH): string {
+  if (text.length <= length) return text;
+  const head = Math.ceil((length - 1) / 2);
+  const tail = length - 1 - head;
+  return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
+}
+
+/** What the window calls something a page named: its address, never words
+    of the page's own, as it reads from the page's folder (`shots/a.png`,
+    `../up.png`) or whole when it is anywhere else, and cut in the middle
+    past `NAME_LENGTH`. */
+export function addressOf(url: string, base: string | null): string {
+  let shown = url;
+  if (base !== null && url.startsWith(base)) shown = url.slice(base.length);
+  else if (base !== null && url.startsWith(filesRoot(base)))
+    shown = `../${url.slice(filesRoot(base).length)}`;
+  return cutMiddle(shown);
 }
 
 /** A file in the page's folder as the page named it, decoded, from the
