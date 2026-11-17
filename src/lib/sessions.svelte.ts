@@ -1,5 +1,6 @@
 import {
   core,
+  isHeld,
   type AgentId,
   type SessionEnded,
   type SessionEvent,
@@ -1799,7 +1800,13 @@ export async function launch(
       .catch(() => {});
     return false;
   } catch (error) {
-    failed(key, String(error));
+    // A conversation held where it went back is not resumed in a terminal
+    // without the user's say: the row says so, and opens as a
+    // conversation, where it goes on from that point.
+    if (isHeld(error)) {
+      heldAtStart.add(key);
+      failed(key, String(error instanceof Error ? error.message : error).replace(/^held:\s*/, ""));
+    } else failed(key, String(error));
     return false;
   }
 }
@@ -1846,6 +1853,16 @@ export function failed(key: string, error: string) {
   session.status = "failed";
   session.error = String(error);
   changed(session);
+}
+
+/** The rows whose terminal start the core refused, their conversation
+    being held at the point it went back to. */
+const heldAtStart = new SvelteSet<string>();
+
+/** Whether a row's terminal start was refused for its conversation being
+    held at the point it went back to. */
+export function refusedAsHeld(key: string): boolean {
+  return heldAtStart.has(key);
 }
 
 /** The rows whose next terminal start brings back what their conversation
@@ -2083,6 +2100,7 @@ export function turnDormant(key: string, to: SessionKind): boolean {
 /** Turns a row whose run has ended, or that has none, the other way, to
     start again there on the same conversation. */
 function swap(row: Session, to: SessionKind, bySetting: boolean) {
+  heldAtStart.delete(row.key);
   if (!bySetting) row.ownWay = to !== kindFor(row.agent);
   // The conversation the stopped run had, which the other way lets go of:
   // the next run reads it back from the agent's own record.

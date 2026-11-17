@@ -116,31 +116,20 @@ onWake((session) => {
  * on with what was gone back on. So a held conversation is never moved into
  * a terminal by the setting, and reopening one by hand says so first.
  *
- * Whether a conversation is held is the core's `integratedHeld`, where the
- * core has it; a core without going back has no such call, and none of its
- * conversations is held. The answer is kept by the row's key with the
- * revision of its conversation it was asked at, and asked again once
- * anything in the conversation has changed, such as a message sent from
- * the point, which lets it go.
+ * Whether a conversation is held is the core's `integratedHeld`. The
+ * answer is kept by the row's key with the revision of its conversation it
+ * was asked at, and asked again once anything in the conversation has
+ * changed, such as a message sent from the point, which lets it go.
  */
-
-type HeldCall = (options: IntegratedHistoryOptions) => Promise<boolean>;
-
-/** The core's word on whether a conversation is held at the point it went
-    back to, or null where the core has no such call. */
-export function heldSeam(): HeldCall | null {
-  const seam = core() as unknown as { integratedHeld?: HeldCall };
-  return typeof seam.integratedHeld === "function" ? (options) => seam.integratedHeld!(options) : null;
-}
 
 /** What the core said of each conversation, by the row's key, at the
     revision of the conversation it was asked at: null while it is asked. */
 const heldAt = new SvelteMap<string, { revision: number; held: boolean | null }>();
 
 /** Whether a row's conversation could be held: a Claude Code conversation
-    with an id, on a core that holds them. */
+    with an id. */
 function holdable(session: Session): boolean {
-  return session.agent === "claude-code" && session.id !== null && heldSeam() !== null;
+  return session.agent === "claude-code" && session.id !== null;
 }
 
 function heldOptions(session: Session): IntegratedHistoryOptions {
@@ -173,15 +162,15 @@ function askHeld(session: Session, link: Link) {
     if (heldAt.get(key)?.revision === revision) heldAt.set(key, { revision, held });
   };
   // A core that cannot say leaves it moving as any other.
-  heldSeam()!(heldOptions(session)).then(settle, () => settle(false));
+  void heldNow(session).then(settle);
 }
 
 /** Whether a row's conversation is held now, asked of the core at once:
     for reopening it in a terminal by hand. */
 export async function heldNow(session: Session): Promise<boolean> {
-  if (session.kind !== "integrated" || !holdable(session)) return false;
+  if (!holdable(session)) return false;
   try {
-    return await heldSeam()!(heldOptions(session));
+    return await core().integratedHeld(heldOptions(session));
   } catch {
     return false;
   }
