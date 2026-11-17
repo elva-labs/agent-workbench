@@ -477,6 +477,21 @@ test("peeks over the focused card's mark while reviewing", async ({ page }) => {
   await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
   await page.keyboard.press(`${MOD}+2`);
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  // The columns ease into the reviewing shape: the card is read once it
+  // stands still, two frames apart.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        (selector) =>
+          new Promise<boolean>((resolve) => {
+            const read = () => JSON.stringify(document.querySelector(selector)!.getBoundingClientRect());
+            const first = read();
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
+          }),
+        `${AGENT} > .body`,
+      ),
+    )
+    .toBe(true);
   const card = await boxOf(page, `${AGENT} > .body`);
   const y = Math.round(card.y) + 1;
   const mark = await pixel(page, Math.round(card.x + card.width - 30), y);
