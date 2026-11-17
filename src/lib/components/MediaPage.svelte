@@ -135,8 +135,14 @@
           (error: unknown) => reasonOf(error),
         );
     }
-    if (drawn !== srcdoc) return;
+    if (drawn !== srcdoc || listed(name, why)) return;
     missed = [...missed, { url, name, why }];
+  }
+
+  /** Whether the list already reads this line: a name and why are listed
+      once, however many addresses share them. */
+  function listed(name: string, why: string): boolean {
+    return missed.some((one) => one.name === name && one.why === why);
   }
 
   /** Whether the user has just clicked or pressed a key, in the window or
@@ -166,10 +172,9 @@
     if (kind === null) {
       if (asked.has(url)) return;
       asked.add(url);
-      missed = [
-        ...missed,
-        { url, name, why: "is not a picture, a film or a sound, which is all a link from a page opens" },
-      ];
+      const why = "is not a picture, a film or a sound, which is all a link from a page opens";
+      if (listed(name, why)) return;
+      missed = [...missed, { url, name, why }];
       return;
     }
     opened = { url, name, file, kind, failed: null };
@@ -243,7 +248,7 @@
   <div class="missed" data-testid="media-page-missed">
     <h4>Not loaded</h4>
     <ul>
-      {#each missed.slice(0, LISTED) as one (one.url)}
+      {#each missed.slice(0, LISTED) as one (`${one.name} ${one.why}`)}
         <li><code>{one.name}</code> {one.why}</li>
       {/each}
     </ul>
