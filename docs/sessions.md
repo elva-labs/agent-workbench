@@ -277,7 +277,13 @@ each question, when it comes while the window is in the background: an
 integrated session's permission or question, one asked by a session another
 started included, the workbench's question when a session wants to start
 another, and an agent's change to the settings. The notification names the
-project and the session that asks, and says what for in a line. One asked
+project and the session that asks, and says what for in a line, with no
+more than the row would show of what is asked: a question's own words, a
+command by its program alone, a session another wants to start by the name
+it would have, and a change to the settings by what kind of setting it
+touches, without the agent's reason. A notification can be read on a locked
+screen and stays in the system's list, and a command's arguments are where
+a secret would be. One asked
 while the window has focus is not told of later, and one answered without
 the user, by a standing answer or the agent's own rules, never waits. The
 window counts as in front while its page or one of its browser tabs has the

@@ -75,10 +75,14 @@ export function heedAsks(now: Waiting[]) {
 
 function fromRequest(row: Session, request: Request, conversation: Conversation): Waiting {
   const asked = request.asked;
-  const body =
-    asked.type === "permissionAsked"
-      ? `Asks to ${phraseText(asks(asked, asked.call === null ? null : conversation.call(asked.call)))}`
-      : `Asks: ${asked.questions[0]?.question ?? "a question"}`;
+  let body: string;
+  if (asked.type === "permissionAsked") {
+    const what = asks(asked, asked.call === null ? null : conversation.call(asked.call));
+    // A command names its program and no more: its arguments are where a
+    // token or a password would be.
+    const phrase = what.shape === "command" && what.object !== null ? { ...what, object: program(what.object) } : what;
+    body = `Asks to ${phraseText(phrase)}`;
+  } else body = `Asks: ${asked.questions[0]?.question ?? "a question"}`;
   return {
     name: JSON.stringify(["ask", row.key, request.request]),
     title: titleFor(row),
@@ -94,13 +98,24 @@ function answeredIn(row: Session): string {
   return starter !== null && starter.kind === "integrated" && starter.status === "running" ? starter.key : row.key;
 }
 
+/** The program a command runs, without the settings put before it or the
+    arguments after it. */
+export function program(command: string): string {
+  const words = (command.split("\n")[0] ?? "").trim().split(/\s+/);
+  const first = words.find((word) => word !== "" && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) ?? words[0] ?? command;
+  return first.split("/").filter(Boolean).pop() ?? first;
+}
+
 function fromConduct(ask: ConductAsk): Waiting {
+  // The session by the name it would have, not by its prompt, which says
+  // more than a notification should.
+  const given = ask.request.arguments?.name;
   const body =
     ask.round !== null
-      ? `Wants another round of ${ask.round.step} on ${ask.round.name}`
-      : ask.prompt.trim() === ""
-        ? "Wants to start a session"
-        : `Wants to start a session: ${ask.prompt}`;
+      ? `Wants another round of ${ask.round.step} on “${ask.round.name}”`
+      : typeof given === "string" && given.trim() !== ""
+        ? `Wants to start “${given.trim()}”`
+        : "Wants to start a session";
   return {
     name: JSON.stringify(["conduct", ask.request.id]),
     title: `${projectLabel(ask.project)} · ${ask.caller}`,
@@ -114,9 +129,27 @@ function fromSettings(ask: SettingsAsk): Waiting {
   return {
     name: JSON.stringify(["settings", ask.request.id]),
     title: row === null ? ask.caller : titleFor(row),
-    body: line(ask.reason === null ? "Wants to change the settings" : `Wants to change the settings: ${ask.reason}`),
+    body: line(`Wants to change ${kinds(ask)}`),
     at: null,
   };
+}
+
+/** What kind of settings a change touches, in the app's words, and not
+    the agent's reason or the values. */
+function kinds(ask: SettingsAsk): string {
+  if (ask.request.tool === "theme_save") return "the look, with a theme of its own";
+  if (ask.request.tool === "styles_write") return "the stylesheet";
+  const touched = new Set(ask.changes.map((change) => kindOf(change.field)));
+  const said = [...touched];
+  if (said.length === 0) return "the settings";
+  return said.length === 1 ? said[0] : `${said.slice(0, -1).join(", ")} and ${said[said.length - 1]}`;
+}
+
+function kindOf(field: string): string {
+  if (field === "keyPreset" || field.startsWith("keys")) return "the key chords";
+  if (field.startsWith("workflow") || field === "defaultWorkflow") return "the workflows";
+  if (field === "userStyles" || field === "css") return "the stylesheet";
+  return "the look";
 }
 
 /** One line of what may be an agent's text, as the user may safely read

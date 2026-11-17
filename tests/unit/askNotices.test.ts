@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { attention, resetAttention } from "$lib/attention.svelte";
-import { heedAsks, openAsks, resetAskNotices } from "$lib/askNotices.svelte";
+import { heedAsks, openAsks, program, resetAskNotices } from "$lib/askNotices.svelte";
 import { conductor, resetConductor, type Ask as ConductAsk } from "$lib/conductor.svelte";
 import { handleOf, launch, listenIntegrated, resetIntegrated } from "$lib/integrated.svelte";
 import { announce, clicked, notify, resetNotify } from "$lib/notify.svelte";
@@ -105,7 +105,7 @@ describe("a question from a session another started, while the window is behind"
     look();
     look();
     expect(told).toEqual([
-      { title: "one · Fix the cache", body: "Asks to use Bash to run cargo test", name: told[0].name },
+      { title: "one · Fix the cache", body: "Asks to use Bash to run cargo", name: told[0].name },
     ]);
   });
 
@@ -194,11 +194,11 @@ describe("the other questions that wait on the user", () => {
     const other = await integrated("Elsewhere");
     sessions.active = other.key;
     conductor.asking = {
-      request: { id: "call-1" },
+      request: { id: "call-1", arguments: { name: "Fix the cache", prompt: "Read /home/ada/dev/one/src/cache.ts and fix it" } },
       caller: "Fix the slow startup",
       outside: null,
       project: A,
-      prompt: "Fix the cache",
+      prompt: "Read /home/ada/dev/one/src/cache.ts and fix it",
       worktree: false,
       round: null,
       login: null,
@@ -206,7 +206,7 @@ describe("the other questions that wait on the user", () => {
     } as unknown as ConductAsk;
     look();
     expect(told).toEqual([
-      { title: "one · Fix the slow startup", body: "Wants to start a session: Fix the cache", name: told[0].name },
+      { title: "one · Fix the slow startup", body: "Wants to start “Fix the cache”", name: told[0].name },
     ]);
     // The question is over the window: a click brings the window forward
     // and leaves the session on screen where it is.
@@ -234,13 +234,16 @@ describe("the other questions that wait on the user", () => {
     expect(taken).toEqual([told[0].name]);
   });
 
-  it("an agent's change to the settings, with its reason", async () => {
+  it("an agent's change to the settings, by what kind of change, not its reason", async () => {
     const caller = await integrated("Theme work");
     settingsAsk.asking = {
       request: { id: "set-1", tool: "settings_change", arguments: {}, cwd: A, session: caller.token },
       caller: "Theme work",
       reason: "You asked for a darker look",
-      changes: [],
+      changes: [
+        { field: "appearance", label: "Appearance", from: "Light", to: "Dark" },
+        { field: "keys.palette", label: "Palette", from: "⌘K", to: "⌘P" },
+      ],
       theme: null,
       ground: null,
       css: null,
@@ -249,10 +252,19 @@ describe("the other questions that wait on the user", () => {
     expect(told).toEqual([
       {
         title: "one · Theme work",
-        body: "Wants to change the settings: You asked for a darker look",
+        body: "Wants to change the look and the key chords",
         name: told[0].name,
       },
     ]);
+  });
+
+  it("a command by its program alone, as its arguments may hold a secret", async () => {
+    const session = await integrated("Fix the cache");
+    fake.ask(handleOf(session.key)!, "Bash", { command: 'API_TOKEN=abc123 /usr/bin/curl -H "Authorization: Bearer abc123" https://x' });
+    look();
+    expect(told[0].body).toBe("Asks to use Bash to run curl");
+    expect(program("cargo test --workspace")).toBe("cargo");
+    expect(program("FOO=1 BAR=2 ./scripts/run.sh --all")).toBe("run.sh");
   });
 
   it("a long line, cut to one line of the notification", async () => {

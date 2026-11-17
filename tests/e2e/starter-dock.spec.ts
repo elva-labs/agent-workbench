@@ -437,7 +437,7 @@ test.describe("a started session's request while the window is behind", () => {
     await expect.poll(async () => (await notified(page)).length).toBe(1);
     const [told] = await notified(page);
     expect(told.title).toContain("Fix the cache");
-    expect(told.body).toBe("Asks to run cargo test --workspace");
+    expect(told.body).toBe("Asks to run cargo");
 
     await click(page, told.id);
     await expect(shown(page)).toHaveAttribute("data-session", starter);
