@@ -462,6 +462,8 @@ export async function launch(key: string): Promise<void> {
     told what it is told, and takes the run up once it is. */
 async function begin(key: string, link: Link, starting: Session, told: Told) {
   link.ranOn = { agent: starting.agent, told: toldText(told.instructions, told.startOnly) };
+  const mode = startMode(starting, link);
+  starting.modeNamed = mode ?? null;
   const started = await core().integratedStart({
     agent: starting.agent,
     project: starting.project,
@@ -469,7 +471,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     session: starting.resumedFrom ?? undefined,
     token: starting.token,
     model: starting.model ?? undefined,
-    mode: startMode(starting, link),
+    mode,
     configDir: dirFor(starting.account, starting.agent),
     ...told,
   });

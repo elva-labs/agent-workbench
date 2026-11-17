@@ -678,6 +678,9 @@ export interface SessionEvent {
   /** With a stop, the commands left running in the background, by their
       descriptions. */
   background?: string[];
+  /** The permission mode the agent runs in as the event fires, where its
+      hooks say. */
+  mode?: string;
 }
 
 /** A place in a file the agent asked to show, through the daemon's MCP
