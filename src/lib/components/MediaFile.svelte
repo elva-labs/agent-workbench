@@ -21,9 +21,10 @@
     /** Changes when the file may have: a later call for it, or the
         working tree moving under it. */
     reload?: string;
-    /** Changes each time the file is presented. A page is then drawn
-        afresh and the files it loads read anew, even when the page itself
-        is the same, so screenshots made again under the same names show. */
+    /** Changes each time the file is presented, or read again in the
+        file viewer. A page is then drawn afresh and the files it loads read
+        anew, even when the page itself is the same, so screenshots made
+        again under the same names show. */
     again?: string;
   }
 

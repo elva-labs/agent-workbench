@@ -149,9 +149,10 @@
          agent presents is, and read again when the tree moves or the core
          sees the file change. -->
     {@const path = absolute(entry.path)}
+    {@const reload = `${files.treeReads}:${files.shownReads}`}
     {#if path !== null}
       <div class="rendered" data-testid="viewer-rendered">
-        <MediaFile {path} alt={lastSegment(entry.path)} reload="{files.treeReads}:{files.shownReads}" />
+        <MediaFile {path} alt={lastSegment(entry.path)} {reload} again={reload} />
       </div>
     {/if}
   {:else if entry.binary}
