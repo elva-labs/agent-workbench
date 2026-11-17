@@ -2,13 +2,15 @@
 #
 # Prints the Homebrew cask for a published release, checksums included, to
 # put in the organisation's tap. The channel is stable, which is
-# Casks/agent-workbench.rb, or beta, which is Casks/agent-workbench@beta.rb.
-# Both install the same app, so each names the other as a conflict. The
-# beta channel takes any version, a stable one too; the stable channel
-# refuses a pre-release.
+# Casks/chord.rb, or beta, which is Casks/chord@beta.rb. Both install the
+# same app, so each names the other as a conflict, and both name the casks
+# the app had under its earlier name, agent-workbench and
+# agent-workbench@beta, which install it under the same bundle identifier.
+# The beta channel takes any version, a stable one too; the stable channel
+# refuses a pre-release. docs/release.md says what else the tap holds.
 #
-#   scripts/cask.sh 0.1.0 > ../homebrew-elva/Casks/agent-workbench.rb
-#   scripts/cask.sh 1.0.0-beta.1 beta > ../homebrew-elva/Casks/agent-workbench@beta.rb
+#   scripts/cask.sh 1.0.0 > ../homebrew-elva/Casks/chord.rb
+#   scripts/cask.sh 1.0.0-beta.4 beta > ../homebrew-elva/Casks/chord@beta.rb
 set -eu
 
 version="${1:?a version, as 0.1.0}"
@@ -22,8 +24,8 @@ case "$channel" in
         exit 1
         ;;
     esac
-    token="agent-workbench"
-    other="agent-workbench@beta"
+    token="chord"
+    other="chord@beta"
     livecheck=$(cat <<'RUBY'
   livecheck do
     url :url
@@ -33,8 +35,8 @@ RUBY
 )
     ;;
   beta)
-    token="agent-workbench@beta"
-    other="agent-workbench"
+    token="chord@beta"
+    other="chord"
     # Pre-releases count here, which the latest release never is.
     livecheck=$(cat <<'RUBY'
   livecheck do
@@ -66,8 +68,8 @@ sum() {
   curl -fsSL "$base/$1" | shasum -a 256 | cut -d' ' -f1
 }
 
-arm=$(sum "Agent.Workbench_${version}_aarch64.dmg")
-intel=$(sum "Agent.Workbench_${version}_x64.dmg")
+arm=$(sum "Chord_${version}_aarch64.dmg")
+intel=$(sum "Chord_${version}_x64.dmg")
 
 cat <<CASK
 cask "$token" do
@@ -76,25 +78,25 @@ cask "$token" do
   on_arm do
     sha256 "$arm"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Agent.Workbench_#{version}_aarch64.dmg"
+    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Chord_#{version}_aarch64.dmg"
   end
   on_intel do
     sha256 "$intel"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Agent.Workbench_#{version}_x64.dmg"
+    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Chord_#{version}_x64.dmg"
   end
 
-  name "Agent Workbench"
+  name "Chord"
   desc "Desktop for terminal coding agents: sessions, live changes, remote projects"
   homepage "https://github.com/elva-labs/agent-workbench"
 
 $livecheck
 
-  conflicts_with cask: "$other"
+  conflicts_with cask: ["$other", "agent-workbench", "agent-workbench@beta"]
   depends_on macos: :ventura
 
-  app "Agent Workbench.app"
-  binary "#{appdir}/Agent Workbench.app/Contents/Resources/bin/awb"
+  app "Chord.app"
+  binary "#{appdir}/Chord.app/Contents/Resources/bin/awb"
 
   zap trash: [
     "~/Library/Application Support/com.elva-labs.agent-workbench",
