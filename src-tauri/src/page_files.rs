@@ -43,7 +43,7 @@ const READS_AT_ONCE: usize = 4;
 /// refused at once. A page asks for every picture it holds as it loads, so
 /// the line holds a gallery of screenshots, while a page asking for files
 /// over and over is turned away rather than queued without end.
-const READS_WAITING: usize = 256;
+const READS_WAITING: usize = 2048;
 
 /// How long the webview may reuse an answer. A page is drawn under a fresh
 /// token each time, so an answer is never reused past the drawing it was
