@@ -113,9 +113,14 @@
       begin with, and whatever the control was switched to. */
   let picked = $state<string | null>(null);
 
-  /** New session: with nothing to choose it starts; otherwise the choice
-      opens under the project's name, the cursor on the agent the project
-      used last and the account the project runs under. */
+  /** New session from a project's own button or menu: with nothing to
+      choose it starts; otherwise the choice opens under the project's
+      name, the cursor on the agent the project used last and the account
+      the project runs under. The project is drawn among the active ones
+      while the choice is open. Nothing else changes until the session
+      starts, which is when the project counts as used: the session on
+      screen stays, and none of the project's own is put on screen, since
+      a row left from the last quit starts once it is. */
   function offer(path: string) {
     if (!startsIn(path)) return;
     if (!choosable) {
@@ -242,7 +247,7 @@
   let split = $derived.by(() => {
     const byPath = new Map(workspace.open.map((project) => [project.path, project]));
     if (folder !== null && !byPath.has(folder.path)) byPath.set(folder.path, folder);
-    const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now);
+    const { active, inactive } = splitProjects([...byPath.keys()], screenProject, layout.projectSort, now, choosing);
     const resorted = shownSort !== layout.projectSort;
     shownSort = layout.projectSort;
     const nextActive = resorted ? active : held(shownActive, active);
@@ -319,11 +324,12 @@
     sortOpen = false;
   }
 
-  /** An inactive project's own new-session button: the project comes
-      forward, which makes it active, and starts as its header's + would. */
+  /** New session in a project's menu, an inactive project's as well: what
+      its header's + does, and the pane scrolls to the project, which is
+      among the active ones while a session is asked for in it. */
   function startIn(path: string) {
-    wake(path);
     offer(path);
+    void reveal(path);
   }
 
   /** An inactive project picked: it comes forward, which makes it active,
@@ -332,6 +338,11 @@
   async function wake(path: string) {
     bringForward(path);
     cursor = `project:${path}`;
+    await reveal(path);
+  }
+
+  /** Scrolls the pane to a project once it is drawn where it now stands. */
+  async function reveal(path: string) {
     await tick();
     nav
       ?.querySelector(`[data-row="${CSS.escape(`project:${path}`)}"]`)
@@ -401,8 +412,8 @@
               label: other === "integrated" ? "New integrated session" : "New session in a terminal",
               disabled: !isReady(),
               run: () => {
-                wake(path);
                 startSession(path, agent, accountOf(path), null, other);
+                void reveal(path);
               },
             },
           ]),
@@ -586,13 +597,6 @@
     closePalette();
     await tick();
     if (outcome.type === "close") outcome.then();
-  }
-
-  /** A project's own new-session button: the project comes forward, and
-      the session starts there, or the choice opens under its name. */
-  function newIn(path: string) {
-    bringForward(path);
-    offer(path);
   }
 
   /** The account the session on screen runs under, for the foot, which
@@ -1961,7 +1965,7 @@
       <button
         class="add-here"
         tabindex="-1"
-        onclick={() => newIn(project.path)}
+        onclick={() => offer(project.path)}
         disabled={!isReady()}
         aria-label="New session in {projectLabel(project.path)}"
         title="New session"

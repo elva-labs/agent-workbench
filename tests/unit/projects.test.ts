@@ -210,6 +210,26 @@ describe("active and inactive", () => {
     });
   });
 
+  // A new session asked for in an inactive project opens its choice under
+  // its name, so it is drawn among the active ones while that is open, in
+  // its own place by the order, and back under Inactive once it is not.
+  it("draws the project a session is asked for in among the active ones", () => {
+    touch("/b", NOW - DAY);
+    touch("/old", NOW - 30 * DAY);
+    const paths = ["/b", "/old"];
+    for (const path of paths) sessions.history[path] = [];
+
+    expect(splitProjects(paths, null, "used", NOW, "/old")).toEqual({
+      active: ["/b", "/old"],
+      inactive: [],
+    });
+    expect(splitProjects(paths, null, "used", NOW)).toEqual({
+      active: ["/b"],
+      inactive: ["/old"],
+    });
+    expect(lastUsed("/old")).toBe(NOW - 30 * DAY);
+  });
+
   // Two checkouts of the same name sort by their paths, so the order
   // never flickers between them.
   it("breaks a tie by path", () => {
