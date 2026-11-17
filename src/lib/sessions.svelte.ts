@@ -29,6 +29,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { isInstalled } from "$lib/hook.svelte";
 import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
@@ -1745,8 +1746,12 @@ export async function launch(
   // last integrated run ran in, which its agent's terminal has no record
   // of, or the one a terminal run was killed in before it could write its
   // own down. A new one another session started begins in the mode its
-  // starter gave it.
-  const mode = session.resumedFrom === null ? session.modeGiven : modeOf(session.resumedFrom);
+  // starter gave it, and one reopened before anything was said in it, in
+  // the mode kept for the conversation it leaves.
+  const mode =
+    session.resumedFrom !== null
+      ? modeOf(session.resumedFrom)
+      : (session.modeGiven ?? (session.id === null ? null : modeOf(session.id)));
   session.modeNamed = mode;
   session.modeSeen = null;
   try {
@@ -2040,12 +2045,15 @@ function swap(row: Session, to: SessionKind, bySetting: boolean) {
   if (!bySetting) row.ownWay = to !== kindFor(row.agent);
   // The conversation the stopped run had, which the other way lets go of:
   // the next run reads it back from the agent's own record.
+  // A conversation nothing was said in has no record of its agent's to
+  // resume from, and starts afresh the other way.
+  const spoken = row.kind === "integrated" ? saidIn(row) : saidInTerminal(row);
   if (row.kind === "integrated") stopIntegrated(row);
   // The row keeps the name it showed, which a row resumed by its id would
   // otherwise give up for the id's start.
-  row.title ??= label(row);
+  if (spoken) row.title ??= label(row);
   row.kind = to;
-  row.resumedFrom = row.id;
+  row.resumedFrom = spoken ? row.id : null;
   // The prompt a started session began with was given then, and is not
   // given again to the conversation that goes on.
   row.prompt = null;
@@ -2064,6 +2072,24 @@ function swap(row: Session, to: SessionKind, bySetting: boolean) {
     row.status = "starting";
   }
   if (!bySetting) changed(row);
+}
+
+/** Whether anything was said in an integrated row's conversation, as its
+    conversation has it. */
+let saidIn: (session: Session) => boolean = () => true;
+
+export function onSaid(handler: (session: Session) => boolean) {
+  saidIn = handler;
+}
+
+/** Whether anything was said in a terminal row's conversation: it was
+    resumed, started with a prompt, or a turn of it was heard. Where no hook
+    and no log of the agent's reports its turns, a line sent to it counts,
+    since a short turn shows nothing in its output. */
+function saidInTerminal(row: Session): boolean {
+  if (row.resumedFrom !== null || row.prompt !== null || row.turns > 0) return true;
+  const reported = row.exact || row.agent === "codex" || isInstalled(row.project);
+  return row.engaged && !reported;
 }
 
 /** Stops the row's run, and once it has ended, does `then` inside the end.

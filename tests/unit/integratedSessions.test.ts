@@ -1130,6 +1130,15 @@ describe("a session reopened the other way", () => {
     resetShells();
   });
 
+  /** A conversation that was spoken to and answered, so there is a
+      conversation to go on with. */
+  async function spoken() {
+    const made = await started();
+    send(made.key, "Go");
+    fake.turn(made.handle, "Done.");
+    return { ...made, session: byKey(made.key)! };
+  }
+
   /** A terminal row of a conversation, its process up. */
   function terminalRow(id: string) {
     const row = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
@@ -1162,7 +1171,7 @@ describe("a session reopened the other way", () => {
   });
 
   it("goes on with a conversation in a terminal once its agent has ended, in the same row", async () => {
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     const token = session.token;
     await reopenOtherWay(key);
@@ -1240,7 +1249,7 @@ describe("a session reopened the other way", () => {
   it("goes on in a terminal in the mode the user last chose, and in none the agent does not offer", async () => {
     stopListening();
     await install({ defaultMode: "auto" });
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     expect(conversationOf(key).settings.mode).toBe("auto");
     await configure(key, { mode: "default" });
     await reopenOtherWay(key);
@@ -1250,7 +1259,7 @@ describe("a session reopened the other way", () => {
     expect(modeOf(session.id!)).toBe("default");
     // A run in a mode from the agent's own settings that it offers no
     // switch to names none: the terminal's settings decide again.
-    const other = await started();
+    const other = await spoken();
     fake.emit(other.handle, { type: "configured", model: null, mode: "bypassPermissions", effort: null, efforts: [] });
     await reopenOtherWay(other.key);
     await launchTerminal(other.key, 80, 24, () => {});
@@ -1264,7 +1273,7 @@ describe("a session reopened the other way", () => {
   it("keeps the mode the user last chose through a terminal run that is killed, and leaves it to the agent once one shuts down", async () => {
     stopListening();
     await install({ defaultMode: "auto" });
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     await configure(key, { mode: "default" });
     await reopenOtherWay(key);
@@ -1306,7 +1315,7 @@ describe("a session reopened the other way", () => {
       [{ code: 1, clean: false }, "plan"],
       [{ code: 0, clean: true }, null],
     ] as const) {
-      const { session, key } = await started();
+      const { session, key } = await spoken();
       const id = session.id!;
       await configure(key, { mode: "plan" });
       await reopenOtherWay(key);
@@ -1319,10 +1328,10 @@ describe("a session reopened the other way", () => {
     }
     // A terminal run still up when the window goes, as at a quit, which
     // hangs up on it: its agent writes its own down.
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     await configure(key, { mode: "acceptEdits" });
-    const other = await started();
+    const other = await spoken();
     await configure(other.key, { mode: "plan" });
     await reopenOtherWay(key);
     await launchTerminal(key, 80, 24, () => {});
@@ -1342,7 +1351,7 @@ describe("a session reopened the other way", () => {
     seam.integratedStop = (async (handle: string) => {
       release = () => void stopNow(handle as never);
     }) as never;
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const reopening = reopenOtherWay(key);
     await settled();
     // The run is on its way out, and the user turns the chip.
@@ -1358,7 +1367,7 @@ describe("a session reopened the other way", () => {
 
     // A change asked of the run that it has not answered when the reopen
     // stops it.
-    const other = await started();
+    const other = await spoken();
     const configureNow = seam.integratedConfigure;
     seam.integratedConfigure = (() => new Promise(() => {})) as never;
     void configure(other.key, { mode: "plan" });

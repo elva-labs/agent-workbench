@@ -258,7 +258,9 @@ describe("the orchestrator's tools with an integrated session", () => {
     const row = create(A, null, "claude-code", null, null, null, null, undefined, "terminal");
     conductor.startedBy[row.key] = callerToken();
     started(row.key, "pty-kid", "kid-1");
+    // At work in a turn of its own.
     byKey(row.key)!.working = true;
+    byKey(row.key)!.turns = 1;
     flushSync();
     const waiting = call("wait", { session: "kid-1", seconds: 60 });
     const waited = handle(waiting);

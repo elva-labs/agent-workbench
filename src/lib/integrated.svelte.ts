@@ -37,6 +37,7 @@ import {
   noted,
   onIntegratedClose,
   onIntegratedHalt,
+  onSaid,
   putUnder,
   rang,
   rejoined,
@@ -699,7 +700,10 @@ export function startMode(session: Session, link: Link): string | undefined {
     // one would, unless the user chose its mode.
     return unspoken(session) && !link.modeChosen ? given : mode;
   }
-  return session.resumedFrom === null ? given : (modeOf(session.resumedFrom) ?? undefined);
+  if (session.resumedFrom !== null) return modeOf(session.resumedFrom) ?? undefined;
+  // One reopened before anything was said in it starts in the mode kept
+  // for the conversation it leaves.
+  return given ?? (session.id === null ? undefined : (modeOf(session.id) ?? undefined));
 }
 
 /**
@@ -1190,6 +1194,13 @@ function halt(session: Session) {
 }
 
 onIntegratedHalt(halt);
+
+// Anything said in a conversation, or before it in an earlier run, is
+// there to resume; one never spoken to, nothing read before it, is not.
+onSaid((session) => {
+  const link = links.get(session.key);
+  return session.resumedFrom !== null || session.prompt !== null || link === undefined || !link.conversation.untouched;
+});
 
 function message(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);

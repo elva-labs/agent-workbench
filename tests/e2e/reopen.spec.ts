@@ -34,6 +34,16 @@ test("reopens a terminal session as a conversation in the same row, from its men
   await expect(page.locator(ROW)).toHaveCount(1);
   await expect.poll(async () => (await spawns(page)).length).toBe(1);
   const [spawned] = await spawns(page);
+  // A turn of it, as its hooks say: there is a conversation to go on with.
+  for (const kind of ["prompt", "stop"])
+    await page.evaluate(
+      (kind) =>
+        (window as unknown as { __sessionEvent: (event: unknown) => void }).__sessionEvent({
+          sessionId: "session-1",
+          kind,
+        }),
+      kind,
+    );
 
   await page.locator(ROW).click({ button: "right" });
   const menu = page.getByTestId("session-menu");
@@ -156,6 +166,11 @@ test("goes on in a terminal in the mode chosen on the chip", async ({ page }) =>
   await chip.click();
   await page.getByTestId("mode-option").filter({ hasText: "Default" }).click();
   await expect(chip).toHaveText("Default");
+  // Spoken to and answered: there is a conversation to go on with.
+  await page.getByTestId("composer-input").fill("Go");
+  await page.keyboard.press("Enter");
+  await agent(page, `f.turn("${H}", "Done.");`);
+  await expect(page.locator(".session .dot.working")).toHaveCount(0);
   await page.locator(ROW).click({ button: "right" });
   await page.getByTestId("session-menu-reopen").click();
   await expect.poll(async () => (await spawns(page)).length).toBe(1);
