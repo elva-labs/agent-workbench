@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, resetConductor, stopStarted, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
-import { byKey, close, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
+import { byKey, close, create, ended as endedTerminal, forProject, keepName, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { resetSessionKinds, setKind } from "$lib/sessionKind.svelte";
@@ -483,6 +483,26 @@ describe("the orchestrator's tools with an integrated session", () => {
         expect(conductor.woken[key]?.by).toEqual([{ key: kid.key, name: label(kid), rest: "quiet" }]);
       });
 
+      it("is sent a session by its id, which the thread shows by its name, also once the starter has stopped it", async () => {
+        const { key, token, kid } = await idle();
+        conductor.started[token] = [{ id: "kid-1", project: A, worktree: null, agent: "claude-code", name: "Fix the cache" }];
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        // What the agent is sent names the session by the id it acts on.
+        const sent = fake.calls.filter((made) => made.method === "send" && made.id === handleOf(key));
+        const text = (sent.at(-1) as { text: string }).text;
+        expect(text).toBe(`${REPORTS_HEAD}\nSession kid-1 stopped working. It has left no line.`);
+        expect(text).not.toContain("Fix the cache");
+        // The thread draws the message the agent was sent, by the name.
+        const message = Object.values(conversationOf(key).messages).at(-1)!;
+        expect(message.text).toBe(text);
+        expect(wakeShown(message.text, sessionName)).toBe("Fix the cache stopped working. It has left no line.");
+        stopStarted(kid.key);
+        expect(byKey(kid.key)).toBeNull();
+        expect(wakeShown(message.text, sessionName)).toBe("Fix the cache stopped working. It has left no line.");
+      });
+
       it("is woken though another session started it, and not again until a turn it did not start once it has been woken WAKES_MAX times", async () => {
         const { key, kid, handle: core } = await idle();
         const top = create(A, null, "claude-code", null);
@@ -672,7 +692,6 @@ describe("a name a start gave", () => {
     flushSync();
     await answering;
     const id = byKey(row.key)!.id!;
-    const report = `${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.\n${"Still at work: "}${id}. Call wait to hear from it.`;
     expect(wakeShown(`${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.`, sessionName)).toBe(
       "Fix the cache stopped working. It has left no line.",
     );
@@ -682,7 +701,20 @@ describe("a name a start gave", () => {
     expect(wakeShown(`${REPORTS_HEAD}\nSession ${id} stopped working. It has left no line.`, sessionName)).toBe(
       "Fix the cache stopped working. It has left no line.",
     );
-    expect(report).toContain(id);
+  });
+
+  it("is never one that reads as the user's or the workbench's, once the row has gone", () => {
+    const row = create(A, null, "claude-code", null);
+    started(row.key, "pty-you", "you-1");
+    titled(row.key, "You");
+    keepName(byKey(row.key)!);
+    close(row.key);
+    sessions.names["wb-1"] = "Workbench";
+    conductor.started["token-x"] = [{ id: "you-2", project: A, worktree: null, agent: "claude-code", name: "you" }];
+    for (const id of ["you-1", "wb-1", "you-2"]) expect(sessionName(id)).toBeNull();
+    expect(wakeShown(`${REPORTS_HEAD}\nSession wb-1 stopped working. It has left no line.`, sessionName)).toBe(
+      "A session stopped working. It has left no line.",
+    );
   });
 
   it("is not replaced by the first words of a message to a resumed conversation", async () => {

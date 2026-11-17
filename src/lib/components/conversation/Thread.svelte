@@ -1515,7 +1515,13 @@
     align-self: flex-start;
   }
 
+  /* A long sender's name gives way on one line, and the way to it and the
+     time keep theirs whole. */
   .who .sender {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-weight: 600;
     color: var(--ink);
     text-transform: none;
@@ -1524,6 +1530,13 @@
 
   .who .go {
     margin-left: 0;
+  }
+
+  .who .go,
+  .who time,
+  .who > span:first-child {
+    flex: none;
+    white-space: nowrap;
   }
 
   .link.instructions {

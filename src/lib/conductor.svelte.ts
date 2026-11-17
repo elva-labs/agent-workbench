@@ -111,7 +111,7 @@ import { lastRun, nameSessionsBy } from "$lib/thread";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
+import { mixesScripts, readsAsWorkbench, readsAsYou, reservedName, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -3139,12 +3139,15 @@ onDirected((session) => startedFor(session.key) !== null);
 function nameOf(id: string): string | null {
   const row = byId(id);
   if (row !== null) return label(row);
+  // A name that would read as the user's or the workbench's is no name for
+  // a session, as a row's never is.
+  const fit = (name: string | null | undefined) =>
+    name !== null && name !== undefined && name.trim() !== "" && !reservedName(name) ? shown(name) : null;
   for (const list of Object.values(conductor.started)) {
-    const name = list.find((entry) => entry.id === id)?.name ?? null;
-    if (name !== null && name.trim() !== "") return shown(name);
+    const name = fit(list.find((entry) => entry.id === id)?.name);
+    if (name !== null) return name;
   }
-  const kept = sessions.names[id] ?? null;
-  return kept === null || kept.trim() === "" ? null : shown(kept);
+  return fit(sessions.names[id]);
 }
 
 nameKeptBy(nameOf);
