@@ -1,6 +1,7 @@
 import {
   TEXT_TOKENS,
   dotColour,
+  vividAt,
   gradientPixels,
   grainPixels,
   labToRgb,
@@ -11,6 +12,7 @@ import {
   veilOf,
   type Appearance,
   type Background,
+  type Lab,
   type Look,
   type Painted,
 } from "$lib/background";
@@ -26,6 +28,9 @@ import {
  * the stylesheets' to follow and needs nothing from here. The gradient is
  * drawn once for each appearance into an image stretched over the window,
  * and the grain into a tile; each is named once, and the sets refer to them.
+ * Above FULL_TINT the cards take the calm tint while the chrome takes the
+ * colours at the strength, so where the cards let any through, their
+ * gradient is an image of its own.
  */
 
 /** How large the gradient is drawn before it is stretched. It is dithered,
@@ -46,6 +51,10 @@ export interface Images {
       colour or the page cannot draw; a flat colour stands in. */
   light: string | null;
   dark: string | null;
+  /** The cards' gradient for each appearance where it is not the
+      chrome's, or null where the cards take the chrome's. */
+  cardLight?: string | null;
+  cardDark?: string | null;
   /** The grain's tile, or null for none. */
   grain: string | null;
   /** The appearances whose gradient here is drawn small, to be drawn at
@@ -88,11 +97,13 @@ function backdrop(painted: Painted, appearance: Appearance, images: Images): str
     paint. */
 function cardBackdrop(painted: Painted, appearance: Appearance, images: Images): string {
   const veil = painted.cards?.veil ?? null;
-  if (painted.colours.length > 1 && images[appearance] !== null) {
-    const image = `var(--tint-image-${appearance}) 0 0 / 100vw 100vh no-repeat fixed`;
+  const own = images[appearance === "light" ? "cardLight" : "cardDark"] ?? null;
+  if (painted.cardColours.length > 1 && images[appearance] !== null) {
+    const name = own === null ? `tint-image-${appearance}` : `tint-card-image-${appearance}`;
+    const image = `var(--${name}) 0 0 / 100vw 100vh no-repeat fixed`;
     return veil === null ? image : `linear-gradient(${veil}, ${veil}), ${image}`;
   }
-  const flat = labToRgb(painted.colours[0]);
+  const flat = labToRgb(painted.cardColours[0]);
   const shown = rgbToHex(veil === null ? flat : mix(flat, [127.5, 127.5, 127.5], veilOf(painted.grain)));
   return `linear-gradient(${shown}, ${shown})`;
 }
@@ -103,35 +114,39 @@ function valuesOf(painted: Painted, appearance: Appearance, images: Images): Rec
     out["tint-card-backdrop"] = cardBackdrop(painted, appearance, images);
     out["tint-card"] = painted.cards.card;
     out["tint-well"] = painted.cards.well;
+    out["tint-card-fill-accent"] = painted.cardFillAccent;
     for (const token of TEXT_TOKENS) out[`tint-card-${token}`] = painted.cards.text[token];
   }
   for (const [part, ground] of Object.entries(painted.grounds)) out[`tint-${part}`] = ground;
   out["tint-line"] = painted.line;
   out["tint-line-strong"] = painted.lineStrong;
+  out["tint-part-line"] = painted.partLine;
+  out["tint-part-line-strong"] = painted.partLineStrong;
   out["tint-fill"] = painted.fill;
   out["tint-fill-accent"] = painted.fillAccent;
+  out["tint-patch"] = painted.patch;
+  out["tint-on-accent"] = painted.onAccent;
   for (const token of TEXT_TOKENS) out[`tint-${token}`] = painted.text[token];
   return out;
 }
 
 /** The stylesheet for a background: what it paints in each appearance and
     look, worked out for the palette's colours in each appearance, the
-    cards' share included where they let any through, with the share the
-    guard lets through in each appearance and look written into `held`,
-    keyed "appearance:look". While a
-    background is being picked only the appearance and look on screen are
-    worked out, so the window keeps up with the pointer. */
+    cards' share included where they let any through. While a background
+    is being picked only the appearance and look on screen are worked out,
+    so the window keeps up with the pointer. */
 export function backgroundCss(
   background: Background,
   colours: Record<Appearance, Record<string, string>>,
   images: Images,
   only: { appearance: Appearance; look: Look } | null = null,
   cards = 0,
-  held: Partial<Record<string, number>> = {},
 ): string {
   const named: Record<string, string> = {};
   if (images.light !== null) named["tint-image-light"] = `url("${images.light}")`;
   if (images.dark !== null) named["tint-image-dark"] = `url("${images.dark}")`;
+  if ((images.cardLight ?? null) !== null) named["tint-card-image-light"] = `url("${images.cardLight}")`;
+  if ((images.cardDark ?? null) !== null) named["tint-card-image-dark"] = `url("${images.cardDark}")`;
   if (images.grain !== null) named["tint-grain"] = `url("${images.grain}")`;
   let css = Object.keys(named).length > 0 ? block(":root[data-background]", named) : "";
   const looks = only === null ? LOOKS : [only.look];
@@ -139,11 +154,7 @@ export function backgroundCss(
     only !== null && only.appearance !== appearance
       ? []
       : looks.map(
-          (look) => {
-            const painted = paintOf(background, look, colours[appearance], cards);
-            held[`${appearance}:${look}`] = painted.cards?.held ?? 0;
-            return [look, valuesOf(painted, appearance, images)] as const;
-          },
+          (look) => [look, valuesOf(paintOf(background, look, colours[appearance], cards), appearance, images)] as const,
         );
   for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
   const dark = sets("dark");
@@ -196,8 +207,8 @@ function toUrl(pixels: Uint8ClampedArray, width: number, height: number): string
 
 /** Drawn images, by what they were drawn from. A few small ones are kept,
     so moving a dot back and forth or sliding the grain draws nothing twice,
-    and the last four full-size gradients, whichever appearance each is
-    for. */
+    and the last six full-size gradients, whichever appearance each is
+    for and whether the chrome's or the cards'. */
 const drawn = new Map<string, string | null>();
 const drawnFull = new Map<string, string | null>();
 
@@ -220,36 +231,48 @@ function remembered(
 }
 
 /** The images a background needs: a gradient for each appearance it is
-    given the palette's colours for, where it has more than one colour, and
-    the grain's tile where it has grain. A gradient already drawn at full
-    size is given at full size. One that is not is drawn so in the
-    appearances `full` names, and drawn small in the others, which `rough`
-    then names. */
+    given the palette's colours for, where it has more than one colour, the
+    cards' own gradient where they let any through and take other colours
+    than the chrome, and the grain's tile where it has grain. A gradient
+    already drawn at full size is given at full size. One that is not is
+    drawn so in the appearances `full` names, and drawn small in the
+    others, which `rough` then names. */
 export function imagesOf(
   background: Background,
   palettes: Partial<Record<Appearance, Record<string, string>>>,
   full: readonly Appearance[] = ["light", "dark"],
+  cards = 0,
 ): Images {
   const rough: Appearance[] = [];
-  const images: Images = { light: null, dark: null, grain: null, rough };
+  const images: Images = { light: null, dark: null, cardLight: null, cardDark: null, grain: null, rough };
   const draw = drawer();
   if (draw === null) return images;
+  const gradient = (appearance: Appearance, colours: Lab[]) => {
+    const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
+    if (full.includes(appearance) || drawnFull.has(key)) {
+      return remembered(drawnFull, 6, key, () =>
+        draw(gradientPixels(colours, FULL.width, FULL.height), FULL.width, FULL.height),
+      );
+    }
+    if (!rough.includes(appearance)) rough.push(appearance);
+    return remembered(drawn, 32, key, () =>
+      draw(gradientPixels(colours, MOVING.width, MOVING.height), MOVING.width, MOVING.height),
+    );
+  };
   if (background.dots.length > 1) {
     for (const appearance of ["light", "dark"] as const) {
       const palette = palettes[appearance];
       if (palette === undefined) continue;
       const tone = toneOf(palette);
-      const colours = background.dots.map((dot) => dotColour(dot, tone));
-      const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
-      if (full.includes(appearance) || drawnFull.has(key)) {
-        images[appearance] = remembered(drawnFull, 4, key, () =>
-          draw(gradientPixels(colours, FULL.width, FULL.height), FULL.width, FULL.height),
+      images[appearance] = gradient(
+        appearance,
+        background.dots.map((dot) => dotColour(dot, tone, background.strength)),
+      );
+      if (cards > 0 && vividAt(background.strength) > 0) {
+        images[appearance === "light" ? "cardLight" : "cardDark"] = gradient(
+          appearance,
+          background.dots.map((dot) => dotColour(dot, tone)),
         );
-      } else {
-        images[appearance] = remembered(drawn, 32, key, () =>
-          draw(gradientPixels(colours, MOVING.width, MOVING.height), MOVING.width, MOVING.height),
-        );
-        rough.push(appearance);
       }
     }
   }

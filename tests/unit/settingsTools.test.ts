@@ -455,13 +455,9 @@ describe("a background", () => {
     theme.backgrounds = { teal: lagoon as never };
     expect(describeSettings()).toContain(`background: ${JSON.stringify(lagoon)}`);
     expect(describeSettings()).toMatch(/one to three dots on a colour pad/);
-    expect(describeSettings()).toContain("cards: 0% (how much of the background shows through the panes");
+    expect(describeSettings()).toContain("cards: 0% (how much of the background's colour shows through the panes");
     theme.cards = { teal: 0.2 };
-    theme.cardsHeld = 0.2;
     expect(describeSettings()).toContain("cards: 80% (");
-    expect(describeSettings()).not.toContain("shows through now");
-    theme.cardsHeld = 0;
-    expect(describeSettings()).toContain("0% shows through now");
   });
 
   it("goes with the palette in use, or the one the change switches to", () => {

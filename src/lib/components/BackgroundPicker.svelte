@@ -27,14 +27,15 @@
   import {
     FIRST,
     HARMONIES,
+    LEAST_CONTRAST,
     MOST_CARDS,
     MOST_DOTS,
     READY_MADE,
-    TERMINAL_STRENGTH,
     addDot,
     hexToRgb,
     deepOf,
     labToRgb,
+    lowestText,
     moveDot,
     padColour,
     padPixels,
@@ -46,6 +47,7 @@
     type Appearance,
     type Background,
     type Dot,
+    type Lab,
   } from "$lib/background";
   import { coloursOf } from "$lib/paletteColours";
   import {
@@ -71,8 +73,9 @@
    * with the arrow keys, repaints the window as it goes, and what is let go
    * of is kept. The two small windows show it in light and in dark, since
    * one choice serves both. Cards says how far the panes let it through as
-   * well, from none to the most they show, and says so where the guard
-   * holds it back.
+   * well, from none to the most they show. Where the colours leave text on
+   * them, or a terminal colour on the panes, under 4.5:1, a line under the
+   * controls says so; nothing is held back.
    */
 
   /** How far an arrow key moves a dot: degrees of hue and a share of the
@@ -109,7 +112,7 @@
   /** The dot last moved or focused: the one Remove takes away. */
   let chosen = $state(0);
   let chosenAt = $derived(Math.max(0, Math.min(chosen, (shown?.dots.length ?? 1) - 1)));
-  /** A word under the pad when a dot is held at the rim. */
+  /** A word under the pad when the pointer goes past the rim. */
   let rim = $state(false);
   let keepTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -127,19 +130,41 @@
   /** A cards' share as the slider reads it: how far along its range. */
   const cardsPercent = (share: number) => percent(share / MOST_CARDS);
 
-  /** What the guard lets through the cards here, in this look and
-      appearance, and why it holds back. */
-  let through = $derived(
-    shown === null || cards === 0 || setAside
-      ? null
-      : paintedOf(shown, theme.look, coloursOf(theme.palette, appearance, theme.themes), cards).cards,
-  );
-  let held = $derived(through !== null && through.held < cards - 1e-9 ? through.held : null);
-  /** Where the hold applies: the appearance on screen, which the guard
-      reads in the look on screen. */
-  let where = $derived(`in ${appearance}`);
-  /** The share held, in words: a percentage, or none. */
-  let heldWords = $derived(held === null ? "" : held === 0 ? `none ${where}` : `held at ${cardsPercent(held)} ${where}`);
+  /** What the background paints in each appearance, in the look on
+      screen, for the small windows and the words under the controls. */
+  let paints = $derived.by(() => {
+    if (shown === null) return null;
+    const look = terminal ? "terminal" : "modern";
+    const share = setAside ? 0 : cards;
+    const at = (which: Appearance) => paintedOf(shown!, look, coloursOf(theme.palette, which, theme.themes), share);
+    return { light: at("light"), dark: at("dark") };
+  });
+
+  /** The appearances where something reads under 4.5:1, in words. */
+  function whereIn(appearances: Appearance[]): string {
+    return appearances.length === 2 ? "in light and dark" : `in ${appearances[0]}`;
+  }
+  const BOTH: Appearance[] = ["light", "dark"];
+  /** Text on the chrome the colours leave under 4.5:1: the lowest it
+      reads at, and where. */
+  let lowText = $derived.by(() => {
+    if (paints === null || setAside) return null;
+    const low = BOTH.filter((at) => lowestText(paints![at]) < LEAST_CONTRAST - 0.005);
+    if (low.length === 0) return null;
+    const lowest = Math.min(...low.map((at) => lowestText(paints![at])));
+    return `Text on it reads at ${lowest.toFixed(1)} to 1 ${whereIn(low)}, under the 4.5 to 1 that reads easily.`;
+  });
+  /** What reads poorly on the panes at the share asked, in words. */
+  let lowCards = $derived.by(() => {
+    if (paints === null || setAside || cards === 0) return null;
+    const terminalLow = BOTH.filter((at) => paints![at].cards?.poor === "terminal");
+    const groundLow = BOTH.filter((at) => paints![at].cards?.poor === "ground");
+    const said = [
+      ...(terminalLow.length > 0 ? [`A terminal colour on the panes reads under 4.5 to 1 ${whereIn(terminalLow)}.`] : []),
+      ...(groundLow.length > 0 ? [`The panes barely stand off the window around them ${whereIn(groundLow)}.`] : []),
+    ];
+    return said.length === 0 ? null : said.join(" ");
+  });
 
   onDestroy(() => {
     moreContrast?.removeEventListener?.("change", followContrast);
@@ -367,20 +392,25 @@
     return colours.length === 1 ? colours[0] : `linear-gradient(135deg, ${colours.join(", ")})`;
   }
 
+  /** A row of colours as a small window's gradient. */
+  function gradientOf(colours: Lab[]): string {
+    const tones = colours.map((lab) => rgbToHex(labToRgb(lab)));
+    return tones.length === 1 ? tones[0] : `linear-gradient(160deg, ${tones.join(", ")})`;
+  }
+
   /** A small window in one appearance, as the background paints it. */
-  function mini(background: Background | null, look: "modern" | "terminal", at: Appearance, share: number) {
+  function mini(at: Appearance) {
     const colours = coloursOf(theme.palette, at, theme.themes);
-    if (background === null) {
-      return { colours, grounds: null, gradient: null, text: colours, card: null, cardText: colours };
+    const painted = paints?.[at] ?? null;
+    if (painted === null) {
+      return { colours, grounds: null, gradient: null, cardGradient: null, text: colours, card: null, cardText: colours };
     }
-    const painted = paintedOf(background, look, colours, setAside ? 0 : share);
-    const tones = painted.colours.map((lab) => rgbToHex(labToRgb(lab)));
-    const gradient = tones.length === 1 ? tones[0] : `linear-gradient(160deg, ${tones.join(", ")})`;
     const card = painted.cards !== null && painted.cards.amount > 0 ? painted.cards.card : null;
     return {
       colours,
       grounds: painted.grounds,
-      gradient,
+      gradient: gradientOf(painted.colours),
+      cardGradient: gradientOf(painted.cardColours),
       text: { ...colours, ...painted.text },
       card,
       cardText: card === null ? colours : { ...colours, ...painted.cards!.text },
@@ -469,7 +499,7 @@
       >
       <span class="word" data-testid="background-word">
         {#if rim}
-          Held at the rim: more colour would make text hard to read.
+          Held at the rim, the most colour there is.
         {:else if shown !== null && shown.harmony === "free" && shown.dots.length > 1}
           Free: each colour moves on its own.
         {:else if shown !== null && shown.dots.length > 1}
@@ -479,12 +509,12 @@
     </div>
     <div class="minis" aria-hidden="true">
       {#each ["light", "dark"] as const as at (at)}
-        {@const m = mini(shown, terminal ? "terminal" : "modern", at, cards)}
+        {@const m = mini(at)}
         <div class="mini-wrap">
           {#if terminal}
             <div class="mini" style:background={layer(m.grounds?.frame, m.gradient, m.colours.bg)}>
-              <i class="box side" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)} style:border-color={m.colours.rule}></i>
-              <i class="box main" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)} style:border-color={m.colours.accent}></i>
+              <i class="box side" style:background={layer(m.card ?? undefined, m.cardGradient, m.colours.surface)} style:border-color={m.colours.rule}></i>
+              <i class="box main" style:background={layer(m.card ?? undefined, m.cardGradient, m.colours.surface)} style:border-color={m.colours.accent}></i>
               <b style:left="27px" style:top="10px" style:width="28px" style:background={m.cardText["ink-3"]}></b>
               <b style:left="27px" style:top="16px" style:width="40px" style:background={m.cardText["ink-2"]}></b>
               <i class="status" style:background={layer(m.grounds?.status, m.gradient, m.colours["surface-2"])}></i>
@@ -494,7 +524,7 @@
             <!-- The ground across the window, the sessions column, the header
                  and the status bar on it, and a card standing on it. -->
             <div class="mini" style:background={layer(m.grounds?.side, m.gradient, rgbToHex(deepOf(m.colours)))}>
-              <i class="card" style:background={layer(m.card ?? undefined, m.gradient, m.colours.surface)}></i>
+              <i class="card" style:background={layer(m.card ?? undefined, m.cardGradient, m.colours.surface)}></i>
               <b style:left="4px" style:top="13px" style:width="14px" style:background={m.text.ink}></b>
               <b style:left="4px" style:top="19px" style:width="11px" style:background={m.text["ink-3"]}></b>
               <b style:left="28px" style:top="4px" style:width="20px" style:background={m.text.accent}></b>
@@ -577,11 +607,7 @@
         onchange={(event) => slide("strength", event, true)}
         data-testid="background-strength"
       />
-      <span class="value"
-        >{percent(shown?.strength ?? FIRST.strength)}{#if terminal && shown !== null && shown.strength > TERMINAL_STRENGTH}<em
-            >, held at {percent(TERMINAL_STRENGTH)} here</em
-          >{/if}</span
-      >
+      <span class="value">{percent(shown?.strength ?? FIRST.strength)}</span>
     </div>
     <div class="row">
       <label class="what" for="background-grain">Grain</label>
@@ -615,28 +641,27 @@
         disabled={shown === null || setAside}
         oninput={(event) => slideCards(event, false)}
         onchange={(event) => slideCards(event, true)}
-        aria-valuetext={cards === 0 ? "None" : `${cardsPercent(cards)}${held === null ? "" : `, ${heldWords}`}`}
+        aria-valuetext={cards === 0 ? "None" : cardsPercent(cards)}
         data-testid="background-cards"
       />
       <span class="value" data-testid="background-cards-value">
-        {#if shown !== null && !setAside}{cards === 0 ? "None" : cardsPercent(cards)}{#if held !== null}<em>, {heldWords}</em>{/if}{/if}
+        {#if shown !== null && !setAside}{cards === 0 ? "None" : cardsPercent(cards)}{/if}
       </span>
     </div>
     <p class="note" data-testid="background-note">
-      Kept with {paletteLabel}, for light and dark alike. Cards is how much of it shows through the panes as
-      well, up to as much as around them. Text on it always stays easy to read.
+      Kept with {paletteLabel}, for light and dark alike. Strength runs from a calm tint to the colours as the pad
+      shows them. Cards is how much of the colour shows through the panes as well, each keeping its own lightness.
+      Text on it is drawn as clear as the colours allow.
       {#if setAside}
         Off while the system asks for more contrast.
-      {:else if held === 0}
-        None shows through {where}, since any would {through?.heldBy === "terminal"
-          ? "leave a terminal colour hard to read"
-          : "melt the cards into the ground"}.
-      {:else if held !== null}
-        Held at {cardsPercent(held)} {where}, since more would {through?.heldBy === "terminal"
-          ? "leave a terminal colour hard to read"
-          : "melt the cards into the ground"}.
       {/if}
     </p>
+    {#if lowText !== null || lowCards !== null}
+      <p class="low" data-testid="background-low">
+        {#if lowText !== null}{lowText}{/if}
+        {#if lowCards !== null}{lowCards}{/if}
+      </p>
+    {/if}
   </div>
 </div>
 
@@ -1071,6 +1096,14 @@
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink-2);
+  }
+
+  /* What reads under 4.5:1 at the choice: said quietly, never in the way. */
+  .low {
+    margin: -4px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--ink-3);
   }
 
   /* The terminal look squares what the modern look rounds. */

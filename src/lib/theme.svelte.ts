@@ -134,9 +134,9 @@ export const theme = $state<{
       background, and the share of it the cards let through, paint the
       parts they tint and leave those colours as they were. */
   painted: number;
-  /** The share the cards let through in the appearance and look on
-      screen, after the guard: none where it holds the share at 0. */
-  cardsHeld: number;
+  /** The share the cards let through now: the one asked while a
+      background shows and the system asks for no more contrast, else none. */
+  cardsShown: number;
 }>({
   choice: "system",
   palette: "teal",
@@ -148,7 +148,7 @@ export const theme = $state<{
   cards: {},
   preview: null,
   painted: 0,
-  cardsHeld: 0,
+  cardsShown: 0,
 });
 
 function isPalette(value: unknown): value is string {
@@ -455,11 +455,10 @@ export function shownCards(): number {
   return Object.hasOwn(theme.cards, theme.palette) ? theme.cards[theme.palette] : 0;
 }
 
-/** Whether the cards let anything through now, in the appearance and look
-    on screen: a background shows, the system asks for no more contrast,
-    and the guard lets some of the share asked through. */
+/** Whether the cards let anything through now: a background shows, the
+    system asks for no more contrast, and a share is asked. */
 export function cardsThrough(): boolean {
-  return theme.cardsHeld > 0;
+  return theme.cardsShown > 0;
 }
 
 /** How long the background goes unchanged before its gradient is drawn at
@@ -468,14 +467,12 @@ export const REST = 200;
 let resting: ReturnType<typeof setTimeout> | null = null;
 
 /** The stylesheet last worked out for a background, by what it was worked
-    out from, with the share the guard lets through in each appearance and
-    look, the appearances whose gradient in it is drawn small, and the
-    images it names: a repaint that changes none of it works nothing out
-    again, unless it is the one that draws one of those at full size. */
+    out from, with the appearances whose gradient in it is drawn small, and
+    the images it names: a repaint that changes none of it works nothing
+    out again, unless it is the one that draws one of those at full size. */
 type Worked = {
   from: string;
   css: string;
-  held: Partial<Record<string, number>>;
   rough: Appearance[];
   urls: string[];
 };
@@ -537,7 +534,7 @@ function paintBackground(full: readonly Appearance[] = []) {
     stamp("background", null);
     stampRested(null);
     stamp("cards", null);
-    theme.cardsHeld = 0;
+    theme.cardsShown = 0;
     if (sheet.textContent !== "") sheet.textContent = "";
     return;
   }
@@ -551,25 +548,26 @@ function paintBackground(full: readonly Appearance[] = []) {
   const only = theme.preview === null ? null : { appearance, look: theme.look };
   const from = JSON.stringify([background, colours, only, cards]);
   if (worked?.from !== from || worked.rough.some((rough) => full.includes(rough))) {
-    const held: Partial<Record<string, number>> = {};
     const images = imagesOf(
       background,
       only === null ? colours : { [only.appearance]: colours[only.appearance] },
       full,
+      cards,
     );
-    const css = backgroundCss(background, colours, images, only, cards, held);
-    const urls = [images.light, images.dark, images.grain].filter((url) => url !== null);
-    worked = { from, css, held, rough: images.rough ?? [], urls };
+    const css = backgroundCss(background, colours, images, only, cards);
+    const urls = [images.light, images.dark, images.cardLight ?? null, images.cardDark ?? null, images.grain].filter(
+      (url) => url !== null,
+    );
+    worked = { from, css, rough: images.rough ?? [], urls };
   }
-  const { css, held, rough } = worked;
+  const { css, rough } = worked;
   if (sheet.textContent !== css) sheet.textContent = css;
   const next = rough.includes(appearance) ? appearance : rough[0];
   if (next !== undefined) resting = setTimeout(() => paintBackground([next]), REST);
   stamp("background", "");
   stampRested(worked);
-  // Where the guard holds the share at none on screen, nothing changes.
-  theme.cardsHeld = held[`${appearance}:${theme.look}`] ?? 0;
-  stamp("cards", theme.cardsHeld > 0 ? "" : null);
+  theme.cardsShown = cards;
+  stamp("cards", cards > 0 ? "" : null);
 }
 
 /** What the colours read back from the page follow, as last painted. */

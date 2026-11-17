@@ -2,13 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BAND,
-  FILL,
+  CALM,
   FIRST,
+  FULL_TINT,
   GRAIN_SPECK,
   HARMONIES,
   LEAST_CONTRAST,
+  PAD,
   READY_MADE,
-  TERMINAL_STRENGTH,
   TEXT_TOKENS,
   addDot,
   checkBackground,
@@ -21,9 +22,11 @@ import {
   groundsOf,
   hexToRgb,
   labToRgb,
+  lowestText,
   luminance,
   mix,
   moveDot,
+  padColour,
   paintOf,
   ratio,
   readyMadeOf,
@@ -31,8 +34,10 @@ import {
   rgbToLab,
   rounded,
   sameBackground,
+  throughAt,
   toneOf,
   validBackgrounds,
+  vividAt,
   withHarmony,
   type Appearance,
   type Background,
@@ -277,6 +282,41 @@ describe("the colours a background paints", () => {
     }
   });
 
+  it("paint a background as they always have up to CALM: the calm tint let through by the strength", () => {
+    const colours = coloursOf("rose", "dark");
+    for (const strength of [0.1, 0.25, 0.5, CALM]) {
+      expect(throughAt(strength)).toBe(strength);
+      expect(vividAt(strength)).toBe(0);
+      const painted = paintOf(background([[350, 0.9], [40, 0.9], [300, 0.9]], { strength }), "modern", colours);
+      painted.colours.forEach((lab, at) => {
+        expect(lab).toEqual(dotColour(painted.colours.length === 3 ? [{ hue: 350, chroma: 0.9 }, { hue: 40, chroma: 0.9 }, { hue: 300, chroma: 0.9 }][at] : { hue: 0, chroma: 0 }, "dark"));
+      });
+      expect(painted.grounds.side).toMatch(new RegExp(`, ${(1 - strength).toFixed(3)}\\)$`));
+    }
+  });
+
+  it("show the calm tint whole by FULL_TINT and rise to the pad's colours at the top", () => {
+    expect(throughAt(FULL_TINT)).toBe(1);
+    expect(throughAt(1)).toBe(1);
+    expect(vividAt(FULL_TINT)).toBe(0);
+    expect(vividAt(1)).toBe(1);
+    for (const tone of ["light", "dark"] as Appearance[]) {
+      for (let hue = 0; hue < 360; hue += 30) {
+        const dot = { hue, chroma: 0.9 };
+        expect(dotColour(dot, tone, FULL_TINT)).toEqual(dotColour(dot, tone));
+        expect(labToRgb(dotColour(dot, tone, 1)).map(Math.round)).toEqual(hexToRgb(padColour(dot, tone)));
+        expect(dotColour(dot, tone, 1)[0]).toBeCloseTo(PAD[tone].lightness, 6);
+        // On the way the lightness moves steadily from the one to the other.
+        let before = BAND[tone].lightness;
+        for (const strength of [0.8, 0.85, 0.9, 0.95, 1]) {
+          const now = dotColour(dot, tone, strength)[0];
+          expect(tone === "dark" ? now > before : now < before).toBe(true);
+          before = now;
+        }
+      }
+    }
+  });
+
   it("take the band of the chrome they lie on, whatever the appearance is called", () => {
     for (const palette of Object.keys(PALETTE_COLOURS)) {
       expect(toneOf(coloursOf(palette, "light"))).toBe("light");
@@ -412,7 +452,13 @@ function shown(painted: ReturnType<typeof paintOf>, ground: Rgb, u: number, v: n
       : speck < 0
         ? (colour.map((value) => value * (1 - alpha)) as Rgb)
         : (colour.map((value) => value + (255 - value) * alpha) as Rgb);
-  return mix(ground, specked, painted.strength);
+  return mix(ground, specked, painted.through);
+}
+
+/** A paint the stylesheets lay as rgba(), as a colour and an opacity. */
+function rgbaOf(css: string): [Rgb, number] {
+  const [r, g, b, a] = css.match(/[\d.]+/g)!.map(Number);
+  return [[r, g, b], a];
 }
 
 /** Relative luminance as WCAG reckons it, worked out here apart from the
@@ -462,12 +508,11 @@ function lowestContrast(
 ) {
   const low: Record<string, number> = {};
   const texts = TEXT_TOKENS.map((token) => [token, luminance(hexToRgb(painted.text[token]))] as const);
-  const fills: [Rgb, number][] = [
-    [hexToRgb(colours.ink), FILL.ink],
-    [hexToRgb(colours.accent), FILL.accent],
-  ];
+  void colours;
+  // The fills a hovered and a chosen row lay, as the stylesheets have them.
+  const fills: [Rgb, number][] = [rgbaOf(painted.fill), rgbaOf(painted.fillAccent)];
   const alpha = painted.grain * GRAIN_SPECK;
-  const strength = painted.strength;
+  const strength = painted.through;
   let darkest = 1;
   let lightest = 0;
   // The layers over one point, in plain numbers: this runs some millions
@@ -525,7 +570,7 @@ describe("the guard", () => {
 
   for (const [palette, appearance] of SWEPT) {
     for (const look of LOOKS) {
-      for (const strength of [0.1, 0.3, 1]) {
+      for (const strength of [0.1, 0.3, FULL_TINT]) {
         it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
           const colours = coloursOf(palette, appearance, THEMES);
           const texts = textGrounds(colours, look);
@@ -544,6 +589,37 @@ describe("the guard", () => {
                   `${token} at ${low[token].toFixed(3)}:1, ${own.toFixed(3)} to ${now.toFixed(3)}, with ${JSON.stringify(choice.dots)} at ${strength}`,
                 );
               }
+            }
+          }
+        });
+      }
+
+      // Above the calm tint the colours are the user's to make too strong:
+      // nothing is held back, and the text has the most contrast there is.
+      for (const strength of [0.9, 1]) {
+        it(`gives every text 4.5:1 where black or white can, and else the better of them, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
+          const colours = coloursOf(palette, appearance, THEMES);
+          const texts = textGrounds(colours, look);
+          const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
+          const lighter = luminance(hexToRgb(colours.ink)) > ground;
+          const ends = { black: "#000000", white: "#ffffff" };
+          for (const choice of choices) {
+            const painted = paintOf({ ...choice, strength }, look, colours);
+            const low = lowestContrast(painted, texts, colours);
+            const reach = lowestContrast({ ...painted, text: { ...painted.text, ink: ends.black, "ink-2": ends.white } }, texts, colours);
+            const black = reach.ink;
+            const white = reach["ink-2"];
+            const lean = lighter ? white : black;
+            const best = Math.max(black, white);
+            for (const token of TEXT_TOKENS) {
+              const own = luminance(hexToRgb(colours[token]));
+              const now = luminance(hexToRgb(painted.text[token]));
+              const said = `${token} at ${low[token].toFixed(3)}:1 with ${JSON.stringify(choice.dots)} at ${strength}`;
+              // It turns from the palette's lean only where that end cannot
+              // hold 4.5:1, a hair of the guard's coarser grid allowed.
+              if ((lighter ? now < own : now > own) && lean >= LEAST_CONTRAST + 0.1) throw new Error(`${said} turned`);
+              // It holds 4.5:1 or comes within a hair of the best end.
+              if (low[token] < Math.min(LEAST_CONTRAST, best) - 0.1) throw new Error(`${said}, the best end reaches ${best.toFixed(3)}`);
             }
           }
         });
@@ -567,22 +643,41 @@ describe("the guard", () => {
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
-    const painted = paintOf(background([[200, 1]], { strength: 1 }), "modern", colours);
+    const painted = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
     expect(painted.text.ink).toBe(colours.ink);
     expect(painted.asked["ink-3"]).toBeLessThan(LEAST_CONTRAST);
     expect(painted.contrast["ink-3"]).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     expect(luminance(hexToRgb(painted.text["ink-3"]))).toBeLessThan(luminance(hexToRgb(colours["ink-3"])));
-    const dark = paintOf(background([[200, 1]], { strength: 1 }), "modern", coloursOf("teal", "dark"));
+    const dark = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", coloursOf("teal", "dark"));
     expect(luminance(hexToRgb(dark.text["ink-3"]))).toBeGreaterThan(luminance(hexToRgb(DEFAULTS.dark["ink-3"])));
   });
 
-  it("holds the terminal look at half strength with no grain", () => {
+  it("turns the text on colours too light for white in dark to black, with chips and a chosen row to match", () => {
+    const colours = coloursOf("rose", "dark");
+    const painted = paintOf(background([[62, 1], [112, 1], [12, 1]], { strength: 1 }), "modern", colours);
+    for (const token of TEXT_TOKENS) {
+      expect(luminance(hexToRgb(painted.text[token])), token).toBeLessThan(luminance(hexToRgb(colours[token])));
+    }
+    expect(lowestText(painted)).toBeGreaterThanOrEqual(LEAST_CONTRAST);
+    // A chip and a chosen row lay white over the colours, and a glyph on
+    // the accent reads against the darker accent.
+    expect(painted.patch).toMatch(/^rgba\(255, 255, 255, /);
+    expect(painted.fillAccent).toMatch(/^rgba\(255, 255, 255, /);
+    expect(ratio(luminance(hexToRgb(painted.onAccent)), luminance(hexToRgb(painted.text.accent)))).toBeGreaterThanOrEqual(3);
+    // In the calm range they are the palette's own.
+    const calm = paintOf(background([[62, 1], [112, 1], [12, 1]], { strength: FULL_TINT }), "modern", colours);
+    expect(calm.patch).toBe(colours.surface);
+    expect(calm.onAccent).toBe(colours.bg);
+  });
+
+  it("takes the full strength in the terminal look too, with no grain", () => {
     const painted = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "terminal", coloursOf("rose", "dark"));
-    expect(painted.strength).toBe(TERMINAL_STRENGTH);
+    expect(painted.through).toBe(1);
+    expect(painted.colours[0][0]).toBeGreaterThan(BAND.dark.lightness + 0.1);
     expect(painted.grain).toBe(0);
     expect(Object.keys(painted.grounds).sort()).toEqual(["frame", "status"]);
     const modern = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "modern", coloursOf("rose", "dark"));
-    expect(modern.strength).toBe(0.9);
+    expect(modern.colours).toEqual(painted.colours);
     expect(Object.keys(modern.grounds).sort()).toEqual(["side", "status", "surf"]);
   });
 });
@@ -615,7 +710,10 @@ describe("the modern look's ground", () => {
 
 describe("the lines on a background", () => {
   const alpha = (css: string) => Number(/, ([\d.]+)\)$/.exec(css)![1]);
-  const over = (under: Rgb, ink: Rgb, css: string) => mix(under, ink, alpha(css));
+  const over = (under: Rgb, css: string) => {
+    const [ink, amount] = rgbaOf(css);
+    return mix(under, ink, amount);
+  };
 
   for (const look of LOOKS) {
     for (const appearance of APPEARANCES) {
@@ -628,41 +726,51 @@ describe("the lines on a background", () => {
               ? mix(hexToRgb(colours.surface), ink, 0.18)
               : hexToRgb(colours.rule);
           const grounds = groundsOf(colours, look);
-          for (const choice of [background([[30, 1]]), background([[192, 1], [300, 1]], { strength: 1 })]) {
+          for (const choice of [
+            background([[30, 1]]),
+            background([[192, 1], [300, 1]], { strength: FULL_TINT }),
+            background([[62, 1], [112, 1], [12, 1]], { strength: 1 }),
+          ]) {
             const painted = paintOf(choice, look, colours);
             for (const ground of Object.values(grounds)) {
               const target = ratio(luminance(today), luminance(ground!));
               for (let i = 0; i <= 10; i++) {
                 const under = shown(painted, ground!, i / 10, i / 10, 0);
-                const line = over(under, ink, painted.line);
+                const line = over(under, painted.partLine);
                 expect(ratio(luminance(line), luminance(under))).toBeGreaterThanOrEqual(target - 0.01);
               }
             }
             // On a solid surface the line is at least today's.
             const surface = hexToRgb(colours.surface);
-            const onSurface = ratio(luminance(over(surface, ink, painted.line)), luminance(surface));
+            const onSurface = ratio(luminance(over(surface, painted.line)), luminance(surface));
             expect(onSurface).toBeGreaterThanOrEqual(ratio(luminance(today), luminance(surface)) - 0.01);
             expect(alpha(painted.lineStrong)).toBeGreaterThanOrEqual(alpha(painted.line));
+            expect(alpha(painted.partLineStrong)).toBeGreaterThanOrEqual(alpha(painted.partLine));
+            // While the text keeps the palette's lean, every line is one paint.
+            if (painted.patch === colours.surface) expect(painted.partLine).toBe(painted.line);
           }
         }
       });
     }
   }
 
-  it("stay quieter than the quiet text and leave the accent of a control above 3:1", () => {
+  it("stay quieter than the quiet text, and in the calm range leave the accent of a control above 3:1", () => {
     for (const appearance of APPEARANCES) {
       for (const palette of PALETTES) {
         const colours = coloursOf(palette, appearance);
-        const ink = hexToRgb(colours.ink);
         const grounds = groundsOf(colours, "modern");
-        const painted = paintOf(background([[192, 1], [300, 1]], { strength: 1, grain: 1 }), "modern", colours);
-        for (const ground of Object.values(grounds)) {
-          for (let i = 0; i <= 10; i++) {
-            const under = shown(painted, ground!, i / 10, 1 - i / 10, 0);
-            const line = luminance(over(under, ink, painted.line));
-            const quiet = luminance(hexToRgb(painted.text["ink-3"]));
-            expect(ratio(quiet, line)).toBeGreaterThan(2);
-            expect(ratio(luminance(hexToRgb(colours.accent)), luminance(under))).toBeGreaterThanOrEqual(3);
+        for (const strength of [FULL_TINT, 1]) {
+          const painted = paintOf(background([[192, 1], [300, 1]], { strength, grain: 1 }), "modern", colours);
+          for (const ground of Object.values(grounds)) {
+            for (let i = 0; i <= 10; i++) {
+              const under = shown(painted, ground!, i / 10, 1 - i / 10, 0);
+              const line = luminance(over(under, painted.partLine));
+              const quiet = luminance(hexToRgb(painted.text["ink-3"]));
+              expect(ratio(quiet, line)).toBeGreaterThan(2);
+              if (strength === FULL_TINT) {
+                expect(ratio(luminance(hexToRgb(colours.accent)), luminance(under))).toBeGreaterThanOrEqual(3);
+              }
+            }
           }
         }
       }

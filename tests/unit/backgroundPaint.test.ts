@@ -61,15 +61,27 @@ describe("the stylesheet a background is painted from", () => {
     expect(dark["tint-backdrop"]).toContain("var(--tint-image-dark)");
   });
 
-  it("paints the modern look's parts, and the terminal look's ground at half strength with no grain", () => {
+  it("paints the modern look's parts, and the terminal look's ground at the same strength with no grain", () => {
     const modern = block(css, ':root[data-background][data-look="modern"]');
     expect(Object.keys(modern)).toEqual(expect.arrayContaining(["tint-side", "tint-surf", "tint-status"]));
     expect(modern["tint-side"]).toMatch(/0\.400\)$/);
     const terminal = block(css, ":root[data-background]:not([data-look])");
     expect(Object.keys(terminal)).toEqual(expect.arrayContaining(["tint-frame", "tint-status"]));
     expect(terminal["tint-side"]).toBeUndefined();
-    expect(terminal["tint-frame"]).toMatch(/0\.500\)$/);
+    expect(terminal["tint-frame"]).toMatch(/0\.400\)$/);
     expect(terminal["tint-backdrop"]).not.toContain("grain");
+  });
+
+  it("names the cards' own gradient above three quarters strength, and the chrome's below", () => {
+    const strong = { ...LAGOON, strength: 1 };
+    const own = { ...images, cardLight: "data:image/png;base64,CARDLIGHT", cardDark: "data:image/png;base64,CARDDARK" };
+    const sheet = backgroundCss(strong, colours, own, null, 0.1);
+    expect(sheet.split("base64,CARDLIGHT").length - 1).toBe(1);
+    const light = block(sheet, ':root[data-background][data-look="modern"]');
+    expect(light["tint-card-backdrop"]).toContain("var(--tint-card-image-light)");
+    expect(light["tint-backdrop"]).toContain("var(--tint-image-light)");
+    const calm = block(backgroundCss(LAGOON, colours, images, null, 0.1), ':root[data-background][data-look="modern"]');
+    expect(calm["tint-card-backdrop"]).toContain("var(--tint-image-light)");
   });
 
   it("writes the dark sets under the system's preference and again under the explicit choice", () => {
@@ -89,7 +101,7 @@ describe("the stylesheet a background is painted from", () => {
     );
     const none = backgroundCss(LAGOON, colours, { light: null, dark: null, grain: null });
     expect(none).not.toContain("tint-image");
-    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, grain: null, rough: [] });
+    expect(imagesOf(LAGOON, colours)).toEqual({ light: null, dark: null, cardLight: null, cardDark: null, grain: null, rough: [] });
   });
 
   it("paints a theme that is dark in both appearances dark in both, its text lighter", () => {
@@ -141,18 +153,29 @@ describe("the gradient's image", () => {
     expect([single.light, single.dark, single.rough]).toEqual([null, null, []]);
   });
 
-  it("keeps the last four full-size gradients, whichever appearance each is for", () => {
+  it("keeps the last six full-size gradients, whichever appearance each is for", () => {
     const moved = (hue: number) => ({ ...LAGOON, dots: [{ hue, chroma: 0.9 }, LAGOON.dots[1]] });
     const first = imagesOf(moved(10), { light: colours.light }, ["light"]).light;
-    for (const hue of [20, 30, 40]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
-    // Read again, it is the latest of the four.
+    for (const hue of [20, 30, 40, 50, 60]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    // Read again, it is the latest of the six.
     expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
-    for (const hue of [50, 60, 70]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    for (const hue of [70, 80, 90, 100, 110]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
     expect(imagesOf(moved(10), { light: colours.light }, []).light).toBe(first);
-    // Four more in the other appearance, and it is gone.
-    for (const hue of [80, 90, 100, 110]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
+    // Six more in the other appearance, and it is gone.
+    for (const hue of [120, 130, 140, 150, 160, 170]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
     const later = imagesOf(moved(10), { light: colours.light }, []);
     expect([sizeOf(later.light), later.rough]).toEqual(["192x120", ["light"]]);
+  });
+
+  it("draws the cards their own gradient in the calm tint above three quarters strength, where they let any through", () => {
+    const strong = { ...LAGOON, strength: 1 };
+    const both = imagesOf(strong, colours, ["light", "dark"], 0.1);
+    expect(both.cardLight).not.toBeNull();
+    expect(both.cardLight).not.toBe(both.light);
+    expect(sizeOf(both.cardDark ?? null)).toBe(`${FULL.width}x${FULL.height}`);
+    // Below it, or with nothing through the cards, they take the chrome's.
+    expect(imagesOf(LAGOON, colours, ["light", "dark"], 0.1).cardLight).toBeNull();
+    expect(imagesOf(strong, colours, ["light", "dark"], 0).cardLight).toBeNull();
   });
 
   it("is drawn fine enough at full size that a pixel is five device pixels across at most on a 4K window", () => {
@@ -351,11 +374,11 @@ describe("the stylesheet with cards that let the background through", () => {
     // stays white.
     expect(modern["tint-card"]).toBe("rgba(255, 255, 255, 0.400)");
     expect(Object.keys(modern)).toEqual(expect.arrayContaining(["tint-well", "tint-card-ink", "tint-card-ink-3"]));
-    // The terminal look takes no grain, so its cards take no veil, at its
-    // held strength.
+    // The terminal look takes no grain, so its cards take no veil, at the
+    // same strength.
     const terminal = block(css, ":root[data-background]:not([data-look])");
     expect(terminal["tint-card-backdrop"]).toBe("var(--tint-image-light) 0 0 / 100vw 100vh no-repeat fixed");
-    expect(terminal["tint-card"]).toBe("rgba(255, 255, 255, 0.500)");
+    expect(terminal["tint-card"]).toBe("rgba(255, 255, 255, 0.400)");
     const dark = block(css, ':root[data-background][data-look="modern"][data-theme="dark"]');
     expect(dark["tint-card-backdrop"]).toContain("var(--tint-image-dark)");
   });
@@ -378,18 +401,16 @@ describe("keeping the cards' share", () => {
     localStorage.clear();
   });
 
-  it("stamps nothing in the appearance where the guard holds the share at none", () => {
+  it("lets the share asked through in either appearance, however a terminal colour reads on it", () => {
     // A theme whose terminal blue holds 4.5:1 on its light card by a hair,
-    // so any of the background on that card would take it under.
+    // so any of the background on that card takes it under.
     const tight = { label: "Tight", light: { "ansi-blue": "#717879" }, dark: {}, shape: {} };
     adoptTheme({ appearance: "light", themes: { tight }, palette: "tight", backgrounds: { tight: LAGOON }, cards: { tight: 0.2 } });
-    expect(theme.cardsHeld).toBe(0);
-    expect(cardsThrough()).toBe(false);
-    expect(document.documentElement.dataset.cards).toBeUndefined();
-    adoptTheme({ appearance: "dark" });
-    expect(theme.cardsHeld).toBeGreaterThan(0);
+    expect(theme.cardsShown).toBe(0.2);
     expect(cardsThrough()).toBe(true);
     expect(document.documentElement.dataset.cards).toBe("");
+    adoptTheme({ appearance: "dark" });
+    expect(theme.cardsShown).toBe(0.2);
     adoptTheme({ appearance: "system" });
   });
 
