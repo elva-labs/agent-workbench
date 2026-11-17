@@ -77,8 +77,9 @@ telling. `start` starts a session in a project with a first prompt, on a
 worktree of its own if it asks for one, and answers with the new session's
 id and tells it to keep calling `wait` until every session it started is
 done. `send` types a line
-into a running session, and Enter after it on its own, as a person does. A
-long line goes in as a paste when the session's terminal has asked for
+into a running session, and Enter after it on its own, as a person does,
+though never one that begins with `!` (see [what the user is
+asked](#what-the-user-is-asked)). A long line goes in as a paste when the session's terminal has asked for
 paste, and in small pieces a moment apart when it has not, so the agent
 takes it whole either way. Its Enter follows on its own, later the longer
 the line is. A session that runs integrated is sent the text as a message,
@@ -581,16 +582,53 @@ whatever it has been told to do by something it read.
 ## What the user is asked
 
 A session that starts another in its own project, on a worktree of it or
-not, is not asked about when the session it starts holds no more than it
-does: it runs the starter's agent under the starter's account. It then has
-the starter's login and reads the settings the starter started from, and
-since a start gives a session no permission mode of its own, it starts in
-the mode those settings name, as a session the user opens there does. A
-start there on another agent or under another account reads other
+not, is not asked about when the session would run on the starter's agent
+and under the starter's account, and the starter's mode, where the
+workbench knows it, is no narrower than the one the session would begin
+in. A start names no permission mode, so the session begins in the one
+its agent chooses from its settings: those of its account, and the
+project's own files where it starts, which need not be where the starter
+started, may have changed since, and may have been written by the starter
+itself. What is compared is the agent, the account and the starter's mode,
+not what those files say when the session starts.
+
+The workbench knows the starter's mode for an integrated session, as its
+agent says it; for a Claude Code session in a terminal, as its hooks say
+it with each turn; and for a terminal session it resumed in the mode it
+keeps for the conversation, which is that mode until the hooks say
+otherwise. It cannot know the mode of a Codex session in a terminal that
+it started in no mode, nor of a terminal session whose hooks are off, and
+does not compare those. The mode a session would begin in is learned from
+the sessions of that agent, under that account, in that project and run
+the way the agent is set to run, that the window saw begin in this run of
+the app with no mode named, the starter's own among them; the widest of
+those is taken. Where none is known, or a mode is not one the workbench
+ranks, the start is asked about. Claude Code's modes rank Plan first, then
+Default and Don't ask together, since Don't ask refuses what Default would
+ask about, then Accept edits, Auto and Bypass permissions; Codex's rank
+Read only, Auto and Full access.
+
+A start there on another agent or under another account reads other
 settings, whose mode may be wider, and is asked about as a start anywhere
-else is. A start on an agent or a model its workflow's step does not allow is
-refused before anything is asked. The session's row and the answer to the
-starter say what was started either way.
+else is. A start on an agent or a model its workflow's step does not allow
+is refused before anything is asked. The session's row and the answer to
+the starter say what was started either way.
+
+A session started without a question takes no command from its starter
+but `/compact`, in a line `send` types, in its prompt or in a resume, since
+a command such as `/permissions` or `/add-dir` would change what it may do.
+No session that runs in a terminal is sent a line, or started or resumed
+with a prompt, that begins with `!`, whoever started it: Claude Code, and
+recent versions of Codex, run such a line as a shell command with no
+permission asked. Both are read as a line that begins with a slash is
+under [following a workflow](#following-a-workflow), past characters that
+draw nothing and with a wide mark read as the plain one.
+
+The settings can put every start to the user instead, in the starter's own
+project too (see [settings](settings.md#sessions)). While they do, no
+answer stands: the question offers Allow once or No, as it does for an
+agent the workbench did not start, and a standing answer given before is
+not used.
 
 The first time a session asks to start another anywhere else, the window
 puts the question up over the agent pane and holds the call until it is

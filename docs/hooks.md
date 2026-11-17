@@ -138,9 +138,12 @@ it acts:
   that can reach the network among them;
 - `terminal`, which types a command into a terminal for the user to run
   and moves the keyboard there;
-- `start`, for which the window asks before the first session in a
-  project unless the user let the caller start more there, and never
-  before a resume;
+- `start`, for which the window asks before the first session in
+  another project unless the user let the caller start more there, and
+  never before a resume; a start in the caller's own project on its agent
+  and account is not asked by the window unless a setting says to, so
+  Codex's question, where its policy asks, is the only one before it (see
+  [orchestrator](orchestrator.md#what-the-user-is-asked));
 - the browser's tools, which act in sites signed into in the workbench's
   browser, and `send` and `stop`;
 - every plugin's tools, since a plugin's tool reaches the agent under the
