@@ -595,7 +595,8 @@ turn runs, a line at its foot says what the agent is doing now: running a
 command, reading a file, thinking, waiting for an answer. The workbench's own
 tools are worded for a person, by the session's name in the sessions list
 where a call names one, between quotes: starting a session, writing to it,
-reading what it did, and the same in the past tense once the call is done.
+reading what it did, and the same in the past tense once the call is done,
+a start then with the mode the session begins in, as its answer says.
 A session whose row has gone keeps the name its caller gave it. An agent's
 request to use one of them reads the same way in the dock, as what it would
 do: asks to start a session, to write to one. Another server's tool reads as

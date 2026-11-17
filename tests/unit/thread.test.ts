@@ -710,6 +710,14 @@ describe("the workbench's own tools in a step's title", () => {
     expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-2 in demo. " })).toBe("Started “Tidy the docs”");
     expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-9 in demo. " })).toBe("Started “Given”");
     expect(own("start", { prompt: "p" })).toBe("Started a session");
+    // The answer says the mode it begins in, and so does the line.
+    expect(
+      own(
+        "start",
+        { name: "Given", prompt: "p" },
+        { result: "Started session s-2 in demo. It has the prompt. It begins in Plan mode. Keep calling wait." },
+      ),
+    ).toBe("Started “Tidy the docs” in Plan mode");
     expect(own("start", { session: "s-1" }, { done: false })).toBe("Resuming “Fix the flake”");
     expect(own("start", { session: "s-1" })).toBe("Resumed “Fix the flake”");
   });

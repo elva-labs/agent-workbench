@@ -91,6 +91,9 @@ const plural = (count: number, one: string, many: string = `${one}s`) =>
     session, whichever agent called it. */
 const STARTED = /^Started session (\S+?)[.,]?\s/;
 
+/** What the start tool's answer says of the mode the session begins in. */
+const BEGINS = / It begins in ([A-Za-z][A-Za-z ]{0,40}?) mode\./;
+
 /** Whether a call started a session through the workbench's start tool. */
 export function startsSession(call: ToolCall): boolean {
   return call.tool === "mcp" && call.done && !call.error && STARTED.test(`${call.result ?? ""} `);
@@ -336,7 +339,11 @@ function workbenchPhrase(
       const given = field(input, "name");
       const named = resumes.name ?? (id === null ? null : sessionNames.named(id)) ?? (given === null ? null : shown(given));
       const [now, then, to] = resumes.named ? ["Resuming", "Resumed", "resume"] : ["Starting", "Started", "start"];
-      return named === null ? say(`${now} a session`, `${then} a session`, `${to} a session`) : name(now, then, to, named);
+      const started =
+        named === null ? say(`${now} a session`, `${then} a session`, `${to} a session`) : name(now, then, to, named);
+      // Once started, the mode it begins in, as the answer told the agent.
+      const mode = form === "then" && call !== null ? (BEGINS.exec(call.result ?? "")?.[1] ?? null) : null;
+      return mode === null ? started : { ...started, tail: `in ${mode} mode` };
     }
     case "send":
       return aSession("Writing to", "Wrote to", "write to");
