@@ -1320,12 +1320,15 @@
      size. Its room, less in a narrow pane, comes with the pane's width in
      the same layout, so a change of width moves the rows once. */
   .thread {
+    /* The thread's rhythm: the room between two messages, which is also
+       the room under the last before the dock or the composer. */
+    --thread-gap: 22px;
     position: relative;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding: calc(max(16px, min(22px, var(--conv-wide))) + var(--room, 0px))
-      max(14px, min(var(--conv-gutter), var(--conv-wide))) max(10px, min(12px, var(--conv-wide)));
+      max(14px, min(var(--conv-gutter), var(--conv-wide))) var(--thread-gap);
   }
 
   /* A long thread keeps the reader's place itself, the same in every
@@ -1359,7 +1362,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: var(--thread-gap);
     font-size: var(--conv-size);
     line-height: 1.58;
     color: var(--ink);
@@ -1374,7 +1377,7 @@
   .row {
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: var(--thread-gap);
     min-width: 0;
   }
 
