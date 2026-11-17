@@ -32,9 +32,10 @@
  * part at the worst point of the gradient behind it, grain included, and
  * draws the text a step stronger, towards black on a light chrome and white
  * on a dark one, just as far as it takes to hold 4.5:1. Where that end
- * cannot, it takes whichever of black or white reads better, so on colours
- * too strong for 4.5:1 the text still has the most contrast there is; the
- * colours are never held back for it. Lines on or beside a tinted part are
+ * cannot, it heads for whichever of black or white reads better, so on
+ * colours too strong for 4.5:1 the text still has the most contrast there
+ * is; the colours are never held back for it. Where the end has room to
+ * spare, the text keeps its steps from it, as stepText says. Lines on or beside a tinted part are
  * the ink let through at one amount for the whole window, so they take the
  * colour of what they cross and stand off it at least as far as today's
  * lines stand off the plain chrome.
@@ -914,6 +915,94 @@ function strengthen(colour: string, range: [number, number], tone: Appearance): 
   return rgbToHex(mix(from, to, amount));
 }
 
+/** How much more than the least contrast the end the text heads for has
+    to reach before the text is drawn in steps from it; under that, every
+    text is drawn just strong enough, which is as far as the colours
+    allow. */
+export const TEXT_ROOM = 1.15;
+
+/** The tinted parts' ground on the average, the colours let through over
+    each part's own ground: what quieter text steps toward. */
+function groundUnder(grid: Rgb[], grounds: Iterable<Rgb>, through: number): Rgb {
+  const sum: Rgb = [0, 0, 0];
+  let count = 0;
+  for (const ground of grounds) {
+    for (const colour of grid) {
+      const shown = mix(ground, colour, through);
+      sum[0] += shown[0];
+      sum[1] += shown[1];
+      sum[2] += shown[2];
+      count++;
+    }
+  }
+  return sum.map((value) => value / Math.max(1, count)) as Rgb;
+}
+
+/** Keeps the text's steps on colours strong enough to draw them together:
+    where the secondary text would have to be drawn stronger, so that it
+    and the quiet text would meet at the least contrast, or where the text
+    has turned to the other end, and the end the text heads for has room.
+    The ink is then that end itself, black or white; the secondary text is
+    a step from it toward the ground, halfway by contrast between the ink
+    and the least that reads, and the quiet text a step further, at the
+    least, or the palette's own where that already reads, leans the same
+    way and stays quieter than the secondary text. The accent, add and
+    remove are left drawn just strong enough, so they keep their colour
+    and stand apart from an ink of pure black or white. */
+function stepText(
+  text: Record<TextToken, string>,
+  asked: Record<TextToken, number>,
+  colours: Record<string, string>,
+  range: [number, number],
+  tone: Appearance,
+  ground: Rgb,
+) {
+  const own = luminance(hexToRgb(colours.ink));
+  const now = luminance(hexToRgb(text.ink));
+  const turned = tone === "dark" ? now < own : now > own;
+  if (!turned && asked["ink-2"] >= AIM) return;
+  const black: Rgb = [0, 0, 0];
+  const white: Rgb = [255, 255, 255];
+  const [towards, away] = tone === "light" ? [black, white] : [white, black];
+  const reach = (end: Rgb) => worst(rgbToHex(end), range);
+  const end = reach(towards) >= AIM || reach(towards) >= reach(away) ? towards : away;
+  const best = reach(end);
+  if (best < AIM * TEXT_ROOM) return;
+  // A colour on the way from the ink to the ground that reads at `target`
+  // or more, as near the ground as that allows.
+  const step = (target: number): string => {
+    let low = 0;
+    let high = 1;
+    for (let at = 0; at < 20; at++) {
+      const middle = (low + high) / 2;
+      if (worst(rgbToHex(mix(end, ground, middle)), range) >= target) low = middle;
+      else high = middle;
+    }
+    return rgbToHex(mix(end, ground, low));
+  };
+  text.ink = rgbToHex(end);
+  text["ink-2"] = step(Math.sqrt(best * AIM));
+  const between = worst(text["ink-2"], range);
+  text["ink-3"] = !turned && asked["ink-3"] >= AIM && asked["ink-3"] <= between ? colours["ink-3"] : step(AIM);
+  // The coloured text moves its lightness toward the end and keeps its hue
+  // and as much of its colour as the screen shows there, rather than being
+  // mixed toward black or white, which would leave it nearly the ink.
+  for (const token of ["accent", "add", "del", "ansi-yellow"] as const) {
+    if (asked[token] >= AIM && !turned) continue;
+    const [L, C, hue] = labToLch(rgbToLab(hexToRgb(colours[token])));
+    const goal = end === white ? 1 : 0;
+    const at = (amount: number) => rgbToHex(labToRgb(fitLch(L + (goal - L) * amount, C, hue)));
+    let low = 0;
+    let high = 1;
+    for (let step = 0; step < 20; step++) {
+      const middle = (low + high) / 2;
+      if (worst(at(middle), range) >= AIM) high = middle;
+      else low = middle;
+    }
+    if (worst(at(high), range) >= AIM) text[token] = at(high);
+  }
+}
+
 /** The background's colour at a grid of points across the window. */
 function gridOf(at: (u: number, v: number) => Lab, across: number, down: number): Rgb[] {
   const out: Rgb[] = [];
@@ -990,8 +1079,9 @@ export function paintOf(
   for (const token of TEXT_TOKENS) {
     asked[token] = worst(colours[token], [low, high]);
     text[token] = strengthen(colours[token], [low, high], tone);
-    contrast[token] = worst(text[token], [low, high]);
   }
+  stepText(text, asked, colours, [low, high], tone, groundUnder(grid, textGrounds.values(), through));
+  for (const token of TEXT_TOKENS) contrast[token] = worst(text[token], [low, high]);
 
   // Text that turned against the palette's lean, on colours too strong for
   // it, takes its chips, its chosen rows and its lines from the end it

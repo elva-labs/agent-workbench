@@ -146,17 +146,27 @@ the colours are the pad's. The slider shows 0.6, where a new background
 starts, at 10%, 0.75 at 16%, 0.85 at 50% and 0.9 at 66%.
 
 Text on a tinted part is judged at the worst point of the gradient behind
-it, grain included. Where it would fall under a contrast of 4.5 to 1 it is
-drawn a step stronger, darker on a light chrome and lighter on a dark one,
-quiet text included. Where that cannot reach 4.5 to 1, as on a dark chrome
-whose colours have risen to a middle lightness, the text turns to black or
-white, whichever reads better there, and so do the lines, a chosen row
-and a chip on a tinted part, such as the switch at the top of the changes
-pane. Up to 16%, while the calm tint rises, every text holds 4.5 to 1.
-Above it the colours are never
-held back for the text: where even black or white reads under 4.5 to 1, a
-quiet line under the section's controls says how low and in which
-appearance, and the choice stays as it is. A hovered or chosen row on a
+it, grain included. Where a text would fall under a contrast of 4.5 to 1 it
+is drawn stronger, darker on a light chrome and lighter on a dark one, just
+as far as 4.5 to 1 takes it. Where that way cannot reach 4.5 to 1, as on a
+dark chrome whose colours have risen to a middle lightness, the text heads
+for black or white instead, whichever reads better there, and so do the
+lines, a chosen row and a chip on a tinted part, such as the switch at the
+top of the changes pane.
+
+Once the secondary text would have to be drawn stronger as well, or the
+text has turned, and black or white reads well clear of 4.5 to 1, the text
+keeps its steps. The main text is then black or white itself; the
+secondary text is a step from it toward the colours behind, halfway by
+contrast between it and 4.5 to 1, and the quiet text a step further, at
+4.5 to 1. The accent and the colours of added and removed lines are drawn
+lighter or darker in their own hue, so they keep their colour beside the
+black or white. Where even black or white only just reads, every text is
+drawn as strong as the colours allow. Up to 16%, while the calm tint
+rises, every text holds 4.5 to 1. Above it the colours are never held back
+for the text: where even black or white reads under 4.5 to 1, a quiet line
+under the section's controls says how low and in which appearance, and the
+choice stays as it is. A hovered or chosen row on a
 tinted part lets the ink or the accent through rather than laying a solid
 patch over the tint, and is judged the same way. A menu or a popover
 opened from a tinted part stands on its own surface and keeps the

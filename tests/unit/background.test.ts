@@ -11,6 +11,7 @@ import {
   PAD,
   READY_MADE,
   SLIDER,
+  TEXT_ROOM,
   TEXT_TOKENS,
   addDot,
   checkBackground,
@@ -719,6 +720,28 @@ describe("the guard", () => {
               // It holds 4.5:1 or comes within a hair of the best end.
               if (low[token] < Math.min(LEAST_CONTRAST, best) - 0.1) throw new Error(`${said}, the best end reaches ${best.toFixed(3)}`);
             }
+            // Where the ink is drawn as an end itself, the text keeps its
+            // steps: the secondary text quieter than the ink, the quiet text
+            // quieter again, and the accent, add and remove plainly apart
+            // from the ink.
+            if ((painted.text.ink === ends.black || painted.text.ink === ends.white) && painted.contrast.ink >= TEXT_ROOM * (LEAST_CONTRAST + 0.05)) {
+              const said = `with ${JSON.stringify(choice.dots)} at ${strength}`;
+              const c = painted.contrast;
+              if (c.ink < c["ink-2"] * 1.05 || c["ink-2"] < c["ink-3"] * 1.03) {
+                throw new Error(`steps of ${c.ink.toFixed(2)}, ${c["ink-2"].toFixed(2)} and ${c["ink-3"].toFixed(2)} ${said}`);
+              }
+              for (const token of ["accent", "add", "del"] as const) {
+                // A palette whose accent is a grey, as mono's is, has no
+                // colour to keep it apart.
+                const [, pa, pb] = rgbToLab(hexToRgb(colours[token]));
+                if (Math.hypot(pa, pb) < 0.04) continue;
+                const [a1, b1] = [rgbToLab(hexToRgb(painted.text[token])), rgbToLab(hexToRgb(painted.text.ink))];
+                const apart = Math.hypot(a1[0] - b1[0], a1[1] - b1[1], a1[2] - b1[2]);
+                // Twice what the eye just tells apart, at the least: near white
+                // or black the screen has little colour left to keep.
+                if (apart < 0.04) throw new Error(`${token} ${apart.toFixed(3)} from the ink ${said}`);
+              }
+            }
           }
         });
       }
@@ -741,13 +764,48 @@ describe("the guard", () => {
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
-    const painted = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
+    const painted = paintOf(background([[200, 1]], { strength: 0.5 }), "modern", colours);
     expect(painted.text.ink).toBe(colours.ink);
     expect(painted.asked["ink-3"]).toBeLessThan(LEAST_CONTRAST);
     expect(painted.contrast["ink-3"]).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     expect(luminance(hexToRgb(painted.text["ink-3"]))).toBeLessThan(luminance(hexToRgb(colours["ink-3"])));
     const dark = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", coloursOf("teal", "dark"));
     expect(luminance(hexToRgb(dark.text["ink-3"]))).toBeGreaterThan(luminance(hexToRgb(DEFAULTS.dark["ink-3"])));
+    // Once the secondary text would have to be drawn stronger too, the ink
+    // takes the end itself, so the two quieter texts do not meet.
+    const full = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
+    expect(full.asked["ink-2"]).toBeLessThan(LEAST_CONTRAST);
+    expect(full.text.ink).toBe("#000000");
+    expect(full.contrast["ink-2"]).toBeGreaterThan(full.contrast["ink-3"] * 1.05);
+  });
+
+  it("keeps the text's steps on vivid chrome: the ink an end itself, the secondary and quiet text steps toward the ground", () => {
+    const owner = background([[355, 0.9], [45, 0.9], [305, 0.9]], { harmony: "analogous", strength: 1 });
+    const shown = (strength: number, appearance: Appearance) =>
+      paintOf({ ...owner, strength }, "modern", coloursOf("rose", appearance), 0.11);
+    for (const [strength, appearance, end] of [
+      [1, "dark", "#000000"],
+      [strengthAt(0.5), "dark", "#ffffff"],
+      [1, "light", "#000000"],
+      [strengthAt(0.5), "light", "#000000"],
+    ] as const) {
+      const painted = shown(strength, appearance);
+      const c = painted.contrast;
+      const said = `${appearance} at ${strengthPercent(strength)}%`;
+      expect(painted.text.ink, said).toBe(end);
+      // Each a step quieter than the one before, the quiet text at the least
+      // that reads.
+      expect(c.ink, said).toBeGreaterThan(c["ink-2"] * 1.1);
+      expect(c["ink-2"], said).toBeGreaterThan(c["ink-3"] * 1.1);
+      expect(c["ink-3"], said).toBeGreaterThanOrEqual(LEAST_CONTRAST);
+      expect(c["ink-3"], said).toBeLessThan(LEAST_CONTRAST + 0.2);
+      // The quieter text takes on the ground's colour as it steps toward it.
+      expect(painted.text["ink-2"], said).not.toMatch(/^#(..)\1\1$/);
+    }
+    // Where even the better end only just holds, nothing is stepped: every
+    // text is drawn as strong as the colours allow.
+    const tight = shown(strengthAt(0.75), "dark");
+    expect(new Set(TEXT_TOKENS.map((token) => tight.text[token])).size).toBe(1);
   });
 
   it("turns the text on colours too light for white in dark to black, with chips and a chosen row to match", () => {
@@ -756,6 +814,7 @@ describe("the guard", () => {
     for (const token of TEXT_TOKENS) {
       expect(luminance(hexToRgb(painted.text[token])), token).toBeLessThan(luminance(hexToRgb(colours[token])));
     }
+    expect(painted.text.ink).toBe("#000000");
     expect(lowestText(painted)).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     // A chip and a chosen row lay white over the colours, and a glyph on
     // the accent reads against the darker accent.
