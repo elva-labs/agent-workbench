@@ -1,14 +1,14 @@
 //! The files a presented HTML page loads from its own folder, served to
 //! the window under a scheme of the app's own.
 //!
-//! The window asks for a page's base address when it shows the page, and
-//! the page's relative references resolve against it. The address names
-//! the page by a token drawn at random, never by a path, so nothing that
-//! runs in the window can name a folder of its choosing, and a token
-//! reaches the one page's folder and nothing else. Only the main window's
-//! webview is answered: a browser tab is a webview of its own and gets
-//! nothing. Which files a page may load is the core's rule, applied where
-//! the files are, a remote machine included.
+//! The window asks for a base address each time it draws a page, and the
+//! page's relative references resolve against it. The address names the
+//! page by a token drawn at random, never by a path, so nothing that runs
+//! in the window can name a folder of its choosing, and a token reaches the
+//! one page's folder and nothing else. Only the main window's webview is
+//! answered: a browser tab is a webview of its own and gets nothing. Which
+//! files a page may load is the core's rule, applied where the files are, a
+//! remote machine included.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::json;
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
+use tokio::sync::Semaphore;
 use workbench_core::page_files::{PageFile, PageFileWire};
 use workbench_core::Core;
 
@@ -31,38 +32,44 @@ pub const SCHEME: &str = "awb-page";
 const DOCUMENT_POLICY: &str =
     "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox";
 
-/// The pages shown, by token, and each page's token, so a page shown again
-/// keeps its address.
-#[derive(Default)]
+/// How many files are read at once, for every page together. The rest
+/// wait their turn, so a page that asks for files over and over holds no
+/// more than this many reads, and their bytes, in the app or on the wire.
+const READS_AT_ONCE: usize = 4;
+
+/// How long the webview may reuse an answer. A page is drawn under a fresh
+/// token each time, so an answer is never reused past the drawing it was
+/// for, and a file changed on disk shows when the page is drawn again.
+const KEPT: &str = "private, max-age=3600";
+
+/// The pages drawn, by token, and the reads under way.
 pub struct Pages {
-    known: Mutex<Known>,
+    known: Mutex<HashMap<String, String>>,
+    reads: Semaphore,
 }
 
-#[derive(Default)]
-struct Known {
-    pages: HashMap<String, String>,
-    tokens: HashMap<String, String>,
+impl Default for Pages {
+    fn default() -> Self {
+        Pages {
+            known: Mutex::default(),
+            reads: Semaphore::new(READS_AT_ONCE),
+        }
+    }
 }
 
 impl Pages {
-    fn token(&self, page: &str) -> String {
-        let mut known = self.known.lock().expect("pages lock");
-        if let Some(token) = known.tokens.get(page) {
-            return token.clone();
-        }
+    /// A token for one drawing of a page.
+    fn give(&self, page: &str) -> String {
         let token = uuid::Uuid::new_v4().simple().to_string();
-        known.tokens.insert(page.to_string(), token.clone());
-        known.pages.insert(token.clone(), page.to_string());
+        self.known
+            .lock()
+            .expect("pages lock")
+            .insert(token.clone(), page.to_string());
         token
     }
 
     fn page(&self, token: &str) -> Option<String> {
-        self.known
-            .lock()
-            .expect("pages lock")
-            .pages
-            .get(token)
-            .cloned()
+        self.known.lock().expect("pages lock").get(token).cloned()
     }
 }
 
@@ -76,11 +83,11 @@ fn base(token: &str) -> String {
     }
 }
 
-/// The base address for a page the window shows, `page` as the window
-/// names it, a remote one with its host.
+/// The base address for a drawing of a page, `page` as the window names
+/// it, a remote one with its host.
 #[tauri::command]
 pub async fn page_files_base(pages: State<'_, Arc<Pages>>, page: String) -> Result<String, String> {
-    Ok(base(&pages.token(&page)))
+    Ok(base(&pages.give(&page)))
 }
 
 /// `%XX` escapes decoded, the result read as UTF-8. A `%` with no two hex
@@ -132,7 +139,7 @@ fn answered(file: PageFile, ranged: bool) -> Response<Vec<u8>> {
         .header(header::CONTENT_TYPE, &file.mime)
         .header(header::CONTENT_SECURITY_POLICY, DOCUMENT_POLICY)
         .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
-        .header(header::CACHE_CONTROL, "no-store")
+        .header(header::CACHE_CONTROL, KEPT)
         .header(header::ACCEPT_RANGES, "bytes");
     // A font is fetched with CORS, from a frame with no origin; nothing
     // else is, so the bytes of an image or a stylesheet stay unreadable to
@@ -180,13 +187,17 @@ async fn answer(app: AppHandle, request: Request<Vec<u8>>) -> Response<Vec<u8>> 
     }
     let path = request.uri().path().trim_start_matches('/');
     let (token, rest) = path.split_once('/').unwrap_or((path, ""));
-    let Some(page) = app.state::<Arc<Pages>>().page(token) else {
+    let pages = Arc::clone(&app.state::<Arc<Pages>>());
+    let Some(page) = pages.page(token) else {
         return refused(StatusCode::NOT_FOUND, "is outside the page's folder");
     };
     let Some(file) = decoded(rest) else {
         return refused(StatusCode::NOT_FOUND, "is not a plain relative path");
     };
     let range = range(&request);
+    let Ok(_turn) = pages.reads.acquire().await else {
+        return refused(StatusCode::SERVICE_UNAVAILABLE, "could not be read now");
+    };
     match read(app, page, file, range).await {
         Ok(file) => answered(file, range.is_some()),
         Err(why) => refused(StatusCode::NOT_FOUND, &why),
@@ -243,12 +254,13 @@ mod tests {
     }
 
     #[test]
-    fn keeps_a_page_on_one_token_and_answers_none_it_did_not_give() {
+    fn gives_each_drawing_its_own_token_and_answers_none_it_did_not_give() {
         let pages = Pages::default();
-        let first = pages.token("/p/site/page.html");
-        assert_eq!(pages.token("/p/site/page.html"), first);
-        assert_ne!(pages.token("/p/other/page.html"), first);
+        let first = pages.give("/p/site/page.html");
+        let again = pages.give("/p/site/page.html");
+        assert_ne!(again, first);
         assert_eq!(pages.page(&first).as_deref(), Some("/p/site/page.html"));
+        assert_eq!(pages.page(&again).as_deref(), Some("/p/site/page.html"));
         assert_eq!(pages.page("up.png"), None);
         assert!(base(&first).ends_with(&format!("/{first}/")));
     }
