@@ -68,7 +68,7 @@ jobs:
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             if [ -n "$prerelease" ]; then gh release edit "${GITHUB_REF_NAME}" --prerelease; fi
           else
-            gh release create "${GITHUB_REF_NAME}" --draft $prerelease --title "Agent Workbench ${GITHUB_REF_NAME}" --notes ""
+            gh release create "${GITHUB_REF_NAME}" --draft $prerelease --title "Chord ${GITHUB_REF_NAME}" --notes ""
           fi
 
   # The daemon for the machines a project can be on, built first so every

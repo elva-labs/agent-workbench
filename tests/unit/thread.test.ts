@@ -785,7 +785,7 @@ describe("the workbench's own tools in a step's title", () => {
     expect(ask("mcp__agent-workbench__show", { path: "/a/b/c/d.ts" })).toBe("show /a/b/c/d.ts");
     expect(ask("mcp__agent-workbench__sessions", {})).toBe("list the sessions it started");
     expect(ask("mcp__claude_ai_Linear__list_issues", {})).toBe("use Linear's list_issues");
-    expect(ask("mcp__agent-workbench__no_such_tool", {})).toBe("use agent-workbench's no_such_tool");
+    expect(ask("mcp__agent-workbench__no_such_tool", {})).toBe("use Chord's no_such_tool");
   });
 
   it("leaves other servers' tools in the general wording", () => {
@@ -794,7 +794,7 @@ describe("the workbench's own tools in a step's title", () => {
       object: "list_issues",
     });
     expect(stepTitle(call({ tool: "mcp", name: "mcp__claude_ai_Linear__list_issues" })).lead).toEqual(["Used ", { name: "Linear" }, "'s"]);
-    expect(own("no_such_tool", {})).toBe("Used agent-workbench's no_such_tool");
+    expect(own("no_such_tool", {})).toBe("Used Chord's no_such_tool");
   });
 });
 

@@ -1,4 +1,4 @@
-//! Agent Workbench core.
+//! Chord core.
 //!
 //! Every pty, git query, filesystem watch, session index and hook lives here,
 //! with no window attached: the desktop app wraps it in Tauri commands, the

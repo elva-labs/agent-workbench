@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Puts the Agent Workbench daemon on this machine, for a desktop to reach
+# Puts the Chord daemon on this machine, for a desktop to reach
 # over ssh: the build for this machine from the latest release, under
 # ~/.agent-workbench/bin. Then `agent-workbench-remote connect` prints the
 # token to paste into the desktop.

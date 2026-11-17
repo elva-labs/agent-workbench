@@ -69,7 +69,7 @@ describe("what an orchestrator is told", () => {
 
   it("tells a session which workflow it follows, before the numbered list", () => {
     const lines = orchestratorPrompt(defaultWorkflow()).split("\n");
-    expect(lines[0]).toBe('You are the orchestrator of the Agent Workbench workflow "Build and review". Follow it:');
+    expect(lines[0]).toBe('You are the orchestrator of the Chord workflow "Build and review". Follow it:');
     expect(lines.slice(1).join("\n")).toBe(instructions(defaultWorkflow()));
   });
 

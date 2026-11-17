@@ -1,4 +1,6 @@
-# Agent Workbench
+# Chord
+
+<img src="docs/app-icon.png" width="128" height="128" alt="">
 
 A desktop app for working with coding agents that run as terminal programs,
 Claude Code and Codex CLI today. It puts the agent's own interface in the
@@ -81,8 +83,13 @@ and notarized. On macOS there is also a tap:
 
 ```
 brew tap elva-labs/elva
-brew install --cask agent-workbench
+brew install --cask chord@beta
 ```
+
+Chord was called Agent Workbench before 1.0. Until Chord's first stable
+release, the stable cask is still `agent-workbench`, the app under that
+name; [release](docs/release.md#the-casks-under-the-apps-earlier-name)
+says how the old casks move to the new ones.
 
 The cask also puts `awb` on the PATH, which opens a folder as a project from
 a terminal: `awb .` for the one you are in. See
