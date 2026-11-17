@@ -113,15 +113,21 @@
       begin with, and whatever the control was switched to. */
   let picked = $state<string | null>(null);
 
-  /** New session: with nothing to choose it starts; otherwise the choice
-      opens under the project's name, the cursor on the agent the project
-      used last and the account the project runs under. */
+  /** New session from a project's own button or menu: with nothing to
+      choose it starts; otherwise the choice opens under the project's
+      name, the cursor on the agent the project used last and the account
+      the project runs under. Asking is using the project, which keeps it
+      among the active ones while the choice is open. Nothing else changes
+      until the session starts: the session on screen stays, and none of
+      the project's own is put on screen, since a row left from the last
+      quit starts once it is. */
   function offer(path: string) {
     if (!startsIn(path)) return;
     if (!choosable) {
       startSession(path);
       return;
     }
+    touch(path);
     choosing = path;
     picked = accountOf(path);
     cursor =
@@ -319,11 +325,12 @@
     sortOpen = false;
   }
 
-  /** An inactive project's own new-session button: the project comes
-      forward, which makes it active, and starts as its header's + would. */
+  /** New session in a project's menu, an inactive project's as well: what
+      its header's + does, and the pane scrolls to the project, which
+      asking for a session has made one of the active ones. */
   function startIn(path: string) {
-    wake(path);
     offer(path);
+    void reveal(path);
   }
 
   /** An inactive project picked: it comes forward, which makes it active,
@@ -332,6 +339,11 @@
   async function wake(path: string) {
     bringForward(path);
     cursor = `project:${path}`;
+    await reveal(path);
+  }
+
+  /** Scrolls the pane to a project once it is drawn where it now stands. */
+  async function reveal(path: string) {
     await tick();
     nav
       ?.querySelector(`[data-row="${CSS.escape(`project:${path}`)}"]`)
@@ -586,13 +598,6 @@
     closePalette();
     await tick();
     if (outcome.type === "close") outcome.then();
-  }
-
-  /** A project's own new-session button: the project comes forward, and
-      the session starts there, or the choice opens under its name. */
-  function newIn(path: string) {
-    bringForward(path);
-    offer(path);
   }
 
   /** The account the session on screen runs under, for the foot, which
@@ -1961,7 +1966,7 @@
       <button
         class="add-here"
         tabindex="-1"
-        onclick={() => newIn(project.path)}
+        onclick={() => offer(project.path)}
         disabled={!isReady()}
         aria-label="New session in {projectLabel(project.path)}"
         title="New session"

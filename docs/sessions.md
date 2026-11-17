@@ -42,22 +42,25 @@ that asks for a new session in the palette, which project first when more
 than one is open, as the palette's New session does. With no project open,
 the pane says so and offers Open project there as well.
 
-Each project starts with a header: its name, the account it runs under as
-a tag when that is not the agents' own, and a button that starts a session
-in it, bringing it forward first. Beside that button, while the pointer is
-on the header, a ⋯ opens the project's own menu, New session and, set apart
-below a separator and in the colour of a removal, Close project; a right
-click on the header opens it too. Closing a project stops everything
-running in it. The header stays in view while the project's rows
-scroll under it, until the next project's pushes it out, and the list's
-scroll bar is drawn over the headers as it is over the rows. A hairline
-separates one project from the next. With more than one agent installed, a
-new session from a project's own button or menu opens the choice in place
-under the project's name, a row per agent; see [agents](adapters.md). The
+Each project starts with a header: its name, the account it runs under as a
+tag when that is not the agents' own, and a button that starts a session in
+it. Beside that button, while the pointer is on the header, a ⋯ opens the
+project's own menu, New session and, set apart below a separator and in the
+colour of a removal, Close project; a right click on the header opens it
+too. Closing a project stops everything running in it. The header stays in
+view while the project's rows scroll under it, until the next project's
+pushes it out, and the list's scroll bar is drawn over the headers as it is
+over the rows. A hairline separates one project from the next. With more
+than one agent installed, a new session from a project's own button or menu
+opens the choice in place under the project's name, a row per agent; see
+[agents](adapters.md). Asking counts as using the project, and nothing else
+changes until a session is picked: the session on screen stays, and the
+project comes forward with the new session once it starts. None of the
+project's other sessions is put on screen on the way, so none of them
+starts. Backing out of the choice leaves the screen as it was. The
 `orchestrator` folder an earlier version kept sessions in is listed among
-the projects while it holds past sessions, with no button for a new
-session and Close project alone in its menu; see
-[orchestrator](orchestrator.md).
+the projects while it holds past sessions, with no button for a new session
+and Close project alone in its menu; see [orchestrator](orchestrator.md).
 
 Once there are accounts to tell apart, the foot of the pane names the one
 the session on screen runs under, with a button that opens the settings
@@ -111,7 +114,9 @@ a weekday within the week, then `3w`, `2mo`. Past seven of them the rest
 stand behind a row that says how many more. Picking one brings it forward,
 which is using it, and it is active again, and the pane scrolls to where it
 lands among the others. Its ⋯, in the place of its time while the pointer is
-on it, opens the same menu as a header's. Nothing is filed by hand.
+on it, opens the same menu as a header's. Its New session does what a
+header's does, which makes the project active, and the pane scrolls to
+where it lands among the others. Nothing is filed by hand.
 
 What happens in a project is the user using it, a row drawn under it
 changing what it says, and one of its own transcripts being written, which
@@ -124,17 +129,18 @@ active, is drawn once they have been, in whichever half they put it.
 
 The order of the projects is the user's own: the order button on the title
 row is a menu of two, Last used, the latest first, which is where every
-setup starts, or Name. Last used is when the user last opened the project
-or brought it forward, or started or picked a session in it, from the pane,
-the palette or the chord that goes to the next session needing them; for a
-project with no such record, when one of its own transcripts was last
-written. The window putting a project in front as it opens, and an agent
-asking to show something in one, is not the user using it. What the agents
-do keeps a project out of Inactive but never moves it. When each project
-was last used is kept in the window's own storage, and a project's record
-goes when it is closed. The choice of order is kept there too, and Inactive
-is listed in the same order. The sessions inside a project are in the order they last
-changed, the latest first.
+setup starts, or Name. Last used is when the user last opened the project or
+brought it forward, or started or picked a session in it, from the pane, the
+palette or the chord that goes to the next session needing them, or asked
+for a new session from its own button or menu; for a project with no such
+record, when one of its own transcripts was last written. The window putting
+a project in front as it opens, and an agent asking to show something in
+one, is not the user using it. What the agents do keeps a project out of
+Inactive but never moves it. When each project was last used is kept in the
+window's own storage, and a project's record goes when it is closed. The
+choice of order is kept there too, and Inactive is listed in the same order.
+The sessions inside a project are in the order they last changed, the latest
+first.
 
 While the pointer is over the pane, or the keyboard is walking its rows,
 the order holds still: what is under the pointer or the cursor stays where
@@ -184,9 +190,10 @@ projects, in the order they had and under the names they had, with nothing
 running behind them. Their dot is yellow. The session that was on screen
 starts at once, through the agent's resume command, and each of the others
 starts when it is selected. Bringing a project forward selects its most
-recent session, so that one starts too. A session closed by hand before the
-quit stays closed, a session whose project did not open again is left out,
-and a session another session started stays with its starter; see
+recent session, so that one starts too; asking for a new session in it does
+not, as the project's header describes above. A session closed by hand
+before the quit stays closed, a session whose project did not open again is
+left out, and a session another session started stays with its starter; see
 [orchestrator](orchestrator.md). A session left open in the `orchestrator`
 folder of an earlier version comes back too, and lists that folder again;
 see [orchestrator](orchestrator.md).

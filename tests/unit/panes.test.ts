@@ -956,6 +956,70 @@ describe("SessionsPane", () => {
     expect(screen.getByTestId("inactive-project")).toHaveTextContent("here");
   });
 
+  // A row left from the last quit starts once it is on screen, so asking
+  // for a new session in its project puts none of the project's own there:
+  // the session on screen stays until the new one starts.
+  describe("asking for a new session in a project not on screen", () => {
+    function twoProjects() {
+      applyDetect({ id: "codex", path: "/usr/local/bin/codex", caps: null, fromLoginShell: true }, true);
+      workspace.open.push(repo("/here", "here"), repo("/there", "there"));
+      workspace.active = "/here";
+      const here = create("/here", null, "claude-code");
+      started(here.key, "pty-1", "session-1");
+      const left = reopened("/there", "t-1", "claude-code", null, null, null);
+      sessions.active = here.key;
+      return { here, left };
+    }
+
+    const choice = (path: string) =>
+      document.querySelector<HTMLElement>(`[data-row="project:${path}"]`)!.closest("section")!;
+
+    it("opens the choice from the header's + and changes nothing else until one is picked", async () => {
+      const { here, left } = twoProjects();
+      touch("/here");
+      touch("/there", Date.now() - 3600 * 1000);
+      render(SessionsPane);
+      await waitFor(() => expect(document.querySelector('[data-row="project:/there"]')).not.toBeNull());
+      const head = document.querySelector<HTMLElement>('[data-row="project:/there"]')!;
+      await fireEvent.click(within(head).getByTestId("project-new-session"));
+
+      expect(within(choice("/there")).getByTestId("agent-choice")).toBeInTheDocument();
+      expect(workspace.active).toBe("/here");
+      expect(sessions.active).toBe(here.key);
+      expect(left.status).toBe("dormant");
+      expect(projects.used["/there"]).toBeDefined();
+
+      await fireEvent.click(within(choice("/there")).getAllByTestId("agent-option")[1]);
+      const made = sessions.all.at(-1)!;
+      expect(made.project).toBe("/there");
+      expect(made.agent).toBe("codex");
+      expect(workspace.active).toBe("/there");
+      expect(sessions.active).toBe(made.key);
+      expect(left.status).toBe("dormant");
+    });
+
+    it("opens the choice from an inactive project's menu among the active ones, and scrolls to it", async () => {
+      const { here, left } = twoProjects();
+      touch("/here");
+      touch("/there", Date.now() - 30 * 24 * 3600 * 1000);
+      render(SessionsPane);
+      await waitFor(() => expect(screen.getByTestId("inactive-fold")).toBeInTheDocument());
+      await fireEvent.click(screen.getByTestId("inactive-fold"));
+      const idle = document.querySelector<HTMLElement>('[data-row="idle:/there"]')!;
+      await fireEvent.click(within(idle).getByTestId("project-more"));
+      const scrolled = vi.mocked(Element.prototype.scrollIntoView);
+      scrolled.mockClear();
+      await fireEvent.click(within(idle).getByTestId("project-menu-new"));
+
+      await waitFor(() => expect(scrolled.mock.contexts).toContain(choice("/there")));
+      expect(within(choice("/there")).getByTestId("agent-choice")).toBeInTheDocument();
+      expect(screen.queryByTestId("inactive-fold")).toBeNull();
+      expect(workspace.active).toBe("/here");
+      expect(sessions.active).toBe(here.key);
+      expect(left.status).toBe("dormant");
+    });
+  });
+
   it("orders the projects by last used or by name, from the sort menu", async () => {
     const now = Date.now();
     workspace.open.push(repo("/b", "beta"), repo("/a", "alpha"), repo("/c", "gamma"));
