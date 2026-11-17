@@ -459,7 +459,11 @@ agent's. A session started for a step stays on the model it was given:
 `send` gives it no command but `/compact`, since commands such as `/model`
 and `/fast` change the model and either agent completes a command from the
 start of its name, and a start or a resume for a step does not begin with
-one either. A line counts as a command where it begins with a slash once
+one either. It begins in its orchestrator's mode, as every started session
+does (see [what the user is asked](#what-the-user-is-asked)), so the
+workers of an orchestrator in Plan plan too and each asks before it leaves
+Plan; the answer to each start names the mode, for the orchestrator to tell
+the user. A line counts as a command where it begins with a slash once
 characters that draw nothing are passed over and a wide slash is read as a
 slash, so one that begins with a path is refused too, and says to put a
 word before it.
@@ -583,32 +587,46 @@ whatever it has been told to do by something it read.
 
 A session that starts another in its own project, on a worktree of it or
 not, is not asked about when the session would run on the starter's agent
-and under the starter's account. The session begins in the starter's
-permission mode, so it holds no more than its starter: the workbench names
-that mode when it starts the session, integrated or in a terminal, as it
-names a kept mode on a resume, whatever the settings of the session's
-account would choose. A mode the workbench starts no session in gives the
-nearest one below it, Auto for Bypass permissions. A session whose agent
-does not take the mode it is given, as Auto where its account or model
-has none, runs integrated in the nearest narrower mode its agent offers,
-said in a notice; in a terminal it runs in the one its agent falls back
-to, which the window cannot change. What the settings files allow still
-applies before anything is asked, as for any session.
+and under the starter's account, and the workbench knows the starter's
+mode. The session begins in the starter's permission mode, so it begins in
+no more than its starter: the workbench names that mode when it starts the
+session, integrated or in a terminal, as it names a kept mode on a resume,
+whatever the settings of the session's account would choose, and the
+answer to the starter says it, as "It begins in Plan mode." Narrowing the
+starter later does not reach the sessions it started. A mode the
+workbench starts no session in gives the nearest one below it, Auto for
+Bypass permissions. A session whose agent does not take the mode it is
+given, as Auto where its account or model has none, runs integrated in the
+nearest narrower mode its agent offers, said in a notice; in a terminal it
+runs in the one its agent falls back to, which the window cannot change.
+What the settings files allow still applies before anything is asked, as
+for any session.
 
 The workbench knows the starter's mode for an integrated session, as its
-agent says it now; for a Claude Code session in a terminal, as its hooks
-last said it; and for a terminal session it resumed in the mode it keeps
-for the conversation, which is that mode until the hooks say otherwise. So
-a starter that went on after a restart in the mode it ran in before gives
-that mode. A mode changed in the middle of a turn is known only once the
-next hook says it, so a start made in that same turn gives the mode
-before. It cannot know the mode of a Codex session in a terminal that it
-started in no mode, nor of a terminal session whose hooks are off: a
-session such a starter starts begins in the mode its agent chooses from
-its settings, as one the user starts does, and the two are not compared.
-A starter whose mode the workbench knows but cannot place, by a name it
-does not know, is asked about, and its session begins as its settings
-say.
+agent says it now, and for a Claude Code session in a terminal, as its
+hooks last said it. Claude Code's hooks say it as each turn begins, before
+the agent sees the prompt, so with hooks on it is known before any call
+the turn makes, after a restart too. A mode changed in the middle of a
+turn is known only once the next hook says it, so a start made in that
+same turn gives the mode before. A Claude Code session in a terminal whose
+hooks have not said its mode, as with hooks off, is asked about, since a
+mode chosen in its terminal is seen only through them. If the user allows
+the start, the session begins in no more than the mode the workbench
+started the starter in, where it named one, as the mode kept for a
+conversation it resumed, and otherwise in the mode its agent chooses from
+its settings.
+
+A Codex session in a terminal is not compared. Its hooks never say its
+mode, so the workbench takes the one it started it in, the mode kept for a
+conversation it resumed, and does not see a change made in it with
+`/approvals`. Codex asks before `start` itself in Read only and in Auto,
+since the workbench gives it no standing approval for that tool, and Full
+access is the top of the scale, so Codex's own question covers a starter
+in a narrower mode. A session it starts begins in the mode the workbench
+started it in where it named one, and otherwise in the mode its agent
+chooses from its settings, as one the user starts does. A starter whose
+mode the workbench knows but cannot place, by a name it does not know, is
+asked about, and its session begins as its settings say.
 
 The modes stand on one scale for both agents: Claude Code's Plan first,
 then Default and Don't ask together, since Don't ask refuses what Default
