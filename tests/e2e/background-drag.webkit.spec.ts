@@ -18,9 +18,8 @@ import { longHistory } from "./longHistory";
  * first. A second drag over another path forces the style and then the
  * layout right after the handler, to say how much of a step each takes.
  * Every frame's start is recorded, and a gap longer than a frame counts
- * the frames it cost. A build instrumented to keep timings of its own in
- * `window.__prof`, with `reset`, `stop` and `dump`, has them logged for
- * each drag as well.
+ * the frames it cost. The page's own animation callbacks are timed by
+ * name, with the style and layout forced after them in the second drag.
  *
  * Knobs, read from the environment, for comparing one cost with another:
  *
@@ -358,7 +357,6 @@ async function drag(page: Page, radius: number, forced: boolean) {
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   const before = await painting(page);
-  await page.evaluate(() => (window as unknown as { __prof?: { reset: () => void } }).__prof?.reset());
   await record(page, forced);
   const started = Date.now();
   for (let step = 1; step <= STEPS; step++) {
@@ -370,7 +368,6 @@ async function drag(page: Page, radius: number, forced: boolean) {
   }
   const took = Date.now() - started;
   const recorded = await stopRecording(page);
-  await page.evaluate(() => (window as unknown as { __prof?: { stop: () => void } }).__prof?.stop());
   const after = await painting(page);
   await page.mouse.up();
   return { ...recorded, took, repainted: before !== after, sheetDuring: after.length };
@@ -450,9 +447,6 @@ test("a dot dragged on the pad, in a workspace the size of a day's work", async 
   test.skip(browserName !== "webkit", "a measurement of WebKit, the app's webview on macOS");
   test.skip(process.env.BG_DRAG !== "1", "a measurement, run when asked with BG_DRAG=1");
   test.setTimeout(600_000);
-  page.on("console", (message) => {
-    if (message.text().startsWith("[prof]")) console.log(message.text());
-  });
   await seed(page);
   if (freeze === "image") {
     await page.evaluate(() => {
@@ -510,15 +504,11 @@ test("a dot dragged on the pad, in a workspace the size of a day's work", async 
   await drag(page, 0.5, false);
   await backgroundAtRest(page);
 
-  const dump = (label: string) =>
-    page.evaluate((label) => (window as unknown as { __prof?: { dump: (label: string) => void } }).__prof?.dump(label), label);
   const natural = await drag(page, 0.6, false);
   if (freeze !== "sheet") expect(natural.repainted).toBe(true);
   summarise("natural", natural);
-  await dump("natural");
   await backgroundAtRest(page);
 
   const forced = await drag(page, 0.7, true);
   summarise("forced", forced);
-  await dump("forced");
 });
