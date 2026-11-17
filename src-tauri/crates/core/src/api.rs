@@ -674,9 +674,7 @@ impl Core {
         // A conversation held at the point it went back to goes on from
         // there.
         let at = match &run.session {
-            Some(session) if agent == crate::claude_stream::AGENT => {
-                self.held_at(&run, session).map(|(_, at)| at)
-            }
+            Some(session) if agent == crate::claude_stream::AGENT => self.held_at(&run, session),
             _ => None,
         };
         self.start_run(run, at)
@@ -1000,13 +998,12 @@ impl Core {
         crate::claude_history::find(&dir, &run.project, run.cwd.as_deref(), session)
     }
 
-    /// The transcript of a Claude Code conversation and the entry it is
-    /// held at, where it went back and has not gone on since.
-    fn held_at(&self, run: &Run, session: &str) -> Option<(PathBuf, String)> {
+    /// The entry a Claude Code conversation is held at, where it went back
+    /// and has not gone on since.
+    fn held_at(&self, run: &Run, session: &str) -> Option<String> {
         let path = self.transcript(run, session)?;
         let leaf = crate::claude_history::leaf(&path);
-        let at = self.held.at(session, leaf.as_deref())?;
-        Some((path, at))
+        self.held.at(session, leaf.as_deref())
     }
 
     /// The messages of a Codex thread, read by a Codex of its own.
@@ -1100,8 +1097,9 @@ impl Core {
 
     /// Takes an integrated session at rest back to before a message of the
     /// user's: with `conversation`, the message and everything after it
-    /// leave the conversation; with `files`, the files go back as they were
-    /// before it, first. Claude Code is started again from the entry before
+    /// leave the conversation; with `files`, those the user was shown, the
+    /// files go back as they were before it, first, unless the agent would
+    /// now change one not among them. Claude Code is started again from the entry before
     /// the message, on the same row's token and the settings it runs on
     /// now, and the conversation is held at that entry until its transcript
     /// holds the cut; before its first message, it starts a new
@@ -1112,11 +1110,11 @@ impl Core {
         id: &str,
         message: &str,
         conversation: bool,
-        files: bool,
+        files: Option<&[String]>,
     ) -> Result<crate::integrated::WentBack, String> {
         use crate::integrated::Back;
         crate::integrated::rest(&self.integrated, id)?;
-        if !conversation && !files {
+        if !conversation && files.is_none() {
             return Err("neither the conversation nor the files were asked to go back".into());
         }
         let run = self.run(id)?;
@@ -1134,7 +1132,7 @@ impl Core {
                     .into_iter()
                     .find(|mark| mark.message == message)
                     .ok_or(UNSAID)?;
-                if files && !mark.files {
+                if files.is_some() && !mark.files {
                     return Err("Claude Code kept no files from before this message.".into());
                 }
                 if !conversation {
@@ -1146,7 +1144,7 @@ impl Core {
                 }
             }
             crate::codex_app_server::AGENT => {
-                if files {
+                if files.is_some() {
                     return Err(crate::codex_app_server::NO_FILES.into());
                 }
                 let (marks, why) = self.codex_marks(&run, &session)?;
@@ -1250,6 +1248,35 @@ impl Core {
             .ok_or(UNSAID)?;
         self.held.hold(session, at, &leaf);
         Ok(Some(at.to_string()))
+    }
+
+    /// Whether a conversation is held at the point it went back to: its
+    /// agent has not written the cut yet, which it does with the next
+    /// message sent from there. Until then a terminal that resumes the
+    /// conversation goes on with what was gone back on, since Claude Code's
+    /// terminal does not take the point a stream session is started from,
+    /// and a line typed there makes that the conversation for good. False
+    /// for an agent whose conversations go back as they are kept.
+    pub fn integrated_held(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: &str,
+        config_dir: Option<&str>,
+    ) -> bool {
+        if agent != crate::claude_stream::AGENT {
+            return false;
+        }
+        let Some(home) = self.home.as_deref() else {
+            return false;
+        };
+        let dir = account::claude_dir(home, config_dir, &env::environment().vars);
+        let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
+            return false;
+        };
+        let leaf = crate::claude_history::leaf(&path);
+        self.held.at(session, leaf.as_deref()).is_some()
     }
 
     /// The usage limits of an agent's account on this machine, under the
@@ -2166,8 +2193,13 @@ mod tests {
             })
             .collect()
         };
+        let config = claude.to_string_lossy().to_string();
+        let held = || core.integrated_held("claude-code", folder, None, session, Some(&config));
         assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4", "m-5"]);
+        assert!(!held());
         core.held.hold(session, "a-5", "a-6");
+        assert!(held());
+        assert!(!core.integrated_held("codex", folder, None, session, Some(&config)));
         assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4"]);
         // Read again, by a core that starts again.
         assert_eq!(
@@ -2187,6 +2219,7 @@ mod tests {
         }
         assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4", "m-6"]);
         assert_eq!(core.held.at(session, Some("a-6")), None, "let go");
+        assert!(!held());
     }
 
     /// A conversation started again goes on from the entry asked for, or,

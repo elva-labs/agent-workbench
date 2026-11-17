@@ -204,8 +204,9 @@ struct IntegratedRewindParams {
     message: String,
     #[serde(default)]
     conversation: bool,
+    /// The files the user was shown, to put back; none leaves them.
     #[serde(default)]
-    files: bool,
+    files: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -591,7 +592,17 @@ pub fn dispatch(
         }
         "integrated_rewind" => {
             let p: IntegratedRewindParams = parse(params)?;
-            value(core.integrated_rewind(&p.id, &p.message, p.conversation, p.files)?)
+            value(core.integrated_rewind(&p.id, &p.message, p.conversation, p.files.as_deref())?)
+        }
+        "integrated_held" => {
+            let p: IntegratedHistoryParams = parse(params)?;
+            value(core.integrated_held(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                &p.session,
+                p.config_dir.as_deref(),
+            ))
         }
         "integrated_rewind_undo" => {
             let p: IdParams = parse(params)?;

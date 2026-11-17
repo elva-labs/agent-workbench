@@ -12,7 +12,8 @@
 //! does the same with a command that ignores the signal asking it to end,
 //! and
 //! `linger` ignores the end of its stdin and, asked to end, writes a file
-//! beside the scenario and ends cleanly. It writes
+//! beside the scenario and ends cleanly, and `await` waits until a file of
+//! that name is beside the scenario. It writes
 //! its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 //!
@@ -83,6 +84,7 @@ while IFS= read -r step || [ -n "$step" ]; do
       printf '","tool_use_id":"%s"}]},"parent_tool_use_id":null}\n' "$1" ;;
     "spawn") sleep 300 & echo $! > "$dir/child" ;;
     "deaf") (trap '' TERM; exec sleep 300) & echo $! > "$dir/child" ;;
+    "await "*) while [ ! -e "$dir/${step#await }" ]; do sleep 0.05; done ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
     "linger")
       trap 'echo yes > "$dir/termed"; exit 0' TERM
@@ -1390,6 +1392,11 @@ reply {"type":"control_response","response":{"subtype":"success","request_id":"@
 expect "subtype":"rewind_files"
 reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"skippedLinks":0}}}"#;
 
+/// The files a preview showed, which going back puts back.
+fn shown() -> Vec<String> {
+    vec!["/w/a.txt".to_string(), "/w/b.txt".to_string()]
+}
+
 fn value_after(args: &[String], flag: &str) -> Option<String> {
     let at = args.iter().position(|arg| arg == flag)?;
     args.get(at + 1).cloned()
@@ -1414,7 +1421,7 @@ fn going_back_starts_the_conversation_again_from_the_entry_before_the_message() 
         &h.id,
         BACK_TO,
         Back::Entry(Some("entry-before".into())),
-        false,
+        None,
         &|again| h.again(again),
     )
     .unwrap();
@@ -1466,7 +1473,7 @@ fn the_files_go_back_first_while_the_message_is_still_in_the_conversation() {
         &h.id,
         BACK_TO,
         Back::Entry(Some("entry-before".into())),
-        true,
+        Some(&shown()),
         &|again| h.again(again),
     )
     .unwrap();
@@ -1501,13 +1508,18 @@ fn only_the_files_go_back_in_the_same_session() {
         &format!("{READY}\n{FILES_BACK}\ndrain"),
     );
     h.until_type("ready");
-    let refused = rewind(&h.sessions, &h.id, BACK_TO, Back::Files, false, &|again| {
+    let refused = rewind(&h.sessions, &h.id, BACK_TO, Back::Files, None, &|again| {
         h.again(again)
     });
     assert!(refused.is_err());
-    let went = rewind(&h.sessions, &h.id, BACK_TO, Back::Files, true, &|again| {
-        h.again(again)
-    })
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Files,
+        Some(&shown()),
+        &|again| h.again(again),
+    )
     .unwrap();
     assert_eq!(went.id.as_deref(), Some(h.id.as_str()));
     assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
@@ -1535,7 +1547,7 @@ reply {"type":"control_response","response":{"subtype":"success","request_id":"@
         &h.id,
         BACK_TO,
         Back::Entry(Some("entry-before".into())),
-        true,
+        Some(&shown()),
         &|again| h.again(again),
     )
     .unwrap_err();
@@ -1594,7 +1606,7 @@ fn an_entry_the_agent_cannot_find_starts_the_conversation_again_whole() {
         &h.id,
         BACK_TO,
         Back::Entry(Some("entry-gone".into())),
-        false,
+        None,
         &|again| h.again(again),
     )
     .unwrap();
@@ -1628,7 +1640,7 @@ fn going_back_before_the_first_message_starts_a_new_conversation() {
         &h.id,
         BACK_TO,
         Back::Entry(None),
-        false,
+        None,
         &|again| h.again(again),
     )
     .unwrap();
@@ -1650,9 +1662,14 @@ fn a_session_at_work_does_not_go_back_and_is_left_as_it_was() {
     h.send("work on");
     h.until_type("turnStarted");
     for back in [Back::Files, Back::Entry(None)] {
-        let error = rewind(&h.sessions, &h.id, BACK_TO, back, true, &|again| {
-            h.again(again)
-        })
+        let error = rewind(
+            &h.sessions,
+            &h.id,
+            BACK_TO,
+            back,
+            Some(&shown()),
+            &|again| h.again(again),
+        )
         .unwrap_err();
         assert_eq!(error, "a turn runs");
     }
@@ -1663,6 +1680,136 @@ fn a_session_at_work_does_not_go_back_and_is_left_as_it_was() {
         .iter()
         .any(|line| line["request"]["subtype"] == "rewind_files"));
     h.stop();
+}
+
+/// Between the preview and the choice a file can change, the user's own
+/// save among them: putting back what the user was not shown is refused,
+/// before anything is put back.
+#[test]
+fn files_that_were_not_shown_are_not_put_back() {
+    let h = start(
+        "rewind-unshown",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt"],"insertions":0,"deletions":2}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt","/w/notes.md"],"insertions":0,"deletions":9}}}"#
+        ),
+    );
+    h.transcript(&["entry-before"]);
+    h.until_type("ready");
+    let shown = preview(&h.sessions, &h.id, BACK_TO).unwrap().files;
+    assert_eq!(shown, ["/w/a.txt"]);
+    let error = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        Some(&shown),
+        &|again| h.again(again),
+    )
+    .unwrap_err();
+    assert_eq!(error, UNSHOWN);
+    // Only the two dry runs went; nothing was put back, nothing restarted.
+    let asked: Vec<bool> = h
+        .stdin()
+        .iter()
+        .filter(|line| line["request"]["subtype"] == "rewind_files")
+        .map(|line| line["request"]["dry_run"] == true)
+        .collect();
+    assert_eq!(asked, [true, true]);
+    assert!(h.sessions.holds(&h.id));
+    assert!(!h.dir.join("args.2").exists());
+    rest(&h.sessions, &h.id).unwrap();
+    h.stop();
+}
+
+/// A message sent while the session goes back, by the window or by the
+/// workbench for a session this one started, would go to the process the
+/// restart ends: it is refused until the going back is over.
+#[test]
+fn nothing_is_sent_while_the_session_goes_back() {
+    let h = start(
+        "rewind-sending",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+await go
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt"],"insertions":0,"deletions":2}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"skippedLinks":0}}}"#
+        ),
+    );
+    h.until_type("ready");
+    std::thread::scope(|scope| {
+        let going = scope.spawn(|| {
+            rewind(
+                &h.sessions,
+                &h.id,
+                BACK_TO,
+                Back::Files,
+                Some(&["/w/a.txt".to_string()]),
+                &|_: &Again| -> Result<Started, String> { unreachable!("only the files go back") },
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !h
+            .stdin()
+            .iter()
+            .any(|line| line["request"]["subtype"] == "rewind_files")
+        {
+            assert!(Instant::now() < deadline, "the dry run never went");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let message = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            send(&h.sessions, &h.id, &message, "meanwhile", &[]).unwrap_err(),
+            GOING_BACK
+        );
+        assert_eq!(
+            control(&h.sessions, &h.id, &Control::Compact { instructions: None }).unwrap_err(),
+            GOING_BACK
+        );
+        std::fs::write(h.dir.join("go"), "").unwrap();
+        going.join().unwrap().unwrap();
+    });
+    // Over once it answered: the session takes messages again.
+    assert!(!h.events().iter().any(|event| event["type"] == "message"));
+    let message = uuid::Uuid::new_v4().to_string();
+    send(&h.sessions, &h.id, &message, "now", &[]).unwrap();
+    h.stop();
+}
+
+/// A start that fails before its process runs is started again whole, as
+/// one that ends before it is ready is.
+#[test]
+fn a_start_that_fails_goes_on_with_the_conversation_whole() {
+    let h = start("rewind-failed", &format!("{READY}\ndrain"));
+    h.then(2, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        None,
+        &|again| match again.at {
+            Some(_) => Err("the transcript is not there".into()),
+            None => h.again(again),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        went.fallback.as_deref(),
+        Some("the transcript is not there")
+    );
+    assert_eq!(went.error, None);
+    assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
+    let whole = h.args(2);
+    assert_eq!(value_after(&whole, "--resume"), Some(h.session.clone()));
+    assert!(!whole.contains(&"--resume-session-at".to_string()));
+    stop(&h.sessions, &went.id.unwrap()).unwrap();
 }
 
 #[test]
@@ -1682,7 +1829,7 @@ fn going_back_is_undone_until_the_conversation_goes_on() {
             id,
             BACK_TO,
             Back::Entry(Some("entry-before".into())),
-            false,
+            None,
             &|again| h.again(again),
         )
         .unwrap()

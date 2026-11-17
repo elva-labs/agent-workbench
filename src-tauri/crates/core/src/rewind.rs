@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 const FILE: &str = "rewound.json";
 
 /// The most conversations held at once: the most recent.
-const KEEP: usize = 64;
+const KEEP: usize = 512;
 
 /// A conversation held at an entry: `at` is the entry it goes on from, and
 /// `leaf` the newest entry its transcript had when it went back.
@@ -106,13 +106,14 @@ impl Held {
     }
 
     /// The entry a conversation goes on from, while its transcript's newest
-    /// entry is `leaf`, the one it had when it went back. Anything else
-    /// lets it go, and answers None.
+    /// entry is the one it had when it went back, or cannot be read now,
+    /// `leaf` being None. Another newest entry lets it go, and answers None.
     pub fn at(&self, session: &str, leaf: Option<&str>) -> Option<String> {
         let at = {
             let guard = self.cuts();
             let cut = guard.as_ref()?.iter().find(|cut| cut.session == session)?;
-            (leaf == Some(cut.leaf.as_str())).then(|| cut.at.clone())
+            leaf.is_none_or(|leaf| leaf == cut.leaf)
+                .then(|| cut.at.clone())
         };
         if at.is_none() {
             self.release(session);
@@ -161,6 +162,8 @@ mod tests {
         // Kept for a core that starts again.
         let again = Held::new(Some(&home));
         assert_eq!(again.at("s-1", Some("leaf-1")).as_deref(), Some("entry-4"));
+        // A transcript that cannot be read now holds it still.
+        assert_eq!(again.at("s-1", None).as_deref(), Some("entry-4"));
         // A transcript that moved on lets it go, for good.
         assert_eq!(again.at("s-1", Some("leaf-7")), None);
         assert_eq!(again.at("s-1", Some("leaf-1")), None);

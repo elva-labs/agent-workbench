@@ -552,8 +552,10 @@ async fn integrated_rewind_preview(
 }
 
 /// Takes an integrated session back to before a message, on the machine it
-/// runs on: a session started again there comes back with the host on its
-/// id, and the files put back with the host on their paths.
+/// runs on, with the files the user was shown, which reach that machine
+/// without the host on their paths: a session started again there comes
+/// back with the host on its id, and the files put back with the host on
+/// their paths.
 #[tauri::command]
 async fn integrated_rewind(
     core: State<'_, Arc<Core>>,
@@ -561,12 +563,26 @@ async fn integrated_rewind(
     id: String,
     message: String,
     conversation: bool,
-    files: bool,
+    files: Option<Vec<String>>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
+    let files: Option<Vec<String>> = files.map(|files| {
+        files
+            .iter()
+            .map(|file| match route(file) {
+                Route::Remote { rest, .. } => rest,
+                Route::Local(file) => file,
+            })
+            .collect()
+    });
     blocking(move || match route(&id) {
-        Route::Local(id) => value(core.integrated_rewind(&id, &message, conversation, files)?),
+        Route::Local(id) => value(core.integrated_rewind(
+            &id,
+            &message,
+            conversation,
+            files.as_deref(),
+        )?),
         Route::Remote { host, rest } => {
             let went = remotes.connection(&host)?.call(
                 "integrated_rewind",
@@ -574,6 +590,47 @@ async fn integrated_rewind(
             )?;
             Ok(remote::went_back_homeward(&host, went))
         }
+    })
+    .await
+}
+
+/// Whether a conversation is held at the point it went back to, on the
+/// machine its project is on, so that a terminal resuming it would go on
+/// with what was gone back on.
+#[tauri::command]
+async fn integrated_held(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.integrated_held(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            &session,
+            config_dir.as_deref(),
+        )),
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "integrated_held",
+            json!({
+                "agent": agent,
+                "project": rest,
+                "cwd": cwd,
+                "session": session,
+                "configDir": config_dir,
+            }),
+        ),
     })
     .await
 }
@@ -1957,6 +2014,7 @@ pub fn run() {
             integrated_rewind_preview,
             integrated_rewind,
             integrated_rewind_undo,
+            integrated_held,
             integrated_stop,
             settings_get,
             settings_set,

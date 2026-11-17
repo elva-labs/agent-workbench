@@ -70,7 +70,7 @@ fn opening(account: &str) -> String {
         r#"reply {"id":@ID@,"result":{"config":{},"origins":{}}}"#,
         r#"expect "method":"thread/"#,
         &format!(
-            r#"reply {{"id":@ID@,"result":{{"thread":{{"id":"{THREAD}","preview":"","turns":[]}},"model":"gpt-a","modelProvider":"openai","reasoningEffort":"medium","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{{"type":"workspaceWrite"}},"cwd":"/w"}}}}"#
+            r#"reply {{"id":@ID@,"result":{{"thread":{{"id":"{THREAD}","historyMode":"paginated","preview":"","turns":[]}},"model":"gpt-a","modelProvider":"openai","reasoningEffort":"medium","approvalPolicy":"on-request","approvalsReviewer":"user","sandbox":{{"type":"workspaceWrite"}},"cwd":"/w"}}}}"#
         ),
     ]
     .join("\n")
@@ -311,7 +311,7 @@ fn a_thread_goes_back_to_before_a_turn_and_the_session_goes_on_with_it() {
             &h.id,
             &first,
             Back::Turn("turn-1".into()),
-            true,
+            Some(&[]),
             &not_again
         )
         .unwrap_err(),
@@ -322,7 +322,7 @@ fn a_thread_goes_back_to_before_a_turn_and_the_session_goes_on_with_it() {
         &h.id,
         &first,
         Back::Turn("turn-1".into()),
-        false,
+        None,
         &not_again,
     )
     .unwrap();
@@ -355,7 +355,7 @@ fn a_thread_goes_back_to_before_a_turn_and_the_session_goes_on_with_it() {
 #[test]
 fn a_thread_kept_in_the_older_format_says_it_cannot_go_back() {
     let scenario = [
-        ready_scenario().replace(r#""preview":"""#, r#""historyMode":"legacy","preview":"""#),
+        ready_scenario().replace(r#""historyMode":"paginated""#, r#""historyMode":"legacy""#),
         "drain".to_string(),
     ]
     .join("\n");
@@ -367,7 +367,7 @@ fn a_thread_kept_in_the_older_format_says_it_cannot_go_back() {
             &h.id,
             "11111111-1111-4111-8111-111111111111",
             Back::Turn("turn-1".into()),
-            false,
+            None,
             &not_again,
         )
         .unwrap_err(),

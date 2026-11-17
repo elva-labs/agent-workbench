@@ -295,16 +295,22 @@ const UNKEPT: &str = "Codex does not keep this conversation, so it cannot go bac
 /// Why Codex puts no files back.
 pub(crate) const NO_FILES: &str = "Codex cannot put files back.";
 
+/// Why a thread Codex says nothing of its format of cannot go back: a Codex
+/// that does not say so is older than the one `thread/revert` came with.
+const UNTOLD: &str =
+    "This Codex does not say how it keeps this conversation, so it cannot go back. A newer Codex can.";
+
 /// Why a thread, as Codex describes it, cannot be taken back with
 /// `thread/revert`, which takes only one kept in the paginated format; None
-/// for one that can, or one that does not say.
+/// for one that can.
 pub(crate) fn unrevertable(thread: &Value) -> Option<&'static str> {
     if thread["ephemeral"] == true {
-        Some(UNKEPT)
-    } else if thread["historyMode"] == "legacy" {
-        Some(OLDER)
-    } else {
-        None
+        return Some(UNKEPT);
+    }
+    match thread["historyMode"].as_str() {
+        Some("paginated") => None,
+        Some(_) => Some(OLDER),
+        None => Some(UNTOLD),
     }
 }
 

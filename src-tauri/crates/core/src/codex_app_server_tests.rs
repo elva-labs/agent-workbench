@@ -72,7 +72,8 @@ fn models() -> Value {
 
 fn thread_started() -> Value {
     json!({
-        "thread": {"id": THREAD, "cwd": "/work/demo", "preview": "", "turns": []},
+        "thread": {"id": THREAD, "cwd": "/work/demo", "preview": "", "turns": [],
+                   "historyMode": "paginated", "ephemeral": false},
         "model": "gpt-a",
         "modelProvider": "openai",
         "reasoningEffort": "medium",
@@ -1785,15 +1786,17 @@ fn a_thread_kept_in_the_older_format_or_not_at_all_says_it_cannot_go_back() {
         );
         assert_eq!(revert(&mut driver, "turn-1").unwrap_err(), why);
     }
+    // A Codex that says nothing of the thread's format is older than the
+    // one that reverts.
     let mut driver = fresh();
     let mut started = thread_started();
-    started["thread"]["historyMode"] = json!("paginated");
+    started["thread"] = json!({"id": THREAD});
     handshake_with(
         &mut driver,
         json!({"account": {"type": "chatgpt"}, "requiresOpenaiAuth": true}),
         started,
     );
-    assert!(revert(&mut driver, "turn-1").is_ok());
+    assert_eq!(revert(&mut driver, "turn-1").unwrap_err(), UNTOLD);
 }
 
 #[test]

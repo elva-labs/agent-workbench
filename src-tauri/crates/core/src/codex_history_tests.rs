@@ -1113,8 +1113,13 @@ fn a_thread_s_messages_are_read_with_their_turns_oldest_first() {
     assert_eq!(codex.asked[1].1["sortDirection"], "desc");
     assert_eq!(codex.asked[2].1["cursor"], "older");
 
-    // A thread kept the older way, or not kept, says why and reads no turn.
+    // A thread kept the older way, or not kept, or by a Codex that does
+    // not say, says why and reads no turn.
     for (read, why) in [
+        (
+            Answer::Result(json!({ "thread": { "id": THREAD } })),
+            "This Codex does not say how it keeps this conversation, so it cannot go back. A newer Codex can.",
+        ),
         (thread("legacy"), crate::codex_app_server::OLDER),
         (
             Answer::Result(

@@ -1828,6 +1828,9 @@ struct Machine {
     ended: bool,
     /// Why the process ended, where it ended badly by itself.
     said: Option<String>,
+    /// The session is going back, from the moment it was found at rest to
+    /// the answer: no message or compaction is taken meanwhile.
+    going_back: bool,
 }
 
 impl Machine {
@@ -1853,6 +1856,7 @@ impl Machine {
             ready,
             ended: false,
             said: None,
+            going_back: false,
         }
     }
 }
@@ -2733,6 +2737,9 @@ pub fn send(
     }
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
+        if machine.going_back {
+            return Err(GOING_BACK.into());
+        }
         let queued = machine.tracker.send(message)?;
         // An agent that takes no message mid-turn may have no conversation
         // to take one into before it is ready, so it is held till then too.
@@ -2920,6 +2927,9 @@ fn request(
     }
     let (went, waiting) = {
         let mut machine = live.machine.lock().expect("machine lock");
+        if machine.going_back && matches!(control, Control::Compact { .. }) {
+            return Err(GOING_BACK.into());
+        }
         let sending = match control {
             Control::SendNow => {
                 if let Some(why) = machine.tracker.not_now() {
@@ -3120,42 +3130,45 @@ pub fn preview(sessions: &Sessions, id: &str, message: &str) -> Result<Preview, 
 /// given, on the settings it runs on now; where that start does not come
 /// up, the conversation is started again whole, and the answer says why.
 ///
+/// `files` are the files the user was shown, from a preview, to put back;
+/// None leaves the files as they are. A fresh dry run that names a file
+/// not among them refuses, since the real run would change what the user
+/// never saw. From the moment the session is found at rest to the answer,
+/// it takes no message and no compaction, which the restart would lose.
+///
 /// Fails, with nothing changed, where the session is not at rest, the
-/// files cannot go back, or the agent will not take the conversation back.
-/// Once a session was stopped, the answer says what came of starting it
-/// again.
+/// files cannot go back or are not those shown, or the agent will not
+/// take the conversation back. Once a session was stopped, the answer
+/// says what came of starting it again.
 pub fn rewind(
     sessions: &Arc<Sessions>,
     id: &str,
     message: &str,
     back: Back,
-    files: bool,
+    files: Option<&[String]>,
     restart: &dyn Fn(&Again) -> Result<Started, String>,
 ) -> Result<WentBack, String> {
-    if back == Back::Files && !files {
+    if back == Back::Files && files.is_none() {
         return Err("neither the conversation nor the files were asked to go back".into());
     }
-    let (conversation, settings) = {
-        let live = sessions.get(id)?;
-        let machine = live.machine.lock().expect("machine lock");
-        if let Some(why) = machine.tracker.unrested() {
-            return Err(why.to_string());
+    let (_going, conversation, settings) = going_back(sessions, id)?;
+    let put_back = match files {
+        Some(shown) => {
+            let preview = preview(sessions, id, message)?;
+            if preview.files.iter().any(|file| !shown.contains(file)) {
+                return Err(UNSHOWN.into());
+            }
+            control(
+                sessions,
+                id,
+                &Control::RewindFiles {
+                    message: message.to_string(),
+                    dry_run: false,
+                },
+            )?;
+            preview.files
         }
-        (machine.tracker.conversation(), machine.tracker.kept())
-    };
-    let put_back = if files {
-        let preview = preview(sessions, id, message)?;
-        control(
-            sessions,
-            id,
-            &Control::RewindFiles {
-                message: message.to_string(),
-                dry_run: false,
-            },
-        )?;
-        preview.files
-    } else {
-        Vec::new()
+        None => Vec::new(),
     };
     let rewound = |conversation: bool| Event::Rewound {
         message: message.to_string(),
@@ -3201,11 +3214,10 @@ pub fn rewind(
                 ..WentBack::default()
             });
         }
-        Ok(Up::Fell(why)) => why,
-        Ok(Up::Failed(error)) | Err(error) => return Ok(failed(error, None)),
+        Ok(Up::Fell(why) | Up::Failed(why)) => why,
+        Err(error) => return Ok(failed(error, None)),
     };
-    // It ended before it was ready from there: the conversation goes on
-    // whole.
+    // It did not come up from there: the conversation goes on whole.
     let whole = Again {
         session: conversation,
         at: None,
@@ -3240,17 +3252,14 @@ pub fn undo(
     session: &str,
     restart: &dyn Fn(&Again) -> Result<Started, String>,
 ) -> Result<WentBack, String> {
-    let settings = {
+    {
         let live = sessions.get(id)?;
         let machine = live.machine.lock().expect("machine lock");
-        if let Some(why) = machine.tracker.unrested() {
-            return Err(why.to_string());
-        }
         if machine.tracker.turned || !machine.tracker.used.is_empty() {
             return Err("the conversation has gone on since it went back".into());
         }
-        machine.tracker.kept()
-    };
+    }
+    let (_going, _, settings) = going_back(sessions, id)?;
     let again = Again {
         session: Some(session.to_string()),
         at: None,
@@ -3267,6 +3276,44 @@ pub fn undo(
             ..WentBack::default()
         },
     })
+}
+
+/// Why a message or a compaction is refused while the session goes back.
+pub const GOING_BACK: &str = "the session is going back";
+
+/// Why going back is refused where the files to put back are not those the
+/// user was shown.
+pub const UNSHOWN: &str =
+    "The files to put back changed since they were shown. Look at them again.";
+
+/// Marks a session at rest as going back, and answers its conversation and
+/// the settings it is started again on. The mark goes when what this
+/// answers is dropped. Fails, with nothing changed, where the session is
+/// not at rest or is going back already.
+fn going_back(sessions: &Sessions, id: &str) -> Result<(Going, Option<String>, Settings), String> {
+    let live = sessions.get(id)?;
+    let mut machine = live.machine.lock().expect("machine lock");
+    if machine.going_back {
+        return Err(GOING_BACK.into());
+    }
+    if let Some(why) = machine.tracker.unrested() {
+        return Err(why.to_string());
+    }
+    machine.going_back = true;
+    let found = (machine.tracker.conversation(), machine.tracker.kept());
+    drop(machine);
+    Ok((Going(live), found.0, found.1))
+}
+
+/// A session marked as going back, until this is dropped.
+struct Going(Arc<Live>);
+
+impl Drop for Going {
+    fn drop(&mut self) {
+        if let Ok(mut machine) = self.0.machine.lock() {
+            machine.going_back = false;
+        }
+    }
 }
 
 /// How a session started again came up.
