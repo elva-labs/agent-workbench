@@ -596,6 +596,7 @@ export async function installFakeCore(
         userStyles: false,
         notifications: true,
         chime: false,
+        askEveryStart: false,
       };
       const allowed: Record<string, string[]> = {
         appearance: ["system", "light", "dark"],
@@ -1649,7 +1650,7 @@ export async function installFakeCore(
             } else if (field === "integrated") {
               if (!Array.isArray(value) || value.some((agent) => !integrable.includes(agent)))
                 throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
-            } else if (["userStyles", "notifications", "chime"].includes(field)) {
+            } else if (["userStyles", "notifications", "chime", "askEveryStart"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (field === "backgrounds") {
               if (typeof value !== "object" || value === null || Array.isArray(value))

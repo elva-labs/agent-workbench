@@ -215,6 +215,7 @@
         exact(event.sessionId, event.kind, event.note ?? null, event.cut === true, {
           error: event.error ?? null,
           background: Array.isArray(event.background) ? event.background : [],
+          mode: typeof event.mode === "string" ? event.mode : null,
         }),
       )
       .then((unlisten) => offs.push(unlisten));

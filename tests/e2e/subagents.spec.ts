@@ -109,7 +109,6 @@ async function started(page: Page) {
       }),
     { project: PROJECT },
   );
-  await page.getByTestId("conduct-allow").click();
   await expect(page.locator(`${SESSIONS} [data-testid='started-session']`)).toHaveCount(1);
 }
 
@@ -413,7 +412,6 @@ test.describe("subagents on the rail", () => {
         }),
       { project: PROJECT },
     );
-    await page.getByTestId("conduct-allow").click();
     const worker = page.locator(`${SESSIONS} [data-testid='started-session']`);
     await expect(worker).toHaveCount(1);
     await page.mouse.move(900, 500);

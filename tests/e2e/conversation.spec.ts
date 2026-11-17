@@ -954,15 +954,15 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await page.getByTestId("workflow-refused-dismiss").click();
     await expect(refused).toHaveCount(0);
 
-    // A start for a step is asked about once, and its worker runs the way
-    // its agent is set, told no workflow.
+    // A start for a step in the orchestrator's own project goes ahead
+    // unasked, and its worker runs the way its agent is set, told no
+    // workflow.
     await conduct(page, {
       id: "c-work",
       tool: "start",
       arguments: { project: PROJECT, prompt: "Fix the flaky cache test", step: "Work", name: "Fix the cache" },
       session: "integrated-session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-work")).not.toBeNull();
     const started = (await answerTo(page, "c-work"))!;
     expect(started.error).toBeNull();
