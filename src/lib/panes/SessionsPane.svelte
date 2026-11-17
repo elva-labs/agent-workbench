@@ -29,6 +29,8 @@
     historyFor,
     historyLabel,
     isLive,
+    markRead,
+    markUnread,
     label,
     lastChanged,
     loadHistory,
@@ -456,8 +458,9 @@
   }
 
   /** A session's own menu, from a right click on its row or the menu key
-      on the row under the cursor: the session reopened the other way where
-      its agent runs both ways, and stopping it. It opens upwards near the
+      on the row under the cursor: marking it unread, or read, the session
+      reopened the other way where its agent runs both ways, and stopping
+      it. It opens upwards near the
       pane's foot, and its keyboard cursor walks the items while it is
       open. */
   let sessionMenu = $state<{ key: string; up: boolean } | null>(null);
@@ -470,6 +473,21 @@
     const other = otherWayFor(session);
     const live = isLive(session);
     return [
+      session.unread
+        ? {
+            id: "session-menu-read",
+            label: "Mark as read",
+            title: "Show it as read without opening it",
+            disabled: false,
+            run: () => markRead(session.key),
+          }
+        : {
+            id: "session-menu-unread",
+            label: "Mark as unread",
+            title: "Show it as waiting for you until you next open it",
+            disabled: false,
+            run: () => markUnread(session.key),
+          },
       ...(other === null
         ? []
         : [

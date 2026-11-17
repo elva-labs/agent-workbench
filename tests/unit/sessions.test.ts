@@ -6,6 +6,7 @@ import { resetZoom, zoom, zoomed } from "$lib/zoom.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { register, resetScreens } from "$lib/screens";
+import { bodyFor } from "$lib/notify.svelte";
 import {
   activeSession,
   adoptPastSessions,
@@ -81,6 +82,9 @@ import {
   byToken,
   runningByToken,
   wake,
+  markUnread,
+  markRead,
+  onScreenNow,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import {
@@ -3104,5 +3108,245 @@ describe("following a workflow", () => {
     const session = create(P, null, "claude-code", null, "go", "sonnet", null, null);
     expect(session.workflow).toBeNull();
     expect(session.model).toBe("sonnet");
+  });
+});
+
+describe("marking a session unread", () => {
+  /** Two sessions in one project, the second behind the first. */
+  const pair = () => {
+    const front = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(front.key);
+    return { front, behind };
+  };
+
+  /** The user puts a session on screen in a focused window. */
+  const look = (key: string) => {
+    select(key);
+    onScreenNow(key);
+    viewed(key);
+  };
+
+  it("shows the last line the agent left, says nothing, and reads on the next look", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      noted(behind.key, "Plugin in main-truck staged, need approvals");
+      look(behind.key);
+      look(front.key);
+      expect(behind.unread).toBe(false);
+      expect(behind.note).toBeNull();
+      expect(told).toEqual([behind.key]);
+
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBe("Plugin in main-truck staged, need approvals");
+      expect(unreadCount()).toBe(1);
+      expect(byStatus()[0].sessions.map((session) => session.key)).toEqual([behind.key]);
+      expect(waitingOnYou().map((session) => session.key)).toEqual([behind.key]);
+      expect(told).toEqual([behind.key]);
+
+      look(behind.key);
+      expect(behind.unread).toBe(false);
+      expect(behind.note).toBeNull();
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("shows the line a turn ended on, and none once a new turn begins", () => {
+    const { front, behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Second answer.");
+    look(behind.key);
+    look(front.key);
+    markUnread(behind.key);
+    expect(behind.note).toBe("Second answer.");
+
+    markRead(behind.key);
+    expect(behind.unread).toBe(false);
+    expect(behind.note).toBeNull();
+
+    exact("session-pty-2", "prompt");
+    markUnread(behind.key);
+    expect(behind.unread).toBe(true);
+    expect(behind.note).toBeNull();
+  });
+
+  it("keeps the session on screen unread until another is on screen and it comes back", () => {
+    const { front, behind } = pair();
+    noted(behind.key, "Over to you.");
+    look(behind.key);
+    markUnread(behind.key);
+    expect(behind.unread).toBe(true);
+    expect(behind.note).toBe("Over to you.");
+
+    // Still looking: the window losing focus and gaining it again, or the
+    // row picked again, reads nothing.
+    attention.focused = false;
+    onScreenNow(behind.key);
+    attention.focused = true;
+    look(behind.key);
+    expect(behind.unread).toBe(true);
+
+    // Away to another and back.
+    look(front.key);
+    expect(behind.unread).toBe(true);
+    look(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("lets a mark on the session on screen go when it is marked read", () => {
+    const { behind } = pair();
+    look(behind.key);
+    markUnread(behind.key);
+    markRead(behind.key);
+    markUnread(behind.key);
+    markRead(behind.key);
+    look(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("announces what happens after a mark with its own line, but not an idle notice", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop", "First turn line.");
+      look(behind.key);
+      look(front.key);
+      told.length = 0;
+
+      markUnread(behind.key);
+      expect(behind.note).toBe("First turn line.");
+      exact("session-pty-2", "idle");
+      expect(told).toEqual([]);
+      expect(behind.note).toBe("First turn line.");
+
+      // A turn of its own, as when a background task ends: no prompt.
+      exact("session-pty-2", "stop", "Background job done.");
+      expect(told).toEqual([behind.key]);
+      expect(behind.note).toBe("Background job done.");
+      expect(bodyFor(behind)).toBe("Background job done.");
+
+      // Unread by now, the next line is no news, as without a mark.
+      noted(behind.key, "Need the API key");
+      expect(told).toEqual([behind.key]);
+      expect(behind.note).toBe("Need the API key");
+      expect(bodyFor(behind)).toBe("Need the API key");
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("announces a line left through notify over a mark with that line", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      noted(behind.key, "Old line.");
+      look(behind.key);
+      look(front.key);
+      told.length = 0;
+      markUnread(behind.key);
+      noted(behind.key, "New line.");
+      expect(told).toEqual([behind.key]);
+      expect(bodyFor(behind)).toBe("New line.");
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("lets the hold go when the user writes to the session marked on screen", () => {
+    const { behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Done.");
+    look(behind.key);
+    markUnread(behind.key);
+
+    // The user types a prompt into it: read, and the mark is over.
+    exact("session-pty-2", "prompt");
+    expect(behind.unread).toBe(false);
+    attention.focused = false;
+    exact("session-pty-2", "stop", "Done again.");
+    expect(behind.unread).toBe(true);
+
+    // Back to the window with it still on screen: read.
+    attention.focused = true;
+    viewed(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("keeps a mark through a director's prompt and its stop, until the user comes back", () => {
+    onDirected(() => true);
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop", "First.");
+      look(behind.key);
+      look(front.key);
+      markUnread(behind.key);
+
+      exact("session-pty-2", "prompt");
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBeNull();
+      exact("session-pty-2", "stop", "Second.");
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBe("Second.");
+
+      look(behind.key);
+      expect(behind.unread).toBe(false);
+    } finally {
+      onDirected(null);
+    }
+  });
+
+  it("forgets an earlier turn's line once the agent is seen at work, without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed(behind.ptyId!, "hello\r");
+      noted(behind.key, "Ready for review");
+      look(behind.key);
+      look(front.key);
+      for (let i = 0; i < WORK_WINDOWS + 1; i += 1) {
+        if (i > 0) vi.advanceTimersByTime(1010);
+        output(behind.key, WORK_BYTES, Date.now(), true);
+      }
+      expect(behind.working).toBe(true);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      look(behind.key);
+      look(front.key);
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("marks a session another started, an ended one and one left from the last quit", () => {
+    onDirected(() => true);
+    try {
+      const { behind } = pair();
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+    } finally {
+      onDirected(null);
+    }
+    const ending = live(A, "pty-3");
+    select(sessions.all[0].key);
+    ended({ id: "pty-3", code: 0, clean: true });
+    markRead(ending.key);
+    markUnread(ending.key);
+    expect(ending.unread).toBe(true);
+
+    const dormant = reopened(A, "old-1", "claude-code", null, null, null);
+    markUnread(dormant.key);
+    expect(dormant.unread).toBe(true);
+    expect(dormant.status).toBe("dormant");
+    expect(unreadCount()).toBe(3);
   });
 });
