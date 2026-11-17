@@ -1,6 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { PROJECT, installFakeCore } from "./fake";
 
+/** A second open project, which a session of the first is asked about
+    before it starts one there. */
+const OTHER = "/home/ada/dev/other";
+
 /**
  * The embedded browser, as a fourth kind the changes pane's viewer can
  * show: a tab strip and an address bar around a placeholder the native
@@ -76,7 +80,7 @@ async function placedOverBody(page: Page): Promise<boolean> {
 }
 
 test.beforeEach(async ({ page }) => {
-  await installFakeCore(page);
+  await installFakeCore(page, { open: [PROJECT, OTHER] });
   await page.goto("/");
   await expect(page.locator(CHANGES)).toBeVisible();
 });
@@ -262,15 +266,15 @@ test("an orchestrator's question hides the native view until it is answered", as
   await showPage(page);
 
   await page.evaluate(
-    (project) =>
+    ({ project, other }) =>
       (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
         id: "c-1",
         tool: "start",
-        arguments: { project, prompt: "Fix the flaky test" },
+        arguments: { project: other, prompt: "Fix the flaky test" },
         cwd: project,
         session: "session-1",
       }),
-    PROJECT,
+    { project: PROJECT, other: OTHER },
   );
   await expect(page.getByTestId("conduct-ask")).toBeVisible();
   await expect.poll(() => showing(page)).toBe(false);

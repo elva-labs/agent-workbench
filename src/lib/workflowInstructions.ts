@@ -57,8 +57,8 @@ function stepLine(workflow: Workflow, index: number): string {
         : `For the step ${quoted(step.name)}, start a session for each piece once it has ${from(before)}`;
     const at =
       step.parallel === 1
-        ? `Run one ${quoted(step.name)} session at a time, and stop it once its piece is done with; a stopped session can be resumed.`
-        : `Run at most ${step.parallel} ${quoted(step.name)} sessions at once, and stop each once its piece is done with; a stopped session can be resumed.`;
+        ? `Run one ${quoted(step.name)} session at a time, and stop it once its work is taken up and nothing more is wanted from it.`
+        : `Run at most ${step.parallel} ${quoted(step.name)} sessions at once, and stop each once its work is taken up and nothing more is wanted from it.`;
     return `${lead}, ${placeText(step)}. ${at}`;
   }
   const lead =
@@ -75,8 +75,8 @@ function stepLine(workflow: Workflow, index: number): string {
   const between = target < 0 ? [] : workflow.steps.slice(target + 1, index).map((other) => other.name);
   const through = between.length === 0 ? "" : `, take it through ${listed(between)} again`;
   const times = step.limit === 1 ? "at most once" : `at most ${step.limit} times`;
-  const otherwise = `If it does not pass, send it back with send to the piece's own session for ${quoted(step.backTo)}, with what the review found, resuming that session first with start if it was stopped${through}. Then review it again for ${quoted(step.name)}, with a new review naming the same work or a line to the reviewer. Send a piece back ${times}; after that, stop and ask the user, and start another round only if they want one.`;
-  return `${lead}, ${placeText(step)}. ${passes} ${otherwise}`;
+  const otherwise = `If it does not pass, send it back with send to the piece's own session for ${quoted(step.backTo)}, with what the review found, resuming that session first with start if it is not running, or starting one for ${quoted(step.backTo)} that names it with work if you stopped it${through}. Then review it again for ${quoted(step.name)}, with a new review naming the same work or a line to the reviewer. Send a piece back ${times}; after that, stop and ask the user, and start another round only if they want one.`;
+  return `${lead}, ${placeText(step)}. ${passes} Once it passes, stop its review. ${otherwise}`;
 }
 
 /** The instructions as sentences, one per line of the list. */

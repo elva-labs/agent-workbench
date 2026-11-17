@@ -272,6 +272,11 @@ pub struct Settings {
     pub notifications: bool,
     /// Whether it says so with a chime as well.
     pub chime: bool,
+    /// Whether the user is asked before every session another session
+    /// starts, one in the starter's own project included. Off, a start in
+    /// the starter's own project on its agent and account is not asked.
+    #[serde(default)]
+    pub ask_every_start: bool,
     /// What the file holds that is not used. Not a setting: it is read from the file and written back to it.
     #[serde(default)]
     pub unread_entries: Vec<UnreadEntry>,
@@ -301,6 +306,7 @@ impl Default for Settings {
             user_styles: false,
             notifications: true,
             chime: false,
+            ask_every_start: false,
             unread_entries: Vec::new(),
         }
     }
@@ -1096,6 +1102,9 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             settings.notifications = value.as_bool().ok_or("notifications is true or false")?;
         }
         "chime" => settings.chime = value.as_bool().ok_or("chime is true or false")?,
+        "askEveryStart" => {
+            settings.ask_every_start = value.as_bool().ok_or("askEveryStart is true or false")?;
+        }
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => {
@@ -2947,6 +2956,22 @@ mod tests {
         let next = apply(&Settings::default(), &json!({ "userStyles": true })).unwrap();
         assert!(next.user_styles);
         assert!(apply(&next, &json!({ "userStyles": "yes" })).is_err());
+    }
+
+    #[test]
+    fn every_start_is_asked_only_once_turned_on() {
+        let defaults = Settings::default();
+        assert!(!defaults.ask_every_start);
+        let next = apply(&defaults, &json!({ "askEveryStart": true })).unwrap();
+        assert!(next.ask_every_start);
+        assert!(apply(&next, &json!({ "askEveryStart": "yes" })).is_err());
+        assert!(
+            parse(r#"{ "askEveryStart": true }"#)
+                .unwrap()
+                .ask_every_start
+        );
+        // A file from before the setting reads as off.
+        assert!(!parse(r#"{ "chime": true }"#).unwrap().ask_every_start);
     }
 
     #[test]

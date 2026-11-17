@@ -538,7 +538,6 @@ test("the dock's round question stands inside the agent's card, clear of its cor
   const conversation = page.locator("[data-testid='conversation'].active");
   await expect(conversation.getByTestId("composer-input")).toBeEnabled();
   await conduct("c-start", { name: "Fix the cache", step: "Work" });
-  await page.getByTestId("conduct-allow").click();
   await expect.poll(() => answered("c-start")).toBe(true);
   for (const id of ["c-2", "c-3"]) {
     await conduct(id, { step: "Review", work: "integrated-session-2" });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, refuse, resetConductor, STOP_WHEN_DONE, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
 import { byKey, close, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
@@ -13,6 +13,7 @@ import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken, wakeShown } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { keepMode, resetModes } from "$lib/sessionModes";
 import { BOUNDED, FORGED } from "../forgedName";
 
 // The orchestrator's tools with a session that runs integrated: it is
@@ -96,6 +97,7 @@ beforeEach(async () => {
     projectInfo: async (path: string) => ({ path, name: "one", repository: path, isGit: true }),
     transcriptsMany: async (projects: string[]) => projects.map(() => []),
     worktrees: async () => [],
+    worktreeAdd: async (project: string, name: string) => `${project}/.worktrees/${name}`,
     kill: async () => {},
     write: async () => {},
     setWindowTitle: async () => {},
@@ -294,7 +296,80 @@ describe("the orchestrator's tools with an integrated session", () => {
     fake.turn(core, "All done.");
     flushSync();
     await waited;
-    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."`);
+    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."\n${STOP_WHEN_DONE}`);
+  });
+
+  describe("a start in an integrated caller's own project", () => {
+    /** A start from the caller in its own project, with whether it was
+        put to the user; refused there when it was. */
+    async function startHere(token: string, prompt: string): Promise<boolean> {
+      const request = { ...call("start", { project: A, prompt }), session: token };
+      const answering = handle(request);
+      await settle();
+      if (conductor.asking !== null) {
+        refuse();
+        await answering;
+        return true;
+      }
+      const row = forProject(A).at(-1)!;
+      await launch(row.key);
+      flushSync();
+      await answering;
+      expect(answerTo(request)?.error).toBeNull();
+      return false;
+    }
+
+    /** The integrated start the fake core was last asked for. */
+    const lastStart = () =>
+      (fake.calls.filter((made) => made.method === "start").at(-1) as { options: { mode?: string; configDir?: string; cwd?: string } })
+        .options;
+
+    it("goes ahead unasked, and starts the session in the caller's mode whatever it is", async () => {
+      setKind("claude-code", "integrated");
+      const caller = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
+      await launch(caller.key);
+      const token = byKey(caller.key)!.token;
+      expect(conversationOf(caller.key).settings.mode).toBe("default");
+      expect(await startHere(token, "Scan the history")).toBe(false);
+      expect(lastStart().mode).toBe("default");
+      conversationOf(caller.key).settings = { ...conversationOf(caller.key).settings, mode: "plan" };
+      expect(await startHere(token, "Scan it again")).toBe(false);
+      expect(lastStart().mode).toBe("plan");
+    });
+
+    it("asks nothing of a caller in Auto after a restart, and starts its session in a worktree in Auto", async () => {
+      // Every project runs under the Work account, whose settings name no
+      // mode, and the caller's conversation last ran in Auto on its chip.
+      accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+      accounts.everywhere = "Work";
+      setKind("claude-code", "integrated");
+      keepMode("lead-conversation", "auto", true);
+      // The window starts again, and the caller goes on in that mode.
+      resetModes();
+      const caller = create(A, "lead-conversation", "claude-code", null, null, null, "Work", undefined, "integrated");
+      await launch(caller.key);
+      expect(lastStart().mode).toBe("auto");
+      expect(conversationOf(caller.key).settings.mode).toBe("auto");
+      const request = { ...call("start", { project: A, prompt: "Look through the log", worktree: true }), session: byKey(caller.key)!.token };
+      const answering = handle(request);
+      await settle();
+      expect(conductor.asking).toBeNull();
+      const row = forProject(A).at(-1)!;
+      expect(row.account).toBe("Work");
+      await launch(row.key);
+      flushSync();
+      await answering;
+      expect(answerTo(request)?.error).toBeNull();
+      expect(lastStart()).toMatchObject({ mode: "auto", configDir: "~/.claude-work", cwd: `${A}/.worktrees/look-through-the-log` });
+      expect(conversationOf(row.key).settings.mode).toBe("auto");
+    });
+
+    it("takes a line that begins with ! as words for an integrated session", async () => {
+      const { id } = await own();
+      const request = call("send", { session: id, text: "!ls" });
+      await handle(request);
+      expect(answerTo(request)?.error).toBeNull();
+    });
   });
 
   describe("the account it runs under", () => {
@@ -334,12 +409,12 @@ describe("the orchestrator's tools with an integrated session", () => {
       // under another account.
       const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "terminal");
       started(caller.key, "pty-caller", "caller-1");
-      const { named, row, configDir, answer } = await startFrom(caller.token, A);
+      const { named, row, configDir, answer } = await startFrom(caller.token, B);
       expect(named).toMatchObject({ label: "Work", projects: false, bare: null });
       expect(row.kind).toBe("integrated");
       expect(row.account).toBe("Work");
       expect(configDir).toBe("~/.claude-work");
-      expect(answer.content).toContain(`in ${A}, under the Work account. It has the prompt.`);
+      expect(answer.content).toContain(`in ${B}, under the Work account. It has the prompt.`);
     });
 
     it("is the account chosen for an integrated caller, placed by its token", async () => {
@@ -576,7 +651,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       kid.working = false;
       flushSync();
       await waited;
-      expect(answerTo(later)?.content).toBe("Session kid-1 stopped working. It has left no line.");
+      expect(answerTo(later)?.content).toBe(`Session kid-1 stopped working. It has left no line.\n${STOP_WHEN_DONE}`);
     });
 
     it("ends a wait it holds, so the user's message is not held behind it, and says what is still out", async () => {
@@ -609,7 +684,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     );
     const stopped = call("stop", { session: id });
     await handle(stopped);
-    expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}.`);
+    expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}. It is off your list now, and not offered to resume.`);
     expect(byKey(key)).toBeNull();
     expect(forProject(A)).toHaveLength(0);
   });
