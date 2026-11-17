@@ -282,9 +282,10 @@ or integrated, the conversation drawn by the window, a terminal to begin
 with. An agent the core says it can drive in messages offers the choice,
 and the tab says an agent that runs only in a terminal does. A session
 that follows a workflow runs the way its orchestrator's agent is set, as
-any other does. The tab says under the choice that a change applies to
-sessions started after it, and that one already running is moved with
-Reopen, from a right click on its row. A single new session can be
+any other does. A change moves the sessions already open as well, each
+once it is at rest and on screen, as [sessions](sessions.md#when-the-setting-is-switched)
+describes, and the tab says so under the choice, with how to move one that
+says on its row that it stays. A single new session can be
 started the other way from a project's ⋯ menu, the palette or the agent
 pane. What an integrated session is like is in
 [sessions](sessions.md#integrated-sessions), and the mode it starts in,
