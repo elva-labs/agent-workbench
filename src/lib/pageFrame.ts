@@ -164,16 +164,25 @@ export function cutMiddle(text: string, length = NAME_LENGTH): string {
   return `${text.slice(0, head)}…${text.slice(text.length - tail)}`;
 }
 
-/** What the window calls something a page named: its address, never words
-    of the page's own, as it reads from the page's folder (`shots/a.png`,
-    `../up.png`) or whole when it is anywhere else, and cut in the middle
-    past `NAME_LENGTH`. */
-export function addressOf(url: string, base: string | null): string {
-  let shown = url;
-  if (base !== null && url.startsWith(base)) shown = url.slice(base.length);
-  else if (base !== null && url.startsWith(filesRoot(base)))
-    shown = `../${url.slice(filesRoot(base).length)}`;
-  return cutMiddle(shown);
+/** What the window calls something a page named, from its address alone:
+    the path in the page's folder, decoded (`shots/b c.png`), or above it
+    on the files' own host (`../up.png`), which says no more than a path
+    in the folder could; and for anywhere else only its scheme and host
+    (`https://cdn.example.com`), which can carry no sentence. Cut in the
+    middle past `NAME_LENGTH`. Null when the address does not parse, and
+    the window then shows nothing of it. */
+export function addressOf(url: string, base: string | null): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const href = parsed.href;
+  if (base !== null && href.startsWith(base)) return cutMiddle(fileOf(href, base));
+  if (base !== null && href.startsWith(filesRoot(base)))
+    return cutMiddle(`../${fileOf(href, filesRoot(base))}`);
+  return cutMiddle(parsed.host === "" ? parsed.protocol : `${parsed.protocol}//${parsed.host}`);
 }
 
 /** A file in the page's folder as the page named it, decoded, from the

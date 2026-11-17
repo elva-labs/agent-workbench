@@ -111,7 +111,8 @@
       Why a file in the folder did not load is for the user alone, since a
       script in the page can ask about any name it likes. */
   async function tell(url: string, how: string) {
-    if (asked.has(url)) return;
+    const name = addressOf(url, own);
+    if (name === null || asked.has(url)) return;
     if (asked.size >= ANSWERED) {
       uncounted += 1;
       return;
@@ -119,7 +120,6 @@
     asked.add(url);
     const drawn = srcdoc;
     const plain = plainWhy(url, how, own);
-    const name = addressOf(url, own);
     inner()?.postMessage({ workbenchWhy: { url, name, why: plain ?? "did not load" } }, "*");
     let why = plain ?? "is outside the page's folder";
     if (plain === null && own !== null) {
@@ -148,9 +148,14 @@
       cannot open one on its own. */
   function open(link: string) {
     if (own === null || link === "" || document.activeElement !== frame || !activated()) return;
-    const url = new URL(link, own).href;
-    if (!url.startsWith(own)) return;
+    let url: string;
+    try {
+      url = new URL(link, own).href;
+    } catch {
+      return;
+    }
     const name = addressOf(url, own);
+    if (!url.startsWith(own) || name === null) return;
     const file = fileOf(url, own);
     const kind = openedKind(file);
     if (kind === null) {

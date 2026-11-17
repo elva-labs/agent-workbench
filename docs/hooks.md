@@ -244,9 +244,11 @@ kind, and any file at all for a page that sits in the home directory or
 above it are not served, and a page's scripts can read none of the files'
 bytes.
 
-What the page names and cannot load is listed under it by its address,
-with the reason, and an image among those is drawn over with its address
-and that it did not load. Why a file in the folder did not load, which
+What the page names and cannot load is listed under it with the reason,
+named by its path in the page's folder or, anywhere else, by its host
+alone, so nothing the page writes reads as the app speaking; an address
+that does not parse is not listed. An image among those is drawn over with
+that name and that it did not load. Why a file in the folder did not load, which
 only the files' machine can say, is in the list alone: a script in the
 page could ask about any name, and the list is out of its reach. A link to
 a picture, a film or a sound in the folder opens it over the window when

