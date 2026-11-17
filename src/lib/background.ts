@@ -477,7 +477,11 @@ export function luminance([r, g, b]: Rgb): number {
 export const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 
 /** Two colours mixed in sRGB, as CSS's color-mix in srgb does. */
-export const mix = (a: Rgb, b: Rgb, t: number): Rgb => a.map((value, at) => value + (b[at] - value) * t) as Rgb;
+export const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
 
 function mixLch(A: Lab, B: Lab, t: number): Lab {
   const [La, Ca, ha] = labToLch(A);
@@ -608,11 +612,18 @@ const GLOW_PLACES = 24;
 
 /** The gradient as pixels, RGBA, for an image stretched over the window.
     Its colours are worked out once, at places along the run and, with a
-    third colour, at strengths of its glow. The whole is dithered by half a
+    third colour, at strengths of its glow, as many of each as `worked`
+    asks: RUN_PLACES and GLOW_PLACES unless an image drawn coarsely while
+    the background moves asks for fewer. The whole is dithered by half a
     step, so a soft run does not band. */
-export function gradientPixels(colours: Lab[], width: number, height: number): Uint8ClampedArray {
-  const places = colours.length > 1 ? RUN_PLACES : 1;
-  const strengths = colours.length > 2 ? GLOW_PLACES : 1;
+export function gradientPixels(
+  colours: Lab[],
+  width: number,
+  height: number,
+  worked: { run: number; glow: number } = { run: RUN_PLACES, glow: GLOW_PLACES },
+): Uint8ClampedArray {
+  const places = colours.length > 1 ? worked.run : 1;
+  const strengths = colours.length > 2 ? worked.glow : 1;
   // The colours as RGB: a row of places along the run for each strength.
   const table = new Float64Array(places * strengths * 3);
   for (let place = 0; place < places; place++) {
@@ -829,8 +840,9 @@ function gridOf(at: (u: number, v: number) => Lab, across: number, down: number)
 /** How much of the ink a line lets through so that at its faintest point
     it stands off what is under it by the ratio asked. */
 function lineAmount(under: Rgb[], ink: Rgb, target: number): number {
+  const own = under.map(luminance);
   const stands = (amount: number) =>
-    under.every((colour) => ratio(luminance(mix(colour, ink, amount)), luminance(colour)) >= target);
+    under.every((colour, at) => ratio(luminance(mix(colour, ink, amount)), own[at]) >= target);
   let low = 0;
   let high = 0.6;
   for (let step = 0; step < 16; step++) {

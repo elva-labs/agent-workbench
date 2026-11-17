@@ -1,25 +1,7 @@
 <script module lang="ts">
-  import { paintOf } from "$lib/background";
-
   /** The pad drawn once for each appearance and size, for as long as the
       window is open: every pixel of it is a colour worked out on the way. */
   const drawn = new Map<string, ImageData>();
-
-  /** What a background paints, as the guard works it out, kept for the
-      last few backgrounds asked about: the small windows and the word on
-      the cards ask about the same ones, each time the picker opens. */
-  const worked = new Map<string, ReturnType<typeof paintOf>>();
-
-  function paintedOf(...args: Parameters<typeof paintOf>): ReturnType<typeof paintOf> {
-    const key = JSON.stringify(args);
-    let found = worked.get(key);
-    if (found === undefined) {
-      found = paintOf(...args);
-      worked.set(key, found);
-      if (worked.size > 16) worked.delete(worked.keys().next().value!);
-    }
-    return found;
-  }
 </script>
 
 <script lang="ts">
@@ -49,13 +31,13 @@
     type Dot,
     type Lab,
   } from "$lib/background";
+  import { paintedOf } from "$lib/backgroundPaint";
   import { coloursOf } from "$lib/paletteColours";
   import {
     MORE_CONTRAST,
     PALETTES,
     endPreview,
     previewBackground,
-    previewCards,
     resolvedTheme,
     setBackground,
     setCards,
@@ -168,6 +150,7 @@
 
   onDestroy(() => {
     moreContrast?.removeEventListener?.("change", followContrast);
+    drop();
     if (keepTimer !== null) {
       clearTimeout(keepTimer);
       keep(shownBackground());
@@ -208,11 +191,45 @@
 
   /** Repaints the window with a background without keeping it. */
   function show(background: Background | null) {
+    drop();
     previewBackground(background);
+  }
+
+  /** What a drag or a slider has reached since the last frame, painted
+      once at the next one however many moves arrive before it, so the
+      window keeps up with the pointer and lands where it is. */
+  let waiting: { background: Background | null; cards?: number } | null = null;
+  let frame = 0;
+
+  /** The background as the last move left it, painted or still waiting. */
+  function latest(): Background | null {
+    return waiting === null ? shown : waiting.background;
+  }
+
+  /** Paints a background, and a share of the cards, at the next frame. */
+  function showSoon(background: Background | null, cards?: number) {
+    waiting = { background, cards: cards ?? waiting?.cards };
+    if (frame === 0) frame = requestAnimationFrame(flush);
+  }
+
+  /** Paints what is waiting, at the frame it waited for. */
+  function flush() {
+    frame = 0;
+    const step = waiting;
+    waiting = null;
+    if (step !== null) previewBackground(step.background, step.cards);
+  }
+
+  /** Forgets what is waiting, for a step that paints in its place. */
+  function drop() {
+    if (frame !== 0) cancelAnimationFrame(frame);
+    frame = 0;
+    waiting = null;
   }
 
   /** Keeps a background with the palette, or none. */
   function keep(background: Background | null) {
+    drop();
     if (keepTimer !== null) clearTimeout(keepTimer);
     keepTimer = null;
     setBackground(background);
@@ -261,15 +278,17 @@
   }
 
   function move(event: PointerEvent) {
-    if (dragging < 0 || shown === null) return;
-    show(moveDot(shown, dragging, dotAt(event)));
+    const from = latest();
+    if (dragging < 0 || from === null) return;
+    showSoon(moveDot(from, dragging, dotAt(event)));
   }
 
   function up() {
     if (dragging < 0) return;
+    const reached = latest();
     dragging = -1;
     rim = false;
-    keep(shownBackground());
+    keep(reached);
   }
 
   function dotKeys(event: KeyboardEvent, index: number) {
@@ -357,18 +376,22 @@
   }
 
   function slide(field: "strength" | "grain", event: Event, kept: boolean) {
-    if (shown === null) return;
+    const from = latest();
+    if (from === null) return;
     const value = Number((event.target as HTMLInputElement).value) / 100;
-    const next = { ...shown, [field]: value };
+    const next = { ...from, [field]: value };
     if (kept) keep(next);
-    else show(next);
+    else showSoon(next);
   }
 
   function slideCards(event: Event, kept: boolean) {
-    if (shown === null) return;
+    const from = latest();
+    if (from === null) return;
     const value = Number((event.target as HTMLInputElement).value) / 100;
-    if (kept) setCards(value);
-    else previewCards(value);
+    if (kept) {
+      drop();
+      setCards(value);
+    } else showSoon(from, value);
   }
 
   /** The arrows walk a row of choices and choose as they go, as a row of

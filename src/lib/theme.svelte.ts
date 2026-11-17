@@ -7,7 +7,7 @@ import {
   type Appearance,
   type Background,
 } from "$lib/background";
-import { backgroundCss, imagesOf } from "$lib/backgroundPaint";
+import { backgroundCss, backgroundValues, imagesOf } from "$lib/backgroundPaint";
 import { themeCss, validThemes, type CustomTheme } from "$lib/customThemes";
 import { coloursOf } from "$lib/paletteColours";
 import { persist } from "$lib/persist";
@@ -336,10 +336,11 @@ export function setCards(share: number) {
 }
 
 /** Paints a background being picked in place of the one kept, without
-    keeping it: the window follows the pad as a dot moves. Keeping one, or
-    letting go with endPreview, ends it. */
-export function previewBackground(background: Background | null) {
-  theme.preview = { background, cards: theme.preview?.cards };
+    keeping it, and a share of the cards with it where one is given: the
+    window follows the pad as a dot moves. Keeping one, or letting go with
+    endPreview, ends it. */
+export function previewBackground(background: Background | null, cards?: number) {
+  theme.preview = { background, cards: cards === undefined ? theme.preview?.cards : roundedCards(cards) };
   applyTheme();
 }
 
@@ -476,11 +477,15 @@ type Worked = {
   rough: Appearance[];
   urls: string[];
 };
+
+/** What a background is painted with, sheet or root: the appearances whose
+    gradient is drawn small, and the images it names. */
+type Drawn = { rough: Appearance[]; urls: string[] };
 let worked: Worked | null = null;
 
 /** The sheet the rested stamp stands for, or is waiting to: it goes on
     once every image the sheet names has been decoded. */
-let restedFor: Worked | null = null;
+let restedFor: Drawn | null = null;
 
 /** Settles once the image at `url` can be drawn, or cannot be at all. */
 function decoded(url: string): Promise<void> {
@@ -492,7 +497,7 @@ function decoded(url: string): Promise<void> {
 /** Stamps the background as drawn at rest for the sheet now in place: at
     once where it is still drawn small, as not, and otherwise once its
     images have decoded, unless another sheet has come in the meantime. */
-function stampRested(sheet: Worked | null) {
+function stampRested(sheet: Drawn | null) {
   if (sheet === null || sheet.rough.length > 0) {
     restedFor = null;
     stamp("backgroundRested", null);
@@ -506,19 +511,43 @@ function stampRested(sheet: Worked | null) {
   });
 }
 
+/** What a background being picked is painted with, laid on the root
+    itself as custom properties over the stylesheet, by name, with what it
+    was worked out from, the appearances whose gradient in it is drawn
+    small and the images it names. While a colour or a slider moves the
+    stylesheet stays as it was: in WebKit a stylesheet changed makes the
+    whole window's style and layout be worked out again, every element
+    of it, where a property changed on the root costs only the style of
+    what inherits it. */
+type Laid = Drawn & { from: string; values: Record<string, string> };
+let laid: Laid | null = null;
+
+/** Lays a background being picked on the root, changing only the
+    properties that differ from what is there, or takes it off with null. */
+function layOnRoot(next: Laid | null) {
+  const style = document.documentElement.style;
+  const before = laid?.values ?? {};
+  const after = next?.values ?? {};
+  for (const name of Object.keys(before)) if (!(name in after)) style.removeProperty(`--${name}`);
+  for (const [name, value] of Object.entries(after)) if (before[name] !== value) style.setProperty(`--${name}`, value);
+  laid = next;
+}
+
 /** The stylesheet the background is painted from, worked out from the
     colours the palette or theme paints in each appearance. A gradient not
     yet drawn at full size is drawn small, unless `full` names its
     appearance. Once the background has rested, it is drawn at full size
     one appearance at a time, the one on screen first, so no frame draws
-    two.
+    two. While one is being picked, only the appearance and look on screen
+    are worked out, and laid on the root rather than written into the
+    sheet, which is written once it is kept or let go.
 
     `<html>` carries data-background while a background shows, and
-    data-background-rested once every gradient in its sheet is drawn at
-    full size and every image the sheet names has decoded: from then on
-    its pixels change only when the background, the palette, the
-    appearance or the cards' share does. A test that compares a
-    background's pixels waits for the second. */
+    data-background-rested once every gradient it is painted with is drawn
+    at full size and every image it names has decoded: from then on its
+    pixels change only when the background, the palette, the appearance or
+    the cards' share does. A test that compares a background's pixels
+    waits for the second. */
 function paintBackground(full: readonly Appearance[] = []) {
   if (resting !== null) clearTimeout(resting);
   resting = null;
@@ -535,37 +564,45 @@ function paintBackground(full: readonly Appearance[] = []) {
     stampRested(null);
     stamp("cards", null);
     theme.cardsShown = 0;
+    layOnRoot(null);
     if (sheet.textContent !== "") sheet.textContent = "";
     return;
   }
   const cards = shownCards();
-  const colours = {
-    light: coloursOf(theme.palette, "light", theme.themes),
-    dark: coloursOf(theme.palette, "dark", theme.themes),
-  };
-  // While one is being picked, only what is on screen is worked out.
   const appearance = resolvedTheme();
-  const only = theme.preview === null ? null : { appearance, look: theme.look };
-  const from = JSON.stringify([background, colours, only, cards]);
-  if (worked?.from !== from || worked.rough.some((rough) => full.includes(rough))) {
-    const images = imagesOf(
-      background,
-      only === null ? colours : { [only.appearance]: colours[only.appearance] },
-      full,
-      cards,
-    );
-    const css = backgroundCss(background, colours, images, only, cards);
-    const urls = [images.light, images.dark, images.cardLight ?? null, images.cardDark ?? null, images.grain].filter(
-      (url) => url !== null,
-    );
-    worked = { from, css, rough: images.rough ?? [], urls };
+  let painting: Drawn;
+  if (theme.preview !== null) {
+    const colours = coloursOf(theme.palette, appearance, theme.themes);
+    const from = JSON.stringify([background, colours, appearance, theme.look, cards]);
+    if (laid?.from !== from || laid.rough.some((rough) => full.includes(rough))) {
+      const images = imagesOf(background, { [appearance]: colours }, full, cards);
+      const values = backgroundValues(background, colours, appearance, theme.look, images, cards);
+      const urls = [images[appearance], images.grain, images[appearance === "light" ? "cardLight" : "cardDark"] ?? null];
+      layOnRoot({ from, values, rough: images.rough ?? [], urls: urls.filter((url) => url !== null) });
+    }
+    painting = laid!;
+  } else {
+    const colours = {
+      light: coloursOf(theme.palette, "light", theme.themes),
+      dark: coloursOf(theme.palette, "dark", theme.themes),
+    };
+    const from = JSON.stringify([background, colours, cards]);
+    if (worked?.from !== from || worked.rough.some((rough) => full.includes(rough))) {
+      const images = imagesOf(background, colours, full, cards);
+      const css = backgroundCss(background, colours, images, cards);
+      const urls = [images.light, images.dark, images.cardLight ?? null, images.cardDark ?? null, images.grain].filter(
+        (url) => url !== null,
+      );
+      worked = { from, css, rough: images.rough ?? [], urls };
+    }
+    if (sheet.textContent !== worked.css) sheet.textContent = worked.css;
+    layOnRoot(null);
+    painting = worked;
   }
-  const { css, rough } = worked;
-  if (sheet.textContent !== css) sheet.textContent = css;
-  const next = rough.includes(appearance) ? appearance : rough[0];
+  const next = painting.rough.includes(appearance) ? appearance : painting.rough[0];
   if (next !== undefined) resting = setTimeout(() => paintBackground([next]), REST);
   stamp("background", "");
-  stampRested(worked);
+  stampRested(painting);
   theme.cardsShown = cards;
   stamp("cards", cards > 0 ? "" : null);
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { hexToRgb, luminance, type Background } from "$lib/background";
-import { FULL, backgroundCss, drawImagesWith, imagesOf } from "$lib/backgroundPaint";
+import { FULL, backgroundCss, drawImagesWith, imagesOf, toBmp } from "$lib/backgroundPaint";
 import { coloursOf } from "$lib/paletteColours";
 import {
   adoptTheme,
@@ -46,6 +46,9 @@ function block(css: string, selector: string): Record<string, string> {
 
 const sheet = () => document.getElementById("workbench-background")?.textContent ?? "";
 
+/** A custom property a background being picked lays on the root. */
+const onRoot = (name: string) => document.documentElement.style.getPropertyValue(`--${name}`);
+
 describe("the stylesheet a background is painted from", () => {
   const images = { light: "data:image/png;base64,LIGHT", dark: "data:image/png;base64,DARK", grain: "data:image/png;base64,GRAIN" };
   const css = backgroundCss(LAGOON, colours, images);
@@ -75,12 +78,12 @@ describe("the stylesheet a background is painted from", () => {
   it("names the cards' own gradient above three quarters strength, and the chrome's below", () => {
     const strong = { ...LAGOON, strength: 1 };
     const own = { ...images, cardLight: "data:image/png;base64,CARDLIGHT", cardDark: "data:image/png;base64,CARDDARK" };
-    const sheet = backgroundCss(strong, colours, own, null, 0.1);
+    const sheet = backgroundCss(strong, colours, own, 0.1);
     expect(sheet.split("base64,CARDLIGHT").length - 1).toBe(1);
     const light = block(sheet, ':root[data-background][data-look="modern"]');
     expect(light["tint-card-backdrop"]).toContain("var(--tint-card-image-light)");
     expect(light["tint-backdrop"]).toContain("var(--tint-image-light)");
-    const calm = block(backgroundCss(LAGOON, colours, images, null, 0.1), ':root[data-background][data-look="modern"]');
+    const calm = block(backgroundCss(LAGOON, colours, images, 0.1), ':root[data-background][data-look="modern"]');
     expect(calm["tint-card-backdrop"]).toContain("var(--tint-image-light)");
   });
 
@@ -126,12 +129,35 @@ function drawSizes() {
 
 const sizeOf = (url: string | null) => url?.split("#")[0] ?? null;
 
+describe("the small gradient's BMP", () => {
+  it("holds every pixel as it is, bottom row first, each row padded to four bytes", () => {
+    // Three by two: a top row of red, green and blue, and a grey row under it.
+    const pixels = new Uint8ClampedArray([
+      255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
+      10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255,
+    ]);
+    const url = toBmp(pixels, 3, 2);
+    expect(url.startsWith("data:image/bmp;base64,")).toBe(true);
+    const bytes = Uint8Array.from(atob(url.split(",")[1]), (char) => char.charCodeAt(0));
+    const view = new DataView(bytes.buffer);
+    expect(String.fromCharCode(bytes[0], bytes[1])).toBe("BM");
+    expect(view.getUint32(2, true)).toBe(bytes.length);
+    expect(view.getUint32(10, true)).toBe(54);
+    expect([view.getInt32(18, true), view.getInt32(22, true), view.getUint16(28, true)]).toEqual([3, 2, 24]);
+    // Nine bytes of a row padded to twelve; the bottom row comes first, in
+    // blue, green, red.
+    expect(bytes.length).toBe(54 + 12 * 2);
+    expect([...bytes.subarray(54, 63)]).toEqual([30, 20, 10, 60, 50, 40, 90, 80, 70]);
+    expect([...bytes.subarray(66, 75)]).toEqual([0, 0, 255, 0, 255, 0, 255, 0, 0]);
+  });
+});
+
 describe("the gradient's image", () => {
   beforeEach(drawSizes);
   afterEach(() => drawImagesWith(null));
 
   it("is small while the background moves and full size where asked, and stays full size", () => {
-    const [small, full] = ["192x120", `${FULL.width}x${FULL.height}`];
+    const [small, full] = ["96x60", `${FULL.width}x${FULL.height}`];
     const moving = imagesOf(LAGOON, colours, []);
     expect([sizeOf(moving.light), sizeOf(moving.dark), moving.rough]).toEqual([small, small, ["light", "dark"]]);
     // One appearance at a time.
@@ -164,7 +190,7 @@ describe("the gradient's image", () => {
     // Six more in the other appearance, and it is gone.
     for (const hue of [120, 130, 140, 150, 160, 170]) imagesOf(moved(hue), { dark: colours.dark }, ["dark"]);
     const later = imagesOf(moved(10), { light: colours.light }, []);
-    expect([sizeOf(later.light), later.rough]).toEqual(["192x120", ["light"]]);
+    expect([sizeOf(later.light), later.rough]).toEqual(["96x60", ["light"]]);
   });
 
   it("draws the cards their own gradient in the calm tint above three quarters strength, where they let any through", () => {
@@ -203,7 +229,7 @@ describe("painting the background the palette keeps", () => {
   it("draws the gradient small while it moves and at full size once it has rested", () => {
     vi.useFakeTimers();
     drawSizes();
-    const [small, full] = ["192x120", `${FULL.width}x${FULL.height}`];
+    const [small, full] = ["96x60", `${FULL.width}x${FULL.height}`];
     // The size of the gradient the sheet names for each appearance.
     const images = () =>
       Object.fromEntries(
@@ -228,18 +254,27 @@ describe("painting the background the palette keeps", () => {
     adoptTheme({ palette: "teal", backgrounds: { teal: moved(30) } });
     vi.advanceTimersByTime(REST);
     expect(images()).toEqual({ light: full, dark: full });
-    // A dot dragged on the pad: only the appearance on screen is drawn, and
-    // each move puts the full size off again.
+    // A dot dragged on the pad: only the appearance on screen is drawn,
+    // laid on the root while the sheet stays as it was, and each move puts
+    // the full size off again.
+    const picked = () => /url\("(\d+x\d+)#\d+"\)/.exec(onRoot(`tint-image-${shown}`))?.[1];
+    const kept = sheet();
     previewBackground(moved(40));
-    expect(images()).toEqual({ [shown]: small });
+    expect(picked()).toBe(small);
+    expect(onRoot(`tint-image-${other}`)).toBe("");
+    expect(sheet()).toBe(kept);
     vi.advanceTimersByTime(REST - 1);
     previewBackground(moved(50));
     vi.advanceTimersByTime(REST - 1);
-    expect(images()).toEqual({ [shown]: small });
+    expect(picked()).toBe(small);
     vi.advanceTimersByTime(1);
-    expect(images()).toEqual({ [shown]: full });
-    // Let go, it is kept at full size, and the other appearance follows.
+    expect(picked()).toBe(full);
+    expect(sheet()).toBe(kept);
+    // Let go, it is kept at full size, the root is cleared, and the other
+    // appearance follows.
     setBackground(moved(50));
+    expect(onRoot(`tint-image-${shown}`)).toBe("");
+    expect(document.documentElement.getAttribute("style") ?? "").not.toContain("--tint");
     expect(images()).toEqual({ [shown]: full, [other]: small });
     vi.advanceTimersByTime(REST);
     expect(images()).toEqual({ light: full, dark: full });
@@ -259,7 +294,7 @@ describe("painting the background the palette keeps", () => {
     previewBackground(moved(80));
     expect(rested()).toBeUndefined();
     await vi.waitFor(() => expect(rested()).toBe(""), { timeout: 10 * REST });
-    expect(images()).toEqual([full]);
+    expect(onRoot(`tint-image-${resolvedTheme()}`)).toContain(`url("${full}#`);
     // A repaint with nothing changed leaves it on.
     previewBackground(moved(80));
     expect(rested()).toBe("");
@@ -360,11 +395,11 @@ describe("the stylesheet with cards that let the background through", () => {
   it("writes nothing for the cards while they let nothing through", () => {
     const css = backgroundCss(LAGOON, colours, images);
     expect(css).not.toContain("--tint-card");
-    expect(backgroundCss(LAGOON, colours, images, null, 0)).toBe(css);
+    expect(backgroundCss(LAGOON, colours, images, 0)).toBe(css);
   });
 
   it("paints the cards from the gradient with the grain blurred to a veil, never the speckle", () => {
-    const css = backgroundCss(LAGOON, colours, images, null, 0.25);
+    const css = backgroundCss(LAGOON, colours, images, 0.25);
     const modern = block(css, ':root[data-background][data-look="modern"]');
     expect(modern["tint-card-backdrop"]).toContain("var(--tint-image-light)");
     expect(modern["tint-card-backdrop"]).not.toContain("--tint-grain");
@@ -384,7 +419,7 @@ describe("the stylesheet with cards that let the background through", () => {
   });
 
   it("paints a single colour's cards flat, the veil worked into it", () => {
-    const css = backgroundCss({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" }, colours, images, null, 0.25);
+    const css = backgroundCss({ ...LAGOON, dots: [LAGOON.dots[0]], harmony: "single" }, colours, images, 0.25);
     const modern = block(css, ':root[data-background][data-look="modern"]');
     expect(modern["tint-card-backdrop"]).toMatch(/^linear-gradient\(#[0-9a-f]{6}, #[0-9a-f]{6}\)$/);
   });

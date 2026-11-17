@@ -40,9 +40,10 @@ import {
     a pixel is at most five device pixels across on a window 3840 device
     pixels wide, the whole of a 4K screen or 1920 points on a screen of
     twice the density, and no steps show. While a background moves the
-    gradient is drawn small, which keeps up with the pointer, and at full
-    size once it rests. */
-const MOVING = { width: 192, height: 120 };
+    gradient is drawn small, from as few colours worked out as its pixels
+    need, so a step costs well under a millisecond and the window keeps up
+    with the pointer; it is drawn at full size once it rests. */
+const MOVING = { width: 96, height: 60, table: { run: 96, glow: 8 } };
 export const FULL = { width: 768, height: 480 };
 const GRAIN_TILE = 128;
 
@@ -130,16 +131,49 @@ function valuesOf(painted: Painted, appearance: Appearance, images: Images): Rec
   return out;
 }
 
+/** The custom properties a background paints with in one appearance and
+    look, the images it names among them, as backgroundCss writes them for
+    that appearance and look. */
+export function backgroundValues(
+  background: Background,
+  colours: Record<string, string>,
+  appearance: Appearance,
+  look: Look,
+  images: Images,
+  cards = 0,
+): Record<string, string> {
+  const named: Record<string, string> = {};
+  if (images[appearance] !== null) named[`tint-image-${appearance}`] = `url("${images[appearance]}")`;
+  const card = images[appearance === "light" ? "cardLight" : "cardDark"] ?? null;
+  if (card !== null) named[`tint-card-image-${appearance}`] = `url("${card}")`;
+  if (images.grain !== null) named["tint-grain"] = `url("${images.grain}")`;
+  return { ...named, ...valuesOf(paintedOf(background, look, colours, cards), appearance, images) };
+}
+
+/** What a background paints, as paintOf works it out, kept for the last
+    few asked about: a background being picked is worked out for the
+    window and again for the picker's small window in the same appearance,
+    and each time the picker opens. */
+const worked = new Map<string, Painted>();
+
+export function paintedOf(...args: Parameters<typeof paintOf>): Painted {
+  const key = JSON.stringify(args);
+  let found = worked.get(key);
+  if (found === undefined) {
+    found = paintOf(...args);
+    worked.set(key, found);
+    if (worked.size > 16) worked.delete(worked.keys().next().value!);
+  }
+  return found;
+}
+
 /** The stylesheet for a background: what it paints in each appearance and
     look, worked out for the palette's colours in each appearance, the
-    cards' share included where they let any through. While a background
-    is being picked only the appearance and look on screen are worked out,
-    so the window keeps up with the pointer. */
+    cards' share included where they let any through. */
 export function backgroundCss(
   background: Background,
   colours: Record<Appearance, Record<string, string>>,
   images: Images,
-  only: { appearance: Appearance; look: Look } | null = null,
   cards = 0,
 ): string {
   const named: Record<string, string> = {};
@@ -149,16 +183,12 @@ export function backgroundCss(
   if ((images.cardDark ?? null) !== null) named["tint-card-image-dark"] = `url("${images.cardDark}")`;
   if (images.grain !== null) named["tint-grain"] = `url("${images.grain}")`;
   let css = Object.keys(named).length > 0 ? block(":root[data-background]", named) : "";
-  const looks = only === null ? LOOKS : [only.look];
   const sets = (appearance: Appearance) =>
-    only !== null && only.appearance !== appearance
-      ? []
-      : looks.map(
-          (look) => [look, valuesOf(paintOf(background, look, colours[appearance], cards), appearance, images)] as const,
-        );
+    LOOKS.map(
+      (look) => [look, valuesOf(paintedOf(background, look, colours[appearance], cards), appearance, images)] as const,
+    );
   for (const [look, values] of sets("light")) css += block(SELECTORS[look], values);
   const dark = sets("dark");
-  if (dark.length === 0) return css;
   css += "@media (prefers-color-scheme: dark) {\n";
   for (const [look, values] of dark) css += block(`${SELECTORS[look]}:not([data-theme="light"])`, values, "  ");
   css += "}\n";
@@ -191,6 +221,44 @@ export function drawImagesWith(draw: Draw | null) {
   drawInstead = draw;
   drawn.clear();
   drawnFull.clear();
+}
+
+/** An image as a BMP, written out here: the pixels as they are, bottom row
+    first, three bytes each and every row padded to four. Nothing is
+    compressed, so writing one costs only a pass over its pixels, where a
+    canvas costs a round trip to read its pixels back and a PNG encoder
+    whatever the size; for the small gradient drawn while a background
+    moves that is most of a step. The alpha is left out: every pixel of a
+    gradient is opaque. */
+export function toBmp(pixels: Uint8ClampedArray, width: number, height: number): string {
+  const row = Math.ceil((width * 3) / 4) * 4;
+  const size = 54 + row * height;
+  const bytes = new Uint8Array(size);
+  const view = new DataView(bytes.buffer);
+  bytes[0] = 0x42;
+  bytes[1] = 0x4d;
+  view.setUint32(2, size, true);
+  view.setUint32(10, 54, true);
+  view.setUint32(14, 40, true);
+  view.setInt32(18, width, true);
+  view.setInt32(22, height, true);
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 24, true);
+  view.setUint32(34, row * height, true);
+  view.setInt32(38, 2835, true);
+  view.setInt32(42, 2835, true);
+  for (let y = 0; y < height; y++) {
+    const from = (height - 1 - y) * width * 4;
+    let to = 54 + y * row;
+    for (let x = 0; x < width; x++, to += 3) {
+      bytes[to] = pixels[from + x * 4 + 2];
+      bytes[to + 1] = pixels[from + x * 4 + 1];
+      bytes[to + 2] = pixels[from + x * 4];
+    }
+  }
+  let binary = "";
+  for (let at = 0; at < size; at += 0x8000) binary += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+  return `data:image/bmp;base64,${btoa(binary)}`;
 }
 
 function toUrl(pixels: Uint8ClampedArray, width: number, height: number): string | null {
@@ -247,6 +315,9 @@ export function imagesOf(
   const images: Images = { light: null, dark: null, cardLight: null, cardDark: null, grain: null, rough };
   const draw = drawer();
   if (draw === null) return images;
+  // The small gradient is written out as a BMP rather than drawn on a
+  // canvas, unless a test draws in its place.
+  const drawSmall = drawInstead ?? toBmp;
   const gradient = (appearance: Appearance, colours: Lab[]) => {
     const key = `${appearance}:${colours.map((lab) => lab.map((x) => x.toFixed(4)).join(",")).join("|")}`;
     if (full.includes(appearance) || drawnFull.has(key)) {
@@ -256,7 +327,7 @@ export function imagesOf(
     }
     if (!rough.includes(appearance)) rough.push(appearance);
     return remembered(drawn, 32, key, () =>
-      draw(gradientPixels(colours, MOVING.width, MOVING.height), MOVING.width, MOVING.height),
+      drawSmall(gradientPixels(colours, MOVING.width, MOVING.height, MOVING.table), MOVING.width, MOVING.height),
     );
   };
   if (background.dots.length > 1) {

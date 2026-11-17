@@ -87,11 +87,13 @@ it.
 
 The section has a colour pad. A colour's angle on the pad is its hue and
 its distance from the centre how much colour it has. A click places the
-first colour, and dragging a colour repaints the window as it moves; what
-is let go of is kept. While a colour moves, the gradient is drawn coarser
-so the window keeps up with the pointer, and a moment after it stops the
-gradient is drawn again finely enough that no steps show where the colour
-changes steeply, on a 4K screen or a screen of twice the density. A
+first colour, and dragging a colour repaints the window as it moves, once
+a frame, wherever the pointer has got to; what is let go of is kept, and
+only then written to the settings file. The sliders repaint the same way.
+While a colour moves, the gradient is drawn coarser so the window keeps up
+with the pointer, and a moment after it stops the gradient is drawn again
+finely enough that no steps show where the colour changes steeply, on a 4K
+screen or a screen of twice the density. A
 harmony keeps the colours a fixed turn of the hue apart: single holds
 one, complementary two opposite each other, analogous
 three close together, 50 degrees either side of the first, and triad three

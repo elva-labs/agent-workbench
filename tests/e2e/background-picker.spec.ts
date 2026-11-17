@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, backgroundAtRest, installFakeCore } from "./fake";
 
 /**
  * The background picker by pointer: placing a colour on the pad and
@@ -59,6 +59,10 @@ test("places a colour where the pad is clicked, and keeps it", async ({ page }) 
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" });
 });
 
+/** The ground the window paints behind the sessions pane, as worked out. */
+const ground = (page: Page) =>
+  page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--tint-backdrop").trim());
+
 test("repaints the window as a dot is dragged, and keeps it when let go", async ({ page }) => {
   await open(page, { backgrounds: { teal: { dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" } } });
   const centre = await pad(page);
@@ -67,11 +71,12 @@ test("repaints the window as a dot is dragged, and keeps it when let go", async 
   await page.mouse.down();
   // Straight down from the centre is a quarter turn of hue.
   await page.mouse.move(centre.x, centre.y + centre.r * 0.8, { steps: 6 });
-  const painting = await page.evaluate(() => document.getElementById("workbench-background")?.textContent ?? "");
+  await expect.poll(() => ground(page)).not.toBe("");
+  const painting = await ground(page);
   expect(await kept(page)).toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }] });
   await page.mouse.move(centre.x, centre.y + centre.r * 0.9);
-  const later = await page.evaluate(() => document.getElementById("workbench-background")?.textContent ?? "");
-  expect(later).not.toBe(painting);
+  // Painted at the next frame, wherever the pointer is by then.
+  await expect.poll(() => ground(page)).not.toBe(painting);
   await page.mouse.up();
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 90, chroma: 0.9 }] });
   // Past the rim the dot stays on it, and says why.
@@ -83,6 +88,42 @@ test("repaints the window as a dot is dragged, and keeps it when let go", async 
   expect(Math.hypot(held.x, held.y)).toBeCloseTo(1, 1);
   await page.mouse.up();
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 90, chroma: 1 }] });
+});
+
+// In WebKit a stylesheet changed makes the whole window's style and layout
+// be worked out again, which with a day's work open held a step of a drag
+// for most of 30 ms: a colour being dragged is laid on the root, and the
+// sheet is written once, when it is let go.
+test("paints a dragged colour without writing the background's sheet, and writes it once let go", async ({ page }) => {
+  await open(page, { backgrounds: { teal: { dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" } } });
+  await backgroundAtRest(page);
+  await page.evaluate(() => {
+    const w = window as unknown as { __sheetWrites: number };
+    w.__sheetWrites = 0;
+    new MutationObserver((changes) => (w.__sheetWrites += changes.length)).observe(
+      document.getElementById("workbench-background")!,
+      { childList: true, characterData: true, subtree: true },
+    );
+  });
+  const writes = () => page.evaluate(() => (window as unknown as { __sheetWrites: number }).__sheetWrites);
+  const onRoot = () => page.evaluate(() => document.documentElement.style.getPropertyValue("--tint-backdrop"));
+  const centre = await pad(page);
+  const start = await dotAt(page, 0);
+  await page.mouse.move(centre.x + start.x * centre.r, centre.y + start.y * centre.r);
+  await page.mouse.down();
+  for (let step = 1; step <= 12; step++) {
+    const angle = (step / 12) * Math.PI;
+    await page.mouse.move(centre.x + Math.cos(angle) * centre.r * 0.7, centre.y + Math.sin(angle) * centre.r * 0.7);
+  }
+  await expect.poll(onRoot).not.toBe("");
+  const during = await onRoot();
+  await page.mouse.move(centre.x - centre.r * 0.7, centre.y - centre.r * 0.2);
+  await expect.poll(onRoot).not.toBe(during);
+  expect(await writes()).toBe(0);
+  await page.mouse.up();
+  await expect.poll(writes).toBeGreaterThan(0);
+  await expect.poll(onRoot).toBe("");
+  await expect.poll(() => kept(page)).not.toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }] });
 });
 
 test("spreads a harmony from the first colour, and carries the others with it", async ({ page }) => {
