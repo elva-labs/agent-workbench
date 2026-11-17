@@ -33,21 +33,23 @@ const HISTORY = /formerly|was called|earlier name/i;
 /** Files that name the old app on purpose throughout. */
 const SKIP = new Set(["scripts/chord-words.mjs", "src-tauri/windows/hooks.nsh"]);
 
-/** What still names the app the old way, and why it stays, the first that
-    matches a line. */
+/** What still names the app the old way, and why it stays: the first rule
+    whose pattern matches a line, in a file its path picks when it names
+    one. */
+const SERVER = "the tool server's name, which agents' tool names and saved rules hold";
 const KEPT = [
   [/com\.elva-labs\.agent-workbench/, "the bundle identifier, which the window's storage, notifications and grants are kept under"],
   [/elva-labs\/agent-workbench/, "the repository's name"],
   [/\.agent-workbench|agent-workbench-pair|agent-workbench-\{what\}/, "the home folder, and scratch files named like it"],
   [/agent-workbench-remote|AgentWorkbenchRemote|AGENT_WORKBENCH_VERSION/, "the daemon, its formula and its install script's variable"],
-  [/agent-workbench@beta|cask: \[?"agent-workbench|Casks\/agent-workbench|--cask agent-workbench|cask "agent-workbench|cask is still `agent-workbench`/, "the old casks, which the new ones conflict with or replace"],
-  [/mcp__agent[-_]workbench|"agent-workbench"|agent_workbench|SERVER_NAME|TOOL_SERVER|CLIENT_NAME|= "agent-workbench"|agent-workbench\/wait|\["agent-workbench"\]/, "the tool server's name, which agents' tool names and saved rules hold"],
+  [/agent-workbench@beta|cask: \[?"agent-workbench|Casks\/agent-workbench|--cask agent-workbench|cask "agent-workbench|cask is still `agent-workbench`|"agent-workbench": "chord"/, "the old casks, which the new ones conflict with or replace"],
+  [/"(conflicts|replaces|provides|obsoletes)": \["agent-workbench"\]/, "the Linux package the app had under its earlier name, which Chord's replaces"],
+  [/agent-workbench`? line|AAAA agent-workbench|"agent-workbench\\n"|restrict \{\} agent-workbench|^\s*"agent-workbench",$/, "the comment on the daemon's line in authorized_keys, which pairing finds its own line by", /pair\.rs$|remote\.md$|agent-workbench-remote\.rs$/],
+  [/^name = "agent-workbench"|^\s*"name": "agent-workbench",$|agent_workbench_lib/, "crate and package names", /Cargo\.(toml|lock)$|package(-lock)?\.json$|src-tauri\/(src|tests)\//],
+  [/target\/\w+\/agent-workbench|<string>agent-workbench<|agent-workbench-driver|"agent-workbench(\.exe)?"|"agent-workbench", "\."/, "the binary the app's crate builds, and a test's scratch folder named like it", /harness\.ts$|launch\.rs$|testing\.md$|driver\.sh$|smoke\.sh$|scripts\//],
+  [/mcp__agent[-_]workbench|"agent-workbench"|agent_workbench|SERVER_NAME|TOOL_SERVER|CLIENT_NAME|agent-workbench\/(wait|start)/, SERVER],
   [/agent-workbench1/, "the embedded browser's data store, which holds its sign-ins"],
-  [/name = "agent-workbench"|agent_workbench_lib|"name": "agent-workbench"|agent-workbench",$|\["agent-workbench"|"agent-workbench", "\."|"agent-workbench"\]/, "crate and package names, and the binary they build"],
-  [/target\/\w+\/agent-workbench|<string>agent-workbench<|agent-workbench-driver/, "the binary the app's crate builds, and a test's scratch folder named like it"],
-  [/agent-workbench`? line|AAAA agent-workbench|"agent-workbench\\n"/, "the comment on the daemon's line in authorized_keys, which pairing finds its own line by"],
   [/"agent-workbench\/[0-9]/, "Codex's user agent, which echoes the name the app gives Codex in its handshake"],
-  [/agent-workbench\/start/, "the tool server's name, which agents' tool names and saved rules hold"],
   [/agent-workbench-plugins/, "a project folder's name"],
   [HISTORY, "says what the app was called before"],
 ];
@@ -83,7 +85,7 @@ for (const file of files) {
   (check ? lines : after).forEach((line, index) => {
     if (!OLD.test(line)) return;
     const where = `${file}:${index + 1}`;
-    const reason = KEPT.find(([pattern]) => pattern.test(line))?.[1];
+    const reason = KEPT.find(([pattern, , path]) => pattern.test(line) && (path === undefined || path.test(file)))?.[1];
     if (reason === undefined) unexplained.push(`${where}: ${line.trim()}`);
     else kept.set(reason, [...(kept.get(reason) ?? []), where]);
   });
