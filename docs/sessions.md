@@ -493,9 +493,11 @@ worktree.
 ## Integrated sessions
 
 How an agent's sessions run is a setting per agent, a terminal to begin
-with; see [settings](settings.md#sessions). An agent runs integrated only
-where the core says it can drive it in messages, and the rest run in a
-terminal. A session under a
+with; see [settings](settings.md#sessions). Switching it moves the
+sessions already open, as [when the setting is
+switched](#when-the-setting-is-switched) describes. An agent runs
+integrated only where the core says it can drive it in messages, and the
+rest run in a terminal. A session under a
 [workflow](orchestrator.md#following-a-workflow) runs the way the setting
 of its orchestrator's agent says, as any session does, and is told the
 workflow either way; so does a resumed one. A single new
@@ -523,12 +525,20 @@ session and, once its process has ended, resumes the same conversation the
 other way in the same row, with its name, its token, its place, its shells
 and the sessions it started, so the tools of the session and those of a
 session that started it go on naming it. The prompt a started session
-began with is not given again. The row stays live throughout: nothing
+began with is not given again. A conversation nothing was said in has
+nothing for its agent to resume, and starts afresh the other way, in the
+mode kept for it. The row stays live throughout: nothing
 watching it, a wait of the session that started it among them, hears that
 it ended, and such a wait counts it as at work until its next run is up.
-In the middle of a turn the pane asks first, at the top of the pane above
-the field that opens go to, where it asks before closing busy shells. A
-row left from the last quit only changes the way it will start.
+A line another session sends it meanwhile goes to the next run. While a
+terminal session's agent is quit, the pane shows `Reopening as a
+conversation…` where its terminal was. In the middle of a turn, where
+the run would end a command it left running in the background or what was
+allowed for its session alone, or where a conversation went back to a point
+a terminal does not take, the pane asks first, saying what reopening ends
+or brings back, at the top of the pane above the field that opens go to, where it
+asks before closing busy shells. A row left from the last quit only
+changes the way it will start.
 
 A terminal Claude Code session is quit as the user would quit it, with
 Ctrl+C a press at a time. Claude Code writes down the mode it resumed a
@@ -979,6 +989,72 @@ its own name, who sent each message and when, and the line where a resumed
 run began. That holds for an orchestrator's sessions and for an integrated
 session another session started, which comes back under its starter, as
 after a restart, when it waits to be resumed like any other.
+
+### When the setting is switched
+
+The sessions already open follow a switch of the setting: each that runs
+the other way moves, as a reopen from its menu does, with its
+conversation, its name, its token, its account, its mode, its worktree,
+the session that started it and those it started, whether it was read,
+and its place and its time in the list. A row left from the last quit has
+nothing running, and only changes the way it will start. A running session
+moves once it has been at rest for a moment, wherever it rested, so a rest
+that the next turn follows at once is not taken for one, and once it is on
+screen with nothing over it: the moment it is opened, or for the one on
+screen, as the settings close. A session out of sight waits until it is
+shown, as a row left from the last quit waits to start, since starting
+every agent at once is a burst of work for sessions nobody is looking at.
+
+The switch never cuts a session short. One at work, asking for a
+permission or a question, with messages waiting for its turn, with
+subagents at work, watched by a wait of the session that started it,
+about to be woken by the workbench, or with words in its composer or on
+its terminal's line goes on as it is, its row and its pane showing it as
+they always do, and moves once all of that is over. Nor is a session moved
+under its reader: one that comes to rest, or is let go of by what held it,
+while it is on screen stays as it is until it is next shown, and its
+second line says so, as in `Moves to a terminal next time`.
+
+What a run ends with it is never ended unasked. A session with a command
+it left running in the background moves once the command ends, and its
+second line says when, as in `Moves to a terminal when npm run dev ends`,
+while its tooltip says that moving it now ends the command. One that holds
+what never ends by itself stays as it is, and its second line says why:
+
+- something allowed, in a conversation, for the rest of that session
+  alone, as in `Stays a conversation: moving ends Bash(npm test)`. A
+  permission mode allowed for the session is not among these, since the
+  mode goes on with the conversation, and what a terminal allowed for its
+  session alone is not seen by the window, so it is not counted;
+- a Claude Code session in a terminal, in a project whose hooks are off,
+  says live updates are off: its output cannot tell a long quiet command
+  from rest;
+- a Claude Code conversation that went back to an earlier message, which
+  is held at that point until a message is sent from there, says `Stays a
+  conversation: it went back, and a terminal would bring back what was
+  gone back on`, since Claude Code's terminal does not take the point.
+  Whether a conversation is held is the core's to say; where the core does
+  not hold conversations, none is.
+
+Where the second line holds what the agent left, a word of it takes the
+place of the model, and a session another started says it where its model
+stands; either way the tooltip has the whole. Reopen from the row's menu
+moves any of them now, and asks first, saying what it ends or, for a held
+conversation, that the terminal brings back what was gone back on, which
+on a yes it does.
+
+A session the user started the other way, or reopened the other way from
+its menu, runs its own way, and a later switch leaves it as it is, since
+the user chose that for the session. Reopened back to the setting's way, it
+follows the setting again. Which sessions run their own way is kept with
+the record of those open, so it holds after a restart; a record from a
+version before says nothing, and its sessions follow the setting. So is a
+move not yet made when the app quits: the row comes back as it was and
+starts the new way when it is woken, so it never starts one way and moves
+a moment later, even before the window has the setting again. A
+session that has ended stays as it ended, and an agent that runs only in a
+terminal has nothing to move. A session on another machine moves as one
+here does.
 
 ## Dropping files
 

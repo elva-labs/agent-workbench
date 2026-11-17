@@ -222,6 +222,11 @@ export async function typeWhole(
     a line `send` types and a wake never run into each other. */
 const typing = new Map<string, Promise<void>>();
 
+/** Whether a line is being typed into the session's terminal. */
+export function typingInto(key: string): boolean {
+  return typing.has(key);
+}
+
 /** Types a line into a session the way a person does: the text, whole, and
     then Enter on its own, after any other line being typed into it. The
     agent has been spoken to, as by a line typed into its terminal. `held`,
@@ -986,6 +991,16 @@ interface Held {
 
 /** The waits being held, by call. */
 const waiting = new Map<string, Held>();
+/** Whether a wait another session holds watches this row: what it waits
+    to hear of the session must not be cut short. */
+export function waitedOn(key: string): boolean {
+  // The waits held, as each caller counts them, so whoever asks hears
+  // when one is taken up or let go.
+  if (Object.values(conductor.listening).length === 0) return false;
+  for (const wait of waiting.values()) if (wait.watched.includes(key)) return true;
+  return false;
+}
+
 /** Calls given up on by the agent: their answer is not written. */
 const given = new Set<string>();
 /** Callers whose last wait was given up on, as the user's message cutting
@@ -1638,6 +1653,10 @@ export function unheard(session: Session): Session[] {
  * leaves it untold. A rest the window did not see begin wakes no one.
  */
 
+/** How long a line sent to a session being reopened waits for its next
+    run to be up. */
+const MOVE_WAIT = 30_000;
+
 /** The most times a starter is woken with no turn between that the
     workbench did not start. */
 export const WAKES_MAX = 5;
@@ -1654,9 +1673,11 @@ const waking = new Set<string>();
     a wake typed into a terminal up if that turn has not begun in time. */
 const wakeTurns = new Map<string, ReturnType<typeof setTimeout> | null>();
 
-/** Whether a session is idle in the way a wake asks. */
+/** Whether a session is idle in the way a wake asks. A run being moved the
+    other way is on its way out, and the next run takes the wake. */
 function idle(starter: Session): boolean {
   if (starter.status !== "running" || starter.working || starter.needs !== null) return false;
+  if (reopeningRow(starter.key)) return false;
   if (starter.turnEnd !== "done") return false;
   if ((conductor.listening[starter.token] ?? 0) > 0) return false;
   if (starter.kind === "integrated")
@@ -1827,6 +1848,13 @@ function forgetWoken() {
     if (row === null || (isViewed(row) && !row.working && !wakeTurns.has(key))) delete conductor.woken[key];
   }
   for (const key of Object.keys(conductor.wakesInRow)) if (byKey(key) === null) delete conductor.wakesInRow[key];
+}
+
+/** Whether a wake is on its way to a starter: set to go, or being typed or
+    sent. */
+export function wakeComing(key: string): boolean {
+  void heard.version;
+  return wakes.has(key) || waking.has(key) || wakeTurns.has(key);
 }
 
 /** Whether the workbench has stopped waking a starter, having woken it as
@@ -2728,6 +2756,19 @@ async function sendText(request: Placed): Promise<Answered> {
     return refused(entry === null ? `The workbench has no session ${id}.` : notRunning(entry));
   }
   if (!mine(request, session)) return notMine(id);
+  // A session being reopened the other way takes the line once its next
+  // run is up, the way it then runs.
+  if (
+    reopeningRow(session.key) &&
+    !(await settles<boolean>(
+      (settle) => {
+        if (!reopeningRow(session.key)) settle(true);
+      },
+      MOVE_WAIT,
+      false,
+    ))
+  )
+    return refused(`Session ${id} is being reopened and is not up yet. Send it again in a moment.`);
   // An integrated session takes the message whole, as the user's own; one
   // sent while it works waits for its turn. A terminal one takes a line.
   const integrated = session.kind === "integrated";

@@ -17,6 +17,9 @@ export type SessionKind = "terminal" | "integrated";
 export const sessionKinds = $state({
   /** The agents whose sessions run integrated. */
   integrated: [] as AgentId[],
+  /** The core's word has been taken: until then the setting is not known,
+      and every agent reads as a terminal. */
+  known: false,
 });
 
 /** Whether the core said it can drive the agent in messages. */
@@ -47,9 +50,11 @@ export function sessionKindSettings(): Pick<Settings, "integrated"> {
 export function adoptSessionKinds(integrated: unknown) {
   const named = Array.isArray(integrated) ? integrated : [];
   sessionKinds.integrated = AGENTS.filter((id) => named.includes(id));
+  sessionKinds.known = true;
 }
 
-/** Sets how the agent's sessions run, from the next one started. */
+/** Sets how the agent's sessions run: the next one started, and the open
+    ones that follow the setting, which move as `followSetting` says. */
 export function setKind(id: AgentId, kind: SessionKind) {
   if (!canIntegrate(id) || kindFor(id) === kind) return;
   const others = sessionKinds.integrated.filter((known) => known !== id);
@@ -61,4 +66,5 @@ export function setKind(id: AgentId, kind: SessionKind) {
 /** Test seam. */
 export function resetSessionKinds() {
   sessionKinds.integrated = [];
+  sessionKinds.known = false;
 }
