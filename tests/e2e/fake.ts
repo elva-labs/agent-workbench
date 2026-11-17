@@ -734,6 +734,15 @@ export async function installFakeCore(
           (w.__limitsAsked ??= []).push(asked);
           return w.__accountLimits?.[`${asked.agent} ${asked.configDir ?? ""}`] ?? null;
         },
+        integratedRewindPoints: async (id: string) => integrated().rewindPoints(id),
+        integratedRewindPreview: async (id: string, message: string) =>
+          integrated().rewindPreview(id, message),
+        integratedRewind: async (
+          id: string,
+          message: string,
+          what: Parameters<FakeIntegrated["rewind"]>[2],
+        ) => integrated().rewind(id, message, what),
+        integratedRewindUndo: async (id: string) => integrated().rewindUndo(id),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],
