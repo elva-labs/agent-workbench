@@ -54,6 +54,10 @@ pub struct SessionEvent {
     /// the agent takes it up in a turn of its own.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub background: Vec<String>,
+    /// The permission mode the agent runs in as the event fires, by the
+    /// agent's own name for it, where its hooks say: Claude Code's do.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
 }
 
 /// The most background tasks a stop names.
@@ -105,6 +109,16 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
     } else {
         Vec::new()
     };
+    let mode = value
+        .get("permission_mode")
+        .and_then(|v| v.as_str())
+        .map(|word| {
+            word.chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(40)
+                .collect::<String>()
+        })
+        .filter(|word| !word.is_empty());
     Some(SessionEvent {
         session_id,
         kind: kind.to_string(),
@@ -112,6 +126,7 @@ pub fn classify(line: &str) -> Option<SessionEvent> {
         cut: false,
         error,
         background,
+        mode,
     })
 }
 
@@ -425,6 +440,33 @@ mod tests {
             .map(|event| event.kind)
             .collect();
         assert_eq!(heard, ["prompt", "stop", "idle", "idle", "idle"]);
+    }
+
+    #[test]
+    fn carries_the_permission_mode_the_hooks_say() {
+        let mode = |line: &str| classify(line).and_then(|event| event.mode);
+        assert_eq!(
+            mode(
+                r#"{"session_id":"s1","hook_event_name":"UserPromptSubmit","permission_mode":"plan","prompt":"go"}"#
+            ),
+            Some("plan".to_string())
+        );
+        assert_eq!(
+            mode(
+                r#"{"session_id":"s1","hook_event_name":"Stop","permission_mode":"accept Edits\n","last_assistant_message":"ok"}"#
+            ),
+            Some("acceptEdits".to_string())
+        );
+        assert_eq!(
+            mode(r#"{"session_id":"s1","hook_event_name":"Stop","last_assistant_message":"ok"}"#),
+            None
+        );
+        assert_eq!(
+            mode(
+                r#"{"session_id":"s1","hook_event_name":"Stop","permission_mode":"","last_assistant_message":"ok"}"#
+            ),
+            None
+        );
     }
 
     /// Recorded from an idle Claude Code session: a command the agent ran in

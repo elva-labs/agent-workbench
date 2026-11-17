@@ -1373,6 +1373,48 @@ describe("a session reopened the other way", () => {
     seam.integratedStop = stopNow;
   });
 
+  it("starts a session another started in the mode its starter gave it, integrated and in a terminal", async () => {
+    const given = create(PROJECT, null, "claude-code", null, "Fix it", null, null, undefined, "integrated");
+    given.modeGiven = "auto";
+    await launch(given.key);
+    expect(lastStart().mode).toBe("auto");
+    expect(conversationOf(given.key).settings.mode).toBe("auto");
+    // Started again before anything was said, it takes that mode again.
+    expect(startMode(byKey(given.key)!, linkFor(given.key))).toBe("auto");
+    const term = create(PROJECT, null, "claude-code", null, "Fix it", null, null, undefined, "terminal");
+    term.modeGiven = "acceptEdits";
+    await launchTerminal(term.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ mode: "acceptEdits" });
+    expect(byKey(term.key)!.modeNamed).toBe("acceptEdits");
+    // A resumed one goes on in the mode its conversation last ran in.
+    const back = create(PROJECT, "old-1", "claude-code", null, null, null, null, undefined, "terminal");
+    back.modeGiven = "acceptEdits";
+    await launchTerminal(back.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)!.mode).toBeUndefined();
+  });
+
+  it("runs one whose agent does not take the mode it was given in the nearest narrower one", async () => {
+    stopListening();
+    // The agent starts in Default whatever it is asked, as where the
+    // account has no auto.
+    await install({ ownMode: "default" });
+    const row = create(PROJECT, null, "claude-code", null, "Fix it", null, null, undefined, "integrated");
+    row.modeGiven = "auto";
+    await launch(row.key);
+    await vi.waitFor(() => expect(conversationOf(row.key).settings.mode).toBe("acceptEdits"));
+    expect(fake.calls.filter((call) => call.method === "configure").at(-1)).toMatchObject({ settings: { mode: "acceptEdits" } });
+    await vi.waitFor(() =>
+      expect(conversationOf(row.key).entries.at(-1)).toMatchObject({
+        kind: "note",
+        text: "The session that started it runs in Auto mode, so it runs in Accept edits mode, the nearest below that it can take.",
+      }),
+    );
+    // One the user started is left in the mode its agent chose.
+    const own = await started();
+    expect(conversationOf(own.key).settings.mode).toBe("default");
+    expect(fake.calls.filter((call) => call.method === "configure")).toHaveLength(1);
+  });
+
   it("leaves no line on the row from what the run it stops says on its way out", async () => {
     const { key, handle } = await started();
     // Nobody looks at it.

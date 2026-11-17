@@ -252,6 +252,17 @@ which is the one the agent's own settings name as for a terminal session,
 in [integrated](integrated.md#the-mode-a-session-starts-in). It is the
 user's to change, and an agent's settings tools refuse it.
 
+Whether you are asked before every session another session starts. Off to
+begin with: a session that starts one in its own project, on its own agent
+and account, goes ahead without a question, and the session begins in no
+more than the starting session's own mode. A start from a Claude Code
+session in a terminal whose hooks have not said its mode, as with hooks
+off, is put to you, and so is a start anywhere else. Every time puts each
+one to you, in the starting session's own project too, with Allow once or
+No and never an answer that stands, as
+[orchestrator](orchestrator.md#what-the-user-is-asked) describes. It is
+the user's to change, and an agent's settings tools refuse it.
+
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
 under its project, one line with its time, ready to resume, as [sessions](sessions.md#past-sessions)
@@ -423,14 +434,17 @@ the step each start is for, give the agent and the model each step names
 and no model for Codex's own default, and name, for a review, the session
 whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
-first as the one to use, how many of its sessions may run at once and to
-stop each once its piece is done with, or for a review when the work
-passes, that it goes back with `send` to the piece's own session for the
-step it returns to, which steps the piece is taken through again, that it
-is reviewed again by a new review or a line to the reviewer, how many
-times, and that the user is asked after that. The last sentence says to
-report to the user once every piece has come out of or passed the last
-step.
+first as the one to use, and how many of its sessions may run at once,
+with each to be stopped once its work is taken up and nothing more is
+wanted from it. For a review, the sentence says when the work passes, and
+that its review is stopped once it does. When it does not pass, the work
+goes back with `send` to the piece's own session for the step it returns
+to, resumed first if it is not running, or carried on in a new session
+that names it where the orchestrator stopped it; the sentence names the
+steps the piece is taken through again, says that it is reviewed again by a new review or
+a line to the reviewer, how many times, and that the user is asked after
+that. The last sentence says to report to the user once every piece has
+come out of or passed the last step.
 
 The foot always shows. A switch there marks the workflow for new sessions, with a line
 saying which workflow new sessions start with. Turning it off leaves them
@@ -524,8 +538,9 @@ sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
 plugins, the accounts, which workflow a project follows, how long past
-sessions stay listed, how long a project stays active, the notifications
-and the chime are refused outright, as the user's to change.
+sessions stay listed, how long a project stays active, whether every
+start of a session is asked about, the notifications and the chime are
+refused outright, as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.

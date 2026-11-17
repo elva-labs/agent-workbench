@@ -78,10 +78,10 @@ describe("what an orchestrator is told", () => {
     expect(lines).toHaveLength(4);
     expect(lines[0]).toMatch(/^1\. /);
     expect(lines[1]).toBe(
-      '2. For the step "Work", split the task into pieces and start a session for each, on claude-code with the model sonnet. Run one "Work" session at a time, and stop it once its piece is done with; a stopped session can be resumed.',
+      '2. For the step "Work", split the task into pieces and start a session for each, on claude-code with the model sonnet. Run one "Work" session at a time, and stop it once its work is taken up and nothing more is wanted from it.',
     );
     expect(lines[2]).toBe(
-      '3. For the step "Review", start a review of each piece once it has come out of "Work", on claude-code with the model opus. The piece passes when the reviewer approves and you agree. If it does not pass, send it back with send to the piece\'s own session for "Work", with what the review found, resuming that session first with start if it was stopped. Then review it again for "Review", with a new review naming the same work or a line to the reviewer. Send a piece back at most 3 times; after that, stop and ask the user, and start another round only if they want one.',
+      '3. For the step "Review", start a review of each piece once it has come out of "Work", on claude-code with the model opus. The piece passes when the reviewer approves and you agree. Once it passes, stop its review. If it does not pass, send it back with send to the piece\'s own session for "Work", with what the review found, resuming that session first with start if it is not running, or starting one for "Work" that names it with work if you stopped it. Then review it again for "Review", with a new review naming the same work or a line to the reviewer. Send a piece back at most 3 times; after that, stop and ask the user, and start another round only if they want one.',
     );
     expect(lines[3]).toBe('4. When every piece has passed "Review", report to the user.');
   });
@@ -114,7 +114,7 @@ describe("what an orchestrator is told", () => {
     if (workflow.steps[0].kind === "work") workflow.steps[0].parallel = 4;
     if (workflow.steps[1].kind === "review") workflow.steps[1].limit = 1;
     const lines = instructionLines(workflow);
-    expect(lines[1]).toContain('Run at most 4 "Work" sessions at once, and stop each once its piece is done with;');
+    expect(lines[1]).toContain('Run at most 4 "Work" sessions at once, and stop each once its work is taken up and nothing more is wanted from it.');
     expect(lines[2]).toContain("Send a piece back at most once;");
   });
 
@@ -134,7 +134,7 @@ describe("what an orchestrator is told", () => {
     expect(lines).toHaveLength(5);
     expect(lines[2]).toContain('For the step "Build", start a session for each piece once it has come out of "Plan"');
     expect(lines[3]).toContain(
-      'send it back with send to the piece\'s own session for "Plan", with what the review found, resuming that session first with start if it was stopped, take it through "Build" again. Then review it again for "Check",',
+      'send it back with send to the piece\'s own session for "Plan", with what the review found, resuming that session first with start if it is not running, or starting one for "Plan" that names it with work if you stopped it, take it through "Build" again. Then review it again for "Check",',
     );
     expect(lines[4]).toBe('When every piece has passed "Check", report to the user.');
   });
@@ -145,12 +145,12 @@ describe("what an orchestrator is told", () => {
     );
     expect(lines[3]).toContain('For the step "Build", start a session for each piece once it has passed "Plan review"');
     expect(lines[4]).toContain(
-      'resuming that session first with start if it was stopped, take it through "Plan review" and "Build" again. Then review it again for "Check",',
+      'resuming that session first with start if it is not running, or starting one for "Plan" that names it with work if you stopped it, take it through "Plan review" and "Build" again. Then review it again for "Check",',
     );
     const near = instructionLines(
       workflowOf(work("Plan"), review("Plan review", "Plan"), work("Build"), review("Check", "Build")),
     );
-    expect(near[4]).toContain('to the piece\'s own session for "Build", with what the review found, resuming that session first with start if it was stopped. Then review it again for "Check",');
+    expect(near[4]).toContain('to the piece\'s own session for "Build", with what the review found, resuming that session first with start if it is not running, or starting one for "Build" that names it with work if you stopped it. Then review it again for "Check",');
     expect(near[4]).not.toContain("Plan review");
   });
 

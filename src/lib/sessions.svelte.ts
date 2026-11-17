@@ -158,6 +158,20 @@ export interface Session {
       its last turn, by its own description of each: when one finishes,
       the agent takes it up in a turn of its own. */
   background: string[];
+  /** The permission mode the workbench started this run in, by the agent's
+      name for it: one kept for the conversation it resumes, or the one its
+      starter gave it. Null where it named none and the agent chose one
+      from its own settings. */
+  modeNamed: string | null;
+  /** For a session another started, the permission mode its starter gave
+      it, which a new run of it starts in: its starter's own as far as its
+      agent has it, never a wider one. Null where the starter's mode is not
+      known, and for a session the user started. */
+  modeGiven: string | null;
+  /** For a terminal run, the permission mode its hooks last said it runs
+      in. Null until they say, and for an agent whose hooks do not, as
+      Codex's do not. */
+  modeSeen: string | null;
   /** How many turns the agent has begun in this run, as its hooks or its
       events say, or, without them, as its output does. */
   turns: number;
@@ -1671,6 +1685,9 @@ function row(
     turnEnd: null,
     failure: null,
     background: [],
+    modeNamed: null,
+    modeGiven: null,
+    modeSeen: null,
     turns: 0,
     changedAt: Date.now(),
     exitCode: null,
@@ -1709,6 +1726,14 @@ export async function launch(
   // A row refused before it started has no process to start.
   if (told === null || session === null) return false;
   const bullets = session.agent === "claude-code" ? bulletWatch() : null;
+  // A conversation goes on in the mode the window keeps for it: the one its
+  // last integrated run ran in, which its agent's terminal has no record
+  // of, or the one a terminal run was killed in before it could write its
+  // own down. A new one another session started begins in the mode its
+  // starter gave it.
+  const mode = session.resumedFrom === null ? session.modeGiven : modeOf(session.resumedFrom);
+  session.modeNamed = mode;
+  session.modeSeen = null;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -1719,11 +1744,7 @@ export async function launch(
         token: session.token,
         prompt: session.prompt ?? undefined,
         model: session.model ?? undefined,
-        // A conversation goes on in the mode the window keeps for it: the
-        // one its last integrated run ran in, which its agent's terminal
-        // has no record of, or the one a terminal run was killed in before
-        // it could write its own down.
-        mode: session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined),
+        mode: mode ?? undefined,
         configDir: dirFor(session.account, session.agent),
         ...told,
         cols,
@@ -2669,6 +2690,8 @@ const pendingActivity = new Map<
 export interface TurnEnding {
   error?: string | null;
   background?: string[];
+  /** The permission mode the hook says the agent runs in. */
+  mode?: string | null;
 }
 
 /** How long a transition waits for its row to learn the session's id. */
@@ -2720,6 +2743,7 @@ export function exact(
   // The hooks have spoken since the user's Escape or Ctrl+C: what it did
   // is theirs to say.
   interrupts.delete(session.key);
+  if (typeof more.mode === "string" && more.mode !== "") session.modeSeen = more.mode;
   answered.delete(session.key);
   // The line a run that a reopen stops leaves on its way out is not left
   // for the user.

@@ -506,7 +506,13 @@ test("where the guard holds the share at none, the window is exactly as with non
         return before === (await width()) ? before : -1;
       })
       .toBeGreaterThan(0);
-    const image = await page.screenshot({ mask: [page.locator("time")], animations: "disabled" });
+    // The shot reads the window as it stands and changes nothing in it.
+    // Hiding the caret, as a shot does unless told not to, restyles the
+    // filter field, and Chromium then redraws the tile under it into a
+    // buffer from an earlier frame of the panes' ease; the rounded corners
+    // there can come out a level or three off, in one window and not the
+    // other. No field has the keyboard here, so there is no caret to hide.
+    const image = await page.screenshot({ mask: [page.locator("time")], animations: "disabled", caret: "initial" });
     await page.close();
     return image;
   };

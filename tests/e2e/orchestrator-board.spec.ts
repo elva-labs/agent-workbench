@@ -10,6 +10,11 @@ import { PROJECT, installFakeCore } from "./fake";
  * the section is read off the pane afterwards.
  */
 
+/** A second open project. A session starting one there is asked once, and
+    is then allowed to start more in it; a start in its own project is not
+    asked about and is allowed nothing. */
+const OTHER = "/home/ada/dev/other";
+
 const AGENT = "section[data-pane='agent']";
 const SESSIONS = "section[data-pane='sessions']";
 
@@ -52,9 +57,9 @@ const written = (page: Page) =>
   );
 
 /** A worktree under a project, as the core answers with one. */
-function tree(name: string, state: { merged: boolean; dirty: boolean }) {
+function tree(name: string, state: { merged: boolean; dirty: boolean }, project = PROJECT) {
   return {
-    path: `${PROJECT}/.worktrees/${name}`,
+    path: `${project}/.worktrees/${name}`,
     name,
     branch: name,
     merged: state.merged,
@@ -62,17 +67,17 @@ function tree(name: string, state: { merged: boolean; dirty: boolean }) {
   };
 }
 
-/** A worktree where a start makes one, under the demo project. */
-function madeTree(name: string, state: { merged: boolean; dirty: boolean }) {
-  return { ...tree(name, state), path: `${PROJECT}/.claude/worktrees/${name}` };
+/** A worktree where a start makes one, under a project. */
+function madeTree(name: string, state: { merged: boolean; dirty: boolean }, project = PROJECT) {
+  return { ...tree(name, state, project), path: `${project}/.claude/worktrees/${name}` };
 }
 
-async function putTrees(page: Page, trees: unknown[]) {
+async function putTrees(page: Page, trees: unknown[], project = PROJECT) {
   await page.evaluate(
     ({ project, trees }) => {
       (window as unknown as { __worktrees: unknown }).__worktrees = { [project]: trees };
     },
-    { project: PROJECT, trees },
+    { project, trees },
   );
 }
 
@@ -93,14 +98,14 @@ async function cursorUpTo(page: Page, want: string | RegExp) {
   throw new Error(`the cursor never reached ${String(want)}`);
 }
 
-/** The worktrees the demo project still has, by name. */
-const treeNames = (page: Page) =>
+/** The worktrees a project still has, by name. */
+const treeNames = (page: Page, project = PROJECT) =>
   page.evaluate(
     (project) =>
       ((window as unknown as { __worktrees: Record<string, { name: string }[]> }).__worktrees[project] ?? []).map(
         (tree) => tree.name,
       ),
-    PROJECT,
+    project,
   );
 
 /**
@@ -172,6 +177,12 @@ async function startOne(page: Page, args: Record<string, unknown>) {
   return /Started session (\S+)/.exec(content)![1];
 }
 
+/** Starts a session in the second project, which asks once and is then
+    allowed from then on, and answers with its id. */
+async function startElsewhere(page: Page, args: Record<string, unknown>) {
+  return startOne(page, { project: OTHER, ...args });
+}
+
 /** The demo project's own session, the first row in the pane. */
 async function toStarter(page: Page) {
   await page.locator(SESSIONS).getByTestId("session-row").first().click();
@@ -186,6 +197,7 @@ const layoutKept = (page: Page) =>
 async function begin(page: Page, workflow = false) {
   calls = 0;
   await installFakeCore(page, {
+    open: [PROJECT, OTHER],
     settings: { workflows: { list: [PLAN_WORK_REVIEW], default: workflow ? PLAN_WORK_REVIEW.name : null, overrides: {} } },
   });
   await page.goto("/");
@@ -201,7 +213,7 @@ test.describe("the board for any session", () => {
     await expect(page.getByTestId("processes-section")).toBeVisible();
     await expect(section(page)).toHaveCount(0);
 
-    await startOne(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
+    await startElsewhere(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
     await toStarter(page);
 
     // The changes stay where they are, the section under the tree, above
@@ -215,12 +227,11 @@ test.describe("the board for any session", () => {
     expect(board.y).toBeGreaterThanOrEqual(tree.y + tree.height - 1);
     expect(processes.y).toBeGreaterThanOrEqual(board.y + board.height - 1);
 
-    // A row with its state and how long since it changed; the project is
-    // its starter's, so it is not named.
+    // A row with its project, its state and how long since it changed.
     await expect(boardRows(page)).toHaveCount(1);
     await expect(boardRows(page).first().getByTestId("board-name")).toHaveText("Fix the cache");
-    await expect(boardRows(page).first().getByTestId("board-detail")).toHaveText("running, now");
-    await expect(page.getByTestId("board-allowed-project")).toHaveText("demo");
+    await expect(boardRows(page).first().getByTestId("board-detail")).toHaveText("other · running, now");
+    await expect(page.getByTestId("board-allowed-project")).toHaveText("other");
 
     // The session it started has started none: no section on its screen.
     await boardRows(page).first().getByTestId("board-open").click();
@@ -328,7 +339,6 @@ test.describe("the board for any session", () => {
         }),
       { project: PROJECT },
     );
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "i-1")).not.toBeNull();
     await page.locator(SESSIONS).getByTestId("session-row").first().click();
     await expect(boardRows(page)).toHaveCount(1);
@@ -354,8 +364,8 @@ test.describe("the board for any session", () => {
 
   test("stops them all only once asked, and takes back what it was allowed", async ({ page }) => {
     await begin(page);
-    await startOne(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
-    await startOne(page, { prompt: "Bump the client", name: "Bump the client" });
+    await startElsewhere(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
+    await startElsewhere(page, { prompt: "Bump the client", name: "Bump the client" });
     await toStarter(page);
 
     await page.getByTestId("board-stop-all").click();
@@ -379,16 +389,20 @@ test.describe("the board for any session", () => {
 
   test("cleans up only the worktrees its own starts made, once asked", async ({ page }) => {
     await begin(page);
-    await startOne(page, { prompt: "Fix the flaky cache test", name: "Fix the cache", worktree: true });
-    await startOne(page, { prompt: "Bump the client", name: "Bump the client", worktree: true });
+    await startElsewhere(page, { prompt: "Fix the flaky cache test", name: "Fix the cache", worktree: true });
+    await startElsewhere(page, { prompt: "Bump the client", name: "Bump the client", worktree: true });
     // Beside its two, a tree another session's start made and one the user
     // made, both merged and clean.
-    await putTrees(page, [
-      madeTree("fix-the-cache", { merged: true, dirty: false }),
-      madeTree("bump-the-client", { merged: true, dirty: true }),
-      madeTree("theirs", { merged: true, dirty: false }),
-      madeTree("users-own", { merged: true, dirty: false }),
-    ]);
+    await putTrees(
+      page,
+      [
+        madeTree("fix-the-cache", { merged: true, dirty: false }, OTHER),
+        madeTree("bump-the-client", { merged: true, dirty: true }, OTHER),
+        madeTree("theirs", { merged: true, dirty: false }, OTHER),
+        madeTree("users-own", { merged: true, dirty: false }, OTHER),
+      ],
+      OTHER,
+    );
     await toStarter(page);
     // Its sessions still run in theirs: nothing is left behind yet.
     await expect(page.getByTestId("board-trees")).toHaveCount(0);
@@ -409,7 +423,7 @@ test.describe("the board for any session", () => {
 
     await expect(page.getByTestId("board-trees")).toContainText("1 kept: uncommitted work");
     await expect(page.getByTestId("board-clean")).toBeDisabled();
-    expect(await treeNames(page)).toEqual(["bump-the-client", "theirs", "users-own"]);
+    expect(await treeNames(page, OTHER)).toEqual(["bump-the-client", "theirs", "users-own"]);
 
     // With what it was allowed taken back, the section stays for the tree
     // its start left, and goes with it.
@@ -419,9 +433,9 @@ test.describe("the board for any session", () => {
 
   test("is walked by the tree's cursor, as its neighbours are", async ({ page }) => {
     await begin(page);
-    await startOne(page, { prompt: "Old fix", name: "Old fix", worktree: true });
-    await startOne(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
-    await putTrees(page, [madeTree("old-fix", { merged: true, dirty: false })]);
+    await startElsewhere(page, { prompt: "Old fix", name: "Old fix", worktree: true });
+    await startElsewhere(page, { prompt: "Fix the flaky cache test", name: "Fix the cache" });
+    await putTrees(page, [madeTree("old-fix", { merged: true, dirty: false }, OTHER)], OTHER);
     await toStarter(page);
     await boardRow(page, "Old fix").hover();
     await boardRow(page, "Old fix").getByTestId("board-stop").click();
@@ -471,9 +485,9 @@ test.describe("the board for any session", () => {
 
   test("keeps the cursor on its row while sessions stop and start around it", async ({ page }) => {
     await begin(page);
-    await startOne(page, { prompt: "First", name: "First" });
-    const second = await startOne(page, { prompt: "Second", name: "Second" });
-    await startOne(page, { prompt: "Third", name: "Third" });
+    await startElsewhere(page, { prompt: "First", name: "First" });
+    const second = await startElsewhere(page, { prompt: "Second", name: "Second" });
+    await startElsewhere(page, { prompt: "Third", name: "Third" });
     await toStarter(page);
     const tree = page.getByTestId("file-tree");
     await tree.focus();
@@ -500,7 +514,7 @@ test.describe("the board for any session", () => {
     // On the project it is allowed in, a session starting adds a row above
     // it: the cursor stays on the allowed line.
     await walkTo(/^started-allowed-/);
-    await startOne(page, { prompt: "Fourth", name: "Fourth" });
+    await startElsewhere(page, { prompt: "Fourth", name: "Fourth" });
     await expect(boardRows(page)).toHaveCount(3);
     await expect.poll(cursorOn).toMatch(/^started-allowed-/);
 
