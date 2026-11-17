@@ -690,7 +690,7 @@ pub fn theme_save_tool() -> Value {
 fn background_schema(description: &str) -> Value {
     json!({
         "type": ["object", "null"],
-        "description": format!("{description} One to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim. The appearance sets how light it paints, so one background serves light and dark, and the window keeps every text on it readable."),
+        "description": format!("{description} One to three dots on a colour pad, each a hue in degrees from 0 up to 360 and a chroma from 0 at the centre to 1 at the rim. The appearance sets how light it paints, so one background serves light and dark, and the window draws the text on it as clear as the colours allow."),
         "properties": {
             "dots": {
                 "type": "array",
@@ -703,7 +703,7 @@ fn background_schema(description: &str) -> Value {
                 }
             },
             "harmony": { "type": "string", "enum": crate::settings::HARMONIES.iter().map(|(name, _)| *name).collect::<Vec<_>>(), "description": "single holds one dot, complementary two, analogous and triad three, each a fixed turn of the hue from the first; free, the default, any number placed at will." },
-            "strength": { "type": "number", "description": "How far it shows through the chrome, 0.1 to 1; 0.6 when left out." },
+            "strength": { "type": "number", "description": "How strongly it shows, 0.1 to 1: a calm tint up to 0.75, where it shows whole; above it the colours rise to the lightness the pad shows them in, and at 1 the chrome is the colours themselves; on the way up, in dark most of all, text may read under 4.5:1. The settings show it on an even slider: 0.6 at 10%, 0.75 at 16%, 0.85 at 50%, 0.9 at 66%. 0.6 when left out." },
             "grain": { "type": "number", "description": "A fine speckle over it, 0 to 1; 0.25 when left out." }
         },
         "required": ["dots"]

@@ -2571,7 +2571,7 @@
     border: 0;
     border-radius: var(--radius);
     background: var(--accent);
-    color: var(--bg);
+    color: var(--on-accent, var(--bg));
     cursor: pointer;
   }
 

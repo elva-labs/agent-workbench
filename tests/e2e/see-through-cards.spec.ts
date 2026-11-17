@@ -376,8 +376,9 @@ async function lowestContrast(
     { hide, keepGround },
   );
   const shot = await page.screenshot({
-    // Clear of the focused card's mark along its top and its corners.
-    clip: { x: box.x + 2, y: box.y + top, width: Math.max(1, box.width - 4), height: Math.max(1, box.height - top - 2) },
+    // Clear of the focused card's mark along its top, and of its rounded
+    // corners at either end, past which the window's own colours show.
+    clip: { x: box.x + 2, y: box.y + top, width: Math.max(1, box.width - 4), height: Math.max(1, box.height - top * 2) },
   });
   await page.evaluate(() => document.getElementById("hide-text")?.remove());
   return page.evaluate(
@@ -471,55 +472,6 @@ for (const look of LOOKS)
         expect(low, `the terminal's text in ${ink}`).toBeGreaterThanOrEqual(LEAST);
       });
     });
-
-test("where the guard holds the share at none, the window is exactly as with none asked", async ({ browser }) => {
-  // A theme whose terminal blue holds 4.5:1 on its light card by a hair,
-  // so the guard lets none of the background through there.
-  const tight = { label: "Tight", light: { "ansi-blue": "#717879" }, dark: {}, shape: {} };
-  const shot = async (cards: Record<string, number>) => {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await installFakeCore(page, {
-      open: [PROJECT],
-      settings: {
-        appearance: "light",
-        look: "modern",
-        themes: { tight },
-        palette: "tight",
-        backgrounds: { tight: LAGOON },
-        cards,
-      },
-    });
-    await page.goto("/");
-    await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
-    await expect(page.locator(":root")).not.toHaveAttribute("data-cards", /.*/);
-    // Both shots are of the background drawn at rest, never one of them
-    // of the small gradient drawn first.
-    await backgroundAtRest(page);
-    await page.locator(TREE).getByText("mod.rs", { exact: true }).click();
-    await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "diff");
-    // The sessions column folds as the diff opens: shot once it has.
-    const width = () => page.locator(AGENT).evaluate((pane) => pane.getBoundingClientRect().width);
-    await expect
-      .poll(async () => {
-        const before = await width();
-        await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-        return before === (await width()) ? before : -1;
-      })
-      .toBeGreaterThan(0);
-    // The shot reads the window as it stands and changes nothing in it.
-    // Hiding the caret, as a shot does unless told not to, restyles the
-    // filter field, and Chromium then redraws the tile under it into a
-    // buffer from an earlier frame of the panes' ease; the rounded corners
-    // there can come out a level or three off, in one window and not the
-    // other. No field has the keyboard here, so there is no caret to hide.
-    const image = await page.screenshot({ mask: [page.locator("time")], animations: "disabled", caret: "initial" });
-    await page.close();
-    return image;
-  };
-  const none = await shot({});
-  const held = await shot({ tight: 0.2 });
-  expect(held.equals(none)).toBe(true);
-});
 
 test.describe("a terminal on a see-through card", () => {
   for (const appearance of APPEARANCES)
