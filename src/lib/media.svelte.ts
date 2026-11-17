@@ -38,6 +38,10 @@ const KEEP = 50;
 
 export const media = $state({
   items: [] as MediaItem[],
+  /** How many calls each item has had since the window opened, by its
+      id: what draws a page again when it is presented again, however
+      soon. Not kept across a restart. */
+  calls: {} as Record<string, number>,
 });
 
 let loaded = false;
@@ -134,6 +138,7 @@ export function presented(request: PresentRequest, now = Date.now()) {
     media.items = media.items.filter((candidate) => candidate !== again);
   }
   media.items.push(item);
+  media.calls[item.id] = (media.calls[item.id] ?? 0) + 1;
   const mine = media.items.filter(
     (candidate) => candidate.owner === item.owner,
   );
@@ -319,4 +324,5 @@ export async function load(path: string): Promise<Loaded> {
 export function resetMedia() {
   loaded = true;
   media.items = [];
+  media.calls = {};
 }

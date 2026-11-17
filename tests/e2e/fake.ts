@@ -1123,6 +1123,9 @@ export async function installFakeCore(
               "# Draft\n\nHello *there*, <b>plain</b>.\n";
             return { mime: "text/markdown", data: btoa(text), size: text.length };
           }
+          const pages = (window as unknown as { __pages?: Record<string, string> }).__pages;
+          if (pages?.[path] !== undefined)
+            return { mime: "text/html", data: btoa(pages[path]), size: pages[path].length };
           if (path.endsWith(".html"))
             return {
               mime: "text/html",
@@ -1142,6 +1145,23 @@ export async function installFakeCore(
             data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC",
             size: 70,
           };
+        },
+
+        // A page's folder at an address of its own for each drawing, as the
+        // app serves it on Windows, so a test can answer for its files with
+        // a route: the page's path in base64, then the drawing's number.
+        pageFilesBase: async (page: string) => {
+          const w = window as unknown as { __drawings?: number };
+          w.__drawings = (w.__drawings ?? 0) + 1;
+          return `http://awb-page.localhost/${btoa(page).replace(/[^a-z0-9]/gi, "")}-${w.__drawings}/`;
+        },
+        // Why a page may not load a file, from `__pageRefusals` by the path
+        // the page gave; any other is there.
+        checkPageFile: async (_page: string, file: string) => {
+          const refusals =
+            (window as unknown as { __pageRefusals?: Record<string, string> }).__pageRefusals ?? {};
+          if (refusals[file] !== undefined) throw new Error(refusals[file]);
+          return { mime: "image/png", size: 70 };
         },
 
         // Two ways in: `lab`, which the user's own ssh setup reaches, and a

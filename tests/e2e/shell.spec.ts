@@ -800,7 +800,7 @@ test.describe("the file viewer", () => {
     );
     const frame = page.getByTestId("media-page");
     await expect(frame).toHaveAttribute("sandbox", "allow-scripts");
-    const inner = page.frameLocator("[data-testid='media-page']");
+    const inner = page.frameLocator("[data-testid='media-page']").frameLocator("iframe");
     await expect(inner.locator("#page")).toHaveText("A page");
     await expect(inner.locator("#ran")).toHaveText("ran");
     // The frame grew to the page's height, from what the page reported.

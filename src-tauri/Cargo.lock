@@ -27,6 +27,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "tokio",
  "uuid",
  "webkit2gtk",
  "workbench-core",
