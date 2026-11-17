@@ -1076,9 +1076,8 @@
   // pane folds, a peek put away above all, or in compact mode goes out of
   // sight by any way at all, the question goes with it, and nothing is
   // closed or reopened.
-  let away = $derived(folded || (compact.on && !layout.sessionsPeek));
   $effect(() => {
-    if (!away) return;
+    if (!(folded || (compact.on && !layout.sessionsPeek))) return;
     untrack(() => {
       if (editor.closing !== null) closingCancel();
       reopenAsk = null;

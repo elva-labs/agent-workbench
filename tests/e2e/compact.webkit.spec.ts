@@ -30,7 +30,12 @@ async function boxOf(page: Page, selector: string) {
     left edge or the frame's padding. */
 async function slidIn(page: Page) {
   await expect(page.locator(SESSIONS)).toBeVisible();
-  await expect.poll(async () => (await boxOf(page, SESSIONS)).x).toBeLessThanOrEqual(10);
+  await expect
+    .poll(async () => {
+      const x = (await boxOf(page, SESSIONS)).x;
+      return x >= 0 && x <= 10;
+    })
+    .toBe(true);
 }
 
 async function slidOut(page: Page) {
