@@ -32,6 +32,7 @@ import {
   renewToken,
   loadHistory,
   named,
+  newTurnLine,
   leaveRun,
   noted,
   onIntegratedClose,
@@ -914,7 +915,7 @@ export function send(
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
-  session.note = null;
+  newTurnLine(session);
   if (from !== null) sentBy(id, from);
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a

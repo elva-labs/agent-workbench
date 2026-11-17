@@ -37,7 +37,7 @@ test("reopens a terminal session as a conversation in the same row, from its men
 
   await page.locator(ROW).click({ button: "right" });
   const menu = page.getByTestId("session-menu");
-  await expect(menu.getByRole("menuitem")).toHaveText(["Reopen as a conversation", "Stop"]);
+  await expect(menu.getByRole("menuitem")).toHaveText(["Mark as unread", "Reopen as a conversation", "Stop"]);
   // The menu hangs under the row it is for, inside the pane.
   const row = (await page.locator(ROW).boundingBox())!;
   const box = (await menu.boundingBox())!;
@@ -79,7 +79,8 @@ test("asks before it reopens a conversation in a terminal in the middle of a tur
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("session-menu")).toHaveCount(0);
   await page.keyboard.press("Shift+F10");
-  await expect(page.getByTestId("session-menu").getByRole("menuitem")).toHaveText(["Reopen in a terminal", "Stop"]);
+  await expect(page.getByTestId("session-menu").getByRole("menuitem")).toHaveText(["Mark as unread", "Reopen in a terminal", "Stop"]);
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
 
   const strip = page.getByTestId("reopen-session");
@@ -168,5 +169,5 @@ test("offers no reopen for an agent that runs only in a terminal", async ({ page
   await page.getByTestId("start-agent").click();
   await expect.poll(async () => (await spawns(page)).length).toBe(1);
   await page.locator(ROW).click({ button: "right" });
-  await expect(page.getByTestId("session-menu").getByRole("menuitem")).toHaveText(["Stop"]);
+  await expect(page.getByTestId("session-menu").getByRole("menuitem")).toHaveText(["Mark as unread", "Stop"]);
 });

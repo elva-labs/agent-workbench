@@ -110,6 +110,7 @@
     sessions,
     unreadCount,
     viewed,
+    onScreenNow,
   } from "$lib/sessions.svelte";
   import { attention, badge, followFocus } from "$lib/attention.svelte";
   import { askForSession, followLimits, lookAtWork } from "$lib/limitsPoll";
@@ -342,9 +343,11 @@
   });
 
   // Looking at a session is what reads it: the one on screen, in a window
-  // that has focus. Either changing is a look.
+  // that has focus. Either changing is a look, except that a session marked
+  // unread while on screen is read only once another has been on screen.
   $effect(() => {
     const key = sessions.active;
+    onScreenNow(key);
     if (attention.focused && key !== null) viewed(key);
   });
 

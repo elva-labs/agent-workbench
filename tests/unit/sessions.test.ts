@@ -81,6 +81,9 @@ import {
   byToken,
   runningByToken,
   wake,
+  markUnread,
+  markRead,
+  onScreenNow,
 } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 import {
@@ -3104,5 +3107,149 @@ describe("following a workflow", () => {
     const session = create(P, null, "claude-code", null, "go", "sonnet", null, null);
     expect(session.workflow).toBeNull();
     expect(session.model).toBe("sonnet");
+  });
+});
+
+describe("marking a session unread", () => {
+  /** Two sessions in one project, the second behind the first. */
+  const pair = () => {
+    const front = live(A, "pty-1");
+    const behind = live(A, "pty-2");
+    select(front.key);
+    return { front, behind };
+  };
+
+  /** The user puts a session on screen in a focused window. */
+  const look = (key: string) => {
+    select(key);
+    onScreenNow(key);
+    viewed(key);
+  };
+
+  it("shows the last line the agent left, says nothing, and reads on the next look", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      noted(behind.key, "Plugin in main-truck staged, need approvals");
+      look(behind.key);
+      look(front.key);
+      expect(behind.unread).toBe(false);
+      expect(behind.note).toBeNull();
+      expect(told).toEqual([behind.key]);
+
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBe("Plugin in main-truck staged, need approvals");
+      expect(unreadCount()).toBe(1);
+      expect(byStatus()[0].sessions.map((session) => session.key)).toEqual([behind.key]);
+      expect(waitingOnYou().map((session) => session.key)).toEqual([behind.key]);
+      expect(told).toEqual([behind.key]);
+
+      look(behind.key);
+      expect(behind.unread).toBe(false);
+      expect(behind.note).toBeNull();
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("shows the line a turn ended on, and none once a new turn begins", () => {
+    const { front, behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Second answer.");
+    look(behind.key);
+    look(front.key);
+    markUnread(behind.key);
+    expect(behind.note).toBe("Second answer.");
+
+    markRead(behind.key);
+    expect(behind.unread).toBe(false);
+    expect(behind.note).toBeNull();
+
+    exact("session-pty-2", "prompt");
+    markUnread(behind.key);
+    expect(behind.unread).toBe(true);
+    expect(behind.note).toBeNull();
+  });
+
+  it("keeps the session on screen unread until another is on screen and it comes back", () => {
+    const { front, behind } = pair();
+    noted(behind.key, "Over to you.");
+    look(behind.key);
+    markUnread(behind.key);
+    expect(behind.unread).toBe(true);
+    expect(behind.note).toBe("Over to you.");
+
+    // Still looking: the window losing focus and gaining it again, or the
+    // row picked again, reads nothing.
+    attention.focused = false;
+    onScreenNow(behind.key);
+    attention.focused = true;
+    look(behind.key);
+    expect(behind.unread).toBe(true);
+
+    // Away to another and back.
+    look(front.key);
+    expect(behind.unread).toBe(true);
+    look(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("lets a mark on the session on screen go when it is marked read", () => {
+    const { behind } = pair();
+    look(behind.key);
+    markUnread(behind.key);
+    markRead(behind.key);
+    markUnread(behind.key);
+    markRead(behind.key);
+    look(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("takes what happens after a mark as news, but not an idle notice", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop", "Done.");
+      look(behind.key);
+      look(front.key);
+      told.length = 0;
+
+      markUnread(behind.key);
+      exact("session-pty-2", "idle");
+      expect(told).toEqual([]);
+
+      noted(behind.key, "Need the API key");
+      expect(told).toEqual([behind.key]);
+      expect(behind.note).toBe("Need the API key");
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("marks a session another started, an ended one and one left from the last quit", () => {
+    onDirected(() => true);
+    try {
+      const { behind } = pair();
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+    } finally {
+      onDirected(null);
+    }
+    const ending = live(A, "pty-3");
+    select(sessions.all[0].key);
+    ended({ id: "pty-3", code: 0, clean: true });
+    markRead(ending.key);
+    markUnread(ending.key);
+    expect(ending.unread).toBe(true);
+
+    const dormant = reopened(A, "old-1", "claude-code", null, null, null);
+    markUnread(dormant.key);
+    expect(dormant.unread).toBe(true);
+    expect(dormant.status).toBe("dormant");
+    expect(unreadCount()).toBe(3);
   });
 });

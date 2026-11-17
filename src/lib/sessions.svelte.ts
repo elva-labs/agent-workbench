@@ -138,6 +138,10 @@ export interface Session {
   /** A line the agent left for the row, through its notify tool. Cleared
       by looking. */
   note: string | null;
+  /** The line the row last showed under its name when it went unread,
+      kept after looking clears it, so a session the user marks unread
+      shows it again. Cleared with the line when a new turn begins. */
+  notice: string | null;
   /** The agent's own hooks are reporting this session, so its transitions
       are exact and the pty heuristic stands down. */
   exact: boolean;
@@ -1669,6 +1673,7 @@ function row(
     startedAt: null,
     unread: false,
     note: null,
+    notice: null,
     exact: false,
     needs: null,
     delegated: false,
@@ -2611,7 +2616,9 @@ function unseen(session: Session, asking = false, reminder = false) {
   if (reminder && rested.has(session.key)) return;
   rested.delete(session.key);
   if (!asking && directed(session)) return;
-  const news = asking || !session.unread;
+  // A mark the user made is no news to the user, so what happens next is.
+  const news = asking || !session.unread || marked.has(session.key);
+  marked.delete(session.key);
   session.unread = true;
   if (!news) return;
   changed(session);
@@ -2639,14 +2646,72 @@ export function belled(key: string) {
   unseen(session, false, session.exact && atRest(session));
 }
 
-/** The user looked: the session is on screen in a focused window. */
+/** The user looked: the session is on screen in a focused window. A
+    session the user marked unread while it was on screen stays so until
+    another is put on screen and it comes back. */
 export function viewed(key: string) {
+  if (markedOnScreen === key) return;
   const session = byKey(key);
   if (session === null) return;
+  read(session);
+  if (atRest(session)) rested.add(key);
+}
+
+function read(session: Session) {
   if (session.unread) changed(session);
   session.unread = false;
   session.note = null;
+  marked.delete(session.key);
+}
+
+/** The sessions the user marked unread, by the row's key, until they are
+    read or something new happens in them. */
+const marked = new Set<string>();
+/** The session the user marked unread while it was on screen, until
+    another session, or none, is put on screen. Looking at it meanwhile is
+    still the look it was marked during, and reads nothing. */
+let markedOnScreen: string | null = null;
+
+/** The session on screen is now this one, or none: a mark held on
+    another is let go, so coming back to it reads it. Called whatever the
+    window's focus, since leaving the window is not leaving the session. */
+export function onScreenNow(key: string | null) {
+  if (markedOnScreen !== key) markedOnScreen = null;
+}
+
+/** The user marks a session unread: drawn as one that went unread by
+    itself, with the line it last showed under its name, and counted
+    wherever unread sessions are, until the user next opens it. The user
+    did it, so nothing is said of it: no notification and no chime. */
+export function markUnread(key: string) {
+  const session = byKey(key);
+  if (session === null || session.unread) return;
+  session.unread = true;
+  if (session.note === null) session.note = session.notice;
+  marked.add(key);
+  if (sessions.active === key) markedOnScreen = key;
+}
+
+/** The user marks a session read, as if it had been looked at. */
+export function markRead(key: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  if (markedOnScreen === key) markedOnScreen = null;
+  read(session);
   if (atRest(session)) rested.add(key);
+}
+
+/** The line the row shows under the name, kept as its notice too. */
+function leaveLine(session: Session, line: string) {
+  session.note = line;
+  session.notice = line;
+}
+
+/** A new turn begins: the line the last one left, and its notice, are
+    stale. */
+export function newTurnLine(session: Session) {
+  session.note = null;
+  session.notice = null;
 }
 
 /** The agent left a line for the row: shown under the name, and the row
@@ -2655,7 +2720,7 @@ export function viewed(key: string) {
 export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null || reopening.has(key)) return;
-  session.note = shown(text);
+  leaveLine(session, shown(text));
   unseen(session);
 }
 
@@ -2747,7 +2812,7 @@ export function exact(
       stirred(session);
       session.unread = false;
       // A new turn: whatever line the last one left is stale.
-      session.note = null;
+      newTurnLine(session);
       tookLine(session.key);
       changed(session);
       beganTurn(session);
@@ -2764,7 +2829,7 @@ export function exact(
       session.failure = null;
       session.background = (more.background ?? []).map(shown);
       changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
     case "failed":
@@ -2777,7 +2842,7 @@ export function exact(
       session.failure = failureOf(more.error ?? null, line === null ? null : shown(line));
       session.background = [];
       changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
     case "delegated": {
@@ -2790,7 +2855,7 @@ export function exact(
       session.delegated = true;
       stirred(session);
       if (idle) changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       break;
     }
     case "permission": {
@@ -2906,6 +2971,8 @@ export function reset() {
   }
   pulses.clear();
   rested.clear();
+  marked.clear();
+  markedOnScreen = null;
   bulleted.clear();
   sessions.all = [];
   sessions.active = null;

@@ -30,6 +30,7 @@ import {
   create,
   isMine,
   loadRemembered,
+  markUnread,
   noted,
   reopened,
   runningByToken,
@@ -296,6 +297,27 @@ describe("an integrated session behind its row", () => {
     fake.endTurn(handle);
     expect(session.unread).toBe(true);
     expect(session.note).toBe("The review is back.");
+  });
+
+  it("shows the line its last turn ended on when marked unread, and none once a message is sent", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    attention.focused = true;
+    sessions.active = session.key;
+    viewed(session.key);
+    sessions.active = null;
+    expect(session.note).toBeNull();
+
+    markUnread(session.key);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
+
+    viewed(session.key);
+    send(session.key, "next");
+    markUnread(session.key);
+    expect(session.note).toBeNull();
   });
 
   it("names an untitled row after the first line of its first message, and a new message clears the line", async () => {
