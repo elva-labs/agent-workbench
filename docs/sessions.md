@@ -581,9 +581,12 @@ that started it. The changes pane stays the place to review changes. While a
 turn runs, a line at its foot says what the agent is doing now: running a
 command, reading a file, thinking, waiting for an answer. The workbench's own
 tools are worded for a person, by the session's name in the sessions list
-where a call names one: starting a session, writing to it, reading what it
-did, and the same in the past tense once the call is done. Another server's
-tool reads as using that server's tool. Two of the workbench's tools are not
+where a call names one, between quotes: starting a session, writing to it,
+reading what it did, and the same in the past tense once the call is done.
+A session whose row has gone keeps the name its caller gave it. An agent's
+request to use one of them reads the same way in the dock, as what it would
+do: asks to start a session, to write to one. Another server's tool reads as
+using that server's tool, by the server's own name. Two of the workbench's tools are not
 drawn at all: wait, which an agent calls to hear from the sessions it
 started, and notify, which leaves a line on its row. Neither has a step, a
 count in the line work folds into, or a line at the foot of its own, and

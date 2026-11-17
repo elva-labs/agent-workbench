@@ -106,11 +106,10 @@ import {
   userWaiting,
   userWriting,
 } from "$lib/integrated.svelte";
-import { lastRun } from "$lib/thread";
+import { lastRun, nameSessionsBy } from "$lib/thread";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
-import { nameSessionsBy } from "$lib/thread";
 import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
@@ -3133,11 +3132,19 @@ onDirected((session) => startedFor(session.key) !== null);
 
 // The thread words a call on the workbench's tools by the rows' names: a
 // session by its id, and the sessions a wait that names none is watching
-// when exactly one caller is waiting.
+// when exactly one caller is waiting. A session whose row has gone keeps
+// the name its caller gave it, or the one it was listed under, so what
+// the thread said of it stays said.
 nameSessionsBy({
   named: (id) => {
     const row = byId(id);
-    return row === null ? null : label(row);
+    if (row !== null) return label(row);
+    for (const list of Object.values(conductor.started)) {
+      const name = list.find((entry) => entry.id === id)?.name ?? null;
+      if (name !== null && name.trim() !== "") return shown(name);
+    }
+    const kept = sessions.names[id] ?? null;
+    return kept === null || kept.trim() === "" ? null : shown(kept);
   },
   watching: () => {
     const holding = Object.keys(conductor.listening);
