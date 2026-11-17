@@ -190,8 +190,8 @@ diagrams, with a caption, each where it is on disk rather than a copy. The call 
 where a file would: every file of it down the viewer under its name, an
 image at width, a PDF in its own frame, a document rendered, a page in a
 frame of its own that can run its scripts and load the files in its
-folder but reach nothing else of the app, the machine or the network, a
-diagram drawn, a mermaid fence in a document drawn too, the
+folder but sends no request anywhere else, to the app, the machine or the
+network, a diagram drawn, a mermaid fence in a document drawn too, the
 caption in the bar above. Escape closes it as it
 closes a file.
 
@@ -218,22 +218,35 @@ taken yet.
 An HTML page is drawn in a frame inside a frame, both sandboxed: its own
 scripts run, but it has no origin, no storage, no forms, no popups and no
 way to navigate its frame or anything above it, and a content security
-policy keeps it off the network altogether, whether by a script, an
-image, a stylesheet, a font or a link. What it may load is the files in its
-own folder and the folders under it, named by a relative path: images,
-stylesheets, fonts, audio and video, so screenshots the agent saved beside
-the page show in it. The app serves them at an address of the page's own,
-named by a token drawn at random rather than by the page's path, and reads
-each file when the page asks for it, where the page is, a remote included:
-up to eight megabytes each, audio and video a part at a time. A path that
-climbs above the folder or leaves it by a symlink, a hidden file or one in
-a hidden folder, a file of any other kind, and any file at all for a page
-that sits in the home directory or above it are not served, and a page's
-scripts can read none of the files' bytes. What the page names and cannot
-load is listed under it with the reason, and an image among those is drawn
-over with it. A link to a picture, a film or a sound in the folder opens it
-over the window, and Escape or a click puts it away; a link anywhere else
-goes nowhere and is listed.
+policy lets no request from it reach the network, whether a script's, an
+image's, a stylesheet's, a font's or a link's. Two ways out are beyond any
+such policy and stay open to its scripts: a hint to look up or connect to
+a host ahead of time, and the search a WebRTC connection makes for a
+route. Through them a script can tell a host only what it can read
+itself, the page's own text, never the bytes of the files beside it.
+
+What a page may load is the files in its own folder and the folders under
+it, named by a relative path: images, stylesheets, fonts, audio and video,
+so screenshots the agent saved beside the page show in it. The app serves
+them at an address of their own for each drawing of the page, named by a
+token drawn at random rather than by the page's path, and reads each file
+when the page asks for it, four at a time, where the page is, a remote
+included: up to eight megabytes each, audio and video a part at a time.
+The webview keeps what it was given while that drawing stands, and a page
+drawn again asks afresh. A path that climbs above the folder or leaves it
+by a symlink, a hidden file or one in a hidden folder, a file of any other
+kind, and any file at all for a page that sits in the home directory or
+above it are not served, and a page's scripts can read none of the files'
+bytes.
+
+What the page names and cannot load is listed under it by its address,
+with the reason, and an image among those is drawn over with its address
+and that it did not load. Why a file in the folder did not load, which
+only the files' machine can say, is in the list alone: a script in the
+page could ask about any name, and the list is out of its reach. A link to
+a picture, a film or a sound in the folder opens it over the window when
+the user clicks it, and Escape or a click puts it away; a link anywhere
+else goes nowhere and is listed.
 
 The fourth tool, `selection`, runs the other way: the agent asks what the
 user is looking at, and is told the file open in the viewer, whether as its
