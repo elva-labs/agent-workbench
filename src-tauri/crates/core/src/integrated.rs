@@ -3229,9 +3229,10 @@ pub fn rewind(
 }
 
 /// Undoes going back: the session at rest is started again on `session`,
-/// the conversation as it was, from its newest entry. Only while nothing
-/// has gone on in it since, no message sent and no turn run, which would
-/// have made the cut part of the conversation. Fails, with nothing
+/// the conversation as it was, naming no entry to go on from, so `restart`
+/// goes on from the one the conversation went on from before. Only while
+/// nothing has gone on in it since, no message sent and no turn run, which
+/// would have made the cut part of the conversation. Fails, with nothing
 /// changed, where it cannot.
 pub fn undo(
     sessions: &Arc<Sessions>,
