@@ -30,7 +30,9 @@ import {
   create,
   isMine,
   loadRemembered,
+  markUnread,
   noted,
+  onScreenNow,
   reopened,
   runningByToken,
   reset as resetSessions,
@@ -296,6 +298,69 @@ describe("an integrated session behind its row", () => {
     fake.endTurn(handle);
     expect(session.unread).toBe(true);
     expect(session.note).toBe("The review is back.");
+  });
+
+  it("shows the line its last turn ended on when marked unread, and none once a message is sent", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    attention.focused = true;
+    sessions.active = session.key;
+    viewed(session.key);
+    sessions.active = null;
+    expect(session.note).toBeNull();
+
+    markUnread(session.key);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
+
+    viewed(session.key);
+    send(session.key, "next");
+    markUnread(session.key);
+    expect(session.note).toBeNull();
+  });
+
+  it("ends a mark when the user writes to the session, and keeps it through a director's message", async () => {
+    const { session, handle } = await started();
+    attention.focused = true;
+    sessions.active = session.key;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    onScreenNow(session.key);
+    viewed(session.key);
+
+    // Marked on screen, then a director writes to it: still marked.
+    markUnread(session.key);
+    send(session.key, "from the starter", [], "Starter");
+    viewed(session.key);
+    expect(session.unread).toBe(true);
+
+    // The user writes to it: read, and the hold is gone.
+    send(session.key, "carry on please");
+    expect(session.unread).toBe(false);
+    attention.focused = false;
+    fake.turn(handle, "Carried on.");
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("Carried on.");
+    attention.focused = true;
+    viewed(session.key);
+    expect(session.unread).toBe(false);
+  });
+
+  it("announces the turn that ends over a mark with its own words", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "First words.");
+    viewed(session.key);
+    markUnread(session.key);
+    expect(session.note).toBe("First words.");
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "text", block: "n", parent: null, text: "Newer words.", done: true });
+    fake.endTurn(handle);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("Newer words.");
   });
 
   it("names an untitled row after the first line of its first message, and a new message clears the line", async () => {

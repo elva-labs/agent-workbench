@@ -308,6 +308,33 @@ The agent can leave a line of its own instead, why it stopped or what it
 needs, which the ending keeps. Either goes when the session is looked at,
 and the next prompt clears it.
 
+The user can mark a session unread from its row's menu, to come back to
+it. The row is then drawn as one that went unread by itself: the accent
+dot, the stronger name, and under the name the line it last showed, the
+agent's own line or the first line of what it last said, for as long as
+no new turn has begun since. It counts wherever unread sessions count,
+the status bar, the app's icon, the chord to the next session that needs
+you and keeping its project active, and nothing is said through the
+system, since the user did it.
+
+A mark stays while the user stays in the session, whatever the window's
+focus does, and while the user is in another session. It ends when the
+user comes back to the session after another session, or a project with
+none, has been on screen; when the user writes to the session, typing a
+prompt into its terminal or sending a message in its conversation; and
+with Mark as read in the same menu, which reads it without opening it. A
+message a session sends to a session it started does not end the user's
+mark, and nor does anything the agent does. The first news after a mark
+is said as it would be without one, and with its own line: the line the
+mark put back gives way to whatever line comes with the news, on the row
+and in the notification.
+
+Any row can be marked, a session another session started and a row left
+from the last quit among them. A past session, listed under its project
+or behind the fold, has no menu and cannot be marked: nothing of it is
+open to wait for the user, and opening it starts it again. A mark does
+not outlive a quit, as no unread row does.
+
 With the project's hooks on (Live updates, in the settings) the transitions
 are reported by the agent. Both agents' prompt, stop and permission hooks
 append to a log the core tails, and from the first line a session's row follows the
@@ -488,8 +515,10 @@ brought back after a restart and resumed the same way.
 
 A session's row has a menu, opened with a right click on the row, or with
 the menu key or Shift+F10 on the row under the pane's cursor. Its arrows
-walk it, Enter picks and Escape puts it away. It holds Stop, or Close for a
-row with nothing running, and for a session whose agent runs both ways and
+walk it, Enter picks and Escape puts it away. It holds Mark as unread, or
+Mark as read on a row that is unread, as described under
+[what a row says](#what-a-row-says); Stop, or Close for a
+row with nothing running; and for a session whose agent runs both ways and
 whose conversation's id is known, Reopen as a conversation for a terminal
 session and Reopen in a terminal for an integrated one. Reopening stops the
 session and, once its process has ended, resumes the same conversation the
