@@ -29,6 +29,7 @@ import { handOver, sessionClosed as closeShells } from "$lib/terminals.svelte";
 import { isReady } from "$lib/agent.svelte";
 import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
+import { isInstalled } from "$lib/hook.svelte";
 import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
@@ -70,6 +71,10 @@ export interface Session {
   /** How it runs: the agent's own interface in a pty, or integrated, the
       conversation drawn by the window. */
   kind: SessionKind;
+  /** It runs its own way, whatever its agent's setting says: the user
+      started it the other way, or reopened it the other way from its menu.
+      Otherwise it follows the setting, and moves when that is switched. */
+  ownWay: boolean;
   ptyId: string | null;
   status: SessionStatus;
   /** The Claude Code session id. Known from the start when resuming, and from
@@ -138,6 +143,10 @@ export interface Session {
   /** A line the agent left for the row, through its notify tool. Cleared
       by looking. */
   note: string | null;
+  /** The line the row last showed under its name when it went unread,
+      kept after looking clears it, so a session the user marks unread
+      shows it again. Cleared with the line when a new turn begins. */
+  notice: string | null;
   /** The agent's own hooks are reporting this session, so its transitions
       are exact and the pty heuristic stands down. */
   exact: boolean;
@@ -1337,7 +1346,8 @@ export function cycle(project: string, direction: 1 | -1): boolean {
  *
  * It runs the way the agent's setting says, unless started the other way,
  * under a workflow as under none: either way of running tells the
- * orchestrator its workflow as it starts.
+ * orchestrator its workflow as it starts. Started the other way, it runs its
+ * own way from then on, and a switch of the setting leaves it as it is.
  */
 export function create(
   project: string,
@@ -1390,6 +1400,7 @@ export function create(
     ),
   );
   if (missing !== null) live.error = missing;
+  live.ownWay = runsAs !== kindFor(runs);
   if (resolving) pending.add(live.key);
   sessions.active = live.key;
   return live;
@@ -1504,6 +1515,9 @@ export function putUnder(key: string, workflow: Workflow | null, alone: AgentId)
     session.model = orchestratorModel(workflow);
   }
   session.workflowGone = false;
+  // A conversation stays one on an agent whose setting is a terminal: it
+  // runs its own way from here.
+  if (session.kind !== kindFor(session.agent)) session.ownWay = true;
   return true;
 }
 
@@ -1585,10 +1599,12 @@ export function resumeWithout(key: string): Session | null {
     project,
   };
   saveKept();
-  // The row resumed in its place runs the way this one did, and keeps the
-  // shells opened beside it.
+  // The row resumed in its place runs the way this one did, its own way
+  // only where this one ran so, and keeps the shells opened beside it.
+  const ownWay = session.ownWay;
   close(key, true);
   const next = create(project, id, agent, startIn, null, model, account, null, kind);
+  next.ownWay = ownWay;
   handOver(key, { project, session: next.key });
   return next;
 }
@@ -1618,12 +1634,23 @@ export function reopened(
   /** The token of a run the core may still be running from before the
       window was reloaded, which the row takes up with it. */
   running: string | null = null,
+  /** It ran its own way, whatever its agent's setting says. */
+  ownWay = false,
 ): Session {
   const live = added(
     row(project, id, agent, startIn, null, model, account, "dormant", workflow, kind, running),
   );
+  live.ownWay = ownWay;
   if (resolve) pending.add(live.key);
   return live;
+}
+
+/** Who hears that a row left from the last quit is about to start, while
+    it can still be turned the way it is to run. */
+let waking: (session: Session) => void = () => {};
+
+export function onWake(handler: (session: Session) => void) {
+  waking = handler;
 }
 
 /** Starts the process behind a row that was open when the app last quit:
@@ -1631,6 +1658,7 @@ export function reopened(
 export function wake(key: string) {
   const session = byKey(key);
   if (session?.status !== "dormant") return;
+  waking(session);
   renewToken(session);
   session.status = "starting";
   changed(session);
@@ -1656,6 +1684,7 @@ function row(
     project,
     agent,
     kind,
+    ownWay: false,
     ptyId: null,
     status,
     id: resumedFrom,
@@ -1679,6 +1708,7 @@ function row(
     startedAt: null,
     unread: false,
     note: null,
+    notice: null,
     exact: false,
     needs: null,
     delegated: false,
@@ -1730,13 +1760,19 @@ export async function launch(
   // last integrated run ran in, which its agent's terminal has no record
   // of, or the one a terminal run was killed in before it could write its
   // own down. A new one another session started begins in the mode its
-  // starter gave it.
-  const mode = session.resumedFrom === null ? session.modeGiven : modeOf(session.resumedFrom);
+  // starter gave it, and one reopened before anything was said in it, in
+  // the mode kept for the conversation it leaves.
+  const mode =
+    session.resumedFrom !== null
+      ? modeOf(session.resumedFrom)
+      : (session.modeGiven ?? (session.id === null ? null : modeOf(session.id)));
   session.modeNamed = mode;
   session.modeSeen = null;
+  const back = bringingBack.delete(key);
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
+        ...(back ? { bringBack: true } : {}),
         agent: session.agent,
         project: session.project,
         cwd: session.startIn ?? undefined,
@@ -1782,8 +1818,9 @@ export function started(
   session.ptyId = ptyId;
   session.startedAt = Date.now();
   session.status = "running";
+  const quiet = quietly.has(key);
   runUp(key);
-  changed(session);
+  if (!quiet) changed(session);
   if (sessionId !== null) {
     session.id = sessionId;
     // A run in the mode kept for the conversation holds that record until
@@ -1809,6 +1846,17 @@ export function failed(key: string, error: string) {
   session.status = "failed";
   session.error = String(error);
   changed(session);
+}
+
+/** The rows whose next terminal start brings back what their conversation
+    went back on, the user having agreed: a core that holds a conversation
+    at the point it went back to refuses that start otherwise. */
+const bringingBack = new Set<string>();
+
+/** The user agreed that the row's next start in a terminal brings back what
+    its conversation went back on. */
+export function bringBack(key: string) {
+  bringingBack.add(key);
 }
 
 /** The conversation each closed row's run had, by its pty, until that run
@@ -1925,9 +1973,21 @@ export function reopeningRow(key: string): boolean {
   return reopening.has(key);
 }
 
+/** The rows being moved the other way because their agent's setting was
+    switched, until the next run is up. Nothing the row says has changed,
+    so such a move keeps its place in the list and its time. */
+const quietly = new SvelteSet<string>();
+
+/** Whether the row is being moved by its agent's setting rather than by
+    the user's hand. */
+export function movingBySetting(key: string): boolean {
+  return quietly.has(key);
+}
+
 /** The next run of a row is up, or did not start: a reopen of it is over. */
 export function runUp(key: string) {
   reopening.delete(key);
+  quietly.delete(key);
 }
 
 /** What a reopen does once the run it stopped has ended, by the row's key. */
@@ -1981,36 +2041,60 @@ export function midTurn(session: Session): boolean {
  * started it hears of an end. A row left from the last quit only changes
  * the way it will start. False when the run did not stop in time: the row
  * is left as it was.
+ *
+ * Reopened by the user's hand, the row runs its own way from then on where
+ * that is not its agent's setting, and follows the setting again where it
+ * is. Moved `bySetting`, it goes on following the setting, and keeps its
+ * time and its place in the list.
  */
-export async function reopenOtherWay(key: string): Promise<boolean> {
+export async function reopenOtherWay(key: string, bySetting = false): Promise<boolean> {
   const session = byKey(key);
   if (session === null) return false;
   const to = otherWayFor(session);
   if (to === null) return false;
   reopening.add(key);
+  if (bySetting) quietly.add(key);
   if (session.status !== "running") {
-    swap(session, to);
+    swap(session, to, bySetting);
     return true;
   }
   const stopped = await stopRun(session, () => {
     const row = byKey(key);
-    if (row !== null) swap(row, to);
+    if (row !== null) swap(row, to, bySetting);
   });
-  if (!stopped) runUp(key);
+  if (!stopped) {
+    runUp(key);
+    // What the user agreed to was for this reopen.
+    bringingBack.delete(key);
+  }
   return stopped;
+}
+
+/** Turns a row left from the last quit the way it is to start, as its
+    agent's setting says: nothing runs behind it to stop. False for a row
+    that is not left from the last quit, or already runs that way. */
+export function turnDormant(key: string, to: SessionKind): boolean {
+  const row = byKey(key);
+  if (row === null || row.status !== "dormant" || row.kind === to || row.id === null) return false;
+  swap(row, to, true);
+  return true;
 }
 
 /** Turns a row whose run has ended, or that has none, the other way, to
     start again there on the same conversation. */
-function swap(row: Session, to: SessionKind) {
+function swap(row: Session, to: SessionKind, bySetting: boolean) {
+  if (!bySetting) row.ownWay = to !== kindFor(row.agent);
   // The conversation the stopped run had, which the other way lets go of:
   // the next run reads it back from the agent's own record.
+  // A conversation nothing was said in has no record of its agent's to
+  // resume from, and starts afresh the other way.
+  const spoken = row.kind === "integrated" ? saidIn(row) : saidInTerminal(row);
   if (row.kind === "integrated") stopIntegrated(row);
   // The row keeps the name it showed, which a row resumed by its id would
   // otherwise give up for the id's start.
-  row.title ??= label(row);
+  if (spoken) row.title ??= label(row);
   row.kind = to;
-  row.resumedFrom = row.id;
+  row.resumedFrom = spoken ? row.id : null;
   // The prompt a started session began with was given then, and is not
   // given again to the conversation that goes on.
   row.prompt = null;
@@ -2028,7 +2112,25 @@ function swap(row: Session, to: SessionKind) {
     renewToken(row);
     row.status = "starting";
   }
-  changed(row);
+  if (!bySetting) changed(row);
+}
+
+/** Whether anything was said in an integrated row's conversation, as its
+    conversation has it. */
+let saidIn: (session: Session) => boolean = () => true;
+
+export function onSaid(handler: (session: Session) => boolean) {
+  saidIn = handler;
+}
+
+/** Whether anything was said in a terminal row's conversation: it was
+    resumed, started with a prompt, or a turn of it was heard. Where no hook
+    and no log of the agent's reports its turns, a line sent to it counts,
+    since a short turn shows nothing in its output. */
+function saidInTerminal(row: Session): boolean {
+  if (row.resumedFrom !== null || row.prompt !== null || row.turns > 0) return true;
+  const reported = row.exact || row.agent === "codex" || isInstalled(row.project);
+  return row.engaged && !reported;
 }
 
 /** Stops the row's run, and once it has ended, does `then` inside the end.
@@ -2083,6 +2185,7 @@ export function close(key: string, keepShells = false) {
   if (session === null) return;
   runUp(key);
   endings.delete(key);
+  bringingBack.delete(key);
   if (session.kind === "integrated") stopIntegrated(session);
 
   if (session.ptyId !== null) {
@@ -2478,6 +2581,8 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
   if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working && turn) {
     session.working = true;
     session.turns += 1;
+    // What an earlier turn left is no longer the session's latest line.
+    session.notice = null;
     stirred(session);
     changed(session);
   }
@@ -2621,7 +2726,14 @@ function unseen(session: Session, asking = false, reminder = false) {
   if (reminder && rested.has(session.key)) return;
   rested.delete(session.key);
   if (!asking && directed(session)) return;
-  const news = asking || !session.unread;
+  // A mark the user made is no news to the user, so the first thing that
+  // happens over it is, and brings its own line rather than the mark's.
+  const mark = marks.get(session.key);
+  const news = asking || !session.unread || (mark !== undefined && !mark.heard);
+  if (mark !== undefined) {
+    newsOverMark(session);
+    mark.heard = true;
+  }
   session.unread = true;
   if (!news) return;
   changed(session);
@@ -2649,14 +2761,109 @@ export function belled(key: string) {
   unseen(session, false, session.exact && atRest(session));
 }
 
-/** The user looked: the session is on screen in a focused window. */
+/** The user looked: the session is on screen in a focused window. A
+    session the user marked unread while it was on screen stays so until
+    another is put on screen and it comes back. */
 export function viewed(key: string) {
+  if (markedOnScreen === key && marks.has(key)) return;
   const session = byKey(key);
   if (session === null) return;
+  read(session);
+  if (atRest(session)) rested.add(key);
+}
+
+/** The session is read: by a look, by Mark as read, or by the user
+    writing to it. A mark on it ends, and so does its hold. */
+function read(session: Session) {
   if (session.unread) changed(session);
   session.unread = false;
   session.note = null;
+  marks.delete(session.key);
+  if (markedOnScreen === session.key) markedOnScreen = null;
+}
+
+/** A mark the user made: the line it put back under the name, while that
+    line is still shown, and whether anything new has been announced over
+    it since. */
+interface Mark {
+  restored: string | null;
+  heard: boolean;
+}
+
+/** The sessions the user marked unread, by the row's key. A mark lasts
+    while the user stays in the session or goes to another, and through
+    whatever the agent, or a session directing it, does meanwhile. It ends
+    when the user comes back to the session, writes to it, or marks it
+    read. */
+const marks = new Map<string, Mark>();
+/** The session the user marked unread while it was on screen, while that
+    mark lasts and until another session, or none, is put on screen.
+    Looking at it meanwhile is still the look it was marked during, and
+    reads nothing. */
+let markedOnScreen: string | null = null;
+
+/** Something new comes over a mark: the line the mark put back is the
+    mark's, not the agent's, and makes way for whatever line comes now. */
+function newsOverMark(session: Session) {
+  const mark = marks.get(session.key);
+  if (mark === undefined || mark.restored === null) return;
+  if (session.note === mark.restored) session.note = null;
+  mark.restored = null;
+}
+
+/** The agent is about to leave a line, or say it is done, over a mark:
+    the line the mark put back gives way first. */
+export function lineComing(key: string) {
+  const session = byKey(key);
+  if (session !== null) newsOverMark(session);
+}
+
+/** The user wrote to the session: it is read, and a mark on it ends. */
+export function userWrote(key: string) {
+  const session = byKey(key);
+  if (session !== null) read(session);
+}
+
+/** The session on screen is now this one, or none: a mark held on
+    another is let go, so coming back to it reads it. Called whatever the
+    window's focus, since leaving the window is not leaving the session. */
+export function onScreenNow(key: string | null) {
+  if (markedOnScreen !== key) markedOnScreen = null;
+}
+
+/** The user marks a session unread: drawn as one that went unread by
+    itself, with the line it last showed under its name, and counted
+    wherever unread sessions are, until the user next opens it. The user
+    did it, so nothing is said of it: no notification and no chime. */
+export function markUnread(key: string) {
+  const session = byKey(key);
+  if (session === null || session.unread) return;
+  session.unread = true;
+  const restored = session.note === null ? session.notice : null;
+  if (restored !== null) session.note = restored;
+  marks.set(key, { restored, heard: false });
+  if (sessions.active === key) markedOnScreen = key;
+}
+
+/** The user marks a session read, as if it had been looked at. */
+export function markRead(key: string) {
+  const session = byKey(key);
+  if (session === null) return;
+  read(session);
   if (atRest(session)) rested.add(key);
+}
+
+/** The line the row shows under the name, kept as its notice too. */
+function leaveLine(session: Session, line: string) {
+  session.note = line;
+  session.notice = line;
+}
+
+/** A new turn begins: the line the last one left, and its notice, are
+    stale. */
+export function newTurnLine(session: Session) {
+  session.note = null;
+  session.notice = null;
 }
 
 /** The agent left a line for the row: shown under the name, and the row
@@ -2665,7 +2872,8 @@ export function viewed(key: string) {
 export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null || reopening.has(key)) return;
-  session.note = shown(text);
+  newsOverMark(session);
+  leaveLine(session, shown(text));
   unseen(session);
 }
 
@@ -2755,9 +2963,14 @@ export function exact(
       session.delegated = false;
       session.turnEnd = null;
       stirred(session);
-      session.unread = false;
+      // A prompt typed by the user, who is looking at the session, reads
+      // it. One that comes from elsewhere, as a director's does, leaves a
+      // mark the user made as it is.
+      if (isViewed(session)) read(session);
+      else if (!marks.has(session.key)) session.unread = false;
+      else newsOverMark(session);
       // A new turn: whatever line the last one left is stale.
-      session.note = null;
+      newTurnLine(session);
       tookLine(session.key);
       changed(session);
       beganTurn(session);
@@ -2774,7 +2987,8 @@ export function exact(
       session.failure = null;
       session.background = (more.background ?? []).map(shown);
       changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      newsOverMark(session);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
     case "failed":
@@ -2787,7 +3001,8 @@ export function exact(
       session.failure = failureOf(more.error ?? null, line === null ? null : shown(line));
       session.background = [];
       changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      newsOverMark(session);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
     case "delegated": {
@@ -2800,7 +3015,8 @@ export function exact(
       session.delegated = true;
       stirred(session);
       if (idle) changed(session);
-      if (session.note === null && line !== null) session.note = shown(line);
+      newsOverMark(session);
+      if (session.note === null && line !== null) leaveLine(session, shown(line));
       break;
     }
     case "permission": {
@@ -2901,6 +3117,8 @@ export function nextNeedingYou(): Session | null {
 export function reset() {
   pendingActivity.clear();
   reopening.clear();
+  quietly.clear();
+  bringingBack.clear();
   endings.clear();
   closedRuns.clear();
   pressed.clear();
@@ -2916,6 +3134,8 @@ export function reset() {
   }
   pulses.clear();
   rested.clear();
+  marks.clear();
+  markedOnScreen = null;
   bulleted.clear();
   sessions.all = [];
   sessions.active = null;

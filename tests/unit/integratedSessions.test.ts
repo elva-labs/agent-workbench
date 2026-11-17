@@ -30,7 +30,9 @@ import {
   create,
   isMine,
   loadRemembered,
+  markUnread,
   noted,
+  onScreenNow,
   reopened,
   runningByToken,
   reset as resetSessions,
@@ -296,6 +298,69 @@ describe("an integrated session behind its row", () => {
     fake.endTurn(handle);
     expect(session.unread).toBe(true);
     expect(session.note).toBe("The review is back.");
+  });
+
+  it("shows the line its last turn ended on when marked unread, and none once a message is sent", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    attention.focused = true;
+    sessions.active = session.key;
+    viewed(session.key);
+    sessions.active = null;
+    expect(session.note).toBeNull();
+
+    markUnread(session.key);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("All green.");
+
+    viewed(session.key);
+    send(session.key, "next");
+    markUnread(session.key);
+    expect(session.note).toBeNull();
+  });
+
+  it("ends a mark when the user writes to the session, and keeps it through a director's message", async () => {
+    const { session, handle } = await started();
+    attention.focused = true;
+    sessions.active = session.key;
+    send(session.key, "go");
+    fake.turn(handle, "All green.");
+    onScreenNow(session.key);
+    viewed(session.key);
+
+    // Marked on screen, then a director writes to it: still marked.
+    markUnread(session.key);
+    send(session.key, "from the starter", [], "Starter");
+    viewed(session.key);
+    expect(session.unread).toBe(true);
+
+    // The user writes to it: read, and the hold is gone.
+    send(session.key, "carry on please");
+    expect(session.unread).toBe(false);
+    attention.focused = false;
+    fake.turn(handle, "Carried on.");
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("Carried on.");
+    attention.focused = true;
+    viewed(session.key);
+    expect(session.unread).toBe(false);
+  });
+
+  it("announces the turn that ends over a mark with its own words", async () => {
+    const { session, handle } = await started();
+    attention.focused = false;
+    send(session.key, "go");
+    fake.turn(handle, "First words.");
+    viewed(session.key);
+    markUnread(session.key);
+    expect(session.note).toBe("First words.");
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "text", block: "n", parent: null, text: "Newer words.", done: true });
+    fake.endTurn(handle);
+    expect(session.unread).toBe(true);
+    expect(session.note).toBe("Newer words.");
   });
 
   it("names an untitled row after the first line of its first message, and a new message clears the line", async () => {
@@ -1130,6 +1195,15 @@ describe("a session reopened the other way", () => {
     resetShells();
   });
 
+  /** A conversation that was spoken to and answered, so there is a
+      conversation to go on with. */
+  async function spoken() {
+    const made = await started();
+    send(made.key, "Go");
+    fake.turn(made.handle, "Done.");
+    return { ...made, session: byKey(made.key)! };
+  }
+
   /** A terminal row of a conversation, its process up. */
   function terminalRow(id: string) {
     const row = create(PROJECT, id, "claude-code", null, null, null, null, undefined, "terminal");
@@ -1162,7 +1236,7 @@ describe("a session reopened the other way", () => {
   });
 
   it("goes on with a conversation in a terminal once its agent has ended, in the same row", async () => {
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     const token = session.token;
     await reopenOtherWay(key);
@@ -1240,7 +1314,7 @@ describe("a session reopened the other way", () => {
   it("goes on in a terminal in the mode the user last chose, and in none the agent does not offer", async () => {
     stopListening();
     await install({ defaultMode: "auto" });
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     expect(conversationOf(key).settings.mode).toBe("auto");
     await configure(key, { mode: "default" });
     await reopenOtherWay(key);
@@ -1250,7 +1324,7 @@ describe("a session reopened the other way", () => {
     expect(modeOf(session.id!)).toBe("default");
     // A run in a mode from the agent's own settings that it offers no
     // switch to names none: the terminal's settings decide again.
-    const other = await started();
+    const other = await spoken();
     fake.emit(other.handle, { type: "configured", model: null, mode: "bypassPermissions", effort: null, efforts: [] });
     await reopenOtherWay(other.key);
     await launchTerminal(other.key, 80, 24, () => {});
@@ -1264,7 +1338,7 @@ describe("a session reopened the other way", () => {
   it("keeps the mode the user last chose through a terminal run that is killed, and leaves it to the agent once one shuts down", async () => {
     stopListening();
     await install({ defaultMode: "auto" });
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     await configure(key, { mode: "default" });
     await reopenOtherWay(key);
@@ -1306,7 +1380,7 @@ describe("a session reopened the other way", () => {
       [{ code: 1, clean: false }, "plan"],
       [{ code: 0, clean: true }, null],
     ] as const) {
-      const { session, key } = await started();
+      const { session, key } = await spoken();
       const id = session.id!;
       await configure(key, { mode: "plan" });
       await reopenOtherWay(key);
@@ -1319,10 +1393,10 @@ describe("a session reopened the other way", () => {
     }
     // A terminal run still up when the window goes, as at a quit, which
     // hangs up on it: its agent writes its own down.
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const id = session.id!;
     await configure(key, { mode: "acceptEdits" });
-    const other = await started();
+    const other = await spoken();
     await configure(other.key, { mode: "plan" });
     await reopenOtherWay(key);
     await launchTerminal(key, 80, 24, () => {});
@@ -1342,7 +1416,7 @@ describe("a session reopened the other way", () => {
     seam.integratedStop = (async (handle: string) => {
       release = () => void stopNow(handle as never);
     }) as never;
-    const { session, key } = await started();
+    const { session, key } = await spoken();
     const reopening = reopenOtherWay(key);
     await settled();
     // The run is on its way out, and the user turns the chip.
@@ -1358,7 +1432,7 @@ describe("a session reopened the other way", () => {
 
     // A change asked of the run that it has not answered when the reopen
     // stops it.
-    const other = await started();
+    const other = await spoken();
     const configureNow = seam.integratedConfigure;
     seam.integratedConfigure = (() => new Promise(() => {})) as never;
     void configure(other.key, { mode: "plan" });

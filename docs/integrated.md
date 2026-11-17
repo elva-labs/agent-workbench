@@ -154,8 +154,9 @@ in, chosen by the agent from the user's own settings, and the window shows
 the mode the agent says it runs in. The workbench names a mode at the start
 in three cases only. A session that starts again, or a conversation resumed
 or reopened integrated, names the mode it last ran in integrated, which the
-window keeps for each conversation. A Claude Code conversation resumed with
-no such mode names the one its transcript last records, the way Claude
+window keeps for each conversation; one reopened before anything was said
+in it starts afresh, in the mode kept for the conversation it leaves. A
+Claude Code conversation resumed with no such mode names the one its transcript last records, the way Claude
 Code's terminal resumes a conversation, since its stream would start one as
 a new conversation. A new conversation another session started names the
 mode its starter gave it, the starter's own as far as its agent has it, so

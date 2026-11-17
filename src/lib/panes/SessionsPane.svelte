@@ -15,6 +15,7 @@
   import { busyGoing, closingAside, closingQuestion, type BusyShell, type Closed } from "$lib/leaving.svelte";
   import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
+    bringBack,
     byChange,
     byKey,
     close as closeSession,
@@ -29,6 +30,8 @@
     historyFor,
     historyLabel,
     isLive,
+    markRead,
+    markUnread,
     label,
     lastChanged,
     loadHistory,
@@ -55,6 +58,7 @@
     workspace,
   } from "$lib/workspace.svelte";
   import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
+  import { BRINGS_BACK, heldNow, holdWords, listed, reopenEnds } from "$lib/sessionMoves.svelte";
   import { folderShown, folderToRead, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
     placeTextOf,
@@ -456,8 +460,9 @@
   }
 
   /** A session's own menu, from a right click on its row or the menu key
-      on the row under the cursor: the session reopened the other way where
-      its agent runs both ways, and stopping it. It opens upwards near the
+      on the row under the cursor: marking it unread, or read, the session
+      reopened the other way where its agent runs both ways, and stopping
+      it. It opens upwards near the
       pane's foot, and its keyboard cursor walks the items while it is
       open. */
   let sessionMenu = $state<{ key: string; up: boolean } | null>(null);
@@ -470,6 +475,21 @@
     const other = otherWayFor(session);
     const live = isLive(session);
     return [
+      session.unread
+        ? {
+            id: "session-menu-read",
+            label: "Mark as read",
+            title: "Show it as read without opening it",
+            disabled: false,
+            run: () => markRead(session.key),
+          }
+        : {
+            id: "session-menu-unread",
+            label: "Mark as unread",
+            title: "Show it as waiting for you until you next open it",
+            disabled: false,
+            run: () => markUnread(session.key),
+          },
       ...(other === null
         ? []
         : [
@@ -481,7 +501,7 @@
                   ? "Stop it, and go on with the same conversation drawn here"
                   : "Stop it, and go on with the same conversation in the agent's own terminal",
               disabled: false,
-              run: () => reopenAsking(session, other),
+              run: () => void reopenAsking(session, other),
             },
           ]),
       {
@@ -518,19 +538,28 @@
     item.run();
   }
 
-  /** Reopening a session the other way stops it, so while a turn runs the
-      pane asks first. */
-  let reopenAsk = $state<{ key: string; to: SessionKind } | null>(null);
+  /** Reopening a session the other way stops it, so while a turn runs,
+      where its run would end something with it, or where its conversation
+      went back to a point a terminal does not take, the pane asks first. */
+  let reopenAsk = $state<{ key: string; to: SessionKind; held: boolean } | null>(null);
 
-  function reopenAsking(session: Session, to: SessionKind) {
-    if (midTurn(session)) reopenAsk = { key: session.key, to };
-    else void reopen(session.key);
+  async function reopenAsking(session: Session, to: SessionKind) {
+    const key = session.key;
+    const held = to === "terminal" && (await heldNow(session));
+    const now = byKey(key);
+    if (now === null) return;
+    if (held || midTurn(now) || reopenEnds(now).length > 0) reopenAsk = { key, to, held };
+    else void reopen(key);
   }
 
   function reopenConfirm() {
     const ask = reopenAsk;
     reopenAsk = null;
-    if (ask !== null) void reopen(ask.key);
+    if (ask !== null) {
+      // Agreed: the terminal brings back what the conversation went back on.
+      if (ask.held) bringBack(ask.key);
+      void reopen(ask.key);
+    }
     nav?.focus();
   }
 
@@ -562,10 +591,19 @@
     const session = byKey(reopenAsk.key);
     if (session === null) return null;
     const name = closingName(session);
+    const ends = reopenEnds(session);
     return {
       question:
         reopenAsk.to === "integrated" ? `Reopen ${name} as a conversation?` : `Reopen ${name} in a terminal?`,
-      detail: `${agentLabel(session.agent)} is in the middle of a turn. Reopening stops it there, and the conversation goes on from where it stopped.`,
+      detail: [
+        ...(midTurn(session)
+          ? [
+              `${agentLabel(session.agent)} is in the middle of a turn. Reopening stops it there, and the conversation goes on from where it stopped.`,
+            ]
+          : []),
+        ...(ends.length > 0 ? [`Reopening ends ${listed(ends)}.`] : []),
+        ...(reopenAsk.held ? [BRINGS_BACK] : []),
+      ].join(" "),
     };
   });
 
@@ -1520,9 +1558,16 @@
     folded || session.note !== null || kids.length > 0 || news.length > 0 || drawnSubs.length === 0
       ? null
       : subagentWords(drawnSubs)}
+  <!-- A row its agent's setting would move and has not: when it moves,
+       or why it stays, on its second line unless that says something of
+       the agent's, and then a word of it where the model stands. -->
+  {@const stays = holdWords(session)}
+  {@const staysSaid =
+    stays !== null && !folded && session.note === null && kids.length === 0 && news.length === 0}
   {@const line = folded
     ? startedWords(kids)
-    : (session.note ?? (kids.length > 0 || news.length > 0 ? startedWords(kids) : subsSaid))}
+    : (session.note ??
+      (kids.length > 0 || news.length > 0 ? startedWords(kids) : staysSaid ? stays!.line : subsSaid))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"
@@ -1568,8 +1613,14 @@
                 : kids.some(isAsking)}
             class:first-say={news.length > 0}
             class:shares={!folded && news.length === 0 && woken !== null}
-            title={line}
-            data-testid={owned ? "session-note" : subsSaid !== null ? "subagent-summary" : "orchestrator-summary"}>{line}</span
+            title={staysSaid ? stays!.full : line}
+            data-testid={owned
+              ? "session-note"
+              : staysSaid
+                ? "session-stays"
+                : subsSaid !== null
+                  ? "subagent-summary"
+                  : "orchestrator-summary"}>{line}</span
           >
           {#if news.length > 0}
             <!-- What it has not heard from the sessions it started, while it
@@ -1606,6 +1657,8 @@
               ><span class="woken-by">{"woken by "}</span
               >{#if words.name !== null}<span class="woken-name">{words.name}</span>{:else}{words.count}{/if}</span
             >
+          {:else if stays !== null && !staysSaid && news.length === 0}
+            <span class="meta" title={stays.full} data-testid="session-stays-mark">{stays.short}</span>
           {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
           {/if}
@@ -1616,7 +1669,7 @@
       <span class="state told"
         >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
             woken,
-          ).name ?? wokenWords(woken).count}{/if}</span
+          ).name ?? wokenWords(woken).count}{/if}{#if stays !== null && !staysSaid}, {stays.line}{/if}</span
       >
     </button>
     {#if kids.length > 0}
@@ -1767,6 +1820,7 @@
              of 4": the step set the model, and the step is what tells the
              rows apart. -->
         {@const role = placeTextOf(kid.key)?.short ?? null}
+        {@const kidStays = holdWords(kid)}
         <div
           class="session kid"
           class:first={index === 0}
@@ -1819,12 +1873,15 @@
             </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
+            {:else if kidStays !== null}
+              <!-- Not moved yet by its agent's setting, and why. -->
+              <span class="model" title={kidStays.full} data-testid="started-stays">{kidStays.short}</span>
             {:else if role !== null}
               <span class="model role" data-testid="started-role">{role}</span>
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told"
-              >{statusLabel(kid)}{#if news.includes(kid)}, not heard by {label(parent)} yet{/if}</span
+              >{statusLabel(kid)}{#if news.includes(kid)}, not heard by {label(parent)} yet{/if}{#if kidStays !== null}, {kidStays.line}{/if}</span
             >
           </button>
           <span class="actions">

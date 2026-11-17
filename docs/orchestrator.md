@@ -84,7 +84,11 @@ session's terminal has asked for paste, and in small pieces a moment apart
 when it has not, so the agent takes it whole either way. Its Enter follows
 on its own, later the longer the line is. A session that runs integrated
 is sent the text as a message, whole, as the user's own is, and one sent
-while it works waits for its turn.
+while it works waits for its turn. A session being reopened the other way,
+by the user or by the setting of how its agent's sessions run (see
+[sessions](sessions.md#integrated-sessions)), takes the line once its next
+run is up, the way that run takes one; one not up within half a minute is
+refused, saying to send again in a moment.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A session whose hooks report its
 turns stops working when they say its turn ended, and never because its
@@ -358,8 +362,9 @@ woken alike, and there is no setting for it.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal
-and its own events for an integrated one. It holds no wait, and asks for
-nothing. The user is not writing to it: an integrated starter's composer
+and its own events for an integrated one. It is not being reopened the
+other way: the run that goes on is woken once it is up. It holds no wait,
+and asks for nothing. The user is not writing to it: an integrated starter's composer
 holds no words or images and no message of the user's waits for the agent;
 a starter in a terminal has had no key of the user's since its agent last
 took a line in, as its prompt hook says, or since Ctrl+C emptied its line,

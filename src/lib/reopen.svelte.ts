@@ -1,4 +1,6 @@
 import type { AgentId } from "$lib/core";
+import type { SessionKind } from "$lib/sessionKind.svelte";
+import { pendingMove, recordMove } from "$lib/sessionMoves.svelte";
 import { carryOver, startedFor } from "$lib/conductor.svelte";
 import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
@@ -58,6 +60,19 @@ interface Open {
       says it has earlier messages only when it has. A record from before
       says nothing, which reads as spoken to. */
   spoken?: boolean;
+  /** It ran its own way, whatever its agent's setting says. A record from
+      before says nothing, which reads as following the setting. */
+  own?: boolean;
+  /** The way its agent's setting had it due to move to and it had not yet,
+      which it starts as once it is woken. */
+  moves?: SessionKind;
+}
+
+/** The way a row is due to move to and has not yet, as the record keeps
+    it. */
+function movesOf(session: Session): { moves?: SessionKind } {
+  const to = pendingMove(session);
+  return to === null ? {} : { moves: to };
 }
 
 function onRecord(session: Session): boolean {
@@ -72,7 +87,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind, handle, spoken, token } =
+  const { project, id, agent, startIn, model, account, kind, handle, spoken, token, own, moves } =
     entry as Record<string, unknown>;
   return (
     typeof project === "string" &&
@@ -84,7 +99,9 @@ function isOpenEntry(entry: unknown): entry is Open {
     (kind === undefined || kind === "terminal" || kind === "integrated") &&
     (handle === undefined || handle === null || typeof handle === "string") &&
     (spoken === undefined || typeof spoken === "boolean") &&
-    (token === undefined || (typeof token === "string" && token !== ""))
+    (token === undefined || (typeof token === "string" && token !== "")) &&
+    (own === undefined || typeof own === "boolean") &&
+    (moves === undefined || moves === "terminal" || moves === "integrated")
   );
 }
 
@@ -171,7 +188,9 @@ export function reopen(
       null,
       true,
       running,
+      entry.own === true,
     );
+    if (entry.moves !== undefined) recordMove(row.key, entry.moves);
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
     // row waits to be resumed like any other.
@@ -243,6 +262,8 @@ export function reopen(
             model: session.model,
             account: session.account,
             kind: session.kind,
+            ...(session.ownWay ? { own: true } : {}),
+            ...movesOf(session),
             ...(session.kind === "integrated"
               ? { handle: handleOf(session.key), spoken: session.engaged, token: session.token }
               : {}),
