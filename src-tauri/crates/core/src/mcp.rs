@@ -153,8 +153,9 @@ pub const ASK_AS_POLICY_SAYS: &[&str] = &[
     // Starts a session. The window asks before the first start in another
     // project unless the user let the caller start more there, and never
     // before a resume. A start in the caller's own project on its agent and
-    // account is not asked by the window unless a setting says to, so for
-    // that one Codex's question, where its policy asks, is the only one.
+    // account, in a mode no narrower than the caller's, is not asked by the
+    // window unless a setting says to, so for that one Codex's question,
+    // where its policy asks, is the only one.
     "start",
     // Act in the workbench's browser, in sites the user signed into there.
     "browser_open",

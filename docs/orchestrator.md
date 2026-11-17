@@ -79,12 +79,12 @@ id and tells it to keep calling `wait` until every session it started is
 done. `send` types a line
 into a running session, and Enter after it on its own, as a person does,
 though never one that begins with `!` (see [what the user is
-asked](#what-the-user-is-asked)). A long line goes in as a paste when the session's terminal has asked for
-paste, and in small pieces a moment apart when it has not, so the agent
-takes it whole either way. Its Enter follows on its own, later the longer
-the line is. A session that runs integrated is sent the text as a message,
-whole, as the user's own is, and one sent while it works waits for its
-turn.
+asked](#what-the-user-is-asked)). A long line goes in as a paste when the
+session's terminal has asked for paste, and in small pieces a moment apart
+when it has not, so the agent takes it whole either way. Its Enter follows
+on its own, later the longer the line is. A session that runs integrated
+is sent the text as a message, whole, as the user's own is, and one sent
+while it works waits for its turn.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A session whose hooks report its
 turns stops working when they say its turn ended, and never because its
@@ -596,17 +596,26 @@ The workbench knows the starter's mode for an integrated session, as its
 agent says it; for a Claude Code session in a terminal, as its hooks say
 it with each turn; and for a terminal session it resumed in the mode it
 keeps for the conversation, which is that mode until the hooks say
-otherwise. It cannot know the mode of a Codex session in a terminal that
+otherwise. A mode changed in the middle of a turn is known only once the
+next hook says it, so a start made in that same turn is compared with the
+mode before. It cannot know the mode of a Codex session in a terminal that
 it started in no mode, nor of a terminal session whose hooks are off, and
 does not compare those. The mode a session would begin in is learned from
 the sessions of that agent, under that account, in that project and run
 the way the agent is set to run, that the window saw begin in this run of
 the app with no mode named, the starter's own among them; the widest of
-those is taken. Where none is known, or a mode is not one the workbench
-ranks, the start is asked about. Claude Code's modes rank Plan first, then
-Default and Don't ask together, since Don't ask refuses what Default would
-ask about, then Accept edits, Auto and Bypass permissions; Codex's rank
-Read only, Auto and Full access.
+those is taken. A resumed session goes on in the mode its conversation
+last ran in, so none counts. Nor does a terminal session whose mode
+somebody could have changed before its hooks first said it: its first mode
+counts only when the workbench started it with its prompt, or when no key
+of the user's had reached it yet. A session the user opened in a terminal
+and typed into first is not counted, so the starts such a session makes
+in its own project are asked about until a session started there has said
+the mode it began in. Where none is known, or a mode is not one the
+workbench ranks, the start is asked about. Claude Code's modes rank Plan
+first, then Default and Don't ask together, since Don't ask refuses what
+Default would ask about, then Accept edits, Auto and Bypass permissions;
+Codex's rank Read only, Auto and Full access.
 
 A start there on another agent or under another account reads other
 settings, whose mode may be wider, and is asked about as a start anywhere
