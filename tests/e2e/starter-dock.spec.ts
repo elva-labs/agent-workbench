@@ -413,3 +413,50 @@ test.describe("a round of review past the limit, for an orchestrator in a conver
     expect((await answerTo(page, "c-4"))!.content).toContain('for step "Review" round 3');
   });
 });
+
+test.describe("a started session's request while the window is behind", () => {
+  type Notified = { title: string; body: string; id: string };
+  const notified = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __notified?: Notified[] }).__notified ?? []);
+  const unnotified = (page: Page) =>
+    page.evaluate(() => (window as unknown as { __unnotified?: string[] }).__unnotified ?? []);
+  const away = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  /** A click on the notification: the window is brought forward, then told
+      which was clicked. */
+  const click = (page: Page, id: string) =>
+    page.evaluate((id) => {
+      window.dispatchEvent(new Event("focus"));
+      (window as unknown as { __noticeClicked: (id: string) => void }).__noticeClicked(id);
+    }, id);
+
+  test("is told of once, and a click comes back to the starter's dock", async ({ page }) => {
+    const starter = await starterWithStarted(page);
+    await goToNamed(page, "Fix the cache");
+    await expect(shown(page)).not.toHaveAttribute("data-session", starter);
+    await away(page);
+    await asks(page, "cargo test --workspace");
+    await expect.poll(async () => (await notified(page)).length).toBe(1);
+    const [told] = await notified(page);
+    expect(told.title).toContain("Fix the cache");
+    expect(told.body).toBe("Asks to run cargo");
+
+    await click(page, told.id);
+    await expect(shown(page)).toHaveAttribute("data-session", starter);
+    const dock = shown(page).getByTestId("permission-dock");
+    await expect(dock).toBeVisible();
+    await expect(dock).toContainText("Fix the cache asks to run cargo test --workspace");
+    expect(await notified(page)).toHaveLength(1);
+  });
+
+  test("is taken away once answered in the dock", async ({ page }) => {
+    await starterWithStarted(page);
+    await away(page);
+    await asks(page, "cargo test");
+    await expect.poll(async () => (await notified(page)).length).toBe(1);
+    const [told] = await notified(page);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await shown(page).getByTestId("permission-dock").getByTestId("choice-allow").click();
+    await expect(shown(page).getByTestId("permission-dock")).toHaveCount(0);
+    await expect.poll(() => unnotified(page)).toEqual([told.id]);
+  });
+});

@@ -276,7 +276,10 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     for name in crate::mcp::ASK_AS_POLICY_SAYS {
         assert!(tool["tools"].get(name).is_none(), "{name}");
     }
-    assert_eq!(tool["env"], json!({"WORKBENCH_ROLE": "orchestrator"}));
+    assert_eq!(
+        tool["env"],
+        json!({"WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"})
+    );
     assert!(start.get("threadId").is_none());
 
     // Ready waits for all four answers, and says the thread's id.
@@ -371,7 +374,7 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     assert_eq!(resume["params"]["approvalsReviewer"], "user");
     assert_eq!(
         resume["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
-        json!({"WORKBENCH_SESSION": "token-old"})
+        json!({"WORKBENCH_SESSION": "token-old", "WORKBENCH_VIEW": "conversation"})
     );
 }
 
@@ -394,7 +397,7 @@ fn a_fresh_thread_s_tool_server_is_told_the_session_before_codex_names_it() {
         .unwrap();
     assert_eq!(
         start["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
-        json!({"WORKBENCH_SESSION": "token-fresh"})
+        json!({"WORKBENCH_SESSION": "token-fresh", "WORKBENCH_VIEW": "conversation"})
     );
 }
 

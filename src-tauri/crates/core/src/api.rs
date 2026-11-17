@@ -1609,6 +1609,27 @@ impl Core {
         crate::show::file_info(path)
     }
 
+    /// A file an HTML page names beside it, whole or a range of it, when
+    /// the page may load it.
+    pub fn read_page_file(
+        &self,
+        page: &Path,
+        file: &str,
+        range: Option<(u64, Option<u64>)>,
+    ) -> Result<crate::page_files::PageFile, String> {
+        crate::page_files::read(page, file, home_directory().as_deref(), range)
+    }
+
+    /// What a file an HTML page names beside it is, or why the page may
+    /// not load it.
+    pub fn check_page_file(
+        &self,
+        page: &Path,
+        file: &str,
+    ) -> Result<crate::page_files::PageFileInfo, String> {
+        crate::page_files::check(page, file, home_directory().as_deref())
+    }
+
     /// The answer to a call on one of the conductor's tools, left where
     /// the tool server that made the call is waiting for it. A prompt call
     /// whose hook has stopped waiting gets none, nor does a wait whose

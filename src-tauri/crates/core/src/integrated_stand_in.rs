@@ -484,6 +484,8 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     assert!(has("WORKBENCH_SESSION=token-command"), "{env}");
     assert!(!has(&format!("WORKBENCH_SESSION={}", h.session)), "{env}");
     assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
+    // And that it is drawn as a conversation, which says how its turns end.
+    assert!(has("WORKBENCH_VIEW=conversation"), "{env}");
     assert!(
         has(&format!("CLAUDE_CONFIG_DIR={}", config.display())),
         "{env}"

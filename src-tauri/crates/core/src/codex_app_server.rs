@@ -31,7 +31,7 @@ use serde_json::{json, Map, Value};
 
 use crate::adapter::{
     prepare_process, process, CODEX_APPROVE, CODEX_HOME_VAR, CODEX_NO_SUBAGENTS, CODEX_TOOLS,
-    CODEX_TOOL_APPROVAL, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR,
+    CODEX_TOOL_APPROVAL, CONVERSATION_VIEW, ORCHESTRATOR_ROLE, ROLE_VAR, SESSION_VAR, VIEW_VAR,
 };
 use crate::env::find_on_path;
 use crate::hook;
@@ -238,6 +238,7 @@ impl Protocol for CodexAppServer {
         if launch.orchestrator {
             command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
         }
+        command.env(VIEW_VAR, CONVERSATION_VIEW);
         if let Some(dir) = launch.config_dir {
             command.env(CODEX_HOME_VAR, dir);
         }
@@ -1485,6 +1486,7 @@ impl AppServer {
             if self.orchestrator {
                 env.insert(ROLE_VAR.into(), json!(ORCHESTRATOR_ROLE));
             }
+            env.insert(VIEW_VAR.into(), json!(CONVERSATION_VIEW));
             // The server's own tools that read, and those the window asks
             // the user about every time, run without asking, each by an
             // approval of its own. Its other tools, and the servers the

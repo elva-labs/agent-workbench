@@ -260,6 +260,15 @@ struct PathParams {
     path: PathBuf,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PageFileParams {
+    page: PathBuf,
+    file: String,
+    from: Option<u64>,
+    to: Option<u64>,
+}
+
 /// A call's answer, however it is named: the conductor's tools and the
 /// browser's both answer through the one underlying method, which just
 /// writes where the tool server named `id` waits.
@@ -798,6 +807,16 @@ pub fn dispatch(
         "file_info" => {
             let p: PathParams = parse(params)?;
             value(core.file_info(&p.path)?)
+        }
+        "read_page_file" => {
+            let p: PageFileParams = parse(params)?;
+            let range = p.from.map(|from| (from, p.to));
+            let file = core.read_page_file(&p.page, &p.file, range)?;
+            value(crate::page_files::PageFileWire::from(file))
+        }
+        "check_page_file" => {
+            let p: PageFileParams = parse(params)?;
+            value(core.check_page_file(&p.page, &p.file)?)
         }
         "set_selection" => {
             let p: SelectionParams = parse(params)?;

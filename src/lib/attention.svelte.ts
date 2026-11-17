@@ -14,17 +14,52 @@ export const attention = $state({
   focused: true,
 });
 
-/** Follows the window's focus. Returns a stop function. */
+/** The page has the keyboard. */
+let page = true;
+/** One of the window's own browser tabs has the keyboard, which takes it
+    from the page while the window stays the one in front. */
+let tab = false;
+
+function settle() {
+  attention.focused = page || tab;
+}
+
+/** Follows the window's focus: the page's, and a browser tab's in the
+    window while it holds the keyboard. Returns a stop function. */
 export function followFocus(target: Window = window): () => void {
-  attention.focused = target.document.hasFocus();
-  const on = () => (attention.focused = true);
-  const off = () => (attention.focused = false);
+  page = target.document.hasFocus();
+  tab = false;
+  settle();
+  const on = () => {
+    page = true;
+    tab = false;
+    settle();
+  };
+  const off = () => {
+    page = false;
+    settle();
+  };
   target.addEventListener("focus", on);
   target.addEventListener("blur", off);
   return () => {
     target.removeEventListener("focus", on);
     target.removeEventListener("blur", off);
   };
+}
+
+/** A browser tab in the window took the keyboard from the page: the window
+    is still the one the user is in. */
+export function tabFocused() {
+  tab = true;
+  settle();
+}
+
+/** The window itself became the one in front, or stopped being it, as the
+    system says. Back in front with the page not holding the keyboard, a
+    browser tab of the window holds it. */
+export function windowFocused(focused: boolean, target: Window = window) {
+  tab = focused && !target.document.hasFocus();
+  settle();
 }
 
 let shown: number | null = null;
@@ -42,5 +77,7 @@ export function badge(count: number) {
 /** Test seam. */
 export function resetAttention() {
   attention.focused = true;
+  page = true;
+  tab = false;
   shown = null;
 }

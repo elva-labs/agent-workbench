@@ -1213,18 +1213,22 @@
     box-shadow: inset 0 0 0 2px var(--accent);
   }
 
+  /* WebKit draws the caret as tall as the line it is on, so each line of
+     the field is as tall as its text, and the caret no taller than the
+     letters. One line keeps the field 22px tall, the line in its middle.
+     What is drawn over the field lays out its lines alike. */
   textarea {
     width: 100%;
     min-height: 22px;
     max-height: 38vh;
-    padding: 0 2px;
+    padding: calc((22px - 1lh) / 2) 2px;
     border: 0;
     outline: none;
     resize: none;
     background: none;
     font: inherit;
     font-size: var(--conv-size);
-    line-height: 1.5;
+    line-height: normal;
     color: var(--ink);
     overflow-y: auto;
   }
@@ -1243,9 +1247,9 @@
   .ghost {
     position: absolute;
     inset: 0;
-    padding: 0 2px;
+    padding: calc((22px - 1lh) / 2) 2px;
     font-size: var(--conv-size);
-    line-height: 1.5;
+    line-height: normal;
     color: var(--ink-3);
     white-space: pre-wrap;
     overflow-wrap: break-word;
@@ -1263,9 +1267,9 @@
   .backdrop {
     position: absolute;
     inset: 0;
-    padding: 0 2px;
+    padding: calc((22px - 1lh) / 2) 2px;
     font-size: var(--conv-size);
-    line-height: 1.5;
+    line-height: normal;
     color: var(--ink);
     white-space: pre-wrap;
     overflow-wrap: break-word;

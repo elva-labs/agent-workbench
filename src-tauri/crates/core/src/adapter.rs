@@ -155,6 +155,14 @@ pub const ROLE_VAR: &str = "WORKBENCH_ROLE";
 /// The one role there is.
 pub const ORCHESTRATOR_ROLE: &str = "orchestrator";
 
+/// The variable that says how the user sees the session, when it is not a
+/// terminal: the agent's own view there draws its turns, and what it is
+/// told of them follows.
+pub const VIEW_VAR: &str = "WORKBENCH_VIEW";
+
+/// The view of a session the workbench draws as a conversation.
+pub const CONVERSATION_VIEW: &str = "conversation";
+
 pub trait AgentAdapter: Send + Sync {
     fn id(&self) -> &'static str;
 
