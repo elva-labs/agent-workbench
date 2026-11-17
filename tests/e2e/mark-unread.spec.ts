@@ -137,3 +137,53 @@ test("marks an unread session read from its menu", async ({ page }) => {
   await expect(first.getByTestId("session-note")).toHaveCount(0);
   await expect(page.getByTestId("waiting-readout")).toHaveCount(0);
 });
+
+/** A hook's word on a session, by its id. */
+const hook = (page: Page, sessionId: string, kind: string, note?: string) =>
+  page.evaluate(
+    ({ sessionId, kind, note }) =>
+      (window as unknown as { __sessionEvent: (event: unknown) => void }).__sessionEvent({ sessionId, kind, note }),
+    { sessionId, kind, note },
+  );
+
+const focus = (page: Page, on: boolean) =>
+  page.evaluate((on) => window.dispatchEvent(new Event(on ? "focus" : "blur")), on);
+
+test("ends the mark on screen when the user writes to it, and announces news with its own line", async ({ page }) => {
+  await two(page);
+  const second = row(page, "session 2");
+  await hook(page, "session-2", "prompt");
+  await hook(page, "session-2", "stop", "First turn line.");
+  await second.click({ button: "right" });
+  await page.getByTestId("session-menu-unread").click();
+  await expect(second.getByTestId("session-note")).toHaveText("First turn line.");
+
+  // The user's own prompt reads it; the turn that ends in the background is
+  // news, and the window coming back to it reads that.
+  await hook(page, "session-2", "prompt");
+  await expect(second.locator(".dot")).not.toHaveClass(/unread/);
+  await focus(page, false);
+  await hook(page, "session-2", "stop", "Done.");
+  await expect(second.locator(".dot")).toHaveClass(/unread/);
+  await focus(page, true);
+  await expect(second.locator(".dot")).not.toHaveClass(/unread/);
+
+  // Marked away from it, then a turn of its own ends: the new line, on the
+  // row and in the notification.
+  const first = row(page, "session 1");
+  await hook(page, "session-1", "prompt");
+  await hook(page, "session-1", "stop", "Old line.");
+  await first.click();
+  await second.click();
+  await first.click({ button: "right" });
+  await page.getByTestId("session-menu-unread").click();
+  await expect(first.getByTestId("session-note")).toHaveText("Old line.");
+  await focus(page, false);
+  await hook(page, "session-1", "stop", "Background job done.");
+  await expect(first.getByTestId("session-note")).toHaveText("Background job done.");
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { __notified?: { body: string }[] }).__notified?.at(-1)?.body),
+    )
+    .toBe("Background job done.");
+});

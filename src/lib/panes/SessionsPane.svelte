@@ -474,7 +474,13 @@
     const live = isLive(session);
     return [
       session.unread
-        ? { id: "session-menu-read", label: "Mark as read", disabled: false, run: () => markRead(session.key) }
+        ? {
+            id: "session-menu-read",
+            label: "Mark as read",
+            title: "Show it as read without opening it",
+            disabled: false,
+            run: () => markRead(session.key),
+          }
         : {
             id: "session-menu-unread",
             label: "Mark as unread",

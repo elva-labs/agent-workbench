@@ -6,6 +6,7 @@ import { resetZoom, zoom, zoomed } from "$lib/zoom.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { register, resetScreens } from "$lib/screens";
+import { bodyFor } from "$lib/notify.svelte";
 import {
   activeSession,
   adoptPastSessions,
@@ -3207,26 +3208,122 @@ describe("marking a session unread", () => {
     expect(behind.unread).toBe(false);
   });
 
-  it("takes what happens after a mark as news, but not an idle notice", () => {
+  it("announces what happens after a mark with its own line, but not an idle notice", () => {
     const told: string[] = [];
     onWaiting((session) => told.push(session.key));
     try {
       const { front, behind } = pair();
       exact("session-pty-2", "prompt");
-      exact("session-pty-2", "stop", "Done.");
+      exact("session-pty-2", "stop", "First turn line.");
       look(behind.key);
       look(front.key);
       told.length = 0;
 
       markUnread(behind.key);
+      expect(behind.note).toBe("First turn line.");
       exact("session-pty-2", "idle");
       expect(told).toEqual([]);
+      expect(behind.note).toBe("First turn line.");
 
+      // A turn of its own, as when a background task ends: no prompt.
+      exact("session-pty-2", "stop", "Background job done.");
+      expect(told).toEqual([behind.key]);
+      expect(behind.note).toBe("Background job done.");
+      expect(bodyFor(behind)).toBe("Background job done.");
+
+      // Unread by now, the next line is no news, as without a mark.
       noted(behind.key, "Need the API key");
       expect(told).toEqual([behind.key]);
       expect(behind.note).toBe("Need the API key");
+      expect(bodyFor(behind)).toBe("Need the API key");
     } finally {
       onWaiting(null);
+    }
+  });
+
+  it("announces a line left through notify over a mark with that line", () => {
+    const told: string[] = [];
+    onWaiting((session) => told.push(session.key));
+    try {
+      const { front, behind } = pair();
+      noted(behind.key, "Old line.");
+      look(behind.key);
+      look(front.key);
+      told.length = 0;
+      markUnread(behind.key);
+      noted(behind.key, "New line.");
+      expect(told).toEqual([behind.key]);
+      expect(bodyFor(behind)).toBe("New line.");
+    } finally {
+      onWaiting(null);
+    }
+  });
+
+  it("lets the hold go when the user writes to the session marked on screen", () => {
+    const { behind } = pair();
+    exact("session-pty-2", "prompt");
+    exact("session-pty-2", "stop", "Done.");
+    look(behind.key);
+    markUnread(behind.key);
+
+    // The user types a prompt into it: read, and the mark is over.
+    exact("session-pty-2", "prompt");
+    expect(behind.unread).toBe(false);
+    attention.focused = false;
+    exact("session-pty-2", "stop", "Done again.");
+    expect(behind.unread).toBe(true);
+
+    // Back to the window with it still on screen: read.
+    attention.focused = true;
+    viewed(behind.key);
+    expect(behind.unread).toBe(false);
+  });
+
+  it("keeps a mark through a director's prompt and its stop, until the user comes back", () => {
+    onDirected(() => true);
+    try {
+      const { front, behind } = pair();
+      exact("session-pty-2", "prompt");
+      exact("session-pty-2", "stop", "First.");
+      look(behind.key);
+      look(front.key);
+      markUnread(behind.key);
+
+      exact("session-pty-2", "prompt");
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBeNull();
+      exact("session-pty-2", "stop", "Second.");
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBe("Second.");
+
+      look(behind.key);
+      expect(behind.unread).toBe(false);
+    } finally {
+      onDirected(null);
+    }
+  });
+
+  it("forgets an earlier turn's line once the agent is seen at work, without hooks", () => {
+    vi.useFakeTimers();
+    try {
+      const { front, behind } = pair();
+      typed(behind.ptyId!, "hello\r");
+      noted(behind.key, "Ready for review");
+      look(behind.key);
+      look(front.key);
+      for (let i = 0; i < WORK_WINDOWS + 1; i += 1) {
+        if (i > 0) vi.advanceTimersByTime(1010);
+        output(behind.key, WORK_BYTES, Date.now(), true);
+      }
+      expect(behind.working).toBe(true);
+      vi.advanceTimersByTime(QUIET_MS + 10);
+      look(behind.key);
+      look(front.key);
+      markUnread(behind.key);
+      expect(behind.unread).toBe(true);
+      expect(behind.note).toBeNull();
+    } finally {
+      vi.useRealTimers();
     }
   });
 

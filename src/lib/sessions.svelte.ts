@@ -2473,6 +2473,8 @@ export function output(key: string, bytes: number, now = Date.now(), said = fals
   if (work && pulse.run >= WORK_WINDOWS - 1 && !session.working && turn) {
     session.working = true;
     session.turns += 1;
+    // What an earlier turn left is no longer the session's latest line.
+    session.notice = null;
     stirred(session);
     changed(session);
   }
@@ -2616,9 +2618,14 @@ function unseen(session: Session, asking = false, reminder = false) {
   if (reminder && rested.has(session.key)) return;
   rested.delete(session.key);
   if (!asking && directed(session)) return;
-  // A mark the user made is no news to the user, so what happens next is.
-  const news = asking || !session.unread || marked.has(session.key);
-  marked.delete(session.key);
+  // A mark the user made is no news to the user, so the first thing that
+  // happens over it is, and brings its own line rather than the mark's.
+  const mark = marks.get(session.key);
+  const news = asking || !session.unread || (mark !== undefined && !mark.heard);
+  if (mark !== undefined) {
+    newsOverMark(session);
+    mark.heard = true;
+  }
   session.unread = true;
   if (!news) return;
   changed(session);
@@ -2650,27 +2657,64 @@ export function belled(key: string) {
     session the user marked unread while it was on screen stays so until
     another is put on screen and it comes back. */
 export function viewed(key: string) {
-  if (markedOnScreen === key) return;
+  if (markedOnScreen === key && marks.has(key)) return;
   const session = byKey(key);
   if (session === null) return;
   read(session);
   if (atRest(session)) rested.add(key);
 }
 
+/** The session is read: by a look, by Mark as read, or by the user
+    writing to it. A mark on it ends, and so does its hold. */
 function read(session: Session) {
   if (session.unread) changed(session);
   session.unread = false;
   session.note = null;
-  marked.delete(session.key);
+  marks.delete(session.key);
+  if (markedOnScreen === session.key) markedOnScreen = null;
 }
 
-/** The sessions the user marked unread, by the row's key, until they are
-    read or something new happens in them. */
-const marked = new Set<string>();
-/** The session the user marked unread while it was on screen, until
-    another session, or none, is put on screen. Looking at it meanwhile is
-    still the look it was marked during, and reads nothing. */
+/** A mark the user made: the line it put back under the name, while that
+    line is still shown, and whether anything new has been announced over
+    it since. */
+interface Mark {
+  restored: string | null;
+  heard: boolean;
+}
+
+/** The sessions the user marked unread, by the row's key. A mark lasts
+    while the user stays in the session or goes to another, and through
+    whatever the agent, or a session directing it, does meanwhile. It ends
+    when the user comes back to the session, writes to it, or marks it
+    read. */
+const marks = new Map<string, Mark>();
+/** The session the user marked unread while it was on screen, while that
+    mark lasts and until another session, or none, is put on screen.
+    Looking at it meanwhile is still the look it was marked during, and
+    reads nothing. */
 let markedOnScreen: string | null = null;
+
+/** Something new comes over a mark: the line the mark put back is the
+    mark's, not the agent's, and makes way for whatever line comes now. */
+function newsOverMark(session: Session) {
+  const mark = marks.get(session.key);
+  if (mark === undefined || mark.restored === null) return;
+  if (session.note === mark.restored) session.note = null;
+  mark.restored = null;
+}
+
+/** The agent is about to leave a line, or say it is done, over a mark:
+    the line the mark put back gives way first. */
+export function lineComing(key: string) {
+  const session = byKey(key);
+  if (session !== null) newsOverMark(session);
+}
+
+/** The user wrote to the session: it is read, and a mark on it ends. */
+export function userWrote(key: string) {
+  const session = byKey(key);
+  if (session !== null) read(session);
+}
 
 /** The session on screen is now this one, or none: a mark held on
     another is let go, so coming back to it reads it. Called whatever the
@@ -2687,8 +2731,9 @@ export function markUnread(key: string) {
   const session = byKey(key);
   if (session === null || session.unread) return;
   session.unread = true;
-  if (session.note === null) session.note = session.notice;
-  marked.add(key);
+  const restored = session.note === null ? session.notice : null;
+  if (restored !== null) session.note = restored;
+  marks.set(key, { restored, heard: false });
   if (sessions.active === key) markedOnScreen = key;
 }
 
@@ -2696,7 +2741,6 @@ export function markUnread(key: string) {
 export function markRead(key: string) {
   const session = byKey(key);
   if (session === null) return;
-  if (markedOnScreen === key) markedOnScreen = null;
   read(session);
   if (atRest(session)) rested.add(key);
 }
@@ -2720,6 +2764,7 @@ export function newTurnLine(session: Session) {
 export function noted(key: string, text: string) {
   const session = byKey(key);
   if (session === null || reopening.has(key)) return;
+  newsOverMark(session);
   leaveLine(session, shown(text));
   unseen(session);
 }
@@ -2810,7 +2855,12 @@ export function exact(
       session.delegated = false;
       session.turnEnd = null;
       stirred(session);
-      session.unread = false;
+      // A prompt typed by the user, who is looking at the session, reads
+      // it. One that comes from elsewhere, as a director's does, leaves a
+      // mark the user made as it is.
+      if (isViewed(session)) read(session);
+      else if (!marks.has(session.key)) session.unread = false;
+      else newsOverMark(session);
       // A new turn: whatever line the last one left is stale.
       newTurnLine(session);
       tookLine(session.key);
@@ -2829,6 +2879,7 @@ export function exact(
       session.failure = null;
       session.background = (more.background ?? []).map(shown);
       changed(session);
+      newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
@@ -2842,6 +2893,7 @@ export function exact(
       session.failure = failureOf(more.error ?? null, line === null ? null : shown(line));
       session.background = [];
       changed(session);
+      newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
       break;
@@ -2855,6 +2907,7 @@ export function exact(
       session.delegated = true;
       stirred(session);
       if (idle) changed(session);
+      newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       break;
     }
@@ -2971,7 +3024,7 @@ export function reset() {
   }
   pulses.clear();
   rested.clear();
-  marked.clear();
+  marks.clear();
   markedOnScreen = null;
   bulleted.clear();
   sessions.all = [];
