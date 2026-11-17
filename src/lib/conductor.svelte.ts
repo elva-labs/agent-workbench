@@ -119,6 +119,7 @@ import { projectLabel, workspace } from "$lib/workspace.svelte";
 import { startsIn } from "$lib/orchestratorFolder.svelte";
 import { kindFor } from "$lib/sessionKind.svelte";
 import { startAsk } from "$lib/startAsk.svelte";
+import { fitMode, narrowerOf } from "$lib/modeFit";
 
 /** How many sessions one caller may have running at a time. */
 export const CAP = 8;
@@ -2023,6 +2024,7 @@ async function startFitted(
   if (kindFor(agent) === "terminal" && runsShell(oneLine(prompt))) return refused(SHELL_PROMPT);
   const unasked = !startAsk.every && beyond === null && ownStart(request, project, agent, account);
   if (unasked && mayChangeModel(oneLine(prompt))) return refused(UNASKED_PROMPT);
+  const given = givenMode(callingSession(request), agent);
   const answer = unasked
     ? "once"
     : await askUser(request, project, prompt, wants, { account, bare }, named, beyond);
@@ -2068,6 +2070,9 @@ async function startFitted(
     account,
     null,
   );
+  // It begins in its starter's mode, the narrower of the one asked about
+  // and the one now where the starter's changed meanwhile.
+  session.modeGiven = narrowerOf(agent, given, givenMode(callingSession(request), agent));
   conductor.startedBy[session.key] = caller;
   if (fit !== null) {
     conductor.places[session.key] = fit.place;
@@ -2180,15 +2185,15 @@ function underFor(
  * Whether a start is the caller's to make without asking the user: the
  * caller is a session the workbench runs, and the session would run in the
  * caller's own project, on a worktree of it or not, on the caller's agent,
- * under the caller's account, while the caller's mode, where the window
- * knows it, is no narrower than the one the session would begin in. The
- * same agent and account mean the same login and the same directory of the
- * agent's own settings. The project's settings files are read where the
- * session starts, which need not be where the caller started, and may have
- * changed since. A start names no permission mode, so the session begins
- * in the one its agent chooses from those settings. Every other start is
- * asked about, an agent the workbench did not start, which has no project
- * of its own to the workbench, among them.
+ * under the caller's account. The same agent and account mean the same
+ * login and the same directory of the agent's own settings. The session
+ * begins in the caller's mode where the window knows that one, so it holds
+ * no more than the caller; a caller whose mode the window knows but cannot
+ * place on the scale of modes is asked about. Where the window does not
+ * know the caller's mode, as for a Codex terminal, the session begins in
+ * the one its agent chooses from its settings, and the two are not
+ * compared. Every other start is asked about, an agent the workbench did
+ * not start, which has no project of its own to the workbench, among them.
  */
 function ownStart(request: Placed, project: string, agent: AgentId, account: string | null): boolean {
   const calling = callingSession(request);
@@ -2197,21 +2202,8 @@ function ownStart(request: Placed, project: string, agent: AgentId, account: str
     calling.project === project &&
     calling.agent === agent &&
     calling.account === account &&
-    !narrower(calling, project, agent, account)
+    (modeNow(calling) === null || givenMode(calling, agent) !== null)
   );
-}
-
-/** How much a permission mode lets a session do with no one asked, by the
-    agent's names for its modes, narrowest first. Claude Code's Don't ask
-    refuses what Default would ask about, so neither does more unasked, and
-    they stand on one step. A mode not named here is not ranked. */
-const MODE_RANKS: Record<AgentId, Record<string, number>> = {
-  "claude-code": { plan: 0, dontAsk: 1, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 },
-  codex: { "read-only": 0, auto: 1, "full-access": 2 },
-};
-
-function modeRank(agent: AgentId, mode: string): number | null {
-  return Object.hasOwn(MODE_RANKS[agent], mode) ? MODE_RANKS[agent][mode] : null;
 }
 
 /** The mode a session runs in now, where the window knows it: an
@@ -2223,43 +2215,12 @@ function modeNow(session: Session): string | null {
   return session.modeSeen ?? session.modeNamed;
 }
 
-/** The mode a session's run began in where the workbench named none and
-    the run is no resumed one, so its agent chose it from its own settings:
-    an integrated run's as its agent said when it came up, a terminal's as
-    its hooks first said where nobody could have changed it before. Null
-    where the workbench named one, for a resumed run, which goes on in the
-    mode its conversation last ran in, and where it is not known. */
-function modeChosen(session: Session): string | null {
-  if (session.modeNamed !== null || session.resumedFrom !== null) return null;
-  if (session.kind === "integrated") return linkOf(session.key)?.conversation.ready?.mode ?? null;
-  return session.modeFirst;
-}
-
-/**
- * Whether a caller runs in a narrower mode, as far as the window knows,
- * than a session it starts would begin in. A start names no mode, so the
- * session begins in the one its agent chooses from its settings, which the
- * window learns from the sessions of that agent, under that account, in
- * that project and run the way the agent is set to run, that it saw begin
- * in this run of the window as `modeChosen` counts them: the caller's own
- * among them. The widest of those is taken. A caller whose mode the window does
- * not know is not compared; one whose mode it knows is taken as narrower
- * where no such session is known, or where a mode is not one it ranks.
- */
-function narrower(calling: Session, project: string, agent: AgentId, account: string | null): boolean {
-  const now = modeNow(calling);
-  if (now === null) return false;
-  const kind = kindFor(agent);
-  const began = sessions.all
-    .filter((row) => row.project === project && row.agent === agent && row.account === account && row.kind === kind)
-    .map(modeChosen)
-    .filter((mode): mode is string => mode !== null);
-  const mine = modeRank(agent, now);
-  if (mine === null || began.length === 0) return true;
-  return began.some((mode) => {
-    const rank = modeRank(agent, mode);
-    return rank === null || rank > mine;
-  });
+/** The mode a session of `agent` that `starter` starts begins in: the
+    starter's own as far as that agent has it, never a wider one. Null
+    where the starter's mode is not known, or not on the scale. */
+function givenMode(starter: Session | null, agent: AgentId): string | null {
+  const now = starter === null ? null : modeNow(starter);
+  return starter === null || now === null ? null : fitMode(starter.agent, now, agent);
 }
 
 /** The session a placed call comes from, while it runs: the one its token

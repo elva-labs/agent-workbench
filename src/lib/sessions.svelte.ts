@@ -159,20 +159,19 @@ export interface Session {
       the agent takes it up in a turn of its own. */
   background: string[];
   /** The permission mode the workbench started this run in, by the agent's
-      name for it: one kept for the conversation it resumes. Null where it
-      named none and the agent chose one from its own settings. */
+      name for it: one kept for the conversation it resumes, or the one its
+      starter gave it. Null where it named none and the agent chose one
+      from its own settings. */
   modeNamed: string | null;
+  /** For a session another started, the permission mode its starter gave
+      it, which a new run of it starts in: its starter's own as far as its
+      agent has it, never a wider one. Null where the starter's mode is not
+      known, and for a session the user started. */
+  modeGiven: string | null;
   /** For a terminal run, the permission mode its hooks last said it runs
       in. Null until they say, and for an agent whose hooks do not, as
       Codex's do not. */
   modeSeen: string | null;
-  /** For a terminal run, the mode its hooks first said it runs in, where
-      nobody could have changed it before: the run was started with its
-      prompt, or no key of the user's had reached it yet. Null otherwise,
-      and until they say. */
-  modeFirst: string | null;
-  /** A key of the user's has reached this run's terminal. */
-  keyed: boolean;
   /** How many turns the agent has begun in this run, as its hooks or its
       events say, or, without them, as its output does. */
   turns: number;
@@ -1677,9 +1676,8 @@ function row(
     failure: null,
     background: [],
     modeNamed: null,
+    modeGiven: null,
     modeSeen: null,
-    modeFirst: null,
-    keyed: false,
     turns: 0,
     changedAt: Date.now(),
     exitCode: null,
@@ -1721,12 +1719,11 @@ export async function launch(
   // A conversation goes on in the mode the window keeps for it: the one its
   // last integrated run ran in, which its agent's terminal has no record
   // of, or the one a terminal run was killed in before it could write its
-  // own down.
-  const mode = session.resumedFrom === null ? null : modeOf(session.resumedFrom);
+  // own down. A new one another session started begins in the mode its
+  // starter gave it.
+  const mode = session.resumedFrom === null ? session.modeGiven : modeOf(session.resumedFrom);
   session.modeNamed = mode;
   session.modeSeen = null;
-  session.modeFirst = null;
-  session.keyed = false;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -2356,7 +2353,6 @@ export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   if (REPORT.test(data) || REPLY.test(data)) return;
-  session.keyed = true;
   if (data.includes("\r") || data.includes("\n")) {
     session.engaged = true;
     stirred(session);
@@ -2737,13 +2733,7 @@ export function exact(
   // The hooks have spoken since the user's Escape or Ctrl+C: what it did
   // is theirs to say.
   interrupts.delete(session.key);
-  if (typeof more.mode === "string" && more.mode !== "") {
-    // The first mode the hooks say is the one the run began in only where
-    // nobody could have changed it before its first turn: the agent took
-    // its prompt as it started, or no key of the user's had reached it.
-    if (session.modeSeen === null && (session.prompt !== null || !session.keyed)) session.modeFirst = more.mode;
-    session.modeSeen = more.mode;
-  }
+  if (typeof more.mode === "string" && more.mode !== "") session.modeSeen = more.mode;
   answered.delete(session.key);
   // The line a run that a reopen stops leaves on its way out is not left
   // for the user.

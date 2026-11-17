@@ -6,6 +6,7 @@ import { reservedName, shown } from "$lib/unseen";
 import { failureOf } from "$lib/turnFailure";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { keepMode, modeOf } from "$lib/sessionModes";
+import { nextNarrower } from "$lib/modeFit";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf } from "$lib/remote.svelte";
 import {
@@ -318,6 +319,8 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       // This run started on the workflow the row follows now.
       rememberWorkflow(session);
       keepRunMode(session, link);
+      if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
+        void fallBack(key, link, session.agent, session.modeGiven, body.mode);
       break;
     case "configured":
       session.model = body.model;
@@ -652,20 +655,42 @@ async function restart(key: string, session: Session, link: Link) {
 }
 
 /** The mode a session starts in: the one it last ran in, where the window
-    knows it and the agent offers it. Otherwise none is named, and the
-    agent decides as it does in a terminal: by the mode a resumed
+    knows it and the agent offers it, and for a new conversation another
+    session started, the mode its starter gave it. Otherwise none is named,
+    and the agent decides as it does in a terminal: by the mode a resumed
     conversation last ran in, where the agent keeps that, else by the
     user's own settings. A mode from those settings that the agent does
     not offer is left to them again rather than replaced. */
 export function startMode(session: Session, link: Link): string | undefined {
+  const given = session.resumedFrom === null ? (session.modeGiven ?? undefined) : undefined;
   const mode = link.conversation.settings.mode;
   if (mode !== null) {
-    if (!offers(link, mode)) return undefined;
+    if (!offers(link, mode)) return given;
     // A new conversation nothing has been said in starts again as a new
     // one would, unless the user chose its mode.
-    return unspoken(session) && !link.modeChosen ? undefined : mode;
+    return unspoken(session) && !link.modeChosen ? given : mode;
   }
-  return session.resumedFrom === null ? undefined : (modeOf(session.resumedFrom) ?? undefined);
+  return session.resumedFrom === null ? given : (modeOf(session.resumedFrom) ?? undefined);
+}
+
+/**
+ * A session its starter gave a mode the agent did not take, as auto where
+ * the account or the model has none, runs in the nearest narrower mode the
+ * agent offers rather than the one the agent chose for itself, so it holds
+ * no more than its starter and no less than it may.
+ */
+async function fallBack(key: string, link: Link, agent: AgentId, given: string, took: string | null) {
+  let mode = nextNarrower(agent, given);
+  while (mode !== null && !offers(link, mode)) mode = nextNarrower(agent, mode);
+  if (mode === null || mode === took) return;
+  await configure(key, { mode });
+  if (link.conversation.settings.mode !== mode) return;
+  const name = (value: string) => link.conversation.ready?.modes.find((known) => known.value === value)?.name ?? value;
+  link.conversation.apply({
+    type: "notice",
+    level: "info",
+    message: `The session that started it runs in ${name(given)} mode, so it runs in ${name(mode)} mode, the nearest below that it can take.`,
+  });
 }
 
 /** Whether the agent behind the link offers a mode to switch to. */

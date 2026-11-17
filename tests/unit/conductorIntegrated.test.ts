@@ -13,6 +13,7 @@ import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 import { outsideCaller, resetSenders, senderOf, sentBy } from "$lib/senders.svelte";
 import { OUTCOME_ASK, REPORTS_HEAD, spoken, wakeShown } from "$lib/instructions";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { keepMode, resetModes } from "$lib/sessionModes";
 import { BOUNDED, FORGED } from "../forgedName";
 
 // The orchestrator's tools with a session that runs integrated: it is
@@ -96,6 +97,7 @@ beforeEach(async () => {
     projectInfo: async (path: string) => ({ path, name: "one", repository: path, isGit: true }),
     transcriptsMany: async (projects: string[]) => projects.map(() => []),
     worktrees: async () => [],
+    worktreeAdd: async (project: string, name: string) => `${project}/.worktrees/${name}`,
     kill: async () => {},
     write: async () => {},
     setWindowTitle: async () => {},
@@ -317,15 +319,49 @@ describe("the orchestrator's tools with an integrated session", () => {
       return false;
     }
 
-    it("goes ahead in the mode the caller began in, and is asked once the caller is in a narrower one", async () => {
+    /** The integrated start the fake core was last asked for. */
+    const lastStart = () =>
+      (fake.calls.filter((made) => made.method === "start").at(-1) as { options: { mode?: string; configDir?: string; cwd?: string } })
+        .options;
+
+    it("goes ahead unasked, and starts the session in the caller's mode whatever it is", async () => {
       setKind("claude-code", "integrated");
       const caller = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
       await launch(caller.key);
       const token = byKey(caller.key)!.token;
       expect(conversationOf(caller.key).settings.mode).toBe("default");
       expect(await startHere(token, "Scan the history")).toBe(false);
+      expect(lastStart().mode).toBe("default");
       conversationOf(caller.key).settings = { ...conversationOf(caller.key).settings, mode: "plan" };
-      expect(await startHere(token, "Scan it again")).toBe(true);
+      expect(await startHere(token, "Scan it again")).toBe(false);
+      expect(lastStart().mode).toBe("plan");
+    });
+
+    it("asks nothing of a caller in Auto after a restart, and starts its session in a worktree in Auto", async () => {
+      // Every project runs under the Work account, whose settings name no
+      // mode, and the caller's conversation last ran in Auto on its chip.
+      accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+      accounts.everywhere = "Work";
+      setKind("claude-code", "integrated");
+      keepMode("lead-conversation", "auto", true);
+      // The window starts again, and the caller goes on in that mode.
+      resetModes();
+      const caller = create(A, "lead-conversation", "claude-code", null, null, null, "Work", undefined, "integrated");
+      await launch(caller.key);
+      expect(lastStart().mode).toBe("auto");
+      expect(conversationOf(caller.key).settings.mode).toBe("auto");
+      const request = { ...call("start", { project: A, prompt: "Look through the log", worktree: true }), session: byKey(caller.key)!.token };
+      const answering = handle(request);
+      await settle();
+      expect(conductor.asking).toBeNull();
+      const row = forProject(A).at(-1)!;
+      expect(row.account).toBe("Work");
+      await launch(row.key);
+      flushSync();
+      await answering;
+      expect(answerTo(request)?.error).toBeNull();
+      expect(lastStart()).toMatchObject({ mode: "auto", configDir: "~/.claude-work", cwd: `${A}/.worktrees/look-through-the-log` });
+      expect(conversationOf(row.key).settings.mode).toBe("auto");
     });
 
     it("takes a line that begins with ! as words for an integrated session", async () => {

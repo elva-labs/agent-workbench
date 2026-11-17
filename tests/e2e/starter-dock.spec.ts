@@ -335,11 +335,10 @@ test.describe("a started session that runs in a terminal", () => {
       arguments: { project: PROJECT, prompt: "Fix the broken links", name: "Fix the links" },
       session: "integrated-session-1",
     });
-    // No session here has begun in a terminal, so the mode this one would
-    // begin in is not known, and the start in the starter's own project is
-    // asked.
-    await page.getByTestId("conduct-allow").click();
+    // The starter's mode is known, so the session begins in it and the start
+    // in the starter's own project goes ahead unasked.
     await expect.poll(() => answerTo(page, "c-term")).not.toBeNull();
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
     const id = /Started session (\S+)/.exec((await answerTo(page, "c-term"))!.content ?? "")![1];
     const event = (kind: string) =>
       page.evaluate(

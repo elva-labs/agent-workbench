@@ -1640,58 +1640,49 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect(written).toContainEqual([allowed.ptyId!, "/model opus"]);
   });
 
-  it("asks once a terminal caller's hooks say it runs in a narrower mode than it began in", async () => {
+  it("gives a session the mode its terminal caller's hooks last said, unasked, and never a wider one", async () => {
     live(A, "pty-caller", "caller-1");
     exact("caller-1", "prompt", null, false, { mode: "acceptEdits" });
-    await unasked({ project: A }, "sid-1");
+    expect((await unasked({ project: A }, "sid-1")).modeGiven).toBe("acceptEdits");
     exact("caller-1", "stop", null, false, { mode: "plan" });
-    expect(await asks({ project: A })).toBe(true);
+    expect((await unasked({ project: A }, "sid-2")).modeGiven).toBe("plan");
+    // A mode the workbench starts no session in gives the nearest below.
     exact("caller-1", "prompt", null, false, { mode: "bypassPermissions" });
-    await unasked({ project: A }, "sid-2");
+    expect((await unasked({ project: A }, "sid-3")).modeGiven).toBe("auto");
   });
 
-  it("counts no first mode the user could have changed, nor a resumed run's, as the mode a session begins in", async () => {
-    const caller = live(A, "pty-caller", "caller-1");
-    // The user typed its first prompt, and may have changed its mode first:
-    // the mode its first hook says is not its settings' word.
-    typed("pty-caller", "Fix the cache\r");
-    exact("caller-1", "prompt", null, false, { mode: "default" });
-    expect(caller.modeFirst).toBeNull();
-    expect(await asks({ project: A })).toBe(true);
-    // A resumed run goes on in its conversation's mode, which counts neither.
-    const back = create(A, "old-1", "claude-code", null, null, null, null, null);
-    started(back.key, "pty-back", "old-1");
-    exact("old-1", "prompt", null, false, { mode: "default" });
-    expect(await asks({ project: A })).toBe(true);
-    // A session started with its prompt began in its settings' mode, wider
-    // than the caller's first hook said: still asked.
-    const sibling = create(A, null, "claude-code", null, "Bump the client", null, null, null);
-    started(sibling.key, "pty-sib", "sib-1");
-    exact("sib-1", "prompt", null, false, { mode: "acceptEdits" });
-    expect(await asks({ project: A })).toBe(true);
-    // In that mode itself, the caller's start goes ahead.
-    exact("caller-1", "stop", null, false, { mode: "acceptEdits" });
-    await unasked({ project: A }, "sid-1");
-  });
-
-  it("asks for a caller started in a kept mode until a session there is seen to begin in no wider one", async () => {
+  it("gives a session the kept mode its terminal caller was resumed in", async () => {
     const caller = live(A, "pty-caller", "caller-1");
     caller.modeNamed = "acceptEdits";
-    expect(await asks({ project: A })).toBe(true);
-    // A session of the same agent and account there began in that mode.
-    live(A, "pty-sib", "sib-1");
-    exact("sib-1", "prompt", null, false, { mode: "acceptEdits" });
-    await unasked({ project: A }, "sid-1");
-    // One that began wider makes a start from the caller wider too.
-    live(A, "pty-sib2", "sib-2");
-    exact("sib-2", "prompt", null, false, { mode: "auto" });
-    expect(await asks({ project: A })).toBe(true);
+    expect((await unasked({ project: A }, "sid-1")).modeGiven).toBe("acceptEdits");
+    // What its hooks say since goes before it.
+    exact("caller-1", "prompt", null, false, { mode: "default" });
+    expect((await unasked({ project: A }, "sid-2")).modeGiven).toBe("default");
   });
 
-  it("does not compare a caller whose mode the window cannot know", async () => {
+  it("gives a session started on another agent the caller's mode as far as that agent's modes go", async () => {
+    live(A, "pty-caller", "caller-1");
+    exact("caller-1", "prompt", null, false, { mode: "auto" });
+    const row = (await startAllowed(call("start", { project: A, prompt: "Fix it", agent: "codex" }, { session: "caller-1" }), "pty-1", "sid-1"))!;
+    expect(row.agent).toBe("codex");
+    expect(row.modeGiven).toBe("auto");
+    exact("caller-1", "stop", null, false, { mode: "acceptEdits" });
+    const narrower = (await startAllowed(call("start", { project: A, prompt: "Fix it", agent: "codex" }, { session: "caller-1" }), "pty-2", "sid-2"))!;
+    expect(narrower.modeGiven).toBe("read-only");
+  });
+
+  it("asks for a caller whose mode the window knows but cannot place, and gives that session none", async () => {
+    live(A, "pty-caller", "caller-1");
+    exact("caller-1", "prompt", null, false, { mode: "somethingNew" });
+    expect(await asks({ project: A })).toBe(true);
+    const row = (await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1"))!;
+    expect(row.modeGiven).toBeNull();
+  });
+
+  it("does not compare a caller whose mode the window cannot know, and gives its session none", async () => {
     const row = create(A, null, "codex", null, null, null, null, null);
     started(row.key, "pty-codex", "codex-caller");
-    await unasked({ project: A, agent: "codex" }, "sid-1", "codex-caller");
+    expect((await unasked({ project: A, agent: "codex" }, "sid-1", "codex-caller")).modeGiven).toBeNull();
   });
 
   it("asks every time while the settings say so, offering this one session or none", async () => {
