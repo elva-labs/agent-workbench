@@ -1272,6 +1272,10 @@ export interface Settings {
   notifications: boolean;
   /** Whether it says so with a chime as well. */
   chime: boolean;
+  /** Whether the user is asked before every session another session
+      starts, one in the starter's own project included. A file from
+      before has none, which reads as off. */
+  askEveryStart: boolean;
 }
 
 /** The user's own stylesheet: its text, or none and why the one on disk

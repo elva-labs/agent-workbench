@@ -580,6 +580,31 @@ test("turns the notifications and the chime on and off, and keeps them", async (
   await expect(page.getByTestId("chime-on")).toHaveAttribute("aria-checked", "true");
 });
 
+test("asks before every start only once turned on, and keeps it", async ({ page }) => {
+  const file = () =>
+    page.evaluate(
+      (key) => JSON.parse(localStorage.getItem(key) ?? "{}"),
+      SETTINGS_FILE,
+    );
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-sessions").click();
+  const outside = page.getByTestId("ask-start-outside");
+  const every = page.getByTestId("ask-start-every");
+  await expect(outside).toHaveAttribute("aria-checked", "true");
+  await expect(every).toHaveAttribute("aria-checked", "false");
+  await every.click();
+  await expect(every).toHaveAttribute("aria-checked", "true");
+  await expect.poll(file).toMatchObject({ askEveryStart: true });
+
+  await page.reload();
+  await expect(page.locator(AGENT)).toBeVisible();
+  await page.keyboard.press(`${MOD}+,`);
+  await page.getByTestId("settings-tab-sessions").click();
+  await expect(page.getByTestId("ask-start-every")).toHaveAttribute("aria-checked", "true");
+  await page.getByTestId("ask-start-outside").click();
+  await expect.poll(file).toMatchObject({ askEveryStart: false });
+});
+
 test.describe("a change the settings file refuses", () => {
   test("is said over the window wherever it was made, and the window shows what is stored", async ({
     page,
