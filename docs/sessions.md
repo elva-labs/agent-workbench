@@ -503,10 +503,11 @@ watching it, a wait of the session that started it among them, hears that
 it ended, and such a wait counts it as at work until its next run is up.
 A line another session sends it meanwhile goes to the next run. While a
 terminal session's agent is quit, the pane shows `Reopening as a
-conversation…` where its terminal was. In the middle of a turn, or where
+conversation…` where its terminal was. In the middle of a turn, where
 the run would end a command it left running in the background or what was
-allowed for its session alone, the pane asks first, saying what reopening
-ends, at the top of the pane above the field that opens go to, where it
+allowed for its session alone, or where a conversation went back to a point
+a terminal does not take, the pane asks first, saying what reopening ends
+or brings back, at the top of the pane above the field that opens go to, where it
 asks before closing busy shells. A row left from the last quit only
 changes the way it will start.
 
@@ -968,33 +969,50 @@ conversation, its name, its token, its account, its mode, its worktree,
 the session that started it and those it started, whether it was read,
 and its place and its time in the list. A row left from the last quit has
 nothing running, and only changes the way it will start. A running session
-moves once it is at rest and on screen, after a moment at rest there, so a
-rest that the next turn follows at once is not taken for one. A session
-out of sight waits until it is shown, as a row left from the last quit
-waits to start, since starting every agent at once is a burst of work for
-sessions nobody is looking at.
+moves once it has been at rest for a moment, wherever it rested, so a rest
+that the next turn follows at once is not taken for one, and once it is on
+screen with nothing over it: the moment it is opened, or for the one on
+screen, as the settings close. A session out of sight waits until it is
+shown, as a row left from the last quit waits to start, since starting
+every agent at once is a burst of work for sessions nobody is looking at.
 
 The switch never cuts a session short. One at work, asking for a
 permission or a question, with messages waiting for its turn, with
 subagents at work, watched by a wait of the session that started it,
 about to be woken by the workbench, or with words in its composer or on
 its terminal's line goes on as it is, its row and its pane showing it as
-they always do, and moves once all of that is over and it is on screen.
+they always do, and moves once all of that is over. Nor is a session moved
+under its reader: one that comes to rest, or is let go of by what held it,
+while it is on screen stays as it is until it is next shown, and its
+second line says so, as in `Moves to a terminal next time`.
 
-What a run ends with it is never ended unasked. A session holding a
-command it left running in the background, or, in a conversation,
-something allowed for the rest of that session alone, stays as it is, and
-its second line says so and what moving would end, as in `Stays a
-conversation: moving ends npm run dev`. Where that line holds what the
-agent left, `stays` takes the place of the model, and a session another
-started says it where its model stands; either way the tooltip has the
-whole. A permission mode allowed for the session is not among what ends,
-since the mode goes on with the conversation, and what a terminal allowed
-for its session alone is not seen by the window, so it is not counted. A
-Claude Code session in a terminal, in a project whose hooks are off, says
-it stays because live updates are off: its output cannot tell a long quiet
-command from rest. Reopen from the row's menu moves any of them, and asks
-first, saying what it ends.
+What a run ends with it is never ended unasked. A session with a command
+it left running in the background moves once the command ends, and its
+second line says when, as in `Moves to a terminal when npm run dev ends`,
+while its tooltip says that moving it now ends the command. One that holds
+what never ends by itself stays as it is, and its second line says why:
+
+- something allowed, in a conversation, for the rest of that session
+  alone, as in `Stays a conversation: moving ends Bash(npm test)`. A
+  permission mode allowed for the session is not among these, since the
+  mode goes on with the conversation, and what a terminal allowed for its
+  session alone is not seen by the window, so it is not counted;
+- a Claude Code session in a terminal, in a project whose hooks are off,
+  says live updates are off: its output cannot tell a long quiet command
+  from rest;
+- a Claude Code conversation that went back to an earlier message, which
+  is held at that point until a message is sent from there, says `Stays a
+  conversation: it went back, and a terminal would bring back what was
+  gone back on`, since Claude Code's terminal does not take the point.
+  Whether a conversation is held is the core's to say; where the core does
+  not hold conversations, none is.
+
+Where the second line holds what the agent left, a word of it takes the
+place of the model, and a session another started says it where its model
+stands; either way the tooltip has the whole. Reopen from the row's menu
+moves any of them now, and asks first, saying what it ends or, for a held
+conversation, that the terminal brings back what was gone back on, which
+on a yes it does.
 
 A session the user started the other way, or reopened the other way from
 its menu, runs its own way, and a later switch leaves it as it is, since
