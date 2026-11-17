@@ -26,6 +26,7 @@ pub mod integrated;
 pub mod known;
 pub mod limits;
 pub mod mcp;
+pub mod page_files;
 pub mod pair;
 pub mod plugins;
 pub mod processes;

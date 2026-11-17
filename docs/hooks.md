@@ -134,8 +134,8 @@ it acts:
 - `show` and `diff`, which open a file the agent names, or its diff, in
   the viewer, where a Markdown document can be drawn with images loaded
   from any address;
-- `present`, which draws what the agent names, an HTML page in a frame
-  that can reach the network among them;
+- `present`, which draws what the agent names, an HTML page that runs
+  its scripts and loads the files in its folder among them;
 - `terminal`, which types a command into a terminal for the user to run
   and moves the keyboard there;
 - `start`, for which the window asks before the first session in
@@ -194,8 +194,9 @@ one or more images, PDFs, Markdown documents, HTML pages or Mermaid
 diagrams, with a caption, each where it is on disk rather than a copy. The call opens in the changes pane's viewer,
 where a file would: every file of it down the viewer under its name, an
 image at width, a PDF in its own frame, a document rendered, a page in a
-frame of its own that can run its scripts but reach nothing of the app or
-the machine, a diagram drawn, a mermaid fence in a document drawn too, the
+frame of its own that can run its scripts and load the files in its
+folder but sends no request anywhere else, to the app, the machine or the
+network, a diagram drawn, a mermaid fence in a document drawn too, the
 caption in the bar above. Escape closes it as it
 closes a file.
 
@@ -218,6 +219,46 @@ the list names the files where they are rather than keeping copies, so one
 the agent later removes shows as gone. Files are read where the agent runs,
 a remote included, up to eight megabytes each. Video is not among the kinds
 taken yet.
+
+An HTML page is drawn in a frame inside a frame, both sandboxed: its own
+scripts run, but it has no origin, no storage, no forms, no popups and no
+way to navigate its frame or anything above it, and a content security
+policy lets no request from it reach the network, whether a script's, an
+image's, a stylesheet's, a font's or a link's. Two ways out are beyond any
+such policy and stay open to its scripts: a hint to look up or connect to
+a host ahead of time, and the search a WebRTC connection makes for a
+route. Through them a script can tell a host only what it can read
+itself, the page's own text, never the bytes of the files beside it.
+
+What a page may load is the files in its own folder and the folders under
+it, named by a relative path: images, stylesheets, fonts, audio and video,
+so screenshots the agent saved beside the page show in it. The app serves
+them at an address of their own for each drawing of the page, named by a
+token drawn at random rather than by the page's path, and reads each file
+when the page asks for it, where the page is, a remote included: up to
+eight megabytes each, audio and video a part at a time. Each drawing reads
+four at a time, with a line of up to 2048 waiting behind them, which holds
+a gallery of screenshots; a request past that is turned away at once, and
+one page asking over and over keeps no other waiting.
+The webview keeps what it was given while that drawing stands. A page is
+drawn again, and asks afresh, whenever it changes and whenever it is
+presented again, changed or not, so screenshots made again under the same
+names show. A path that climbs above the folder or leaves it
+by a symlink, a hidden file or one in a hidden folder, a file of any other
+kind, and any file at all for a page that sits in the home directory or
+above it are not served, and a page's scripts can read none of the files'
+bytes.
+
+What the page names and cannot load is listed under it with the reason,
+named by its path in the page's folder or, anywhere else, by its host
+alone, so nothing the page writes reads as the app speaking; an address
+that does not parse is not listed. An image among those is drawn over with
+that name and that it did not load. Why a file in the folder did not load, which
+only the files' machine can say, is in the list alone: a script in the
+page could ask about any name, and the list is out of its reach. A link to
+a picture, a film or a sound in the folder opens it over the window when
+the user clicks it, and Escape or a click puts it away; a link anywhere
+else goes nowhere and is listed.
 
 The fourth tool, `selection`, runs the other way: the agent asks what the
 user is looking at, and is told the file open in the viewer, whether as its

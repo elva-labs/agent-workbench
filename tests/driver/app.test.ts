@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -865,6 +866,66 @@ describe("the real app", () => {
     expect(
       (await textOf(driver, "[data-testid='media-fold']")).toLowerCase(),
     ).toContain("media (1)");
+    await (await located(driver, "[data-testid='viewer'] .close")).click();
+  });
+
+  // An HTML page presented the same way loads the pictures in its own
+  // folder, and in a folder under it, through the app's scheme for them in
+  // the real webview, and nothing from above its folder.
+  it("draws a presented page with the pictures in its folder", async () => {
+    const { driver } = app;
+    const picture = readFileSync(join(repo, "shot.png"));
+    mkdirSync(join(repo, "out", "shots"), { recursive: true });
+    writeFileSync(join(repo, "out", "beside.png"), picture);
+    writeFileSync(join(repo, "out", "shots", "under.png"), picture);
+    writeFileSync(
+      join(repo, "out", "page.html"),
+      '<!doctype html><h1>Shots</h1><img id="beside" src="beside.png"><img id="under" src="shots/under.png"><img id="above" src="../shot.png">',
+    );
+    const messages = [
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test", version: "0" },
+        },
+      },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      {
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: {
+          name: "present",
+          arguments: { files: ["out/page.html"], caption: "The shots." },
+        },
+      },
+    ];
+    const said = execFileSync(DAEMON, ["mcp"], {
+      cwd: repo,
+      env: { ...process.env, HOME: app.home },
+      input:
+        messages.map((message) => JSON.stringify(message)).join("\n") + "\n",
+    }).toString();
+    expect(said).toContain("Presented 1 file.");
+    await driver.switchTo().frame(await located(driver, "[data-testid='media-page']"));
+    await driver.switchTo().frame(await located(driver, "iframe"));
+    const shown = (id: string) =>
+      driver.executeScript<string>(
+        `var i = document.getElementById(arguments[0]);
+         return !i ? "none" : i.src.indexOf("data:") === 0 ? "why" : i.complete && i.naturalWidth > 0 ? "loaded" : "not yet";`,
+        id,
+      );
+    await driver.wait(async () => (await shown("beside")) === "loaded", 10_000, "beside.png never loaded");
+    await driver.wait(async () => (await shown("under")) === "loaded", 10_000, "shots/under.png never loaded");
+    await driver.wait(async () => (await shown("above")) === "why", 10_000, "../shot.png was not refused");
+    await driver.switchTo().defaultContent();
+    expect(await textOf(driver, "[data-testid='media-page-missed']")).toContain(
+      "../shot.png is outside the page's folder",
+    );
     await (await located(driver, "[data-testid='viewer'] .close")).click();
   });
 

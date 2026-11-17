@@ -16,6 +16,7 @@ mod launch;
 mod leaving;
 mod menu;
 mod notices;
+mod page_files;
 #[cfg(all(debug_assertions, target_os = "macos"))]
 mod probe;
 pub mod remote;
@@ -982,6 +983,27 @@ async fn read_media(
     .await
 }
 
+/// What a file a presented page names beside it is, or why the page may
+/// not load it, read where the page is.
+#[tauri::command]
+async fn check_page_file(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    page: String,
+    file: String,
+) -> Result<Value, String> {
+    let f = file.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&page),
+        "check_page_file",
+        move |rest| json!({ "page": rest, "file": file }),
+        move |core, page| core.check_page_file(Path::new(page), &f),
+    )
+    .await
+}
+
 /// How big a file given to the agent by its path is, read where it is.
 #[tauri::command]
 async fn file_info(
@@ -1782,6 +1804,8 @@ pub fn run() {
     let builder = builder.activate_ignoring_other_apps(!probe::wanted());
     builder
         .manage(launch::Launches::default())
+        .manage(Arc::new(page_files::Pages::default()))
+        .register_asynchronous_uri_scheme_protocol(page_files::SCHEME, page_files::handle)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -1821,6 +1845,8 @@ pub fn run() {
             agent_detect,
             read_media,
             file_info,
+            check_page_file,
+            page_files::page_files_base,
             set_selection,
             project_info,
             sessions_list,

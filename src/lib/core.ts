@@ -1468,6 +1468,13 @@ export interface Core {
   readMedia(path: string): Promise<Media>;
   /** How big a file is, and whether it is a folder, read where it is. */
   fileInfo(path: string): Promise<FileInfo>;
+  /** The address an HTML page's relative references resolve against:
+      its own folder's files, served by the app under a token for the
+      page, wherever the page is. */
+  pageFilesBase(page: string): Promise<string>;
+  /** What a file a page names beside it is, or rejects with why the page
+      may not load it. `file` is relative to the page's folder, decoded. */
+  checkPageFile(page: string, file: string): Promise<{ mime: string; size: number }>;
   onDiffRequest(handler: (request: DiffRequest) => void): Promise<() => void>;
   onTerminalRequest(
     handler: (request: TerminalRequest) => void,
@@ -1971,6 +1978,9 @@ const tauriCore: Core = {
   },
   readMedia: (path) => invoke<Media>("read_media", { path }),
   fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
+  pageFilesBase: (page) => invoke<string>("page_files_base", { page }),
+  checkPageFile: (page, file) =>
+    invoke<{ mime: string; size: number }>("check_page_file", { page, file }),
   async onDiffRequest(handler) {
     return listen<DiffRequest>("diff_request", (event) =>
       handler(event.payload),
@@ -2319,6 +2329,12 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async fileInfo() {
+    throw new Error("no core");
+  },
+  async pageFilesBase() {
+    throw new Error("no core");
+  },
+  async checkPageFile() {
     throw new Error("no core");
   },
   async onDiffRequest() {
