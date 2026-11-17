@@ -27,9 +27,6 @@ pub fn install(app: &AppHandle) {
     let _ = app;
 }
 
-/// The event that tells the window which notification was clicked.
-pub const CLICKED: &str = "notice_clicked";
-
 /// Shows a notification under the window's name for it.
 #[tauri::command]
 pub fn notice_show(app: AppHandle, id: String, title: String, body: String) -> Result<(), String> {
@@ -83,6 +80,9 @@ mod mac {
     };
     use tauri::{AppHandle, Emitter, Manager};
 
+    /// The event that tells the window which notification was clicked.
+    const CLICKED: &str = "notice_clicked";
+
     define_class!(
         /// Hears a click on one of the app's notifications, and says
         /// whether one is shown as a banner.
@@ -109,7 +109,7 @@ mod mac {
                     let _ = window.set_focus();
                 }
                 if let Some(id) = notification.identifier() {
-                    let _ = app.emit_to("main", super::CLICKED, id.to_string());
+                    let _ = app.emit_to("main", CLICKED, id.to_string());
                 }
             }
 
