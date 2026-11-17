@@ -66,7 +66,6 @@ async function starterWithStarted(page: Page, settings: Record<string, unknown> 
     arguments: { project: PROJECT, prompt: "Fix the flaky cache test", name: "Fix the cache", ...args },
     session: "integrated-session-1",
   });
-  await page.getByTestId("conduct-allow").click();
   await expect.poll(() => answerTo(page, "c-start")).not.toBeNull();
   expect((await answerTo(page, "c-start"))!.error).toBeNull();
   return (await shown(page).getAttribute("data-session"))!;
@@ -336,7 +335,6 @@ test.describe("a started session that runs in a terminal", () => {
       arguments: { project: PROJECT, prompt: "Fix the broken links", name: "Fix the links" },
       session: "integrated-session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-term")).not.toBeNull();
     const id = /Started session (\S+)/.exec((await answerTo(page, "c-term"))!.content ?? "")![1];
     const event = (kind: string) =>
