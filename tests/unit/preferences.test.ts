@@ -44,6 +44,7 @@ const DEFAULTS: Settings = {
   userStyles: false,
   notifications: true,
   chime: false,
+  askEveryStart: false,
 };
 
 vi.mock("$lib/core", () => ({

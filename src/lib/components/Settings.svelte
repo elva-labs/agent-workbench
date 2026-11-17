@@ -80,6 +80,7 @@
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
+  import { setAskEveryStart, startAsk } from "$lib/startAsk.svelte";
   import BackgroundPicker from "$lib/components/BackgroundPicker.svelte";
   import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
@@ -694,6 +695,31 @@
               A change applies to sessions started after it. To move one that is running, right-click
               its row and choose Reopen.
             </p>
+            <h3>When a session starts another</h3>
+            <UnreadEntries field="askEveryStart" />
+            <p class="note">
+              A session can start others, each beginning in no more than its own permission mode. One
+              it starts in its own project, on its own agent and account, goes ahead without a
+              question, unless it is a Claude Code session in a terminal whose mode the workbench has
+              not heard yet, as with live updates off; anywhere else, you are asked first. Choose
+              Every time to be asked before each one.
+            </p>
+            <div class="seg" role="radiogroup" aria-label="When to ask before a session starts another">
+              <button
+                role="radio"
+                aria-checked={!startAsk.every}
+                class:on={!startAsk.every}
+                onclick={() => setAskEveryStart(false)}
+                data-testid="ask-start-outside">Outside its project</button
+              >
+              <button
+                role="radio"
+                aria-checked={startAsk.every}
+                class:on={startAsk.every}
+                onclick={() => setAskEveryStart(true)}
+                data-testid="ask-start-every">Every time</button
+              >
+            </div>
             <h3>Past sessions</h3>
             <UnreadEntries field="pastSessions" />
             <p class="note">

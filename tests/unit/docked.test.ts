@@ -172,6 +172,7 @@ describe("what a session's dock holds", () => {
       round: { step: "Review", work: "w", piece: "w", name: "Fix the cache", done: 4, limit: 3 },
       login: null,
       named: null,
+      once: false,
     };
     expect(roundDockedIn()).toBeNull();
     expect(dockedFor(starter.key)).toEqual([]);

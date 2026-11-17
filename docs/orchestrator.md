@@ -25,12 +25,15 @@ many sessions at once as a session may run (see
 [settings](settings.md#workflows)). Its steps add what any workflow's do:
 edit no files, hand out work only through `start` and never through its
 own subagents, name the step in each start, and stop a piece's session
-once it is done with. A session that follows no workflow is told none of
-this. Every session, an orchestrator included, is told that
-once it has started sessions it keeps calling `wait` until all of them are
-done, and does not hand its turn back while any is running unless it needs
-the user, and that a message from the workbench, not the user, is what
-those sessions did while it was idle.
+once its work is taken up and nothing more is wanted from it. A session
+that follows no workflow is told none of this. Every session, an
+orchestrator included, is told that once it has started sessions it keeps
+calling `wait` until all of them are done, and does not hand its turn back
+while any is running unless it needs the user, that a message from the
+workbench, not the user, is what those sessions did while it was idle,
+and that it stops a session it started once that session's work is taken
+up, merged, reviewed or answered, and nothing more is wanted from it,
+keeping one it may ask again soon.
 
 Earlier versions of the workbench ran such sessions in a project of their
 own, the folder `orchestrator` under the workbench's home. While
@@ -74,20 +77,23 @@ telling. `start` starts a session in a project with a first prompt, on a
 worktree of its own if it asks for one, and answers with the new session's
 id and tells it to keep calling `wait` until every session it started is
 done. `send` types a line
-into a running session, and Enter after it on its own, as a person does. A
-long line goes in as a paste when the session's terminal has asked for
-paste, and in small pieces a moment apart when it has not, so the agent
-takes it whole either way. Its Enter follows on its own, later the longer
-the line is. A session that runs integrated is sent the text as a message,
-whole, as the user's own is, and one sent while it works waits for its
-turn.
+into a running session, and Enter after it on its own, as a person does,
+though never one that begins with `!` (see [what the user is
+asked](#what-the-user-is-asked)). A long line goes in as a paste when the
+session's terminal has asked for paste, and in small pieces a moment apart
+when it has not, so the agent takes it whole either way. Its Enter follows
+on its own, later the longer the line is. A session that runs integrated
+is sent the text as a message, whole, as the user's own is, and one sent
+while it works waits for its turn.
 `wait` sits until a session stops working, asks for permission or ends, or
 until the seconds it was given run out. A session whose hooks report its
 turns stops working when they say its turn ended, and never because its
 screen went quiet: an agent running a long command, or thinking, draws
 nothing but its spinner's clock for minutes on end, and is still at work
 (see [sessions](sessions.md)). How the turn ended is said for what it is.
-A turn the agent ended is "stopped working"; one a usage limit ended is "is
+A turn the agent ended is "stopped working", and the answer adds a line
+saying to stop the session once its work is taken up and nothing more is
+wanted from it; one a usage limit ended is "is
 at its usage limit until 4pm", with the time the agent named where it is a
 time or a date as Claude Code writes one, or "stopped at a usage limit"
 otherwise; one another error from the model's service ended, such as a
@@ -144,13 +150,20 @@ turn, is said to be the user's or the session's that sent it. A message one
 session sends another shows in that session's thread under the sender's
 name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
-their row, rather than leaving a row of it under the project. A stop
+their row, rather than leaving a row of it under the project, and its
+answer says the session is off the caller's list. A stop
 naming a session the caller started that is not running says why it was
 not, and takes it off the caller's list all the same, since a stop says
 the caller is done with it. `send` and `read` naming such a session say
 why it is not running and how to bring it back, a wait closed by the row
 going says whether the user closed it, and a session the workbench never
 had, or that is not the caller's, is refused as before.
+A tool that names a session takes its id whole, or its first eight
+characters or more, as many as a row with no title of its own shows of
+it. Those are matched against the sessions the caller started and no
+others: a start of an id that fits more than one of them is refused with
+the ids it fits, and one that fits none is refused as an id the workbench
+does not know, so it never reaches a session the caller did not start.
 A session `start` starts runs in a terminal or integrated as the
 agent's own setting says, and every tool acts on it either way; what an
 integrated session cannot do when it is not running, such as take a
@@ -446,15 +459,21 @@ agent's. A session started for a step stays on the model it was given:
 `send` gives it no command but `/compact`, since commands such as `/model`
 and `/fast` change the model and either agent completes a command from the
 start of its name, and a start or a resume for a step does not begin with
-one either. A line counts as a command where it begins with a slash once
+one either. It begins in its orchestrator's mode, as every started session
+does (see [what the user is asked](#what-the-user-is-asked)), so the
+workers of an orchestrator in Plan plan too and each asks before it leaves
+Plan; the answer to each start names the mode, for the orchestrator to tell
+the user. A line counts as a command where it begins with a slash once
 characters that draw nothing are passed over and a wide slash is read as a
 slash, so one that begins with a path is refused too, and says to put a
 word before it.
 
 A work step runs no more sessions at once than it says. A start past that
 is refused with the sessions running for it, and so is a resume: a session
-that has finished its piece is stopped to make room, and a stopped one can
-be resumed later. A session whose step the workflow no longer has, because
+whose work is taken up is stopped to make room. A session the orchestrator
+stopped is off its list and is not resumed; its piece goes on in a new
+start that names it as the work it carries on. A session whose step the
+workflow no longer has, because
 the step was renamed or removed since, is not resumed, nor is one that was
 not started for a step of the workflow, such as one a plain session in the
 same directory started; the refusal names
@@ -469,8 +488,9 @@ is no work behind it. A piece is named by the work session that began it;
 a start for a later work step can name the session the piece came from,
 and carries the piece on. A piece that does not pass is sent back with
 `send` to its own session for the step the review goes back to, resumed
-first if it was stopped, and is reviewed again by a new review naming the
-same work or by a line to the reviewer.
+first if it is not running, or carried on in a new start that names it
+where the orchestrator stopped it, and is reviewed again by a new review
+naming the same work or by a line to the reviewer.
 
 The workbench counts the rounds of each review for each piece: a review
 started, a review resumed with a prompt, and a line sent to a review that
@@ -565,14 +585,91 @@ whatever it has been told to do by something it read.
 
 ## What the user is asked
 
-The first time a session asks to start another in a project, the window
+A session that starts another in its own project, on a worktree of it or
+not, is not asked about when the session would run on the starter's agent
+and under the starter's account, and the workbench knows the starter's
+mode. The session begins in the starter's permission mode, so it begins in
+no more than its starter: the workbench names that mode when it starts the
+session, integrated or in a terminal, as it names a kept mode on a resume,
+whatever the settings of the session's account would choose, and the
+answer to the starter says it, as "It begins in Plan mode." Narrowing the
+starter later does not reach the sessions it started. A mode the
+workbench starts no session in gives the nearest one below it, Auto for
+Bypass permissions. A session whose agent does not take the mode it is
+given, as Auto where its account or model has none, runs integrated in the
+nearest narrower mode its agent offers, said in a notice; in a terminal it
+runs in the one its agent falls back to, which the window cannot change.
+What the settings files allow still applies before anything is asked, as
+for any session.
+
+The workbench knows the starter's mode for an integrated session, as its
+agent says it now, and for a Claude Code session in a terminal, as its
+hooks last said it. Claude Code's hooks say it as each turn begins, before
+the agent sees the prompt, so with hooks on it is known before any call
+the turn makes, after a restart too. A mode changed in the middle of a
+turn is known only once the next hook says it, so a start made in that
+same turn gives the mode before. A Claude Code session in a terminal whose
+hooks have not said its mode, as with hooks off, is asked about, since a
+mode chosen in its terminal is seen only through them. If the user allows
+the start, the session begins in no more than the mode the workbench
+started the starter in, where it named one, as the mode kept for a
+conversation it resumed, and otherwise in the mode its agent chooses from
+its settings.
+
+A Codex session in a terminal is not compared. Its hooks never say its
+mode, so the workbench takes the one it started it in, the mode kept for a
+conversation it resumed, and does not see a change made in it with
+`/approvals`. Codex asks before `start` itself in Read only and in Auto,
+since the workbench gives it no standing approval for that tool, and Full
+access is the top of the scale, so Codex's own question covers a starter
+in a narrower mode. A session it starts begins in the mode the workbench
+started it in where it named one, and otherwise in the mode its agent
+chooses from its settings, as one the user starts does. A starter whose
+mode the workbench knows but cannot place, by a name it does not know, is
+asked about, and its session begins as its settings say.
+
+The modes stand on one scale for both agents: Claude Code's Plan first,
+then Default and Don't ask together, since Don't ask refuses what Default
+would ask about, with Codex's Read only beside them, then Accept edits,
+Codex's Auto, which runs commands without asking only inside its sandbox,
+Claude Code's Auto, and last Bypass permissions with Codex's Full access.
+A session on the starter's agent begins in the starter's own mode. One on
+the other agent, which is always asked about, begins in the widest of its
+agent's modes that goes no further than the starter's, or in the narrowest
+it has where none is that narrow, as Read only for a Codex session
+started from Plan.
+
+A start there on another agent or under another account runs under
+another login and other settings, and is asked about as a start anywhere
+else is. A start on an agent or a model its workflow's step does not allow
+is refused before anything is asked. The session's row and the answer to
+the starter say what was started either way.
+
+A session started without a question takes no command from its starter
+but `/compact`, in a line `send` types, in its prompt or in a resume, since
+a command such as `/permissions` or `/add-dir` would change what it may do.
+No session that runs in a terminal is sent a line, or started or resumed
+with a prompt, that begins with `!`, whoever started it: Claude Code, and
+recent versions of Codex, run such a line as a shell command with no
+permission asked. Both are read as a line that begins with a slash is
+under [following a workflow](#following-a-workflow), past characters that
+draw nothing and with a wide mark read as the plain one.
+
+The settings can put every start to the user instead, in the starter's own
+project too (see [settings](settings.md#sessions)). While they do, no
+answer stands: the question offers Allow once or No, as it does for an
+agent the workbench did not start, and a standing answer given before is
+not used.
+
+The first time a session asks to start another anywhere else, the window
 puts the question up over the agent pane and holds the call until it is
 answered: allow it from now on, allow this one, or refuse. A round of
-review past a workflow's limit is asked about every time, however the
-project was allowed. It says the project the round runs in, then names the
-review and the work by the names the user sees, "Review has run twice on
-Fix the cache, as many times as the workflow allows. Allow another round?",
-with Allow one more round or Stop at the limit. For a caller that runs
+review past a workflow's limit is asked about every time, in the starter's
+own project too, however the project was allowed. It says the project the
+round runs in, then names the review and the work by the names the user
+sees, "Review has run twice on Fix the cache, as many times as the workflow
+allows. Allow another round?", with Allow one more round or Stop at the
+limit. For a caller that runs
 integrated, the round docks over its composer while its conversation is on
 screen, with the same two choices taken as the dock takes any request (see
 [sessions](sessions.md#integrated-sessions)), so it never covers the
@@ -761,18 +858,18 @@ Browser, headed Sessions it started with how many (see
 [layout](layout.md#under-the-tree)): stop one or all, send one a line, take
 back a project it may start in without asking, and clean up the worktrees
 its starts left behind. It is there while the session on
-screen has sessions it started, may start more in a project without being
-asked, or has worktrees its starts left behind, so that can still be taken
-back and those cleaned up once they are gone. Each row
+screen has sessions it started, has been allowed to start more in a project
+without being asked, or has worktrees its starts left behind, so that can
+still be taken back and those cleaned up once they are gone. Each row
 is a session's name, drawn as the agent gave it with anything unseen
 written out, cut to what the row holds, and under it its step and round
 where it runs for one, in the words of the run's chip and the rail, the
 project when it is not its starter's, its worktree, what it is doing and
 how long since that changed. The row's own buttons send it a line, typed
 into its terminal or sent as your message to an integrated session, or
-stop it, and a click or Enter goes to it. Under the rows, each project it
-may start in has a × to take that back, and the worktrees its own starts
-made and left behind are counted, with Clean up; a worktree another
+stop it, and a click or Enter goes to it. Under the rows, each project you
+allowed it to start in has a × to take that back, and the worktrees its
+own starts made and left behind are counted, with Clean up; a worktree another
 session's start made, or one you made, is never counted or taken. Stop all
 and Clean up ask first, the one saying how many of them still run and how
 many of those wait on you or are at work, the other naming each worktree

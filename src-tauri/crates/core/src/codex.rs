@@ -232,6 +232,7 @@ pub fn observe(
                     cut,
                     error: None,
                     background: Vec::new(),
+                    mode: None,
                 },
             );
         }
