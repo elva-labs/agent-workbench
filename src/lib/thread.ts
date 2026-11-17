@@ -38,6 +38,7 @@ export type Segment =
 export function segments(parts: Part[]): Segment[] {
   const out: Segment[] = [];
   for (const part of parts) {
+    if (!drawnPart(part)) continue;
     if (part.kind === "text") out.push({ kind: "text", part });
     else if (part.kind === "plan") out.push({ kind: "plan", part });
     else if (part.kind === "question") {
@@ -55,6 +56,19 @@ export function segments(parts: Part[]): Segment[] {
     }
   }
   return out;
+}
+
+/** The workbench's own calls the thread does not draw: a wait on the
+    sessions the agent started, and a line left on its row. Neither is work
+    the user reads, so neither has a step, a count or a line of its own,
+    and what the agent wrote before them stays the last thing in its run. */
+const UNDRAWN = new Set(["wait", "notify"]);
+
+/** Whether the thread draws a part of a run. */
+export function drawnPart(part: Part): boolean {
+  if (part.kind !== "tool") return true;
+  const named = mcpName(part.name);
+  return named === null || named.server !== WORKBENCH || !UNDRAWN.has(named.tool);
 }
 
 /** A span of time as the thread says it: 12s, 3m, 1h 5m. */
@@ -467,7 +481,7 @@ function firstLine(text: string | null): string | null {
 export function runningCall(parts: Part[]): ToolCall | null {
   for (let at = parts.length - 1; at >= 0; at--) {
     const part = parts[at];
-    if (part.kind !== "tool" || part.done) continue;
+    if (part.kind !== "tool" || part.done || !drawnPart(part)) continue;
     return runningCall(part.parts) ?? part;
   }
   return null;

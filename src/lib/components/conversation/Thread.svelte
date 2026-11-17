@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
+  import { clock, drawnPart, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -494,7 +494,7 @@
   function visible(entry: Entry): boolean {
     if (entry.key === endedWith) return false;
     if (entry.kind !== "agent") return true;
-    if (entry.parts.length > 0 || entry.key === liveKey) return true;
+    if (entry.parts.some(drawnPart) || entry.key === liveKey) return true;
     const turn = conversation.turns[entry.turn];
     return lastOfTurn.has(entry.key) && (turn?.outcome === "interrupted" || turn?.outcome === "failed");
   }

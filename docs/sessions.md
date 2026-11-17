@@ -579,9 +579,17 @@ that started it. The changes pane stays the place to review changes. While a
 turn runs, a line at its foot says what the agent is doing now: running a
 command, reading a file, thinking, waiting for an answer. The workbench's own
 tools are worded for a person, by the session's name in the sessions list
-where a call names one: waiting on a session, writing to it, starting one,
-and the same in the past tense once the call is done. Another server's tool
-reads as using that server's tool. A plan is drawn
+where a call names one: starting a session, writing to it, reading what it
+did, and the same in the past tense once the call is done. Another server's
+tool reads as using that server's tool. Two of the workbench's tools are not
+drawn at all: wait, which an agent calls to hear from the sessions it
+started, and notify, which leaves a line on its row. Neither has a step, a
+count in the line work folds into, or a line at the foot of its own, and
+neither folds anything: what the agent wrote before them stays the last
+thing in its run, in full, so an answer it gives while it waits on its
+sessions is read where it is written, and a wait that follows a wake leaves
+it so as well. While a turn is only waiting, its foot says Working, as it
+does for any turn at work with nothing else to say. A plan is drawn
 where it came and changed in place, a question the user answered with the
 answer, a secret one without it, and a compaction, a notice or an error
 where it happened. The sessions an agent started with the workbench's start

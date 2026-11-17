@@ -24,6 +24,7 @@ import {
   phraseText,
   replyMarkdown,
   address,
+  drawnPart,
   nowDoing,
   runningCall,
   segments,
@@ -220,6 +221,74 @@ describe("a step's title", () => {
         call({ done: false, inputDone: false, input: null, inputText: '{"command":"cargo test","timeout":' }),
       ),
     ).toEqual({ lead: ["Running"], object: "cargo test" });
+  });
+});
+
+describe("the workbench's wait and notify in a run", () => {
+  const WAIT = "mcp__agent-workbench__wait";
+  const NOTIFY = "mcp__agent-workbench__notify";
+  const shape = (parts: Part[]) =>
+    segments(parts).map((segment) =>
+      segment.kind === "work" ? `work:${segment.parts.map((part) => (part.kind === "tool" ? part.name : part.kind)).join("+")}` : segment.kind,
+    );
+  const running = () => {
+    const c = new Conversation(() => 0);
+    c.apply({ type: "turnStarted", messages: [] });
+    return c;
+  };
+
+  it("are not drawn, while every other call is, the workbench's others included", () => {
+    expect(drawnPart(call({ name: WAIT, tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: NOTIFY, tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: "mcp__agent-workbench__send", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call({ name: "mcp__other__wait", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call())).toBe(true);
+    expect(drawnPart(text())).toBe(true);
+  });
+
+  it("leave a message followed only by them the last thing in its run, while the wait runs and after", () => {
+    const answer = text({ text: "The cache races on its clock." });
+    const waiting: Part[] = [answer, call({ name: WAIT, tool: "mcp", done: false })];
+    expect(shape(waiting)).toEqual(["text"]);
+    expect(runningCall(waiting)).toBeNull();
+    // A turn that is only waiting says what a turn at work with nothing to
+    // say does.
+    expect(nowDoing(running(), waiting)).toBe("Working");
+    const done: Part[] = [answer, call({ name: WAIT, tool: "mcp" }), call({ name: NOTIFY, tool: "mcp" }), call({ name: WAIT, tool: "mcp" })];
+    expect(shape(done)).toEqual(["text"]);
+  });
+
+  it("do not join the work before and after a message, nor count in it", () => {
+    const parts: Part[] = [
+      text({ block: "a" }),
+      call({ name: "Bash", call: "real" }),
+      call({ name: WAIT, tool: "mcp" }),
+      text({ block: "b" }),
+      call({ name: WAIT, tool: "mcp", done: false }),
+    ];
+    expect(shape(parts)).toEqual(["text", "work:Bash", "text"]);
+    const work = segments(parts)[1];
+    expect(work.kind === "work" && workSummary(work.parts, 0).detail).toBe("ran 1 command");
+    expect(nowDoing(running(), parts)).toBe("Working");
+  });
+
+  it("keep a message whole across a wake that comes between two waits", () => {
+    const c = new Conversation(() => 0);
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "Is the cache fixed?", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "text", block: "b-1", parent: null, text: "Not yet: the review is still running.", done: true },
+      { type: "toolStarted", call: "w-1", parent: null, name: WAIT, kind: "mcp" },
+      { type: "toolFinished", call: "w-1", parent: null, output: "Fix the cache stopped.", error: false, truncated: false, changes: [] },
+      { type: "message", message: "wake", state: "taken", error: null, text: "From the workbench: Fix the cache stopped.", images: [] },
+      { type: "toolStarted", call: "w-2", parent: null, name: WAIT, kind: "mcp" },
+    ];
+    for (const event of events) c.apply(event);
+    const runs = c.entries.filter((entry) => entry.kind === "agent");
+    expect(runs).toHaveLength(2);
+    expect(runs.map((run) => (run.kind === "agent" ? shape(run.parts) : []))).toEqual([["text"], []]);
+    const last = runs[1];
+    expect(last.kind === "agent" && nowDoing(c, last.parts)).toBe("Working");
   });
 });
 

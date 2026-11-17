@@ -133,6 +133,31 @@ test.describe("an integrated session", () => {
     expect(steps.y + steps.height).toBeLessThanOrEqual(after.y);
   });
 
+  test("keeps an answer whole while the agent waits on its sessions, and draws no wait", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Is the cache fixed?");
+       f.startTurn("${H}");
+       f.tool("${H}", "Bash", { command: "npm test" }, "ok", { kind: "command" });
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: "Not yet: the review is still running.", done: true });
+       const n = f.startTool("${H}", "mcp__agent-workbench__notify", { text: "Answered" }, { kind: "mcp" });
+       f.finishTool("${H}", n, "Left on the session's row.");
+       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+    );
+    const run = page.getByTestId("agent-run");
+    await expect(run.getByTestId("agent-text")).toHaveText("Not yet: the review is still running.");
+    // Only the command is work: the wait and the notify make no line.
+    await expect(run.getByTestId("work-line")).toHaveCount(1);
+    await expect(run.getByTestId("work-line")).toContainText(/ran 1 command$/);
+    await expect(page.getByTestId("now")).toHaveText("Working");
+    const answer = (await run.getByTestId("agent-text").boundingBox())!;
+    const now = (await page.getByTestId("now").boundingBox())!;
+    expect(answer.y + answer.height).toBeLessThanOrEqual(now.y);
+    await run.getByTestId("work-line").click();
+    await expect(run.getByTestId("step")).toHaveCount(1);
+  });
+
   test("grows streaming text in place and says what the agent does meanwhile", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "cargo build" }, { kind: "command" });`);

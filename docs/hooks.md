@@ -241,11 +241,11 @@ is told. Looking at the session clears it. A line from an agent run by
 hand in the project's directory, which has the same tools but no row of
 its own, goes nowhere. The agent is told to call it in
 every turn it hands back, just before its final message rather than after
-it. What an agent writes before a tool call is folded into one line on
-screen, whatever the call is, and only the message after the last call of
-the turn shows in full; so the agent is told that its answer belongs in
-that message, written again there when a call had to follow it, and that a
-notify after the answer would fold the answer away. It cannot tell whether
+it, and to write an answer whole, in a message of its own after the work it
+reports. A conversation draws neither notify nor wait, and neither folds
+what came before it, so a message followed only by them stays in full; an
+agent waiting on the sessions it started is told it can answer the user
+there and go back to waiting. It cannot tell whether
 the user is watching, so it calls regardless, and never for progress. A
 turn that ends without the call leaves a line all the same: the stop hook
 brings the agent's last message, and the row takes its first line.
