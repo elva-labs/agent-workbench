@@ -1486,7 +1486,9 @@ export interface Core {
       this resolves; Codex goes on in the same session. `rewound` follows on
       the session that goes on. Until this resolves the session refuses
       messages and compaction, saying "the session is going back", whoever
-      sends them. Rejects, with nothing changed, where it cannot go back
+      sends them, and once a Claude Code session has ended for its restart,
+      "no such session": a window holds what it sends meanwhile, either way,
+      for the session the answer names. Rejects, with nothing changed, where it cannot go back
       there, and where the agent would now put back a file the preview did
       not show, saying the files changed since they were shown. */
   integratedRewind(
