@@ -938,17 +938,18 @@ function groundUnder(grid: Rgb[], grounds: Iterable<Rgb>, through: number): Rgb 
   return sum.map((value) => value / Math.max(1, count)) as Rgb;
 }
 
-/** Keeps the text's steps on colours strong enough to draw them together:
-    where the secondary text would have to be drawn stronger, so that it
-    and the quiet text would meet at the least contrast, or where the text
-    has turned to the other end, and the end the text heads for has room.
-    The ink is then that end itself, black or white; the secondary text is
-    a step from it toward the ground, halfway by contrast between the ink
-    and the least that reads, and the quiet text a step further, at the
-    least, or the palette's own where that already reads, leans the same
-    way and stays quieter than the secondary text. The accent, add and
-    remove are left drawn just strong enough, so they keep their colour
-    and stand apart from an ink of pure black or white. */
+/** Keeps the text's steps on colours risen above the calm tint: where the
+    secondary text would have to be drawn stronger, so that it and the
+    quiet text would meet at the least contrast, or where the text has
+    turned to the other end, and the end the text heads for has room. The
+    ink is then that end itself, black or white; the secondary text is a
+    step from it toward the ground, halfway by contrast between the ink and
+    the least that reads, and the quiet text a step further, at the least,
+    or the palette's own where that already reads, leans the same way and
+    stays quieter than the secondary text. The accent, add and remove move
+    their lightness toward the end in their own hue, so they keep their
+    colour beside an ink of pure black or white. The calm tint never comes
+    here: its text is the palette's own, drawn just strong enough. */
 function stepText(
   text: Record<TextToken, string>,
   asked: Record<TextToken, number>,
@@ -1080,7 +1081,11 @@ export function paintOf(
     asked[token] = worst(colours[token], [low, high]);
     text[token] = strengthen(colours[token], [low, high], tone);
   }
-  stepText(text, asked, colours, [low, high], tone, groundUnder(grid, textGrounds.values(), through));
+  // The calm tint keeps the palette's own text, drawn just strong enough;
+  // only colours on their way up to the pad's keep steps from an end.
+  if (vividAt(background.strength) > 0) {
+    stepText(text, asked, colours, [low, high], tone, groundUnder(grid, textGrounds.values(), through));
+  }
   for (const token of TEXT_TOKENS) contrast[token] = worst(text[token], [low, high]);
 
   // Text that turned against the palette's lean, on colours too strong for

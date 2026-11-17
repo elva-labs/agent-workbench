@@ -667,7 +667,7 @@ describe("the guard", () => {
 
   for (const [palette, appearance] of SWEPT) {
     for (const look of LOOKS) {
-      for (const strength of [0.1, 0.3, FULL_TINT]) {
+      for (const strength of [0.1, 0.3, 0.6, FULL_TINT]) {
         it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
           const colours = coloursOf(palette, appearance, THEMES);
           const texts = textGrounds(colours, look);
@@ -686,6 +686,12 @@ describe("the guard", () => {
                   `${token} at ${low[token].toFixed(3)}:1, ${own.toFixed(3)} to ${now.toFixed(3)}, with ${JSON.stringify(choice.dots)} at ${strength}`,
                 );
               }
+              // The calm tint keeps the palette's text: a text that reads
+              // as it is stays as it is, and one that does not is drawn
+              // just strong enough, never stepped from black or white.
+              const said = `${token} with ${JSON.stringify(choice.dots)} at ${strength}`;
+              if (painted.asked[token] >= LEAST_CONTRAST + 0.05) expect(painted.text[token], said).toBe(colours[token]);
+              else expect(painted.contrast[token], said).toBeLessThan(LEAST_CONTRAST + 0.25);
             }
           }
         });
@@ -764,19 +770,50 @@ describe("the guard", () => {
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
-    const painted = paintOf(background([[200, 1]], { strength: 0.5 }), "modern", colours);
+    const painted = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
     expect(painted.text.ink).toBe(colours.ink);
     expect(painted.asked["ink-3"]).toBeLessThan(LEAST_CONTRAST);
     expect(painted.contrast["ink-3"]).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     expect(luminance(hexToRgb(painted.text["ink-3"]))).toBeLessThan(luminance(hexToRgb(colours["ink-3"])));
     const dark = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", coloursOf("teal", "dark"));
     expect(luminance(hexToRgb(dark.text["ink-3"]))).toBeGreaterThan(luminance(hexToRgb(DEFAULTS.dark["ink-3"])));
-    // Once the secondary text would have to be drawn stronger too, the ink
-    // takes the end itself, so the two quieter texts do not meet.
-    const full = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
-    expect(full.asked["ink-2"]).toBeLessThan(LEAST_CONTRAST);
-    expect(full.text.ink).toBe("#000000");
-    expect(full.contrast["ink-2"]).toBeGreaterThan(full.contrast["ink-3"] * 1.05);
+  });
+
+  // What the calm tint paints for text, as the guard drew it before
+  // strength could rise above it: the default palette at the strength a
+  // new background starts at, in light and dark, at the default grain and
+  // the most. The step from an end that vivid colours take never reaches
+  // in here.
+  const CALM_TEXT: Record<string, string[]> = {
+    "lagoon light 0.25": ["#14181a", "#4e5959", "#515959", "#13625c", "#2a623a", "#953844", "#6d5318"],
+    "lagoon light 1": ["#14181a", "#465150", "#495050", "#115854", "#265834", "#87323e", "#624b16"],
+    "lagoon dark 0.25": ["#e6eae9", "#a3aeac", "#949e9d", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "lagoon dark 1": ["#e6eae9", "#a4afad", "#a6aead", "#58c0b4", "#7fbf8c", "#e498a2", "#d8b45e"],
+    "amber light 0.25": ["#14181a", "#4e5959", "#515858", "#13615c", "#2a623a", "#943844", "#6d5318"],
+    "amber light 1": ["#14181a", "#465050", "#494f4f", "#115753", "#265834", "#86323e", "#624b16"],
+    "amber dark 0.25": ["#e6eae9", "#a3aeac", "#8f9998", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "amber dark 1": ["#e6eae9", "#a3aeac", "#a1a9a8", "#58c0b4", "#7fbf8c", "#e2919c", "#d8b45e"],
+    "sky light 0.25": ["#14181a", "#4e5a59", "#525959", "#13625d", "#2b633b", "#963845", "#6e5419"],
+    "sky light 1": ["#14181a", "#475151", "#495150", "#115854", "#265935", "#87333e", "#634c16"],
+    "sky dark 0.25": ["#e6eae9", "#a3aeac", "#949d9c", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "sky dark 1": ["#e6eae9", "#a4aeac", "#a6aead", "#58c0b4", "#7fbf8c", "#e497a1", "#d8b45e"],
+  };
+
+  it("paints the calm tint's text as it always has, at the strength a new background starts at", () => {
+    const shapes: Record<string, [number, number][]> = {
+      lagoon: [[192, 0.9], [252, 0.8]],
+      amber: [[30, 1]],
+      sky: [[200, 1]],
+    };
+    for (const [key, expected] of Object.entries(CALM_TEXT)) {
+      const [name, appearance, grain] = key.split(" ");
+      const painted = paintOf(
+        background(shapes[name], { strength: FIRST.strength, grain: Number(grain) }),
+        "modern",
+        coloursOf("teal", appearance as Appearance),
+      );
+      expect(TEXT_TOKENS.map((token) => painted.text[token]), key).toEqual(expected);
+    }
   });
 
   it("keeps the text's steps on vivid chrome: the ink an end itself, the secondary and quiet text steps toward the ground", () => {
