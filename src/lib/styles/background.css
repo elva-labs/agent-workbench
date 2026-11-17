@@ -15,18 +15,53 @@
  *   --tint-line, --tint-line-strong
  *                     the ink at the one amount every line in the window
  *                     takes, and the stronger marks such as a tag's outline;
+ *   --tint-part-line, --tint-part-line-strong
+ *                     the same on the tinted parts, unless their text turned
+ *                     to black or white, whose end their lines then take;
  *   --tint-fill, --tint-fill-accent
  *                     the ink and the accent let through, for a hovered or
  *                     chosen row and a field, so they stay part of the tint;
  *   --tint-ink and the other text tokens
- *                     each text a step stronger where the tint needs it.
+ *                     each text a step stronger where the tint needs it, or
+ *                     black or white where the colours are too strong for
+ *                     the palette's own lean;
+ *   --tint-patch, --tint-on-accent
+ *                     a chip on a tinted part, such as a chosen switch, and
+ *                     a glyph on the accent laid as a fill, which follow the
+ *                     text when it turns to the other end.
  *
  * A tinted part lays its ground over the backdrop. In the modern look that
  * is the window's ground, with the sessions pane, the pane headers and the
  * status bar on it, and the settings' title row and tab column; in the
- * terminal look, the ground between the boxes and the status bar. Every
- * surface that holds text to read stays solid: the cards and the boxes.
+ * terminal look, the ground between the boxes and the status bar. The
+ * cards and the boxes keep their own lightness. A menu or a popover on a
+ * tinted part stands on its own surface, so it keeps the palette's text.
  */
+
+/* The palette's own tokens, read at the root before a tinted part
+   restates them, for what stands on a tinted part on a surface of its
+   own. */
+:root[data-background] {
+  --plain-ink: var(--ink);
+  --plain-ink-2: var(--ink-2);
+  --plain-ink-3: var(--ink-3);
+  --plain-accent: var(--accent);
+  --plain-add: var(--add);
+  --plain-del: var(--del);
+  --plain-ansi-yellow: var(--ansi-yellow);
+  --plain-rule: var(--rule);
+  --plain-rule-strong: var(--rule-strong);
+  --plain-divider: var(--divider);
+  --plain-head-rule: var(--head-rule);
+  --plain-surface-2: var(--surface-2);
+  --plain-field-bg: var(--field-bg);
+  --plain-accent-soft: var(--accent-soft);
+  --plain-hover: var(--hover);
+  --plain-paint-surface: var(--paint-surface);
+  --plain-title-color: var(--title-color);
+  --plain-title-color-on: var(--title-color-on);
+  --plain-heading-color: var(--heading-color);
+}
 
 /* A line on or beside a tinted part follows the background: the ink let
    through, so it takes the colour of whatever it crosses. The terminal
@@ -63,12 +98,16 @@
   --add: var(--tint-add);
   --del: var(--tint-del);
   --ansi-yellow: var(--tint-ansi-yellow);
-  --rule: var(--tint-line);
-  --rule-strong: var(--tint-line-strong);
+  --rule: var(--tint-part-line);
+  --rule-strong: var(--tint-part-line-strong);
+  --divider: var(--tint-part-line);
+  --head-rule: var(--tint-part-line);
   --surface-2: var(--tint-fill);
   --field-bg: var(--tint-fill);
   --accent-soft: var(--tint-fill-accent);
   --hover: var(--tint-fill);
+  --paint-surface: var(--tint-patch);
+  --on-accent: var(--tint-on-accent);
 }
 
 :root[data-background][data-look="modern"]
@@ -81,6 +120,40 @@
   --title-color: var(--tint-ink);
   --title-color-on: var(--tint-accent);
   --heading-color: var(--tint-ink);
+}
+
+/* A menu or a popover on a tinted part stands on a surface of its own and
+   keeps the palette's text there, unless the cards let the background
+   through, which paints it as a card. */
+:root[data-background]:not([data-cards])[data-look="modern"]
+  :is(
+    [data-pane="sessions"],
+    section[data-pane] > header,
+    [data-testid="settings"] > header,
+    [data-testid="settings"] nav
+  )
+  [data-card],
+:root[data-background]:not([data-cards]) [data-testid="status-bar"] [data-card] {
+  --ink: var(--plain-ink);
+  --ink-2: var(--plain-ink-2);
+  --ink-3: var(--plain-ink-3);
+  --accent: var(--plain-accent);
+  --add: var(--plain-add);
+  --del: var(--plain-del);
+  --ansi-yellow: var(--plain-ansi-yellow);
+  --rule: var(--plain-rule);
+  --rule-strong: var(--plain-rule-strong);
+  --divider: var(--plain-divider);
+  --head-rule: var(--plain-head-rule);
+  --surface-2: var(--plain-surface-2);
+  --field-bg: var(--plain-field-bg);
+  --accent-soft: var(--plain-accent-soft);
+  --hover: var(--plain-hover);
+  --paint-surface: var(--plain-paint-surface);
+  --on-accent: initial;
+  --title-color: var(--plain-title-color);
+  --title-color-on: var(--plain-title-color-on);
+  --heading-color: var(--plain-heading-color);
 }
 
 /* The tinted parts of the modern look. The headers over the cards are
@@ -108,19 +181,20 @@
  * for each appearance and look:
  *
  *   --tint-card-backdrop
- *                     the same gradient, fixed to the window, with the
- *                     grain blurred into a flat veil, so a card shows its
- *                     piece of the picture soft rather than speckled;
+ *                     the gradient in the calm tint, fixed to the window,
+ *                     with the grain blurred into a flat veil, so a card
+ *                     shows its piece of the picture soft rather than
+ *                     speckled; up to three quarters strength it is the
+ *                     chrome's own gradient;
  *   --tint-card, --tint-well
  *                     the card's and the well's own tone, with the grey at
- *                     the background's lightness taken out, laid over it
- *                     so the card keeps its lightness and takes on the
- *                     background's colour by the cards' share, which the
- *                     guard holds back where a terminal colour would fall
- *                     under 4.5:1 or, in dark, where cards would stop
- *                     standing off the ground;
+ *                     the tint's lightness taken out, laid over it so the
+ *                     card keeps its lightness and takes on the
+ *                     background's colour by the cards' share;
  *   --tint-card-ink and the other text tokens
- *                     each text on a card a step stronger where it needs it.
+ *                     each text on a card a step stronger where it needs it;
+ *   --tint-card-fill-accent
+ *                     the accent let through for a chosen row on a card.
  *
  * A card is the modern look's card under a pane's header, every box of the
  * terminal look, and what stands over the window as one, marked
@@ -170,7 +244,7 @@
   --field-border: var(--tint-line);
   --surface-2: var(--tint-fill);
   --field-bg: var(--tint-fill);
-  --accent-soft: var(--tint-fill-accent);
+  --accent-soft: var(--tint-card-fill-accent);
   --hover: var(--tint-fill);
   --ground-quiet: var(--tint-card-ink-3);
   --title-color-on: var(--tint-card-accent);

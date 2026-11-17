@@ -14,6 +14,7 @@
     inactiveAfter: "span a project stays active",
     notifications: "notifications choice",
     chime: "chime choice",
+    askEveryStart: "choice on asking before every start",
   };
 
   /** What an entry is called to the user. */

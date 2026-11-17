@@ -10,8 +10,14 @@ import { PROJECT, NO_WORKFLOW, WITH_WORKFLOW, installFakeCore } from "./fake";
  * read back off the fake.
  */
 
+const STOP_WHEN_DONE =
+  "Once its work is taken up and nothing more is wanted from it, stop it; keep it if you may ask it again soon.";
+
 const AGENT = "section[data-pane='agent']";
 const MOD = "ControlOrMeta";
+/** A second open project. A session starting one there is asked about; a
+    start in the caller's own project is not. */
+const OTHER = "/home/ada/dev/other";
 
 interface Answer {
   id: string;
@@ -42,6 +48,22 @@ async function push(
       }),
     { project: PROJECT, request },
   );
+}
+
+/** The caller's hooks say the mode it runs in, as Claude Code's do with
+    each turn: one begun and ended. Until they do, the window does not know
+    the mode, and a start in the caller's own project is asked about. */
+async function hooksSay(page: Page, mode = "default") {
+  for (const kind of ["prompt", "stop"])
+    await page.evaluate(
+      ({ kind, mode }) =>
+        (window as unknown as { __sessionEvent: (event: unknown) => void }).__sessionEvent({
+          sessionId: "session-1",
+          kind,
+          mode,
+        }),
+      { kind, mode },
+    );
 }
 
 const answers = (page: Page) =>
@@ -84,19 +106,20 @@ const drawn = (page: Page, text: string) =>
 
 test.describe("the conductor", () => {
   test.beforeEach(async ({ page }) => {
-    await installFakeCore(page, { settings: NO_WORKFLOW });
+    await installFakeCore(page, { open: [PROJECT, OTHER], settings: NO_WORKFLOW });
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     // One session of the user's own, which is the caller below.
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
   test("keeps both palettes shut while the question is up", async ({ page }) => {
     await push(page, {
       id: "c-1",
       tool: "start",
-      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      arguments: { project: OTHER, prompt: "Fix the flaky test" },
       session: "session-1",
     });
     await expect(page.getByTestId("conduct-ask")).toBeVisible();
@@ -117,7 +140,7 @@ test.describe("the conductor", () => {
       await push(page, {
         id: `c-${answer}`,
         tool: "start",
-        arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+        arguments: { project: OTHER, prompt: "Fix the flaky test" },
         session: "session-1",
       });
       await expect(page.getByTestId("conduct-ask")).toBeVisible();
@@ -131,7 +154,7 @@ test.describe("the conductor", () => {
     await push(page, {
       id: "c-agent",
       tool: "start",
-      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      arguments: { project: OTHER, prompt: "Fix the flaky test" },
       session: "session-1",
     });
     await expect(page.getByTestId("conduct-ask")).toBeVisible();
@@ -148,13 +171,13 @@ test.describe("the conductor", () => {
     await push(page, {
       id: "c-1",
       tool: "start",
-      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      arguments: { project: OTHER, prompt: "Fix the flaky test" },
       session: "session-1",
     });
 
     const ask = page.getByTestId("conduct-ask");
     await expect(ask).toBeVisible();
-    await expect(ask).toContainText(PROJECT);
+    await expect(ask).toContainText(OTHER);
     await expect(ask).toContainText("Fix the flaky test");
     // The session would run under the project's own account, so none is
     // named.
@@ -202,7 +225,40 @@ test.describe("the conductor", () => {
     expect(listed.split("\n")).toHaveLength(1);
     expect(listed).toContain("session-2");
     expect(listed).not.toContain("session-1  ");
-    expect(listed).toContain(PROJECT);
+    expect(listed).toContain(OTHER);
+  });
+
+  test("starts a session in its own project without asking, and asks for another open project", async ({
+    page,
+  }) => {
+    await push(page, {
+      id: "c-own",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    await expect.poll(() => answerTo(page, "c-own")).not.toBeNull();
+    const own = (await answerTo(page, "c-own"))!;
+    expect(own.error).toBeNull();
+    expect(own.content).toContain("Started session session-2");
+    await expect(page.getByTestId("conduct-ask")).toHaveCount(0);
+    await expect(page.getByTestId("started-session")).toHaveCount(1);
+
+    // The same caller asking for the project beside it is asked about.
+    await push(page, {
+      id: "c-other",
+      tool: "start",
+      arguments: { project: OTHER, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText(OTHER);
+    expect(await answerTo(page, "c-other")).toBeNull();
+    await page.getByTestId("conduct-no").click();
+    await expect(ask).toHaveCount(0);
+    await expect.poll(() => answerTo(page, "c-other")).not.toBeNull();
+    expect((await answerTo(page, "c-other"))!.error).toContain("did not allow");
   });
 
   test("reads what a session it started has on screen", async ({ page }) => {
@@ -212,7 +268,6 @@ test.describe("the conductor", () => {
       arguments: { project: PROJECT, prompt: "Run the tests" },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-4")).not.toBeNull();
 
     // The started session draws, as an agent does, and the read tool
@@ -257,7 +312,6 @@ test.describe("the conductor", () => {
       arguments: { project: PROJECT, prompt: "Run the tests", worktree: true },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-10")).not.toBeNull();
     expect((await answerTo(page, "c-10"))!.content).toContain(
       ".claude/worktrees/run-the-tests",
@@ -362,7 +416,6 @@ test.describe("the conductor", () => {
       },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-7")).not.toBeNull();
     // The model the caller chose goes to the agent's command line.
     const spawns = () =>
@@ -422,7 +475,7 @@ test.describe("the conductor", () => {
     await push(page, {
       id: "c-3",
       tool: "start",
-      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      arguments: { project: OTHER, prompt: "Fix the flaky test" },
       session: "session-1",
     });
     await expect(page.getByTestId("conduct-ask")).toBeVisible();
@@ -434,6 +487,31 @@ test.describe("the conductor", () => {
   });
 });
 
+test.describe("a start while the settings ask before every one", () => {
+  test("puts a start in the caller's own project to the user, with Allow once or No", async ({ page }) => {
+    await installFakeCore(page, { settings: { ...NO_WORKFLOW, askEveryStart: true } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+    await push(page, {
+      id: "c-own",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText(PROJECT);
+    await expect(ask.getByTestId("conduct-once")).toHaveText("Allow once");
+    await expect(ask.getByTestId("conduct-allow")).toHaveCount(0);
+    await ask.getByTestId("conduct-once").click();
+    await expect(ask).toHaveCount(0);
+    await expect.poll(() => answerTo(page, "c-own")).not.toBeNull();
+    expect((await answerTo(page, "c-own"))!.content).toContain("Started session session-2");
+  });
+});
+
 test.describe("what a starter is told", () => {
   test.beforeEach(async ({ page }) => {
     await installFakeCore(page, { settings: NO_WORKFLOW });
@@ -441,10 +519,10 @@ test.describe("what a starter is told", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
-  /** A session the caller starts, allowed from then on, answered with its
-      id. */
+  /** A session the caller starts in its own project, answered with its id. */
   async function started(page: Page, call: string, prompt: string, id: string) {
     await push(page, {
       id: call,
@@ -452,8 +530,6 @@ test.describe("what a starter is told", () => {
       arguments: { project: PROJECT, prompt },
       session: "session-1",
     });
-    const allow = page.getByTestId("conduct-allow");
-    if (call === "s-1") await allow.click();
     await expect.poll(() => answerTo(page, call)).not.toBeNull();
     expect((await answerTo(page, call))!.content).toContain(`Started session ${id}`);
   }
@@ -526,7 +602,7 @@ test.describe("what a starter is told", () => {
     await hook(page, { sessionId: "session-2", kind: "stop", note: "Done: cache fixed" });
     await push(page, { id: "w-1", tool: "wait", session: "session-1" });
     expect((await answered(page, "w-1")).content).toBe(
-      'Session session-2 stopped working. Its last line: "Done: cache fixed"',
+      `Session session-2 stopped working. Its last line: "Done: cache fixed"\n${STOP_WHEN_DONE}`,
     );
     for (const id of ["w-2", "w-3", "w-4"]) {
       await push(page, { id, tool: "wait", arguments: { seconds: 5 }, session: "session-1" });
@@ -539,7 +615,7 @@ test.describe("what a starter is told", () => {
     await hook(page, { sessionId: "session-3", kind: "stop", note: "Done: deps bumped" });
     await push(page, { id: "w-5", tool: "wait", session: "session-1" });
     expect((await answered(page, "w-5")).content).toBe(
-      'Session session-3 stopped working. Its last line: "Done: deps bumped"',
+      `Session session-3 stopped working. Its last line: "Done: deps bumped"\n${STOP_WHEN_DONE}`,
     );
   });
 
@@ -589,7 +665,6 @@ test.describe("what a starter is told", () => {
       arguments: { project: PROJECT, prompt: "Review it", name: "Confirm review of send now" },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await answered(page, "s-1");
     const kid = page.getByTestId("started-session");
     await expect(kid).toContainText("Confirm review of send now");
@@ -628,6 +703,7 @@ test.describe("a session that follows a workflow", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
   const spawns = (page: Page) =>
@@ -698,7 +774,6 @@ test.describe("a session that follows a workflow", () => {
       arguments: { project: PROJECT, prompt: "Fix the flaky test", step: "Work" },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-2")).not.toBeNull();
     expect((await answerTo(page, "c-2"))!.content).toContain(
       'Started session session-2 for step "Work"',
@@ -801,6 +876,8 @@ test.describe("the workflow tag", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
     const type = (selector: string) =>
       page.locator(selector).first().evaluate((element) => {
         const style = getComputedStyle(element);
@@ -829,7 +906,6 @@ test.describe("the workflow tag", () => {
       arguments: { project: PROJECT, prompt: "Fix it", step: "Work" },
       session: "session-1",
     });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-2")).not.toBeNull();
     await push(page, {
       id: "c-3",
@@ -893,6 +969,7 @@ test.describe("a round of review past the workflow's limit", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
 
     const start = async (id: string, args: Record<string, unknown>) => {
       await push(page, {
@@ -903,7 +980,6 @@ test.describe("a round of review past the workflow's limit", () => {
       });
     };
     await start("c-1", { step: "Work", name: "Fix the cache" });
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
     // Two rounds: the first, and the one the work may be sent back for.
     for (const id of ["c-2", "c-3"]) {
@@ -939,7 +1015,6 @@ test.describe("a round of review past the workflow's limit", () => {
   });
 
   test("says where it would start and under which account", async ({ page }) => {
-    const OTHER = "/home/ada/dev/other-project";
     const once = structuredClone(WITH_WORKFLOW);
     const review = once.workflows.list[0].steps[1] as { limit: number };
     review.limit = 1;
@@ -965,6 +1040,7 @@ test.describe("a round of review past the workflow's limit", () => {
     await page.locator("[data-testid='account-option'][data-account='Work']").click();
     await page.getByTestId("workflow-option").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
 
     const start = async (id: string, args: Record<string, unknown>) => {
       await push(page, {
@@ -975,10 +1051,6 @@ test.describe("a round of review past the workflow's limit", () => {
       });
     };
     await start("c-1", { step: "Work", name: "Fix the cache" });
-    await expect(page.getByTestId("conduct-account")).toHaveText(
-      "Under the Work account, not the project's own.",
-    );
-    await page.getByTestId("conduct-allow").click();
     await expect.poll(() => answerTo(page, "c-1")).not.toBeNull();
     for (const id of ["c-2", "c-3"]) {
       await start(id, { step: "Review", work: "session-2" });

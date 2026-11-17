@@ -184,7 +184,8 @@ test("an agent's background is shown on the palette's swatches, and kept only wh
     { project: PROJECT, background: LAGOON },
   );
   const ask = page.getByTestId("settings-ask");
-  await expect(ask).toContainText("Lagoon, strength 60%, grain 25%");
+  // The strength is named where the even slider shows it: 0.6 at 10%.
+  await expect(ask).toContainText("Lagoon, strength 10%, grain 25%");
   await expect(page.getByTestId("settings-ask-theme")).toBeVisible();
   await page.getByTestId("settings-allow").click();
   await expect.poll(async () => blueish(await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8))))).toBeGreaterThan(8);

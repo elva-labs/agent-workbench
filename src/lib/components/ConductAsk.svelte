@@ -75,7 +75,7 @@
     {/if}
     <p class="prompt"><Plain text={ask.prompt} /></p>
     <div class="actions">
-      {#if ask.outside !== null}
+      {#if ask.once}
         <button class="go" onclick={() => answer(once)} data-testid="conduct-once">Allow once</button>
       {:else}
         <button class="go" onclick={() => answer(allow)} data-testid="conduct-allow">Allow this session</button>

@@ -309,8 +309,9 @@ test.describe("a session started by a session under another account", () => {
   test("runs under the starting session's account, not the project's", async ({ page }) => {
     // The project runs under the agents' own, and there is an account to
     // start a session under instead.
+    const OTHER = "/home/ada/dev/other";
     await installFakeCore(page, {
-      open: [PROJECT],
+      open: [PROJECT, OTHER],
       settings: { accounts: { ...WORK, overrides: {} } },
     });
     await page.goto("/");
@@ -330,8 +331,9 @@ test.describe("a session started by a session under another account", () => {
     expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
 
-    // That session starts another and names no account.
-    await startCall(page, "c-1", { project: PROJECT, prompt: "Fix the flaky test" }, "session-1");
+    // That session starts another in the project beside its own and names
+    // no account.
+    await startCall(page, "c-1", { project: OTHER, prompt: "Fix the flaky test" }, "session-1");
     // The question says the account, since it is not the project's own.
     const ask = page.getByTestId("conduct-ask");
     await expect(ask).toBeVisible();
@@ -348,7 +350,7 @@ test.describe("a session started by a session under another account", () => {
     expect((await spawns(page))[1].configDir).toBe("~/.claude-work");
     await expect
       .poll(async () => (await answerTo(page, "c-1"))?.content ?? null)
-      .toContain(`in ${PROJECT}, under the Work account.`);
+      .toContain(`in ${OTHER}, under the Work account.`);
 
     // Its row, under the session that started it, says the account too.
     await expect(page.getByTestId("started-account")).toHaveText("as Work");

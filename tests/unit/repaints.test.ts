@@ -23,7 +23,11 @@ import {
 
 vi.mock("$lib/backgroundPaint", async (original) => {
   const actual = await original<typeof import("$lib/backgroundPaint")>();
-  return { ...actual, backgroundCss: vi.fn(actual.backgroundCss) };
+  return {
+    ...actual,
+    backgroundCss: vi.fn(actual.backgroundCss),
+    backgroundValues: vi.fn(actual.backgroundValues),
+  };
 });
 
 const LAGOON: Background = {
@@ -36,7 +40,10 @@ const LAGOON: Background = {
   grain: 0.25,
 };
 
-const worked = () => vi.mocked(paint.backgroundCss).mock.calls.length;
+/** How many times what a background paints has been worked out: the
+    sheet for one kept, the properties on the root for one being picked. */
+const worked = () =>
+  vi.mocked(paint.backgroundCss).mock.calls.length + vi.mocked(paint.backgroundValues).mock.calls.length;
 
 beforeEach(() => {
   theme.palette = "teal";

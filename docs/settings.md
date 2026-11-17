@@ -70,15 +70,15 @@ for editing by hand.
 ## Background
 
 A colour or a gradient of up to three colours of your own behind the
-window's chrome. It tints the chrome: in the modern look the window's
+window's chrome. It colours the chrome: in the modern look the window's
 ground, with the sessions pane, the pane headers and the status bar on it,
 and the settings' title row and tab column. The cards, with the terminal,
 the conversation, the diff, the editor and the viewer in them, stay solid
 unless [Cards](#cards) lets a little of the background through them. In
-dark the ground under the tint is the chrome's darkest tone, so the headers
-on it stand apart from the cards below them. In the terminal look it shows
-in the ground between the boxes and in the status bar, at half strength at
-most and with no grain.
+dark the ground under the colour is the chrome's darkest tone, so the
+headers on it stand apart from the cards below them. In the terminal look
+it shows in the ground between the boxes and in the status bar, with no
+grain.
 
 Each palette and each theme of your own keeps a background of its own, so
 choosing another colour brings its background with it, and one that has
@@ -87,11 +87,13 @@ it.
 
 The section has a colour pad. A colour's angle on the pad is its hue and
 its distance from the centre how much colour it has. A click places the
-first colour, and dragging a colour repaints the window as it moves; what
-is let go of is kept. While a colour moves, the gradient is drawn coarser
-so the window keeps up with the pointer, and a moment after it stops the
-gradient is drawn again finely enough that no steps show where the colour
-changes steeply, on a 4K screen or a screen of twice the density. A
+first colour, and dragging a colour repaints the window as it moves, once
+a frame, wherever the pointer has got to; what is let go of is kept, and
+only then written to the settings file. The sliders repaint the same way.
+While a colour moves, the gradient is drawn coarser so the window keeps up
+with the pointer, and a moment after it stops the gradient is drawn again
+finely enough that no steps show where the colour changes steeply, on a 4K
+screen or a screen of twice the density. A
 harmony keeps the colours a fixed turn of the hue apart: single holds
 one, complementary two opposite each other, analogous
 three close together, 50 degrees either side of the first, and triad three
@@ -105,10 +107,9 @@ the plus adds one close to the first, on the side away from the second.
 The minus shows the colour it takes, which is the one last moved or
 focused and has a white centre on the pad. Taking the last leaves none. A row of ready-made
 backgrounds sets the colours and keeps the strength and grain, and None
-goes back to the plain chrome. Strength is how far the background shows
-through the chrome's own ground, from a tenth to all of it, and grain lays
-a fine speckle over it. Two small windows show the choice in light and in
-dark.
+goes back to the plain chrome. Strength runs from a calm tint to the
+colours themselves, as the next paragraphs describe, and grain lays a fine
+speckle over it. Two small windows show the choice in light and in dark.
 
 By keyboard each colour on the pad is a stop. The left and right arrows
 turn its hue and the up and down arrows give it more or less colour, by
@@ -119,20 +120,59 @@ the palette's accent. The harmonies and the ready-made row are one stop
 each, walked with the arrows.
 
 One choice serves light and dark. The pad sets the hue and how much
-colour, and the chrome it lies on sets how light it paints: light on a
-light chrome and dark on a dark one, read from the palette's own colours,
-so a theme that is dark in both appearances is painted dark in both. It
-paints at about the lightness of the chrome's darkest tone, so the tinted
-ground stays below the cards, and a dark chrome takes more colour at the
-rim, since near black the screen shows little of it.
-Switching between them cannot leave anything hard to read, and the rim of
-the pad is held where the strongest choice is still a tint. Text on a
-tinted part is judged at the worst point of the gradient behind it, grain
-included, and drawn a step stronger, darker on a light chrome and lighter
-on a dark one, where it would fall under a contrast of 4.5 to 1, so every
-text holds that, quiet text included. A hovered or chosen row on a tinted part lets the ink or the
-accent through rather than laying a solid patch over the tint, and is
-judged the same way.
+colour, and the chrome it lies on sets how light it paints, read from the
+palette's own colours, so a theme that is dark in both appearances is
+painted dark in both. The Strength slider runs from a calm tint to the
+colours themselves, and is even to the eye: each step changes the picture
+by about as much as any other, light and dark taken together, from the
+faintest tint to the full colours. Its first sixth is the calm tint
+showing through the chrome's own ground: light on a light chrome and dark
+on a dark one, at about the lightness of the chrome's darkest tone, so the
+tinted ground stays below the cards, with more colour at the rim on a dark
+chrome, since near black the screen shows little of it. At 16% the calm
+tint shows whole. From there to 100% the colours rise to the lightness and
+the colour the pad shows them in, so at full strength the chrome is plainly
+the colours on the pad, in light and in dark, and in either look. Each hue
+rises as far as the screen shows it fullest, within a limit: pinks, reds,
+blues and violets to a middle lightness, and yellows, limes, greens and
+cyans lighter, where they read as themselves rather than as olive or teal.
+The arrow keys move the slider a step, and with <kbd>Shift</kbd>, or Page
+Up and Page Down, a tenth of the way, as with grain and cards.
+
+The settings file keeps the strength as a number from 0.1 to 1, in
+thousandths, along the same path at its own pace: up to 0.6 it is the share
+of the calm tint that shows through, at 0.75 the tint shows whole, and at 1
+the colours are the pad's. The slider shows 0.6, where a new background
+starts, at 10%, 0.75 at 16%, 0.85 at 50% and 0.9 at 66%.
+
+Text on a tinted part is judged at the worst point of the gradient behind
+it, grain included. Where a text would fall under a contrast of 4.5 to 1 it
+is drawn stronger, darker on a light chrome and lighter on a dark one, just
+as far as 4.5 to 1 takes it. Where that way cannot reach 4.5 to 1, as on a
+dark chrome whose colours have risen to a middle lightness, the text heads
+for black or white instead, whichever reads better there, and so do the
+lines, a chosen row and a chip on a tinted part, such as the switch at the
+top of the changes pane.
+
+Up to 16%, while the calm tint rises, the text is the palette's own, each
+drawn just strong enough to hold 4.5 to 1. Above it, where the colours
+rise, once the secondary text would have to be drawn stronger as well, or
+the text has turned, and black or white reads well clear of 4.5 to 1, the
+text keeps its steps. The main text is then black or white itself; the
+secondary text is a step from it toward the colours behind, halfway by
+contrast between it and 4.5 to 1, and the quiet text a step further, at
+4.5 to 1. The accent and the colours of added and removed lines are drawn
+lighter or darker in their own hue, so they keep their colour beside the
+black or white. Where even black or white only just reads, every text is
+drawn as strong as the colours allow. The colours are never held back for
+the text: where even black or white reads under 4.5 to 1, a quiet line
+under the section's controls says how low and in which appearance, and
+the choice stays as it is.
+
+A hovered or chosen row on a tinted part lets the ink or the accent
+through rather than laying a solid patch over the tint, and is judged the
+same way. A menu or a popover opened from a tinted part stands on its own
+surface and keeps the palette's text.
 
 Every line the window draws stays. With a background each line on or
 beside a tinted part is the text colour let through at one amount for the
@@ -155,9 +195,10 @@ Cards, under strength and grain, lets a little of the background show
 through the cards as well: the panes in the modern look, the boxes in the
 terminal look, and what stands over the window, such as the settings, the
 palette and a menu. It runs from none, the default, to 100%, where a card
-shows as much of the background's colour as the window around it does.
-A card keeps its own lightness while it takes on the colour, so cards
-still stand off the window around them at every step, in light and dark.
+shows the calm tint as fully as the chrome shows it at 16% strength. A
+card keeps its own lightness while it takes on the colour, and takes it
+from the calm tint at every strength, so above 16%, where the chrome takes
+the colours themselves, the cards keep what they hold on their own ground.
 It does nothing while there is no background, and each palette and theme
 keeps its own share with its background. The settings file keeps it as a
 number from 0 to 0.25, a quarter of what the section shows.
@@ -188,15 +229,14 @@ shows nothing, terminals are drawn by the GPU as before.
 Text on a card is judged as text on the chrome is, at the worst point of
 the gradient behind it, and the app's own text is drawn a step stronger
 where it would fall under 4.5 to 1, quiet text included. A terminal draws
-its sixteen colours as they are, so the share is held back where one of
-them that holds 4.5 to 1 on a solid card would fall under it. In dark the
-share is also held back where the cards would stop standing off the
-ground, which happens only near the top of the range at full strength. A
-white card in light cannot keep its lightness and darkens a little toward
-the colour, so in light a terminal colour is what most often holds it
-back. The section says beside the slider when either holds the share
-back, by how much, and in which appearance. Where it holds the share at
-none, nothing changes.
+its sixteen colours as they are, so one of them that holds 4.5 to 1 on a
+solid card can fall under it on a see-through one; a white card in light
+cannot keep its lightness and darkens a little toward the colour, so that
+happens most in light. In dark a card that lets much of the calm tint
+through can come near the ground around it. The share asked is let through
+whole either way, and the quiet line under the section's controls says
+when a terminal colour reads under 4.5 to 1, or the cards barely stand off
+the window around them, and in which appearance.
 
 ## Custom styles
 
@@ -251,6 +291,17 @@ pane. What an integrated session is like is in
 which is the one the agent's own settings name as for a terminal session,
 in [integrated](integrated.md#the-mode-a-session-starts-in). It is the
 user's to change, and an agent's settings tools refuse it.
+
+Whether you are asked before every session another session starts. Off to
+begin with: a session that starts one in its own project, on its own agent
+and account, goes ahead without a question, and the session begins in no
+more than the starting session's own mode. A start from a Claude Code
+session in a terminal whose hooks have not said its mode, as with hooks
+off, is put to you, and so is a start anywhere else. Every time puts each
+one to you, in the starting session's own project too, with Allow once or
+No and never an answer that stands, as
+[orchestrator](orchestrator.md#what-the-user-is-asked) describes. It is
+the user's to change, and an agent's settings tools refuse it.
 
 How long a past session stays listed under its project: forever, 30 days,
 7 days or 1 day, forever to begin with. A session this app ran is listed
@@ -423,14 +474,17 @@ the step each start is for, give the agent and the model each step names
 and no model for Codex's own default, and name, for a review, the session
 whose work it checks. Then each step has a sentence naming the step, what a
 piece has come out of or passed before it, the models it may use with the
-first as the one to use, how many of its sessions may run at once and to
-stop each once its piece is done with, or for a review when the work
-passes, that it goes back with `send` to the piece's own session for the
-step it returns to, which steps the piece is taken through again, that it
-is reviewed again by a new review or a line to the reviewer, how many
-times, and that the user is asked after that. The last sentence says to
-report to the user once every piece has come out of or passed the last
-step.
+first as the one to use, and how many of its sessions may run at once,
+with each to be stopped once its work is taken up and nothing more is
+wanted from it. For a review, the sentence says when the work passes, and
+that its review is stopped once it does. When it does not pass, the work
+goes back with `send` to the piece's own session for the step it returns
+to, resumed first if it is not running, or carried on in a new session
+that names it where the orchestrator stopped it; the sentence names the
+steps the piece is taken through again, says that it is reviewed again by a new review or
+a line to the reviewer, how many times, and that the user is asked after
+that. The last sentence says to report to the user once every piece has
+come out of or passed the last step.
 
 The foot always shows. A switch there marks the workflow for new sessions, with a line
 saying which workflow new sessions start with. Turning it off leaves them
@@ -523,8 +577,9 @@ sees it: a value a setting does not take, an action that does not exist, a
 chord two actions would share or one the agent's terminal needs, and the
 agent is told why without the user being troubled. The agent hooks, the
 plugins, the accounts, which workflow a project follows, how long past
-sessions stay listed, how long a project stays active, the notifications
-and the chime are refused outright, as the user's to change.
+sessions stay listed, how long a project stays active, whether every
+start of a session is asked about, the notifications and the chime are
+refused outright, as the user's to change.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.

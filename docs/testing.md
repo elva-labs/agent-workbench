@@ -50,6 +50,22 @@ npx playwright test -g "splitter"            # one browser test
 npx playwright show-report                   # after a failure
 ```
 
+## Measuring a drag
+
+One browser test is a measurement rather than a check, and runs only when
+`BG_DRAG=1` is set, in WebKit: it opens a workspace the size of a day's
+work through the fake core, ten projects, a few dozen session rows,
+terminals full of output and two long conversations, drags a colour round
+the background picker's pad with the mouse, and logs how long each step
+takes to reach the screen, how many frames go by without one, and how
+long the page's own frame callbacks and the style and layout after them
+take. Its comment lists the settings it can be run with to take one cost
+away at a time.
+
+```
+BG_DRAG=1 WORKBENCH_DEV_PORT=14537 npx playwright test tests/e2e/background-drag.webkit.spec.ts --project webkit --workers 1
+```
+
 ## Running from a second checkout
 
 The browser tier starts the dev server on port 1420 and, outside CI, reuses

@@ -154,6 +154,7 @@ describe("plan", () => {
     expect(() => plan({ plugins: [] })).toThrow(/user's to change/);
     expect(() => plan({ notifications: false })).toThrow(/user's to change/);
     expect(() => plan({ chime: true })).toThrow(/user's to change/);
+    expect(() => plan({ askEveryStart: false })).toThrow(/user's to change/);
   });
 
   it("reads chords as text, the modifier implied", () => {
@@ -455,20 +456,16 @@ describe("a background", () => {
     theme.backgrounds = { teal: lagoon as never };
     expect(describeSettings()).toContain(`background: ${JSON.stringify(lagoon)}`);
     expect(describeSettings()).toMatch(/one to three dots on a colour pad/);
-    expect(describeSettings()).toContain("cards: 0% (how much of the background shows through the panes");
+    expect(describeSettings()).toContain("cards: 0% (how much of the background's colour shows through the panes");
     theme.cards = { teal: 0.2 };
-    theme.cardsHeld = 0.2;
     expect(describeSettings()).toContain("cards: 80% (");
-    expect(describeSettings()).not.toContain("shows through now");
-    theme.cardsHeld = 0;
-    expect(describeSettings()).toContain("0% shows through now");
   });
 
   it("goes with the palette in use, or the one the change switches to", () => {
     const { next, changes, ground } = plan({ background: lagoon });
     expect(next.backgrounds).toEqual({ teal: lagoon });
     expect(changes).toEqual([
-      { field: "background", label: "Background", from: "None", to: "Lagoon, strength 60%, grain 25%" },
+      { field: "background", label: "Background", from: "None", to: "Lagoon, strength 10%, grain 25%" },
     ]);
     expect(ground?.light).toMatch(/^linear-gradient\(135deg, #[0-9a-f]{6}, #[0-9a-f]{6}\)$/);
     const switched = plan({ palette: "rose", background: { dots: [{ hue: 10, chroma: 1 }] } });
@@ -479,7 +476,7 @@ describe("a background", () => {
   it("is taken away with null, and refused when it breaks the rules", () => {
     theme.backgrounds = { teal: lagoon as never };
     expect(plan({ background: null }).changes).toEqual([
-      { field: "background", label: "Background", from: "Lagoon, strength 60%, grain 25%", to: "None" },
+      { field: "background", label: "Background", from: "Lagoon, strength 10%, grain 25%", to: "None" },
     ]);
     expect(() => plan({ background: { dots: [] } })).toThrow(/one to 3 dots/);
     expect(() => plan({ background: { ...lagoon, strength: 2 } })).toThrow(/strength is from 0.1 to 1/);

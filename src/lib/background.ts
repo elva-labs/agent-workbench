@@ -1,16 +1,22 @@
 /**
- * A background of the user's own, and the guard that keeps every text on
- * it readable.
+ * A background of the user's own, and the guard that keeps the text on it
+ * as readable as the colours allow.
  *
  * A background is one to three dots on a colour pad, each a hue and how
  * much colour, from none at the centre to the rim. It says nothing about
  * lightness: the chrome it lies on sets that, light or dark, so one
- * background is painted for both appearances and switching between them
- * can leave nothing hard to read. Whether the chrome is light or dark is
- * read from its own colours, not from the appearance's name, so a theme
- * that is dark in both appearances is painted dark in both. The rim is
- * capped for each, so the strongest choice is still a tint. Strength says how far the background shows through the chrome's
- * own ground, and grain lays a fine speckle over it.
+ * background is painted for both appearances. Whether the chrome is light
+ * or dark is read from its own colours, not from the appearance's name, so
+ * a theme that is dark in both appearances is painted dark in both. Grain
+ * lays a fine speckle over it.
+ *
+ * Strength runs from a calm tint to the colours themselves. Up to CALM it
+ * is how far a tint at about the chrome's darkest lightness shows through
+ * the chrome's own ground; by FULL_TINT that tint shows whole; from there
+ * to the top the colours rise to the lightness and colour the pad shows
+ * them in, so at full strength the window is the colours on the pad. The
+ * Strength slider shows it along SLIDER, so each of its steps changes the
+ * picture by about as much as any other.
  *
  * Two or three colours make a gradient across the window: the first two run
  * from the top left down to the foot, mixed in OKLCH so the middle never
@@ -21,12 +27,16 @@
  * together and mix cleanly; three spread evenly round the wheel stay a
  * choice.
  *
- * The background tints the chrome only, and every surface that holds text
- * to read stays solid. The guard judges each kind of text on a tinted part
- * at the worst point of the gradient behind it, grain included, and draws
- * the text a step stronger, towards black on a light chrome and white on a
- * dark one, just as far as it takes to hold 4.5:1. Lines on or beside a tinted part are the
- * ink let through at one amount for the whole window, so they take the
+ * The background tints the chrome, and the cards that hold what is read
+ * keep their own lightness. The guard judges each kind of text on a tinted
+ * part at the worst point of the gradient behind it, grain included, and
+ * draws the text a step stronger, towards black on a light chrome and white
+ * on a dark one, just as far as it takes to hold 4.5:1. Where that end
+ * cannot, it heads for whichever of black or white reads better, so on
+ * colours too strong for 4.5:1 the text still has the most contrast there
+ * is; the colours are never held back for it. Where the end has room to
+ * spare, the text keeps its steps from it, as stepText says. Lines on or beside a tinted part are
+ * the ink let through at one amount for the whole window, so they take the
  * colour of what they cross and stand off it at least as far as today's
  * lines stand off the plain chrome.
  *
@@ -47,7 +57,8 @@ export interface Dot {
 export interface Background {
   dots: Dot[];
   harmony: Harmony;
-  /** How far the background shows through the chrome's ground, 0.1 to 1. */
+  /** How strongly the background shows, 0.1 to 1: see throughAt and
+      vividAt. */
   strength: number;
   /** How strong the speckle over it is, 0 to 1. */
   grain: number;
@@ -58,14 +69,13 @@ export const LEAST_STRENGTH = 0.1;
 /** The most a cards' share is kept as. The share is read against this
     end, so 0.25 is the end of the Cards range, shown as 100%. */
 export const MOST_CARDS = 0.25;
-/** How much of what the ground shows a card shows at the end of the Cards
-    range. */
+/** How much of the calm tint a card shows at the end of the Cards range,
+    as a share of what the ground lets through. */
 export const CARDS_REACH = 1;
-/** The most strength the terminal look takes, and it takes no grain. */
-export const TERMINAL_STRENGTH = 0.5;
 /** How far a speck of grain darkens or lightens, at full grain. */
 export const GRAIN_SPECK = 0.14;
-/** The contrast every text on a tinted part holds, at its worst point. */
+/** The contrast the guard draws each text on a tinted part to, at its
+    worst point, wherever black or white can reach it. */
 export const LEAST_CONTRAST = 4.5;
 /** What the guard aims for: a hair above, so a worst point between the
     places it samples, or a step of rounding, still holds the least. */
@@ -77,6 +87,11 @@ const AIM = LEAST_CONTRAST + 0.05;
     them at a little more than either, which covers a control that mixes
     a fill with more ink. */
 export const FILL = { ink: 0.07, accent: 0.14 };
+/** How much of white or black a chip, and a chosen row, lay over the
+    colours on a tinted part where the text there has turned to the other
+    end, whose accent is then too near the ink to mark a row. */
+const PATCH = 0.5;
+const CHOSEN = 0.3;
 const GUARD_FILL = { ink: 0.12, accent: 0.16 };
 // The guard reads text over one fill at a time. A fill laid over another,
 // such as a hovered row inside a chosen one, can leave ink-2, ink-3 and
@@ -84,17 +99,129 @@ const GUARD_FILL = { ink: 0.12, accent: 0.16 };
 // tokens sits on stacked fills; a part that stacks them has to be read
 // here as well.
 
-/** The lightness a light and a dark chrome paint at, and the most colour
-    each takes at the rim, in OKLCH. Each is about the lightness of the
-    chrome's darkest tone, the modern look's ground, so the ground keeps its
-    place under the cards and they stand off it by lightness as well as
-    colour. Near black the screen shows little colour at any lightness, so
-    a dark chrome takes more of it at the rim, as much as the screen can
-    show for hues that allow it. */
+/** The calm tint: the lightness a light and a dark chrome paint at up to
+    FULL_TINT, and the most colour each takes at the rim, in OKLCH. Each is
+    about the lightness of the chrome's darkest tone, the modern look's
+    ground, so the ground keeps its place under the cards and they stand
+    off it by lightness as well as colour. Near black the screen shows
+    little colour at any lightness, so a dark chrome takes more of it at
+    the rim, as much as the screen can show for hues that allow it. A card
+    takes its colour from this tint at every strength, so it keeps its own
+    lightness. */
 export const BAND: Record<Appearance, { lightness: number; chroma: number }> = {
   light: { lightness: 0.94, chroma: 0.066 },
   dark: { lightness: 0.18, chroma: 0.13 },
 };
+
+/** The colours as the pad shows them on a light and a dark chrome, which
+    is what the window paints at full strength: light and full enough to
+    read as the hue they are, as much colour at the rim as the screen
+    shows. Each hue is as light as its fullest colour on the screen,
+    CUSP_BELOW under it, held between `lightness` and `most`: pinks, reds,
+    blues and violets are fullest darker and sit at `lightness`, while
+    yellows, limes, greens and cyans are fullest much lighter, and at
+    `lightness` would read as olive and teal rather than as themselves. */
+export const PAD: Record<Appearance, { lightness: number; most: number; chroma: number }> = {
+  light: { lightness: 0.8, most: 0.9, chroma: 0.15 },
+  dark: { lightness: 0.7, most: 0.86, chroma: 0.15 },
+};
+const CUSP_BELOW = 0.05;
+
+/** The lightness at which each hue shows the most colour the screen can,
+    every two degrees, worked out once. */
+let cusps: Float64Array | null = null;
+
+function cuspOf(hue: number): number {
+  if (cusps === null) {
+    cusps = new Float64Array(181);
+    const fullest = (L: number, h: number) => {
+      const [, a, b] = fitLch(L, 0.4, h);
+      return Math.hypot(a, b);
+    };
+    for (let at = 0; at <= 180; at++) {
+      // The colour the screen shows rises and then falls with lightness.
+      let low = 0.3;
+      let high = 0.99;
+      for (let step = 0; step < 40; step++) {
+        const one = low + (high - low) / 3;
+        const two = high - (high - low) / 3;
+        if (fullest(one, at * 2) < fullest(two, at * 2)) low = one;
+        else high = two;
+      }
+      cusps[at] = (low + high) / 2;
+    }
+  }
+  const at = turn(hue) / 2;
+  const below = Math.floor(at);
+  const above = Math.min(below + 1, 180);
+  return cusps[below] + (cusps[above] - cusps[below]) * (at - below);
+}
+
+/** How light a hue paints at full strength on a light or a dark chrome. */
+export function padLightness(hue: number, tone: Appearance): number {
+  const pad = PAD[tone];
+  return clamp(cuspOf(hue) - CUSP_BELOW, pad.lightness, pad.most);
+}
+
+/** The strength up to which the calm tint shows through the ground by as
+    much as the strength says, and the strength at which it shows whole;
+    from there to the top the colours rise from the calm tint to the
+    pad's. */
+export const CALM = 0.6;
+export const FULL_TINT = 0.75;
+
+/** How much of the colours the chrome's ground lets through at a strength:
+    the strength itself up to CALM, then all of it by FULL_TINT. */
+export function throughAt(strength: number): number {
+  if (strength <= CALM) return strength;
+  return Math.min(1, CALM + ((strength - CALM) * (1 - CALM)) / (FULL_TINT - CALM));
+}
+
+/** How far the colours have risen from the calm tint to the pad's at a
+    strength, 0 up to FULL_TINT and 1 at the top. */
+export function vividAt(strength: number): number {
+  return clamp((strength - FULL_TINT) / (1 - FULL_TINT), 0, 1);
+}
+
+/** Where each strength sits on the Strength slider, from 0 at no
+    background to 1 at the colours themselves, with a straight run
+    between each pair. The slider is even to the eye: each step of it
+    changes what the window paints by about the same amount, measured in
+    OKLab over every hue at the rim, on a light chrome and a dark one
+    alike. Up to CALM the calm tint is a small change, on a dark chrome
+    most of all, so it takes the first tenth of the slider; the rest of
+    the calm tint takes the next sixteenth, and the rise to the colours
+    the rest. */
+export const SLIDER: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [CALM, 0.098],
+  [FULL_TINT, 0.161],
+  [1, 1],
+];
+
+/** Where a strength sits on the Strength slider, 0 to 1. */
+export function positionOf(strength: number): number {
+  const at = clamp(strength, 0, 1);
+  const upper = SLIDER.findIndex(([knot]) => knot >= at);
+  if (upper <= 0) return SLIDER[0][1];
+  const [s0, p0] = SLIDER[upper - 1];
+  const [s1, p1] = SLIDER[upper];
+  return p0 + ((at - s0) * (p1 - p0)) / (s1 - s0);
+}
+
+/** The strength at a place on the Strength slider, 0 to 1, never under
+    LEAST_STRENGTH. */
+export function strengthAt(position: number): number {
+  const at = clamp(position, 0, 1);
+  const upper = SLIDER.findIndex(([, place]) => place >= at);
+  if (upper <= 0) return LEAST_STRENGTH;
+  const [s0, p0] = SLIDER[upper - 1];
+  const [s1, p1] = SLIDER[upper];
+  return Math.max(LEAST_STRENGTH, s0 + ((at - p0) * (s1 - s0)) / (p1 - p0));
+}
+
+/** A strength as the slider shows it, in whole percent. */
+export const strengthPercent = (strength: number) => Math.round(positionOf(strength) * 100);
 
 /** How far either side of the first dot a close colour sits, in degrees. */
 export const NEAR = 50;
@@ -245,7 +372,8 @@ export function validCards(value: unknown): Record<string, number> {
 export const roundedCards = (share: number) => Math.round(Math.min(MOST_CARDS, Math.max(0, share)) * 100) / 100;
 
 /** A background with its numbers rounded as they are kept: whole degrees,
-    and hundredths for the rest. */
+    thousandths for the strength, fine enough for each step of the even
+    slider where the colours rise, and hundredths for the rest. */
 export function rounded(background: Background): Background {
   const hundredths = (value: number) => Math.round(value * 100) / 100;
   return {
@@ -254,7 +382,7 @@ export function rounded(background: Background): Background {
       chroma: hundredths(Math.min(1, Math.max(0, dot.chroma))),
     })),
     harmony: background.harmony,
-    strength: hundredths(Math.min(1, Math.max(LEAST_STRENGTH, background.strength))),
+    strength: Math.round(Math.min(1, Math.max(LEAST_STRENGTH, background.strength)) * 1000) / 1000,
     grain: hundredths(Math.min(1, Math.max(0, background.grain))),
   };
 }
@@ -282,8 +410,7 @@ export function describeBackground(background: Background | null): string {
   const ready = READY_MADE.find((known) => known.name === readyMadeOf(background));
   const colours =
     ready?.label ?? (background.dots.length === 1 ? "One colour" : `${background.dots.length} colours`);
-  const percent = (value: number) => `${Math.round(value * 100)}%`;
-  return `${colours}, strength ${percent(background.strength)}, grain ${percent(background.grain)}`;
+  return `${colours}, strength ${strengthPercent(background.strength)}%, grain ${Math.round(background.grain * 100)}%`;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -434,7 +561,11 @@ export function luminance([r, g, b]: Rgb): number {
 export const ratio = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 
 /** Two colours mixed in sRGB, as CSS's color-mix in srgb does. */
-export const mix = (a: Rgb, b: Rgb, t: number): Rgb => a.map((value, at) => value + (b[at] - value) * t) as Rgb;
+export const mix = (a: Rgb, b: Rgb, t: number): Rgb => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
 
 function mixLch(A: Lab, B: Lab, t: number): Lab {
   const [La, Ca, ha] = labToLch(A);
@@ -468,17 +599,24 @@ export function toneOf(colours: Record<string, string>): Appearance {
   return luminance(hexToRgb(colours.ink)) < ground ? "light" : "dark";
 }
 
-/** A dot's colour on a light or a dark chrome: its lightness, and its
-    share of the rim's colour, held inside what the screen shows. */
-export function dotColour(dot: Dot, tone: Appearance): Lab {
+/** A dot's colour on a light or a dark chrome at a strength: the calm
+    tint's lightness and share of the rim's colour up to FULL_TINT, rising
+    to the pad's above it, held inside what the screen shows. Left without
+    a strength it is the calm tint, which the cards take. */
+export function dotColour(dot: Dot, tone: Appearance, strength = 0): Lab {
   const band = BAND[tone];
-  return fitLch(band.lightness, clamp(dot.chroma, 0, 1) * band.chroma, dot.hue);
+  const pad = PAD[tone];
+  const vivid = vividAt(strength);
+  const lightness = vivid === 0 ? band.lightness : band.lightness + (padLightness(dot.hue, tone) - band.lightness) * vivid;
+  const chroma = band.chroma + (pad.chroma - band.chroma) * vivid;
+  return fitLch(lightness, clamp(dot.chroma, 0, 1) * chroma, dot.hue);
 }
 
-/** A dot as the pad shows it: lighter and fuller than it paints, so the
-    pad reads as a colour wheel. */
+/** A dot as the pad shows it, which is how the window paints it at full
+    strength. */
 export function padColour(dot: Dot, appearance: Appearance): string {
-  return rgbToHex(labToRgb(fitLch(appearance === "light" ? 0.8 : 0.6, clamp(dot.chroma, 0, 1) * 0.15, dot.hue)));
+  const pad = PAD[appearance];
+  return rgbToHex(labToRgb(fitLch(padLightness(dot.hue, appearance), clamp(dot.chroma, 0, 1) * pad.chroma, dot.hue)));
 }
 
 /** A background as a small swatch shows it: its colours laid over a
@@ -487,7 +625,7 @@ export function swatchOf(background: Background, palette: Record<string, string>
   const under = hexToRgb(palette.bg);
   const tone = toneOf(palette);
   const colours = background.dots.map((dot) =>
-    rgbToHex(mix(under, labToRgb(dotColour(dot, tone)), background.strength)),
+    rgbToHex(mix(under, labToRgb(dotColour(dot, tone, background.strength)), throughAt(background.strength))),
   );
   return colours.length === 1 ? colours[0] : `linear-gradient(135deg, ${colours.join(", ")})`;
 }
@@ -495,10 +633,12 @@ export function swatchOf(background: Background, palette: Record<string, string>
 /** The pad as pixels, RGBA: hue around it and colour out to the rim, as
     padColour shows a dot, edged smoothly. */
 export function padPixels(size: number, appearance: Appearance): Uint8ClampedArray {
-  const lightness = appearance === "light" ? 0.8 : 0.6;
-  // The most colour the screen shows at each half degree of hue.
-  const most = Array.from({ length: 720 }, (_, at) => {
-    const [, a, b] = fitLch(lightness, 0.15, at / 2);
+  const { chroma: rim } = PAD[appearance];
+  // How light each half degree of hue is, and the most colour the screen
+  // shows there.
+  const light = Array.from({ length: 720 }, (_, at) => padLightness(at / 2, appearance));
+  const most = light.map((lightness, at) => {
+    const [, a, b] = fitLch(lightness, rim, at / 2);
     return Math.hypot(a, b);
   });
   const pixels = new Uint8ClampedArray(size * size * 4);
@@ -510,8 +650,9 @@ export function padPixels(size: number, appearance: Appearance): Uint8ClampedArr
       const r = Math.hypot(dx, dy) / radius;
       if (r > 1.01) continue;
       const hue = turn((Math.atan2(dy, dx) * 180) / Math.PI);
-      const chroma = Math.min(Math.min(r, 1) * 0.15, most[Math.round(hue * 2) % 720]);
-      const rgb = labToRgb(lchToLab(lightness, chroma, hue));
+      const at = Math.round(hue * 2) % 720;
+      const chroma = Math.min(Math.min(r, 1) * rim, most[at]);
+      const rgb = labToRgb(lchToLab(light[at], chroma, hue));
       const offset = (y * size + x) * 4;
       pixels[offset] = rgb[0];
       pixels[offset + 1] = rgb[1];
@@ -558,11 +699,18 @@ const GLOW_PLACES = 24;
 
 /** The gradient as pixels, RGBA, for an image stretched over the window.
     Its colours are worked out once, at places along the run and, with a
-    third colour, at strengths of its glow. The whole is dithered by half a
+    third colour, at strengths of its glow, as many of each as `worked`
+    asks: RUN_PLACES and GLOW_PLACES unless an image drawn coarsely while
+    the background moves asks for fewer. The whole is dithered by half a
     step, so a soft run does not band. */
-export function gradientPixels(colours: Lab[], width: number, height: number): Uint8ClampedArray {
-  const places = colours.length > 1 ? RUN_PLACES : 1;
-  const strengths = colours.length > 2 ? GLOW_PLACES : 1;
+export function gradientPixels(
+  colours: Lab[],
+  width: number,
+  height: number,
+  worked: { run: number; glow: number } = { run: RUN_PLACES, glow: GLOW_PLACES },
+): Uint8ClampedArray {
+  const places = colours.length > 1 ? worked.run : 1;
+  const strengths = colours.length > 2 ? worked.glow : 1;
   // The colours as RGB: a row of places along the run for each strength.
   const table = new Float64Array(places * strengths * 3);
   for (let place = 0; place < places; place++) {
@@ -639,21 +787,43 @@ export type TextToken = (typeof TEXT_TOKENS)[number];
 
 /** What a background paints in one appearance and look. */
 export interface Painted {
-  /** The dots' colours in this appearance. */
+  /** The dots' colours on the chrome in this appearance, at the strength. */
   colours: Lab[];
-  /** The strength and grain after the look's limits. */
-  strength: number;
+  /** The dots' colours a card takes: the calm tint, the same as on the
+      chrome up to FULL_TINT. */
+  cardColours: Lab[];
+  /** How much of the colours the ground lets through, from throughAt, and
+      the grain after the look's limits. */
+  through: number;
   grain: number;
-  /** Each tinted part's own ground, let through by the strength. */
+  /** Each tinted part's own ground, laid over the colours. */
   grounds: Partial<Record<Part, string>>;
-  /** The text tokens on tinted parts, a step stronger where they need it. */
+  /** The text tokens on tinted parts, a step stronger where they need it,
+      or black or white where the colours are too strong for 4.5:1. */
   text: Record<TextToken, string>;
   /** Every line, and the stronger marks such as a tag's outline. */
   line: string;
   lineStrong: string;
-  /** What a hovered row or a field, and a chosen row, lay over the tint. */
+  /** The lines on the tinted parts: the same as every other line, unless
+      the text there turned to black or white, whose end they then take. */
+  partLine: string;
+  partLineStrong: string;
+  /** What a hovered row or a field, and a chosen row, lay over the tint.
+      Where the text has turned to the other end, a chosen row is a step of
+      that end instead, since the accent is then too near the ink. */
   fill: string;
   fillAccent: string;
+  /** What a chosen row lays over a see-through card: the accent let
+      through, whatever the chrome's text has turned to. */
+  cardFillAccent: string;
+  /** A chip on a tinted part, such as a chosen switch: the palette's
+      surface while the text keeps the palette's lean, and the other end let
+      through where the text has turned to black or white against it. */
+  patch: string;
+  /** A glyph on the accent laid as a fill on a tinted part: the palette's
+      ground where it stands 3:1 off the accent there, else whichever of
+      black or white stands further off. */
+  onAccent: string;
   /** Each text's contrast at the worst point behind it, as asked and as
       painted. */
   asked: Record<TextToken, number>;
@@ -719,8 +889,9 @@ function worst(colour: string, [low, high]: [number, number]): number {
 
 /** A text drawn a step stronger, towards black on a light chrome and
     white on a dark one, just as far as it takes to hold the least
-    contrast. Where that end cannot hold it and the other end does better,
-    it heads for the other. */
+    contrast. Where that end cannot hold it, it heads for whichever of
+    black or white reads better, and where neither holds it, it is that
+    end itself: the most contrast the colours leave. */
 function strengthen(colour: string, range: [number, number], tone: Appearance): string {
   if (worst(colour, range) >= AIM) return colour;
   const from = hexToRgb(colour);
@@ -744,6 +915,95 @@ function strengthen(colour: string, range: [number, number], tone: Appearance): 
   return rgbToHex(mix(from, to, amount));
 }
 
+/** How much more than the least contrast the end the text heads for has
+    to reach before the text is drawn in steps from it; under that, every
+    text is drawn just strong enough, which is as far as the colours
+    allow. */
+export const TEXT_ROOM = 1.15;
+
+/** The tinted parts' ground on the average, the colours let through over
+    each part's own ground: what quieter text steps toward. */
+function groundUnder(grid: Rgb[], grounds: Iterable<Rgb>, through: number): Rgb {
+  const sum: Rgb = [0, 0, 0];
+  let count = 0;
+  for (const ground of grounds) {
+    for (const colour of grid) {
+      const shown = mix(ground, colour, through);
+      sum[0] += shown[0];
+      sum[1] += shown[1];
+      sum[2] += shown[2];
+      count++;
+    }
+  }
+  return sum.map((value) => value / Math.max(1, count)) as Rgb;
+}
+
+/** Keeps the text's steps on colours risen above the calm tint: where the
+    secondary text would have to be drawn stronger, so that it and the
+    quiet text would meet at the least contrast, or where the text has
+    turned to the other end, and the end the text heads for has room. The
+    ink is then that end itself, black or white; the secondary text is a
+    step from it toward the ground, halfway by contrast between the ink and
+    the least that reads, and the quiet text a step further, at the least,
+    or the palette's own where that already reads, leans the same way and
+    stays quieter than the secondary text. The accent, add and remove move
+    their lightness toward the end in their own hue, so they keep their
+    colour beside an ink of pure black or white. The calm tint never comes
+    here: its text is the palette's own, drawn just strong enough. */
+function stepText(
+  text: Record<TextToken, string>,
+  asked: Record<TextToken, number>,
+  colours: Record<string, string>,
+  range: [number, number],
+  tone: Appearance,
+  ground: Rgb,
+) {
+  const own = luminance(hexToRgb(colours.ink));
+  const now = luminance(hexToRgb(text.ink));
+  const turned = tone === "dark" ? now < own : now > own;
+  if (!turned && asked["ink-2"] >= AIM) return;
+  const black: Rgb = [0, 0, 0];
+  const white: Rgb = [255, 255, 255];
+  const [towards, away] = tone === "light" ? [black, white] : [white, black];
+  const reach = (end: Rgb) => worst(rgbToHex(end), range);
+  const end = reach(towards) >= AIM || reach(towards) >= reach(away) ? towards : away;
+  const best = reach(end);
+  if (best < AIM * TEXT_ROOM) return;
+  // A colour on the way from the ink to the ground that reads at `target`
+  // or more, as near the ground as that allows.
+  const step = (target: number): string => {
+    let low = 0;
+    let high = 1;
+    for (let at = 0; at < 20; at++) {
+      const middle = (low + high) / 2;
+      if (worst(rgbToHex(mix(end, ground, middle)), range) >= target) low = middle;
+      else high = middle;
+    }
+    return rgbToHex(mix(end, ground, low));
+  };
+  text.ink = rgbToHex(end);
+  text["ink-2"] = step(Math.sqrt(best * AIM));
+  const between = worst(text["ink-2"], range);
+  text["ink-3"] = !turned && asked["ink-3"] >= AIM && asked["ink-3"] <= between ? colours["ink-3"] : step(AIM);
+  // The coloured text moves its lightness toward the end and keeps its hue
+  // and as much of its colour as the screen shows there, rather than being
+  // mixed toward black or white, which would leave it nearly the ink.
+  for (const token of ["accent", "add", "del", "ansi-yellow"] as const) {
+    if (asked[token] >= AIM && !turned) continue;
+    const [L, C, hue] = labToLch(rgbToLab(hexToRgb(colours[token])));
+    const goal = end === white ? 1 : 0;
+    const at = (amount: number) => rgbToHex(labToRgb(fitLch(L + (goal - L) * amount, C, hue)));
+    let low = 0;
+    let high = 1;
+    for (let step = 0; step < 20; step++) {
+      const middle = (low + high) / 2;
+      if (worst(at(middle), range) >= AIM) high = middle;
+      else low = middle;
+    }
+    if (worst(at(high), range) >= AIM) text[token] = at(high);
+  }
+}
+
 /** The background's colour at a grid of points across the window. */
 function gridOf(at: (u: number, v: number) => Lab, across: number, down: number): Rgb[] {
   const out: Rgb[] = [];
@@ -756,8 +1016,9 @@ function gridOf(at: (u: number, v: number) => Lab, across: number, down: number)
 /** How much of the ink a line lets through so that at its faintest point
     it stands off what is under it by the ratio asked. */
 function lineAmount(under: Rgb[], ink: Rgb, target: number): number {
+  const own = under.map(luminance);
   const stands = (amount: number) =>
-    under.every((colour) => ratio(luminance(mix(colour, ink, amount)), luminance(colour)) >= target);
+    under.every((colour, at) => ratio(luminance(mix(colour, ink, amount)), own[at]) >= target);
   let low = 0;
   let high = 0.6;
   for (let step = 0; step < 16; step++) {
@@ -777,17 +1038,19 @@ function todayLine(colours: Record<string, string>, look: Look): Rgb {
 }
 
 /** What a background paints in a look over a palette's colours in one
-    appearance, with the guard's stronger text and the lines' one amount. */
+    appearance, with the guard's stronger text and the lines' one amount.
+    The terminal look takes no grain. */
 export function paintOf(
   background: Background,
   look: Look,
   colours: Record<string, string>,
   cards = 0,
 ): Painted {
-  const strength = look === "terminal" ? Math.min(background.strength, TERMINAL_STRENGTH) : background.strength;
+  const through = throughAt(background.strength);
   const grain = look === "terminal" ? 0 : background.grain;
   const tone = toneOf(colours);
-  const dots = background.dots.map((dot) => dotColour(dot, tone));
+  const dots = background.dots.map((dot) => dotColour(dot, tone, background.strength));
+  const cardDots = vividAt(background.strength) > 0 ? background.dots.map((dot) => dotColour(dot, tone)) : dots;
   const at = field(dots);
   const grounds = groundsOf(colours, look);
   const parts = Object.keys(grounds) as Part[];
@@ -805,11 +1068,11 @@ export function paintOf(
   // do, are read once.
   const textGrounds = new Map(TEXT_PARTS[look].map((part) => [grounds[part]!.join(","), grounds[part]!]));
   for (const ground of textGrounds.values()) {
-    const [partLow, partHigh] = extremes(grid, ground, strength, grain * GRAIN_SPECK, fills);
+    const [partLow, partHigh] = extremes(grid, ground, through, grain * GRAIN_SPECK, fills);
     low = Math.min(low, partLow);
     high = Math.max(high, partHigh);
   }
-  const throughCards = cards > 0 ? cardsOf(colours, look, dots, strength, grain, cards) : null;
+  const throughCards = cards > 0 ? cardsOf(colours, look, cardDots, through, grain, cards, dots) : null;
 
   const text = {} as Record<TextToken, string>;
   const asked = {} as Record<TextToken, number>;
@@ -817,12 +1080,31 @@ export function paintOf(
   for (const token of TEXT_TOKENS) {
     asked[token] = worst(colours[token], [low, high]);
     text[token] = strengthen(colours[token], [low, high], tone);
-    contrast[token] = worst(text[token], [low, high]);
   }
+  // The calm tint keeps the palette's own text, drawn just strong enough;
+  // only colours on their way up to the pad's keep steps from an end.
+  if (vividAt(background.strength) > 0) {
+    stepText(text, asked, colours, [low, high], tone, groundUnder(grid, textGrounds.values(), through));
+  }
+  for (const token of TEXT_TOKENS) contrast[token] = worst(text[token], [low, high]);
+
+  // Text that turned against the palette's lean, on colours too strong for
+  // it, takes its chips, its chosen rows and its lines from the end it
+  // turned to; the palette's own would vanish there.
+  const own = luminance(ink);
+  const now = luminance(hexToRgb(text.ink));
+  const turned = tone === "dark" ? now < own : now > own;
+  const towards: Rgb = tone === "dark" ? [0, 0, 0] : [255, 255, 255];
+  const other: Rgb = tone === "dark" ? [255, 255, 255] : [0, 0, 0];
+  const patch = turned ? rgba(other, PATCH) : colours.surface;
+  const accentNow = luminance(hexToRgb(text.accent));
+  const off = (colour: string) => ratio(luminance(hexToRgb(colour)), accentNow);
+  const onAccent = off(colours.bg) >= 3 ? colours.bg : off("#000000") >= off("#ffffff") ? "#000000" : "#ffffff";
 
   // One amount for every line in the window: the most any part needs to
   // stand as far off it as today's line stands off its plain ground, a
-  // solid surface included.
+  // solid surface included. Where the text on the tinted parts turned,
+  // their lines are that end let through, at an amount of their own.
   const surface = hexToRgb(colours.surface);
   const line = todayLine(colours, look);
   const strong = hexToRgb(colours["rule-strong"]);
@@ -836,35 +1118,58 @@ export function paintOf(
     // on as well.
     const solid = [hexToRgb(colours.surface), wellOf(colours)];
     const laid = [throughCards.laid.card, throughCards.laid.well];
+    const behind = cardDots === dots ? coarse : cardDots.length === 1 ? [labToRgb(cardDots[0])] : gridOf(field(cardDots), 8, 5);
     for (const [at, ground] of solid.entries()) {
-      const under = coarse.map((colour) => mix(laid[at], colour, throughCards.amount));
+      const under = behind.map((colour) => mix(laid[at], colour, throughCards.amount));
       amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
       strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
     }
   }
+  const partInk = turned ? towards : ink;
+  let partAmount = 0;
+  let partStrong = 0;
   for (const part of parts) {
     const ground = grounds[part]!;
-    const under = coarse.map((colour) => mix(ground, colour, strength));
-    amount = Math.max(amount, lineAmount(under, ink, away(line, ground)));
-    strongAmount = Math.max(strongAmount, lineAmount(under, ink, away(strong, ground)));
-    painted[part] = rgba(ground, 1 - strength);
+    const under = coarse.map((colour) => mix(ground, colour, through));
+    partAmount = Math.max(partAmount, lineAmount(under, partInk, away(line, ground)));
+    partStrong = Math.max(partStrong, lineAmount(under, partInk, away(strong, ground)));
+    painted[part] = rgba(ground, 1 - through);
   }
+  if (!turned) {
+    amount = Math.max(amount, partAmount);
+    strongAmount = Math.max(strongAmount, partStrong);
+  }
+  const lines = { line: rgba(ink, amount), lineStrong: rgba(ink, Math.max(amount, strongAmount)) };
+  const partLines = turned
+    ? { line: rgba(partInk, partAmount), lineStrong: rgba(partInk, Math.max(partAmount, partStrong)) }
+    : lines;
 
   return {
     colours: dots,
-    strength,
+    cardColours: cardDots,
+    through,
     grain,
     grounds: painted,
     text,
-    line: rgba(ink, amount),
-    lineStrong: rgba(ink, Math.max(amount, strongAmount)),
+    line: lines.line,
+    lineStrong: lines.lineStrong,
+    partLine: partLines.line,
+    partLineStrong: partLines.lineStrong,
     fill: rgba(ink, FILL.ink),
-    fillAccent: rgba(accent, FILL.accent),
+    fillAccent: turned ? rgba(other, CHOSEN) : rgba(accent, FILL.accent),
+    cardFillAccent: rgba(accent, FILL.accent),
+    patch,
+    onAccent,
     asked,
     contrast,
     cards: throughCards,
   };
 }
+
+/** The lowest contrast any text on a tinted part is left at, after the
+    guard: under LEAST_CONTRAST only where the colours are too strong for
+    black or white to reach it. */
+export const lowestText = (painted: Painted) => Math.min(...TEXT_TOKENS.map((token) => painted.contrast[token]));
 
 /* ---------------------------------------------------------------------- */
 /* Cards that let the background through.                                  */
@@ -935,21 +1240,21 @@ const CARD_PAIRS: CardPair[] = [
   { ground: "card", fill: "accent", amount: 0.22, tokens: ["ink"], terminal: true },
 ];
 
-/** How far, in OKLab, cards in dark keep standing off the ground at their
-    weakest point: about half the least step any palette's plain cards
-    have, or the step solid cards have over the background where that is
-    already less. */
+/** How far, in OKLab, cards in dark stand off the ground at their weakest
+    point before the section says they barely do: about half the least step
+    any palette's plain cards have, or the step solid cards have over the
+    background where that is already less. */
 export const STAND_OFF = 0.015;
 
 /** What the cards paint in one appearance and look. */
 export interface PaintedCards {
-  /** The cards' share asked, and the share let through after
-      the guard, and why it holds back: a terminal colour that would fall
-      under 4.5:1, or cards that would stop standing off the ground. */
+  /** The cards' share asked, which is let through whole. */
   asked: number;
-  held: number;
-  heldBy: "terminal" | "ground" | null;
-  /** How much of the background a card shows, from throughOf. */
+  /** What reads poorly at the share: a terminal colour that held 4.5:1 on
+      a solid card and falls under it, or cards that barely stand off the
+      ground in dark; null where neither does. */
+  poor: "terminal" | "ground" | null;
+  /** How much of the calm tint a card shows, from throughOf. */
   amount: number;
   /** The card's ground and the well's, let through by that amount, and
       the solid tones they lay over the background. */
@@ -969,10 +1274,10 @@ export interface PaintedCards {
   standOff: number;
 }
 
-/** How much of the background a card shows at a share: none at none, and
-    at the end of the range CARDS_REACH of what the ground shows. */
-export const throughOf = (share: number, strength: number) =>
-  strength * CARDS_REACH * clamp(share / MOST_CARDS, 0, 1);
+/** How much of the calm tint a card shows at a share: none at none, and at
+    the end of the range CARDS_REACH of what the ground lets through. */
+export const throughOf = (share: number, through: number) =>
+  through * CARDS_REACH * clamp(share / MOST_CARDS, 0, 1);
 
 /** The grey at the background's lightness: what a card takes out of the
     background so it keeps its own lightness and takes only its colour. */
@@ -1008,98 +1313,76 @@ function cardRange(under: Rgb[], laid: Rgb, amount: number, fill: Rgb | null, sh
 }
 
 /** The least step, in OKLab, between a card laying its solid tone over the
-    background and the ground it stands on. */
-function standOff(under: Rgb[], card: Rgb, ground: Rgb, amount: number, strength: number): number {
+    calm tint and the ground it stands on, which lets the chrome's colours
+    through. */
+function standOff(cardUnder: Rgb[], groundUnder: Rgb[], card: Rgb, ground: Rgb, amount: number, through: number): number {
   let least = Infinity;
-  for (const colour of under) {
+  for (const [at, colour] of cardUnder.entries()) {
     const [L1, a1, b1] = rgbToLab(mix(card, colour, amount));
-    const [L2, a2, b2] = rgbToLab(mix(ground, colour, strength));
+    const [L2, a2, b2] = rgbToLab(mix(ground, groundUnder[at], through));
     least = Math.min(least, Math.hypot(L1 - L2, a1 - a2, b1 - b2));
   }
   return least;
 }
 
-/** What cards paint that let through a share of a background, with the
-    guard's stronger text and the share it holds back to. */
+/** What cards paint that let through a share of a background's calm tint,
+    `dots`, with the guard's stronger text, and what reads poorly at that
+    share. The share is never held back. `ground` is the chrome's colours
+    where they differ from the calm tint, above FULL_TINT. */
 export function cardsOf(
   colours: Record<string, string>,
   look: Look,
   dots: Lab[],
-  strength: number,
+  through: number,
   grain: number,
   asked: number,
+  ground: Lab[] = dots,
 ): PaintedCards {
   const tone = toneOf(colours);
-  const at = field(dots);
-  const grid = dots.length === 1 ? [labToRgb(dots[0])] : gridOf(at, 24, 15);
+  const grid = dots.length === 1 ? [labToRgb(dots[0])] : gridOf(field(dots), 24, 15);
   const veil = veilOf(grain);
   const under = veil > 0 ? grid.map((colour) => mix(colour, VEIL, veil)) : grid;
   const grounds = { card: hexToRgb(colours.surface), well: wellOf(colours) };
   const grey = greyOf(under);
-  const laid = (name: CardPair["ground"], amount: number) => laidOf(grounds[name], grey, amount);
+  const amount = throughOf(asked, through);
+  const laid = { card: laidOf(grounds.card, grey, amount), well: laidOf(grounds.well, grey, amount) };
   const fillOf = (name: CardPair["fill"]) => (name === null ? null : hexToRgb(colours[name]));
-  const ranges = (amount: number) =>
-    CARD_PAIRS.map((pair) => cardRange(under, laid(pair.ground, amount), amount, fillOf(pair.fill), pair.amount));
+  const rangeOf = (pair: CardPair, at: number) =>
+    cardRange(under, laidOf(grounds[pair.ground], grey, at), at, fillOf(pair.fill), pair.amount);
+  const now = CARD_PAIRS.map((pair) => rangeOf(pair, amount));
 
-  // A terminal colour that holds 4.5:1 on a solid card is to hold it on a
-  // see-through one; the share is held back to the most at which each
-  // still does.
-  const terminalPairs = CARD_PAIRS.flatMap((pair, index) => (pair.terminal ? [index] : []));
-  const terminalRanges = (amount: number) =>
-    terminalPairs.map((index) => {
-      const pair = CARD_PAIRS[index];
-      return cardRange(under, laid(pair.ground, amount), amount, fillOf(pair.fill), pair.amount);
-    });
-  const solid = terminalRanges(0);
-  const judged = terminalPairs.flatMap((index, at) =>
-    CARD_PAIRS[index].tokens
-      .filter((token) => worst(colours[token], solid[at]) >= LEAST_CONTRAST)
-      .map((token) => ({ at, token })),
-  );
-  const terminalLow = (amount: number) => {
-    const now = terminalRanges(amount);
-    return judged.reduce((least, { at, token }) => Math.min(least, worst(colours[token], now[at])), Infinity);
-  };
+  // A terminal draws its colours as they are: each that holds 4.5:1 on a
+  // solid card is read again on the see-through one.
+  let terminal = Infinity;
+  CARD_PAIRS.forEach((pair, index) => {
+    if (!pair.terminal) return;
+    const solid = rangeOf(pair, 0);
+    for (const token of pair.tokens) {
+      if (worst(colours[token], solid) >= LEAST_CONTRAST) terminal = Math.min(terminal, worst(colours[token], now[index]));
+    }
+  });
 
-  // In dark, a card that takes on the background's colour comes nearer
-  // the ground, which is that colour too, so the guard also holds the
-  // share where cards would stop standing off the ground.
-  const ground = look === "modern" ? deepOf(colours) : hexToRgb(colours.bg);
+  // In dark, a card that takes on the background's colour comes nearer the
+  // ground, which is that colour too.
+  const plainGround = look === "modern" ? deepOf(colours) : hexToRgb(colours.bg);
+  const groundUnder = (() => {
+    if (ground === dots) return under;
+    const shown = ground.length === 1 ? grid.map(() => labToRgb(ground[0])) : gridOf(field(ground), 24, 15);
+    return veil > 0 ? shown.map((colour) => mix(colour, VEIL, veil)) : shown;
+  })();
+  const apart = (at: number, card: Rgb) => standOff(under, groundUnder, card, plainGround, at, through);
   const plain = (() => {
     const [L1, a1, b1] = rgbToLab(grounds.card);
-    const [L2, a2, b2] = rgbToLab(ground);
+    const [L2, a2, b2] = rgbToLab(plainGround);
     return Math.hypot(L1 - L2, a1 - a2, b1 - b2);
   })();
-  const apart = (amount: number) => standOff(under, laid("card", amount), ground, amount, strength);
-  const least = tone === "light" ? 0 : Math.min(STAND_OFF, apart(0)) - 1e-6;
-  /** What holds a share back, or null where it holds. */
-  const fails = (share: number): PaintedCards["heldBy"] => {
-    const amount = throughOf(share, strength);
-    if (terminalLow(amount) < LEAST_CONTRAST) return "terminal";
-    if (tone === "dark" && apart(amount) < least) return "ground";
-    return null;
-  };
-
-  // The share asked, or else the most in whole hundredths that holds. Each
-  // figure falls as the share grows, so halving finds it.
-  let held = asked;
-  let heldBy = fails(asked);
-  if (heldBy !== null) {
-    let low = 0;
-    let high = Math.ceil(asked * 100);
-    while (high - low > 1) {
-      const middle = Math.floor((low + high) / 2);
-      if (fails(middle / 100) === null) low = middle;
-      else high = middle;
-    }
-    held = low / 100;
-    heldBy = fails(high / 100) ?? heldBy;
-  }
-  const amount = throughOf(held, strength);
+  const standing = apart(amount, laid.card);
+  const least = Math.min(STAND_OFF, apart(0, grounds.card)) - 1e-6;
+  const poor: PaintedCards["poor"] =
+    terminal < LEAST_CONTRAST ? "terminal" : tone === "dark" && amount > 0 && standing < least ? "ground" : null;
 
   // The app's own text is drawn a step stronger, as on the chrome, over
   // every ground and fill it is read on.
-  const now = ranges(amount);
   const text = {} as Record<TextToken, string>;
   const contrast = {} as Record<TextToken, number>;
   for (const token of TEXT_TOKENS) {
@@ -1116,16 +1399,15 @@ export function cardsOf(
 
   return {
     asked,
-    held,
-    heldBy,
+    poor,
     amount,
-    card: rgba(laid("card", amount), 1 - amount),
-    well: rgba(laid("well", amount), 1 - amount),
-    laid: { card: laid("card", amount), well: laid("well", amount) },
+    card: rgba(laid.card, 1 - amount),
+    well: rgba(laid.well, 1 - amount),
+    laid,
     veil: veil > 0 ? rgba(VEIL, veil) : null,
     text,
     contrast,
-    terminal: judged.length === 0 ? Infinity : terminalLow(amount),
-    standOff: plain === 0 ? 1 : apart(amount) / plain,
+    terminal,
+    standOff: plain === 0 ? 1 : standing / plain,
   };
 }
