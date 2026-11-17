@@ -352,9 +352,74 @@ test.describe("a long conversation", () => {
     await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
     const rows = page.getByTestId("thread-rows");
     const thread = page.getByTestId("thread");
-    // A question's bubble a little below the top of the view, and how much
-    // of its height the terminal look's smaller type takes off.
-    const height = () => thread.evaluate((node) => node.querySelector("[data-bubble]")!.getBoundingClientRect().height);
+    // A question's bubble with the view's top inside its foot, by less than
+    // the smaller type takes it up past the view's top. How far that is
+    // depends on the machine's fonts and on the block the thread keeps, so
+    // it is measured: a dry run of the change the test makes below, the
+    // type smaller in one frame and the bubble's foot read in the next from
+    // a frame callback asked for before the thread's own.
+    const settled = () =>
+      thread.evaluate(
+        () =>
+          new Promise((done) => {
+            void document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(done)));
+          }),
+      );
+    /** Puts the view's top `by` inside the foot of the bubble marked, and
+        answers how far inside it stands, and how much of the bubble's foot
+        is its own, below what it holds: the view's top there makes the
+        bubble itself the block at the top, which the thread keeps. */
+    const place = (by: number) =>
+      thread.evaluate(async (node, by) => {
+        const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+        const bubble = node.querySelector("[data-bubble]")!;
+        const foot = () => bubble.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
+        await frames();
+        node.scrollTop += foot() - by;
+        await frames();
+        const box = bubble.getBoundingClientRect();
+        const feet = [...bubble.children].map((child) => child.getBoundingClientRect().bottom);
+        return { inside: foot(), own: box.bottom - Math.max(box.top, ...feet) };
+      }, by);
+    /** The type smaller in one frame, and in the next where the bubble's
+        foot stands against the view's top; then the type back. */
+    const footAfter = async () => {
+      const after = await thread.evaluate(
+        (node, key) =>
+          new Promise<number>((answer) => {
+            requestAnimationFrame(() => {
+              const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look: "terminal" };
+              localStorage.setItem(key, JSON.stringify(next));
+              (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
+                appearance: "system",
+                look: "modern",
+                palette: "teal",
+                terminalFont: "system",
+                interfaceFont: "system",
+                keys: {},
+                hooks: { everywhere: true, overrides: {} },
+                themes: {},
+                ...next,
+              });
+              requestAnimationFrame(() =>
+                answer(
+                  node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom - node.getBoundingClientRect().top,
+                ),
+              );
+            });
+          }),
+        SETTINGS_FILE,
+      );
+      await expect(rows).toHaveCSS("font-size", "12.5px");
+      await settled();
+      await switchLook(page, "modern");
+      await expect(rows).toHaveCSS("font-size", "13.5px");
+      await settled();
+      return after;
+    };
+    // The question's bubble nearest the top of the view, with the view's
+    // top in its own foot, below what it holds, where the bubble is the
+    // block at the top and the one the thread keeps.
     await thread.evaluate((node) => {
       const top = node.getBoundingClientRect().top;
       const bubble = [...node.querySelectorAll("[data-testid='user-message'] .bubble")].find(
@@ -362,26 +427,30 @@ test.describe("a long conversation", () => {
       )!;
       bubble.setAttribute("data-bubble", "");
     });
-    const large = await height();
-    await switchLook(page, "terminal");
-    await expect(rows).toHaveCSS("font-size", "12.5px");
-    const small = await height();
-    await switchLook(page, "modern");
-    await expect(rows).toHaveCSS("font-size", "13.5px");
-    const shrinks = large - small;
-    expect(shrinks).toBeGreaterThan(0);
-    // The view's top inside the bubble's foot by less than it shrinks, so
-    // the smaller type takes it wholly above the view.
-    const inside = await thread.evaluate(async (node, by) => {
-      const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
-      const foot = () => node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
-      await frames();
-      node.scrollTop += foot() - by;
-      await frames();
-      return foot();
-    }, shrinks / 2);
-    expect(inside).toBeGreaterThan(0);
-    expect(inside).toBeLessThan(shrinks);
+    await settled();
+    const { own } = await place(1);
+    const start = await place(own / 2);
+    // How far the smaller type takes the foot up past the view's top in
+    // the frame the test acts in: with the machine's fonts and the block
+    // the thread keeps, not the bubble's height at rest.
+    const rise = start.inside - (await footAfter());
+    const tried: string[] = [`${own.toFixed(2)}px of its own foot, rising ${rise.toFixed(2)}px`];
+    // The view's top inside the foot by the least the scroll steps allow,
+    // which are whole pixels where a CSS pixel is one device pixel, and by
+    // half a pixel less than the rise at most, so the bubble goes wholly
+    // above the view with room to spare.
+    const most = Math.min(rise - 0.5, own);
+    let chosen = false;
+    for (const by of [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2].filter((one) => one < most)) {
+      const { inside } = await place(by);
+      tried.push(`${inside.toFixed(2)}px inside`);
+      if (inside > 0 && inside < most) {
+        chosen = true;
+        break;
+      }
+    }
+    if (!chosen)
+      throw new Error(`no place in the bubble's foot the smaller type takes wholly above the view: ${tried.join("; ")}`);
     await markTop(page);
     await expect(thread.locator("[data-bubble]")).toHaveAttribute("data-mark", "");
     // The type smaller in one frame, and in the next, before the thread
