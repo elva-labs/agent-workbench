@@ -15,6 +15,7 @@
   import { busyGoing, closingAside, closingQuestion, type BusyShell, type Closed } from "$lib/leaving.svelte";
   import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
+    bringBack,
     byChange,
     byKey,
     close as closeSession,
@@ -55,7 +56,7 @@
     workspace,
   } from "$lib/workspace.svelte";
   import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
-  import { listed, reopenEnds, staysWords } from "$lib/sessionMoves.svelte";
+  import { BRINGS_BACK, heldNow, holdWords, listed, reopenEnds } from "$lib/sessionMoves.svelte";
   import { folderShown, folderToRead, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
     placeTextOf,
@@ -482,7 +483,7 @@
                   ? "Stop it, and go on with the same conversation drawn here"
                   : "Stop it, and go on with the same conversation in the agent's own terminal",
               disabled: false,
-              run: () => reopenAsking(session, other),
+              run: () => void reopenAsking(session, other),
             },
           ]),
       {
@@ -519,19 +520,28 @@
     item.run();
   }
 
-  /** Reopening a session the other way stops it, so while a turn runs, or
-      where its run would end something with it, the pane asks first. */
-  let reopenAsk = $state<{ key: string; to: SessionKind } | null>(null);
+  /** Reopening a session the other way stops it, so while a turn runs,
+      where its run would end something with it, or where its conversation
+      went back to a point a terminal does not take, the pane asks first. */
+  let reopenAsk = $state<{ key: string; to: SessionKind; held: boolean } | null>(null);
 
-  function reopenAsking(session: Session, to: SessionKind) {
-    if (midTurn(session) || reopenEnds(session).length > 0) reopenAsk = { key: session.key, to };
-    else void reopen(session.key);
+  async function reopenAsking(session: Session, to: SessionKind) {
+    const key = session.key;
+    const held = to === "terminal" && (await heldNow(session));
+    const now = byKey(key);
+    if (now === null) return;
+    if (held || midTurn(now) || reopenEnds(now).length > 0) reopenAsk = { key, to, held };
+    else void reopen(key);
   }
 
   function reopenConfirm() {
     const ask = reopenAsk;
     reopenAsk = null;
-    if (ask !== null) void reopen(ask.key);
+    if (ask !== null) {
+      // Agreed: the terminal brings back what the conversation went back on.
+      if (ask.held) bringBack(ask.key);
+      void reopen(ask.key);
+    }
     nav?.focus();
   }
 
@@ -574,6 +584,7 @@
             ]
           : []),
         ...(ends.length > 0 ? [`Reopening ends ${listed(ends)}.`] : []),
+        ...(reopenAsk.held ? [BRINGS_BACK] : []),
       ].join(" "),
     };
   });
@@ -1529,10 +1540,10 @@
     folded || session.note !== null || kids.length > 0 || news.length > 0 || drawnSubs.length === 0
       ? null
       : subagentWords(drawnSubs)}
-  <!-- A row its agent's setting would move, held where it is until the
-       user moves it: why, on its second line unless that says something
-       of the agent's, and then quietly where the model stands. -->
-  {@const stays = staysWords(session)}
+  <!-- A row its agent's setting would move and has not: when it moves,
+       or why it stays, on its second line unless that says something of
+       the agent's, and then a word of it where the model stands. -->
+  {@const stays = holdWords(session)}
   {@const staysSaid =
     stays !== null && !folded && session.note === null && kids.length === 0 && news.length === 0}
   {@const line = folded
@@ -1629,7 +1640,7 @@
               >{#if words.name !== null}<span class="woken-name">{words.name}</span>{:else}{words.count}{/if}</span
             >
           {:else if stays !== null && !staysSaid && news.length === 0}
-            <span class="meta" title={stays.full} data-testid="session-stays-mark">stays</span>
+            <span class="meta" title={stays.full} data-testid="session-stays-mark">{stays.short}</span>
           {:else if news.length === 0 && session.model !== null}
             <span class="meta" data-testid="session-model">{modelLabel(session.model)}</span>
           {/if}
@@ -1791,7 +1802,7 @@
              of 4": the step set the model, and the step is what tells the
              rows apart. -->
         {@const role = placeTextOf(kid.key)?.short ?? null}
-        {@const kidStays = staysWords(kid)}
+        {@const kidStays = holdWords(kid)}
         <div
           class="session kid"
           class:first={index === 0}
@@ -1845,8 +1856,8 @@
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
             {:else if kidStays !== null}
-              <!-- Held where it is until the user moves it, and why. -->
-              <span class="model" title={kidStays.full} data-testid="started-stays">stays</span>
+              <!-- Not moved yet by its agent's setting, and why. -->
+              <span class="model" title={kidStays.full} data-testid="started-stays">{kidStays.short}</span>
             {:else if role !== null}
               <span class="model role" data-testid="started-role">{role}</span>
             {/if}

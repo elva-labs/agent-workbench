@@ -1091,7 +1091,7 @@ test.describe("how sessions run, in the settings", () => {
     // Under the choice, in so many words: when it applies.
     const when = page.getByTestId("session-kind-when");
     await expect(when).toContainText("A change moves the sessions already open too");
-    await expect(when).toContainText("right-click it and choose Reopen to move it.");
+    await expect(when).toContainText("Reopen, from a right click on it, moves it now.");
     const last = (await codex.boundingBox())!;
     expect((await when.boundingBox())!.y).toBeGreaterThanOrEqual(last.y + last.height);
   });

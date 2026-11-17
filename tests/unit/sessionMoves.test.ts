@@ -34,7 +34,9 @@ import { hook, reset as resetHooks } from "$lib/hook.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { reopen } from "$lib/reopen.svelte";
 import { reset as resetWorkflows } from "$lib/workflows.svelte";
-import { dueTo, followSetting, holdOf, REST_FOR, reopenEnds, staysWords } from "$lib/sessionMoves.svelte";
+import { dueTo, followSetting, heldNow, holdOf, holdWords, REST_FOR, reopenEnds, resetMoves } from "$lib/sessionMoves.svelte";
+import { closeSettings, openSettings } from "$lib/settings.svelte";
+import { bringBack } from "$lib/sessions.svelte";
 import { fakeIntegrated, type FakeIntegrated } from "../fakeIntegrated";
 
 // Switching how an agent's sessions run moves the open sessions that follow
@@ -97,6 +99,8 @@ beforeEach(async () => {
   // The window has the workflows, so a resumed row finds out what it
   // follows as it starts.
   resetWorkflows();
+  resetMoves();
+  closeSettings();
   localStorage.clear();
   detect("claude-code");
   adoptSessionKinds(["claude-code"]);
@@ -207,6 +211,118 @@ describe("switching how an agent's sessions run", () => {
     expect(pty.spawned.at(-1)!.session).toBeUndefined();
   });
 
+  it("moves the row on screen once the settings close over it, and one opened after the switch at once", async () => {
+    const away = await conversation();
+    const row = await conversation();
+    openSettings();
+    setKind("claude-code", "terminal");
+    await rest(REST_FOR * 3);
+    // Nothing is looked at under the settings.
+    expect(byKey(row.key)!.kind).toBe("integrated");
+    expect(byKey(away.key)!.kind).toBe("integrated");
+    closeSettings();
+    await rest(0);
+    expect(byKey(row.key)!.kind).toBe("terminal");
+    // At rest out of sight all along, it moves the moment it is opened.
+    sessions.active = away.key;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(byKey(away.key)!.kind).toBe("terminal");
+  });
+
+  it("does not move a row that comes to rest while it is looked at, until it is shown again", async () => {
+    const row = await conversation();
+    const h = handleOf(row.key)!;
+    setKind("claude-code", "terminal");
+    flushSync();
+    send(row.key, "One more thing");
+    fake.startTurn(h);
+    flushSync();
+    fake.turn(h, "Done too.");
+    fake.emit(h, { type: "state", state: "idle" });
+    await rest(REST_FOR * 5);
+    expect(byKey(row.key)!.kind).toBe("integrated");
+    expect(holdWords(byKey(row.key)!)).toEqual({
+      line: "Moves to a terminal next time",
+      short: "next time",
+      full: "It came to rest while you were looking at it, so it moves the next time you come to it. Reopen it in a terminal from its menu to move it now.",
+    });
+    sessions.active = null;
+    flushSync();
+    sessions.active = row.key;
+    await rest(0);
+    expect(byKey(row.key)!.kind).toBe("terminal");
+  });
+
+  it("leaves a conversation held at a point it went back to, until a message is sent from there, and says so", async () => {
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const asked: unknown[] = [];
+    let held = true;
+    seam.integratedHeld = async (options: unknown) => {
+      asked.push(options);
+      return held;
+    };
+    const row = await conversation();
+    expect(await heldNow(byKey(row.key)!)).toBe(true);
+    asked.length = 0;
+    setKind("claude-code", "terminal");
+    await rest(REST_FOR * 3);
+    expect(asked).toEqual([{ agent: "claude-code", project: PROJECT, session: row.id }]);
+    expect(stops()).toEqual([]);
+    expect(holdWords(byKey(row.key)!)).toEqual({
+      line: "Stays a conversation: it went back, and a terminal would bring back what was gone back on",
+      short: "stays",
+      full: "It went back to an earlier message, which Claude Code's terminal does not take: opened there, it would bring back what was gone back on. It moves once a message is sent from here. Reopen it in a terminal from its menu to move it anyway.",
+    });
+    // A message sent from there lets it go; a turn's stream asks nothing.
+    held = false;
+    send(row.key, "Carry on from here");
+    const h = handleOf(row.key)!;
+    fake.startTurn(h);
+    for (const block of ["b-1", "b-2", "b-3"])
+      fake.emit(h, { type: "text", block, parent: null, text: "Carrying on", done: true });
+    await rest(REST_FOR * 3);
+    expect(asked).toHaveLength(1);
+    fake.endTurn(h);
+    fake.emit(h, { type: "state", state: "idle" });
+    await rest(REST_FOR * 3);
+    expect(asked).toHaveLength(2);
+    // It was held while it was looked at, so it moves when next shown.
+    expect(holdWords(byKey(row.key)!)?.line).toBe("Moves to a terminal next time");
+    sessions.active = null;
+    flushSync();
+    sessions.active = row.key;
+    await rest(0);
+    expect(byKey(row.key)!.kind).toBe("terminal");
+  });
+
+  it("asks a core without going back nothing, and holds none of its conversations", async () => {
+    const row = await conversation();
+    expect(await heldNow(byKey(row.key)!)).toBe(false);
+    setKind("claude-code", "terminal");
+    await rest();
+    expect(byKey(row.key)!.kind).toBe("terminal");
+  });
+
+  it("starts a terminal that brings back what the conversation went back on only once the user agreed, and once", async () => {
+    const row = await conversation();
+    bringBack(row.key);
+    const reopening = reopenOtherWay(row.key);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await reopening).toBe(true);
+    await launchTerminal(row.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: row.id, bringBack: true });
+    const back = reopenOtherWay(row.key);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(await back).toBe(true);
+    await launch(row.key);
+    const again = reopenOtherWay(row.key);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await again).toBe(true);
+    await launchTerminal(row.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).not.toHaveProperty("bringBack");
+  });
+
   it("turns a row left from the last quit at once, starting nothing", async () => {
     const row = reopened(PROJECT, "conversation-9", "claude-code", null, null, null, "integrated");
     const changedAt = row.changedAt;
@@ -255,7 +371,15 @@ describe("switching how an agent's sessions run", () => {
     await rest(REST_FOR * 3);
     expect(byKey(row.key)!.kind).toBe("integrated");
     link.draft = "";
-    await rest();
+    await rest(REST_FOR * 3);
+    // It was at work while it was looked at, so it waits to be shown again
+    // rather than moving under the reader.
+    expect(byKey(row.key)!.kind).toBe("integrated");
+    expect(holdWords(byKey(row.key)!)?.line).toBe("Moves to a terminal next time");
+    sessions.active = null;
+    flushSync();
+    sessions.active = row.key;
+    await rest(0);
     expect(byKey(row.key)!.kind).toBe("terminal");
   });
 
@@ -280,18 +404,34 @@ describe("switching how an agent's sessions run", () => {
     expect(byKey(row.key)!.kind).toBe("terminal");
   });
 
-  it("leaves a conversation that holds a background command or a permission allowed for its run alone, saying what moving ends", async () => {
+  it("waits for a command in the background to end, saying so, and leaves one with a permission allowed for its run alone", async () => {
     const second = await conversation();
     const row = await conversation();
     const h = handleOf(row.key)!;
-    fake.task(h, null, { kind: "shell", background: true, description: "npm run dev" });
+    const task = fake.task(h, null, { kind: "shell", background: true, description: "npm run dev" });
     setKind("claude-code", "terminal");
     await rest(REST_FOR * 3);
     expect(byKey(row.key)!.kind).toBe("integrated");
-    expect(staysWords(byKey(row.key)!)).toEqual({
-      line: "Stays a conversation: moving ends npm run dev",
-      full: "Moving it ends npm run dev. Reopen it in a terminal from its menu to move it now.",
+    expect(holdWords(byKey(row.key)!)).toEqual({
+      line: "Moves to a terminal when npm run dev ends",
+      short: "waits",
+      full: "Moving it now ends npm run dev. Reopen it in a terminal from its menu to move it now.",
     });
+    // The command ends while it is looked at: it moves next time it is
+    // shown, and says so.
+    fake.finishTask(h, task, "completed", "stopped");
+    fake.emit(h, { type: "state", state: "idle" });
+    await rest(REST_FOR * 3);
+    expect(byKey(row.key)!.kind).toBe("integrated");
+    expect(holdWords(byKey(row.key)!)?.line).toBe("Moves to a terminal next time");
+    sessions.active = null;
+    flushSync();
+    expect(holdWords(byKey(row.key)!)).toBeNull();
+    sessions.active = row.key;
+    await rest(0);
+    expect(byKey(row.key)!.kind).toBe("terminal");
+    sessions.active = null;
+    flushSync();
 
     // A rule allowed for the session is lost with the run; a permission
     // mode allowed so goes on with the conversation's mode.
@@ -303,7 +443,8 @@ describe("switching how an agent's sessions run", () => {
     answer(second.key, mode, "allowSession");
     await vi.advanceTimersByTimeAsync(0);
     expect(reopenEnds(byKey(second.key)!)).toEqual(["Bash(npm test)"]);
-    expect(holdOf(byKey(second.key)!)).toEqual({ kind: "stays", ends: ["Bash(npm test)"], unknown: false });
+    expect(holdOf(byKey(second.key)!)).toEqual({ kind: "stays", why: "ends", ends: ["Bash(npm test)"] });
+    expect(holdWords(byKey(second.key)!)?.line).toBe("Stays a conversation: moving ends Bash(npm test)");
     // Moved by hand, the next run holds none of it.
     expect(await reopenOtherWay(second.key)).toBe(true);
     expect(byKey(second.key)!.ownWay).toBe(false);
@@ -317,9 +458,10 @@ describe("switching how an agent's sessions run", () => {
     const unhooked = terminal("conversation-2");
     hook.installed[PROJECT] = false;
     setKind("claude-code", "integrated");
-    expect(staysWords(byKey(serving.key)!)?.line).toBe("Stays in a terminal: moving ends npm run dev");
-    expect(staysWords(byKey(unhooked.key)!)).toEqual({
+    expect(holdWords(byKey(serving.key)!)?.line).toBe("Moves to a conversation when npm run dev ends");
+    expect(holdWords(byKey(unhooked.key)!)).toEqual({
       line: "Stays in a terminal: live updates are off",
+      short: "stays",
       full: "Live updates are off for this project, so the workbench cannot tell when this session is idle. Reopen it as a conversation from its menu when it is.",
     });
     await rest(REST_FOR * 3);
@@ -464,6 +606,8 @@ describe("a session another started, moved by the setting", () => {
     const h = handleOf(kid.key)!;
     fake.send(h, crypto.randomUUID(), "Fix it");
     fake.startTurn(h);
+    // The user is in the session that started it.
+    sessions.active = lead.key;
     setKind("claude-code", "terminal");
     const waiting = call(lead, "wait", { session: kid.id, seconds: 30 });
     const answered = handle(waiting);
@@ -484,6 +628,9 @@ describe("a session another started, moved by the setting", () => {
     await vi.advanceTimersByTimeAsync(6_000);
     await second;
     expect(answerTo(again)?.content).toContain("Nothing happened");
+    expect(byKey(kid.key)!.kind).toBe("integrated");
+    // Shown once the wait is over, it moves.
+    sessions.active = kid.key;
     await rest();
     expect(byKey(kid.key)).toMatchObject({ kind: "terminal", status: "starting" });
     const third = call(lead, "wait", { session: kid.id, seconds: 5 });

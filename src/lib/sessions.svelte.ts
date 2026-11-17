@@ -1763,9 +1763,11 @@ export async function launch(
       : (session.modeGiven ?? (session.id === null ? null : modeOf(session.id)));
   session.modeNamed = mode;
   session.modeSeen = null;
+  const back = bringingBack.delete(key);
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
+        ...(back ? { bringBack: true } : {}),
         agent: session.agent,
         project: session.project,
         cwd: session.startIn ?? undefined,
@@ -1839,6 +1841,17 @@ export function failed(key: string, error: string) {
   session.status = "failed";
   session.error = String(error);
   changed(session);
+}
+
+/** The rows whose next terminal start brings back what their conversation
+    went back on, the user having agreed: a core that holds a conversation
+    at the point it went back to refuses that start otherwise. */
+const bringingBack = new Set<string>();
+
+/** The user agreed that the row's next start in a terminal brings back what
+    its conversation went back on. */
+export function bringBack(key: string) {
+  bringingBack.add(key);
 }
 
 /** The conversation each closed row's run had, by its pty, until that run
@@ -2044,7 +2057,11 @@ export async function reopenOtherWay(key: string, bySetting = false): Promise<bo
     const row = byKey(key);
     if (row !== null) swap(row, to, bySetting);
   });
-  if (!stopped) runUp(key);
+  if (!stopped) {
+    runUp(key);
+    // What the user agreed to was for this reopen.
+    bringingBack.delete(key);
+  }
   return stopped;
 }
 
@@ -2163,6 +2180,7 @@ export function close(key: string, keepShells = false) {
   if (session === null) return;
   runUp(key);
   endings.delete(key);
+  bringingBack.delete(key);
   if (session.kind === "integrated") stopIntegrated(session);
 
   if (session.ptyId !== null) {
@@ -2982,6 +3000,7 @@ export function reset() {
   pendingActivity.clear();
   reopening.clear();
   quietly.clear();
+  bringingBack.clear();
   endings.clear();
   closedRuns.clear();
   pressed.clear();

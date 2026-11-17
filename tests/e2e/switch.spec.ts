@@ -64,7 +64,7 @@ async function switchTo(page: Page, kind: "terminal" | "integrated") {
   await page.getByTestId("settings-close").click();
 }
 
-test("moves a session at rest at once, and one at work or asking once it is at rest and shown", async ({ page }) => {
+test("moves a session at rest at once, one at work or asking once shown at rest, and none under its reader", async ({ page }) => {
   await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
   await conversation(page, "int-1", "Resting");
@@ -106,25 +106,33 @@ test("moves a session at rest at once, and one at work or asking once it is at r
   expect((await spawns(page)).length).toBe(1);
   expect(await stops(page)).toEqual(["int-1"]);
 
-  // The question answered and the turn over, it moves once shown.
+  // The question answered and the turn over while it is read, it is not
+  // moved under the reader: it says it moves next time.
   await row(page, "Asking").click();
   await page.getByTestId("question-option").first().click();
   await agent(page, `f.turn("int-3", "Went with dev.");`);
-  await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual([
-    "integrated-session-1",
-    "integrated-session-3",
-  ]);
+  await expect(row(page, "Asking").getByTestId("session-stays")).toHaveText("Moves to a terminal next time");
+  expect((await spawns(page)).length).toBe(1);
+  await expect(page.locator("[data-testid='conversation']:visible")).toBeVisible();
 
-  // The one at work comes to rest out of sight, and moves once shown.
+  // The one at work comes to rest out of sight, and moves once shown, at
+  // once.
   await agent(page, `f.turn("int-2", "Fixed.");`);
   await expect(row(page, "Working").locator(".dot.working")).toHaveCount(0);
-  expect((await spawns(page)).length).toBe(2);
+  expect((await spawns(page)).length).toBe(1);
   const rested = await names(page);
   await row(page, "Working").click();
   await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual([
     "integrated-session-1",
-    "integrated-session-3",
     "integrated-session-2",
+  ]);
+  await expect(page.locator("[data-testid='conversation']:visible")).toHaveCount(0);
+  // Shown again, the one that rested under its reader moves too.
+  await row(page, "Asking").click();
+  await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual([
+    "integrated-session-1",
+    "integrated-session-2",
+    "integrated-session-3",
   ]);
   await expect(page.locator("[data-testid='conversation']:visible")).toHaveCount(0);
 
@@ -133,7 +141,7 @@ test("moves a session at rest at once, and one at work or asking once it is at r
   await expect(page.locator(".session .dot:not(.live)")).toHaveCount(0);
 });
 
-test("leaves a session that would lose a command in the background, saying so, until it is reopened from its menu", async ({ page }) => {
+test("waits for a command in the background to end, saying so, or is reopened from its menu", async ({ page }) => {
   await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
   await conversation(page, "int-1", "Serving");
@@ -142,7 +150,7 @@ test("leaves a session that would lose a command in the background, saying so, u
   await switchTo(page, "terminal");
 
   const stays = row(page, "Serving").getByTestId("session-stays");
-  await expect(stays).toHaveText("Stays a conversation: moving ends npm run dev");
+  await expect(stays).toHaveText("Moves to a terminal when npm run dev ends");
   expect(await spawns(page)).toEqual([]);
   await expect(page.locator("[data-testid='conversation']:visible")).toBeVisible();
 
@@ -155,4 +163,27 @@ test("leaves a session that would lose a command in the background, saying so, u
   await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual(["integrated-session-1"]);
   await expect(page.locator("[data-testid='conversation']:visible")).toHaveCount(0);
   await expect(page.getByTestId("session-stays")).toHaveCount(0);
+});
+
+// A core that holds a conversation at a point it went back to says so
+// through `integratedHeld`, which a core without going back does not have:
+// this runs once the fake core has it.
+test("asks the core whether a conversation went back before it moves one into a terminal", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+  await page.goto("/");
+  const held = await page.evaluate(
+    () => typeof (window as unknown as { __WORKBENCH_CORE__: { integratedHeld?: unknown } }).__WORKBENCH_CORE__.integratedHeld,
+  );
+  test.skip(held !== "function", "the core has no integratedHeld yet");
+  await conversation(page, "int-1", "Resting");
+  await switchTo(page, "terminal");
+  await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual(["integrated-session-1"]);
+  const asked = await page.evaluate(() =>
+    (
+      window as unknown as { __integrated: { calls: { method: string; options?: unknown }[] } }
+    ).__integrated.calls.filter((call) => call.method === "held"),
+  );
+  expect(asked).toEqual([
+    { method: "held", options: { agent: "claude-code", project: PROJECT, session: "integrated-session-1" } },
+  ]);
 });
