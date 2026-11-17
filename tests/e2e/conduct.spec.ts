@@ -50,6 +50,22 @@ async function push(
   );
 }
 
+/** The caller's hooks say the mode it runs in, as Claude Code's do with
+    each turn: one begun and ended. Until they do, the window does not know
+    the mode, and a start in the caller's own project is asked about. */
+async function hooksSay(page: Page, mode = "default") {
+  for (const kind of ["prompt", "stop"])
+    await page.evaluate(
+      ({ kind, mode }) =>
+        (window as unknown as { __sessionEvent: (event: unknown) => void }).__sessionEvent({
+          sessionId: "session-1",
+          kind,
+          mode,
+        }),
+      { kind, mode },
+    );
+}
+
 const answers = (page: Page) =>
   page.evaluate(
     () =>
@@ -96,6 +112,7 @@ test.describe("the conductor", () => {
     // One session of the user's own, which is the caller below.
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
   test("keeps both palettes shut while the question is up", async ({ page }) => {
@@ -502,6 +519,7 @@ test.describe("what a starter is told", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
   /** A session the caller starts in its own project, answered with its id. */
@@ -685,6 +703,7 @@ test.describe("a session that follows a workflow", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
   });
 
   const spawns = (page: Page) =>
@@ -857,6 +876,8 @@ test.describe("the workflow tag", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
     const type = (selector: string) =>
       page.locator(selector).first().evaluate((element) => {
         const style = getComputedStyle(element);
@@ -948,6 +969,7 @@ test.describe("a round of review past the workflow's limit", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     await page.getByTestId("start-agent").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
 
     const start = async (id: string, args: Record<string, unknown>) => {
       await push(page, {
@@ -1018,6 +1040,7 @@ test.describe("a round of review past the workflow's limit", () => {
     await page.locator("[data-testid='account-option'][data-account='Work']").click();
     await page.getByTestId("workflow-option").click();
     await expect(rows(page)).toHaveCount(1);
+    await hooksSay(page);
 
     const start = async (id: string, args: Record<string, unknown>) => {
       await push(page, {

@@ -2185,42 +2185,50 @@ function underFor(
  * Whether a start is the caller's to make without asking the user: the
  * caller is a session the workbench runs, and the session would run in the
  * caller's own project, on a worktree of it or not, on the caller's agent,
- * under the caller's account. The same agent and account mean the same
- * login and the same directory of the agent's own settings. The session
- * begins in the caller's mode where the window knows that one, so it holds
- * no more than the caller; a caller whose mode the window knows but cannot
- * place on the scale of modes is asked about. Where the window does not
- * know the caller's mode, as for a Codex terminal, the session begins in
- * the one its agent chooses from its settings, and the two are not
- * compared. Every other start is asked about, an agent the workbench did
- * not start, which has no project of its own to the workbench, among them.
+ * under the caller's account, while the window knows the caller's mode and
+ * can place it on the scale of modes. The same agent and account mean the
+ * same login and the same directory of the agent's own settings. The
+ * session begins in the caller's mode, so it begins in no more than the
+ * caller. A Claude Code terminal's mode is known only once its hooks have
+ * said it, so one whose hooks have not is asked about. A Codex terminal is
+ * not compared: its hooks never say its mode, and Codex asks before
+ * `start` itself in each of its modes but full access. Every other start
+ * is asked about, an agent the workbench did not start, which has no
+ * project of its own to the workbench, among them.
  */
 function ownStart(request: Placed, project: string, agent: AgentId, account: string | null): boolean {
   const calling = callingSession(request);
-  return (
-    calling !== null &&
-    calling.project === project &&
-    calling.agent === agent &&
-    calling.account === account &&
-    (modeNow(calling) === null || givenMode(calling, agent) !== null)
-  );
+  if (calling === null || calling.project !== project || calling.agent !== agent || calling.account !== account)
+    return false;
+  if (uncompared(calling)) return true;
+  const now = modeNow(calling);
+  return now !== null && fitMode(calling.agent, now, agent) !== null;
+}
+
+/** A Codex session in a terminal, whose mode the window does not compare
+    before a start. */
+function uncompared(session: Session): boolean {
+  return session.kind !== "integrated" && session.agent === "codex";
 }
 
 /** The mode a session runs in now, where the window knows it: an
-    integrated session's as its agent says, a terminal's as its hooks last
-    said, or else the one the workbench started it in. Null where none is
-    known, as for a Codex terminal the workbench named no mode for. */
+    integrated session's as its agent says, a Claude Code terminal's as its
+    hooks last said, since a mode chosen in it is seen only through them,
+    and a Codex terminal's as the workbench started it, since its hooks
+    never say and a change made in it is not seen. Null where none is
+    known. */
 function modeNow(session: Session): string | null {
   if (session.kind === "integrated") return linkOf(session.key)?.conversation.settings.mode ?? null;
-  return session.modeSeen ?? session.modeNamed;
+  return session.agent === "claude-code" ? session.modeSeen : session.modeNamed;
 }
 
 /** The mode a session of `agent` that `starter` starts begins in: the
-    starter's own as far as that agent has it, never a wider one. Null
-    where the starter's mode is not known, or not on the scale. */
+    starter's own as far as that agent has it, else the mode the starter
+    was started in, as a cap on a start the user allowed. Null where
+    neither is known, or on the scale. */
 function givenMode(starter: Session | null, agent: AgentId): string | null {
-  const now = starter === null ? null : modeNow(starter);
-  return starter === null || now === null ? null : fitMode(starter.agent, now, agent);
+  const mode = starter === null ? null : (modeNow(starter) ?? starter.modeNamed);
+  return starter === null || mode === null ? null : fitMode(starter.agent, mode, agent);
 }
 
 /** The session a placed call comes from, while it runs: the one its token

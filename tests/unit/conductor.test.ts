@@ -299,6 +299,12 @@ function live(project: string, ptyId: string, id: string) {
   return session;
 }
 
+/** The session's hooks say the mode it runs in, as Claude Code's do as a
+    turn begins. */
+function heard(id: string, mode = "default") {
+  exact(id, "prompt", null, false, { mode });
+}
+
 /** A session the caller started, which is what the tools may act on. */
 function own(project: string, ptyId: string, id: string, caller: string = ME) {
   const key = callerKey(caller);
@@ -1505,6 +1511,7 @@ describe("a start in the caller's own project", () => {
 
   it("starts there, on a worktree or not, without asking, and says what it started", async () => {
     live(A, "pty-caller", "caller-1");
+    heard("caller-1");
     const row = await unasked({ project: A }, "sid-1");
     expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. ${KEEP_WAITING}`);
     expect(startedFor(row.key)).toBe(tok("caller-1"));
@@ -1519,6 +1526,7 @@ describe("a start in the caller's own project", () => {
   it("is the project of a caller that runs in a worktree of it", async () => {
     const row = create(A, null, "claude-code", `${A}/.worktrees/lead`, null, null, null, null);
     started(row.key, "pty-caller", "caller-1");
+    heard("caller-1");
     await unasked({ project: A }, "sid-1");
     expect(last().content).toContain(`Started session sid-1 in ${A}.`);
   });
@@ -1558,6 +1566,7 @@ describe("a start in the caller's own project", () => {
     review.limit = 1;
     const orch = create(A, null, "claude-code", null, null, null, null, workflow);
     started(orch.key, "pty-orch", "orch");
+    heard("orch");
     await unasked({ project: A, step: "Work" }, "work-0001", "orch");
     expect((await asked({ project: A, step: "Work", agent: "codex" }, { session: "orch" })).round).toBeNull();
     // The work is named by the start of its id; a review once and once more
@@ -1613,6 +1622,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
 
   it("gives a session it started unasked no command but /compact, in a line, its prompt or a resume", async () => {
     live(A, "pty-caller", "caller-1");
+    heard("caller-1");
     await unasked({ project: A }, "sid-1");
     expect(conductor.started[tok("caller-1")][0].unasked).toBe(true);
     await handle(call("send", { session: "sid-1", text: "/permissions" }, { session: "caller-1" }));
@@ -1651,13 +1661,44 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect((await unasked({ project: A }, "sid-3")).modeGiven).toBe("auto");
   });
 
-  it("gives a session the kept mode its terminal caller was resumed in", async () => {
+  it("asks for a Claude Code terminal caller whose hooks have not said its mode, and gives the session none", async () => {
+    live(A, "pty-caller", "caller-1");
+    expect(await asks({ project: A })).toBe(true);
+    const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
+    expect(row.modeGiven).toBeNull();
+  });
+
+  it("asks for a Claude Code terminal caller started in a kept mode whose hooks have not said one, and caps the session at it", async () => {
+    // A Shift+Tab in its terminal since is seen only through its hooks.
     const caller = live(A, "pty-caller", "caller-1");
     caller.modeNamed = "acceptEdits";
-    expect((await unasked({ project: A }, "sid-1")).modeGiven).toBe("acceptEdits");
-    // What its hooks say since goes before it.
-    exact("caller-1", "prompt", null, false, { mode: "default" });
-    expect((await unasked({ project: A }, "sid-2")).modeGiven).toBe("default");
+    expect(await asks({ project: A })).toBe(true);
+    const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
+    expect(row.modeGiven).toBe("acceptEdits");
+  });
+
+  it("goes ahead for a Claude Code terminal caller once its hooks have said its mode, over the one it was started in", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    caller.modeNamed = "acceptEdits";
+    heard("caller-1", "plan");
+    expect((await unasked({ project: A }, "sid-1")).modeGiven).toBe("plan");
+  });
+
+  it("gives the narrower of the caller's mode when the start was asked about and when its session is made", async () => {
+    live(A, "pty-caller", "caller-1");
+    heard("caller-1", "auto");
+    const answering = handle(call("start", { project: A, prompt: "Fix it", agent: "codex" }, { session: "caller-1" }));
+    await settle();
+    expect(conductor.asking).not.toBeNull();
+    // The user narrows the caller while the question is open.
+    exact("caller-1", "stop", null, false, { mode: "default" });
+    allow();
+    await settle();
+    const row = forProject(A).at(-1)!;
+    started(row.key, "pty-1", "sid-1");
+    flushSync();
+    await answering;
+    expect(row.modeGiven).toBe("read-only");
   });
 
   it("gives a session started on another agent the caller's mode as far as that agent's modes go", async () => {
@@ -1723,6 +1764,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     started(inside.key, "pty-inside", "caller-2");
     expect(await asks({ project: A }, "caller-2")).toBe(true);
     // A model of the caller's own agent is no wider: unasked.
+    heard("caller-1");
     const row = await unasked({ project: A, agent: "claude-code", model: "opus" }, "sid-1");
     expect(row.model).toBe("opus");
   });
