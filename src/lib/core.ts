@@ -1454,16 +1454,20 @@ export interface Core {
   integratedRewindPreview(id: string, message: string): Promise<IntegratedPreview>;
   /** Takes a session at rest back to before a message of the user's: with
       `conversation`, the message and everything after it leave the
-      conversation; with `files`, the files go back first. Claude Code is
-      stopped and started again under a new id, keeping the row's token and
-      the settings it runs on, and the session it went back from ends
-      before this resolves; Codex goes on in the same session. `rewound`
-      follows on the session that goes on. Rejects, with nothing changed,
-      where it cannot go back there. */
+      conversation; with `files`, the files a preview showed the user, the
+      files go back first, as they were before it. Claude Code is stopped
+      and started again under a new id, keeping the row's token and the
+      settings it runs on, and the session it went back from ends before
+      this resolves; Codex goes on in the same session. `rewound` follows on
+      the session that goes on. Until this resolves the session refuses
+      messages and compaction, saying "the session is going back", whoever
+      sends them. Rejects, with nothing changed, where it cannot go back
+      there, and where the agent would now put back a file the preview did
+      not show, saying the files changed since they were shown. */
   integratedRewind(
     id: string,
     message: string,
-    what: { conversation: boolean; files: boolean },
+    what: { conversation: boolean; files: string[] | null },
   ): Promise<IntegratedWentBack>;
   /** Undoes the going back of Claude Code's conversation that started
       this session, while nothing has gone on in it since and it put no
@@ -1471,6 +1475,14 @@ export interface Core {
       conversation as it was, and the one undone ends before this
       resolves. Rejects, with nothing changed, where it cannot. */
   integratedRewindUndo(id: string): Promise<IntegratedWentBack>;
+  /** Whether a conversation is held at the point it went back to, which
+      its agent writes down only with the next message sent from there.
+      Until then a terminal that resumes it goes on with what was gone back
+      on, since Claude Code's terminal does not take the point, and a line
+      typed there makes that the conversation for good: a window says so
+      before it opens one, and offers to send a message first. Needs no
+      session running. */
+  integratedHeld(options: IntegratedHistoryOptions): Promise<boolean>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;
   /** Every integrated session's news, each event naming its session. */
@@ -1971,6 +1983,7 @@ const tauriCore: Core = {
       files: what.files,
     }),
   integratedRewindUndo: (id) => invoke<IntegratedWentBack>("integrated_rewind_undo", { id }),
+  integratedHeld: (options) => invoke<boolean>("integrated_held", { ...options }),
   integratedStop: (id) => invoke<void>("integrated_stop", { id }),
   async onIntegratedEvent(handler) {
     return listen<IntegratedEvent>("integrated_event", (event) =>
@@ -2330,6 +2343,9 @@ const detachedCore: Core = {
   },
   async integratedRewindUndo(): Promise<IntegratedWentBack> {
     throw new Error("not connected to the workbench core");
+  },
+  async integratedHeld() {
+    return false;
   },
   async integratedStop() {},
   async onIntegratedEvent() {

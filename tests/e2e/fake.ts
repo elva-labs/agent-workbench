@@ -744,6 +744,8 @@ export async function installFakeCore(
           what: Parameters<FakeIntegrated["rewind"]>[2],
         ) => integrated().rewind(id, message, what),
         integratedRewindUndo: async (id: string) => integrated().rewindUndo(id),
+        integratedHeld: async (options: Parameters<FakeIntegrated["held"]>[0]) =>
+          integrated().held(options),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],

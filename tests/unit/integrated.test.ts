@@ -66,8 +66,10 @@ describe("the seam's integrated sessions", () => {
     });
     await seam.integratedRewindPoints("int-1");
     await seam.integratedRewindPreview("int-1", M1);
-    await seam.integratedRewind("int-1", M1, { conversation: true, files: false });
+    await seam.integratedRewind("int-1", M1, { conversation: true, files: null });
+    await seam.integratedRewind("int-1", M1, { conversation: false, files: ["/repo/a.ts"] });
     await seam.integratedRewindUndo("int-2");
+    await seam.integratedHeld({ agent: "claude-code", project: "/repo", session: "s-1" });
     await seam.integratedStop("int-1");
     expect(invoke.mock.calls).toEqual([
       [
@@ -128,8 +130,13 @@ describe("the seam's integrated sessions", () => {
       ],
       ["integrated_rewind_points", { id: "int-1" }],
       ["integrated_rewind_preview", { id: "int-1", message: M1 }],
-      ["integrated_rewind", { id: "int-1", message: M1, conversation: true, files: false }],
+      ["integrated_rewind", { id: "int-1", message: M1, conversation: true, files: null }],
+      [
+        "integrated_rewind",
+        { id: "int-1", message: M1, conversation: false, files: ["/repo/a.ts"] },
+      ],
       ["integrated_rewind_undo", { id: "int-2" }],
+      ["integrated_held", { agent: "claude-code", project: "/repo", session: "s-1" }],
       ["integrated_stop", { id: "int-1" }],
     ]);
   });
@@ -617,10 +624,10 @@ describe("the scripted integrated session", () => {
     });
     expect(fake.rewindPreview(id, M2)).toEqual({ files: ["/repo/b.ts"], insertions: 1, deletions: 3 });
     expect(() => fake.rewindPreview(id, M3)).toThrow("No file checkpoint found for this message.");
-    expect(() => fake.rewind(id, M3, { conversation: true, files: true })).toThrow(
+    expect(() => fake.rewind(id, M3, { conversation: true, files: [] })).toThrow(
       "Claude Code kept no files from before this message.",
     );
-    const went = fake.rewind(id, M3, { conversation: true, files: false });
+    const went = fake.rewind(id, M3, { conversation: true, files: null });
     expect(went).toMatchObject({ sessionId: conversation, files: [], fallback: null, error: null });
     const next = went.id!;
     expect(next).not.toBe(id);
@@ -639,12 +646,15 @@ describe("the scripted integrated session", () => {
       (await fake.history({ agent: "claude-code", project: "/repo", session: conversation }))!.items
         .flatMap((item) => (item.event.type === "message" ? [item.event.message] : []));
     expect(await read()).toEqual([M1, M2]);
+    const held = () => fake.held({ agent: "claude-code", project: "/repo", session: conversation });
+    expect(held()).toBe(true);
     // Undone: the conversation as it was.
     const undone = fake.rewindUndo(next);
     expect(undone.sessionId).toBe(conversation);
     expect(await read()).toEqual([M1, M2, M3]);
+    expect(held()).toBe(false);
     // Back to before the first: a new conversation, the old one kept.
-    const fresh = fake.rewind(undone.id!, M1, { conversation: true, files: false });
+    const fresh = fake.rewind(undone.id!, M1, { conversation: true, files: null });
     expect(fresh.sessionId).not.toBe(conversation);
     expect(await read()).toEqual([M1, M2, M3]);
     // Gone on since: there is nothing to undo.
@@ -663,7 +673,7 @@ describe("the scripted integrated session", () => {
     fake.files.set(M2, { files: ["/repo/a.ts"], insertions: 0, deletions: 2 });
     fake.send(id, M3, "three");
     fake.startTurn(id);
-    expect(() => fake.rewind(id, M2, { conversation: false, files: true })).toThrow("a turn runs");
+    expect(() => fake.rewind(id, M2, { conversation: false, files: ["/repo/a.ts"] })).toThrow("a turn runs");
     fake.endTurn(id);
     // Before the last compaction the conversation cannot go back, but the
     // files can; the first message starts a new conversation still.
@@ -674,8 +684,8 @@ describe("the scripted integrated session", () => {
       [M3, true, false],
     ]);
     expect(points[1].why).toMatch(/compacted/);
-    expect(() => fake.rewind(id, M2, { conversation: true, files: false })).toThrow(/compacted/);
-    const went = fake.rewind(id, M2, { conversation: false, files: true });
+    expect(() => fake.rewind(id, M2, { conversation: true, files: null })).toThrow(/compacted/);
+    const went = fake.rewind(id, M2, { conversation: false, files: ["/repo/a.ts"] });
     expect(went).toEqual({
       id,
       sessionId: fake.snapshot(id).ready!.sessionId,
@@ -693,6 +703,32 @@ describe("the scripted integrated session", () => {
     expect(() => fake.rewindUndo(id)).toThrow("there is no going back to undo in this session");
   });
 
+  it("puts back only the files the user was shown, and is held until a message goes from there", () => {
+    const { fake, id } = started();
+    fake.send(id, M1, "one");
+    fake.turn(id, "done");
+    fake.send(id, M2, "two");
+    fake.turn(id, "done");
+    fake.files.set(M2, { files: ["/repo/a.ts"], insertions: 0, deletions: 2 });
+    const shown = fake.rewindPreview(id, M2).files;
+    // Between the preview and the choice another file comes to be put back.
+    fake.files.set(M2, { files: ["/repo/a.ts", "/repo/notes.md"], insertions: 0, deletions: 9 });
+    const calls = fake.calls.length;
+    expect(() => fake.rewind(id, M2, { conversation: true, files: shown })).toThrow(
+      "The files to put back changed since they were shown. Look at them again.",
+    );
+    expect(fake.calls.length).toBe(calls);
+    expect(fake.snapshot(id).ready).not.toBeNull();
+    const conversation = fake.snapshot(id).ready!.sessionId;
+    const went = fake.rewind(id, M2, { conversation: true, files: null });
+    const held = () => fake.held({ agent: "claude-code", project: "/repo", session: conversation });
+    expect(held()).toBe(true);
+    expect(fake.held({ agent: "codex", project: "/repo", session: conversation })).toBe(false);
+    fake.send(went.id!, M3, "instead");
+    fake.turn(went.id!, "ok");
+    expect(held()).toBe(false);
+  });
+
   it("starts a Claude Code conversation again whole where it does not come up from the point", () => {
     const { fake, id } = started();
     fake.send(id, M1, "one");
@@ -700,7 +736,7 @@ describe("the scripted integrated session", () => {
     fake.send(id, M2, "two");
     fake.turn(id, "done");
     fake.rewindFallback = "claude ended with code 1: No message found";
-    const went = fake.rewind(id, M2, { conversation: true, files: false });
+    const went = fake.rewind(id, M2, { conversation: true, files: null });
     expect(went.fallback).toBe("claude ended with code 1: No message found");
     expect(fake.rewindPoints(went.id!).points.map((point) => point.message)).toEqual([M1, M2]);
     expect(() => fake.rewindUndo(went.id!)).toThrow();
@@ -726,8 +762,8 @@ describe("the scripted integrated session", () => {
       [M3, true, false],
     ]);
     expect(() => fake.rewindPreview(id, M1)).toThrow("Codex cannot put files back.");
-    expect(() => fake.rewind(id, M2, { conversation: true, files: false })).toThrow(/took this message into a turn/);
-    const went = fake.rewind(id, M3, { conversation: true, files: false });
+    expect(() => fake.rewind(id, M2, { conversation: true, files: null })).toThrow(/took this message into a turn/);
+    const went = fake.rewind(id, M3, { conversation: true, files: null });
     expect(went).toEqual({ id, sessionId: thread, files: [], fallback: null, error: null });
     expect(heard.at(-1)).toMatchObject({ id, type: "rewound", message: M3, conversation: true });
     const read = await fake.history({ agent: "codex", project: "/repo", session: thread });

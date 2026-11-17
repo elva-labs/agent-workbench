@@ -50,8 +50,9 @@ export type IntegratedCall =
   | { method: "history"; options: IntegratedHistoryOptions }
   | { method: "rewindPoints"; id: string }
   | { method: "rewindPreview"; id: string; message: string }
-  | { method: "rewind"; id: string; message: string; conversation: boolean; files: boolean }
+  | { method: "rewind"; id: string; message: string; conversation: boolean; files: string[] | null }
   | { method: "rewindUndo"; id: string }
+  | { method: "held"; options: IntegratedHistoryOptions }
   | { method: "stop"; id: string };
 
 /** How the scripted agent behaves. `holding`: it takes no message while a
@@ -157,8 +158,10 @@ export interface FakeIntegrated {
   rewindPreview(id: string, message: string): IntegratedPreview;
   /** Goes back to before a message, refused as the core refuses it: a
       session not at rest, a message it cannot go back to, files it cannot
-      put back. The transcript is read as far as the message from then on,
-      as the core holds it. Claude Code's session ends and one is started
+      put back, or files to put back that `files` now names and the ones
+      passed, those the user was shown, do not. The transcript is read as
+      far as the message from then on, as the core holds it, and a Claude
+      Code conversation is held until a turn takes a message in it. Claude Code's session ends and one is started
       again under a new id, on the same conversation, a new one for the
       first message, or with `rewindFallback` set on the conversation
       whole; Codex's goes on. `rewound` follows on the session that goes
@@ -166,8 +169,11 @@ export interface FakeIntegrated {
   rewind(
     id: string,
     message: string,
-    what: { conversation: boolean; files: boolean },
+    what: { conversation: boolean; files: string[] | null },
   ): IntegratedWentBack;
+  /** Whether a Claude Code conversation is held at the point it went back
+      to: from going back until a turn takes a message in it, or undo. */
+  held(options: IntegratedHistoryOptions): boolean;
   /** Undoes the going back that started a Claude Code session, while
       nothing has gone on in it since: it ends, and one is started again on
       the conversation as it was. */
@@ -437,12 +443,15 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     "Codex took this message into a turn that was running, which goes back with the message that began it.";
   const OLDER = "This conversation was kept by an older Codex and cannot go back.";
   const NO_FILES = "Codex cannot put files back.";
+  const UNSHOWN = "The files to put back changed since they were shown. Look at them again.";
   const sessions = new Map<string, Session>();
   const handlers = new Set<(event: IntegratedEvent) => void>();
   /** What takes the messages steered while `holdSteers` holds. */
   const steersHeld: (() => void)[] = [];
   /** Each conversation's transcript, by its id. */
   const transcripts = new Map<string, Written[]>();
+  /** The Claude Code conversations held at the point they went back to. */
+  const heldConversations = new Set<string>();
   /** The conversations Codex keeps, the rest being Claude Code's. */
   const threads = new Set<string>();
   let historyHeld: { wait: Promise<void>; release: () => void } | null = null;
@@ -797,17 +806,20 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       const session = live(id);
       const why = unrested(session);
       if (why !== null) throw new Error(why);
-      if (!what.conversation && !what.files)
+      if (!what.conversation && what.files === null)
         throw new Error("neither the conversation nor the files were asked to go back");
       const conversation = conversationOf(session)!;
-      if (session.codex && what.files) throw new Error(NO_FILES);
+      if (session.codex && what.files !== null) throw new Error(NO_FILES);
       const points = pointsOf(session);
       if (points.why !== null) throw new Error(points.why);
       const point = points.points.find((point) => point.message === message);
       if (!point) throw new Error(UNSAID);
-      if (what.files && !point.files)
+      if (what.files !== null && !point.files)
         throw new Error("Claude Code kept no files from before this message.");
       if (what.conversation && !point.conversation) throw new Error(point.why ?? UNSAID);
+      const shown = what.files;
+      if (shown !== null && (fake.files.get(message)?.files ?? []).some((file) => !shown.includes(file)))
+        throw new Error(UNSHOWN);
       fake.calls.push({
         method: "rewind",
         id,
@@ -815,7 +827,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         conversation: what.conversation,
         files: what.files,
       });
-      const files = what.files ? [...(fake.files.get(message)?.files ?? [])] : [];
+      const files = what.files !== null ? [...(fake.files.get(message)?.files ?? [])] : [];
       const rewound = (on: string, back: boolean) =>
         fake.emit(on, { type: "rewound", message, conversation: back, files });
       if (!what.conversation || session.codex) {
@@ -834,6 +846,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       else if (files.length > 0) rewound(next.id, false);
       if (fallback === null && files.length === 0)
         sessions.get(next.id)!.undo = { conversation, transcript: whole };
+      if (fallback === null && !first) heldConversations.add(conversation);
+      else heldConversations.delete(conversation);
       return { id: next.id, sessionId: next.sessionId, files, fallback, error: null };
     },
 
@@ -847,8 +861,14 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.calls.push({ method: "rewindUndo", id });
       const { conversation, transcript } = session.undo;
       if (transcript !== null) transcripts.set(conversation, transcript);
+      heldConversations.delete(conversation);
       const next = again(id, session, conversation);
       return { id: next.id, sessionId: next.sessionId, files: [], fallback: null, error: null };
+    },
+
+    held(heldOptions) {
+      fake.calls.push({ method: "held", options: heldOptions });
+      return heldOptions.agent === "claude-code" && heldConversations.has(heldOptions.session);
     },
 
     stop(id) {
@@ -1397,6 +1417,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     const said = (message: string) => told.get(message);
     switch (body.type) {
       case "turnStarted":
+        // A message taken from the point held writes the cut down.
+        if (body.messages.length > 0) heldConversations.delete(conversation);
         for (const message of body.messages)
           write({
             type: "message",
@@ -1565,6 +1587,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           "releaseAnswers",
           "rewindPoints",
           "rewindPreview",
+          "held",
         ].includes(name)
       )
         continue;
