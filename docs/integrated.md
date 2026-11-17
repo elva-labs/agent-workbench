@@ -112,9 +112,21 @@ its way goes with the one after, and one a message carried that Codex
 refused goes with the next.
 
 The workbench's tool server is attached to each thread through the
-thread's own configuration, under the name the hooks install it by, with
-its tools allowed without asking, so it needs no entry in the account's
-configuration. The servers the user's configuration names ask as it says.
+thread's own configuration, under the name the hooks install it by, so it
+needs no entry in the account's configuration. The thread gives the same
+tools an approval of their own to run without asking as a terminal
+session's entry does, the server's own tools that read and those the
+window asks the user about every time, as [the hooks](hooks.md#the-agents-tools)
+list, and none to the server as a whole. Every other tool of it, the
+plugins' tools among them, asks as the session's mode says: Codex's
+question comes as a permission in the conversation, as for any other MCP
+server, with Codex's choice to allow it for the rest of the session, and
+the call waits on the answer. Allowing it from now on is not offered for
+these tools: the server has no entry outside the thread for Codex to keep
+that answer in, and it would end with the thread. In full access Codex
+allows every call itself. The thread's configuration is read over the
+project's, so an approval the user set in the project's entry does not
+hold there. The servers the user's configuration names ask as it says.
 Codex gives the servers it starts an environment of its own choosing, so
 the session's token and role go into the server's entry, for a fresh
 thread as for a resumed one: the token is the workbench's, chosen before

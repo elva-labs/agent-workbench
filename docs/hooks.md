@@ -112,20 +112,58 @@ under any of them has the tools; Codex in the project's
 a file is the agent's own: the core changes its one entry and writes the
 rest back as it found it, comments, headers, dotted keys, inline tables,
 line breaks and a byte order mark included, and one it cannot parse or
-whose servers are not a table it leaves alone rather than replaces. The
-entry lets the server's tools run without asking, with
-`default_tools_approval_mode = "approve"`, and says nothing of any other
-server or of the approval policy. An entry for the server that has no such
-setting reads as installed but out of date when the project is checked.
-Where the project should have the hooks, the install that follows adds
-that one line to it and leaves the rest of the file as it was; where it
-should have none, they are taken away. An entry that names an approval of
-its own keeps it, and so does a session in that project, since the server
-is named again on its command line with nothing of approval. A Codex older
-than 0.122.0 does not know the setting and passes over it, and there each
-call to the workbench's tools asks. A machine kind the app has no daemon
-build for gets the hooks without the tool. An app run from the source uses
-the daemon built beside it.
+whose servers are not a table it leaves alone rather than replaces.
+
+The entry lets some of the server's own tools run without asking, each by
+a line of its own, `tools.notify.approval_mode = "approve"`:
+
+- `notify`, which puts one line of text on the session's row;
+- `selection`, which says what the user has open in the viewer and which
+  lines are highlighted;
+- `sessions`, `read` and `wait`, which list, read and wait on the
+  sessions the caller started and no others;
+- `projects`, which lists the open projects' paths and names;
+- `settings`, which reads the workbench's settings;
+- `settings_change`, `theme_save` and `styles_write`, for which the window
+  shows the change and asks the user every time before making it.
+
+It says nothing for the server as a whole, so every other tool asks as
+the user's approval policy says, with Codex's question the only one before
+it acts:
+
+- `show` and `diff`, which open a file the agent names, or its diff, in
+  the viewer, where a Markdown document can be drawn with images loaded
+  from any address;
+- `present`, which draws what the agent names, an HTML page in a frame
+  that can reach the network among them;
+- `terminal`, which types a command into a terminal for the user to run
+  and moves the keyboard there;
+- `start`, for which the window asks before the first session in a
+  project unless the user let the caller start more there, and never
+  before a resume;
+- the browser's tools, which act in sites signed into in the workbench's
+  browser, and `send` and `stop`;
+- every plugin's tools, since a plugin's tool reaches the agent under the
+  plugin's name and the tool's, which any plugin enabled under that name
+  could publish;
+- a tool the server gains later, until it is put on the list.
+
+The entry says nothing of any other server or of the approval policy.
+
+An entry for the server that lacks one of those lines reads as installed
+but out of date when the project is checked. Where the project should
+have the hooks, the install that follows adds the missing lines, in the
+form the entry's tools are already written in, and leaves the rest of the
+file as it was; where it should have none, they are taken away. An
+approval of the user's own is kept: a tool's, and one for the whole
+server, `default_tools_approval_mode`, of any value, which leaves the
+entry as it is. A session in that project keeps them too, since the
+server is named again on its command line with nothing of approval. A
+Codex older than 0.117.0 does not know a tool's own approval and passes
+over it, and there each call to the workbench's tools asks.
+
+A machine kind the app has no daemon build for gets the hooks without the
+tool. An app run from the source uses the daemon built beside it.
 
 What a session's agent asks to show is for that session. While the user is
 looking at another session, the call waits on the agent's own rather than

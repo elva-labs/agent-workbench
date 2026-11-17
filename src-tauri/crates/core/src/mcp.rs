@@ -103,6 +103,82 @@ pub fn tools() -> Vec<Value> {
     listed
 }
 
+/// The tools a Codex session runs without asking, by name: each is given
+/// an approval of its own, in a terminal session's entry for the server
+/// and in an integrated session's thread, and the server as a whole is
+/// given none. Only the server's own tools are named here, never a
+/// plugin's. Every other tool of the server asks as the user's approval
+/// policy says, a plugin's tool or one added to the server later among
+/// them, until it is put here.
+pub const RUN_UNASKED: &[&str] = &[
+    // Puts one line of text on the caller's row in the sessions list.
+    "notify",
+    // Says what the user has open in the viewer and which lines are
+    // highlighted.
+    "selection",
+    // List, read and wait on the sessions the caller started, and no
+    // others.
+    "sessions",
+    "read",
+    "wait",
+    // Lists the open projects' paths and names.
+    "projects",
+    // Reads the workbench's settings: looks, keys, workflows, theme names.
+    "settings",
+    // The window shows the change and asks the user every time before it
+    // makes it.
+    "settings_change",
+    "theme_save",
+    "styles_write",
+];
+
+/// The tools left off [`RUN_UNASKED`] on purpose, so they ask as the
+/// user's approval policy says, with Codex's question the only one before
+/// they act. Named so that a tool added to the server is never left off
+/// either list by accident.
+pub const ASK_AS_POLICY_SAYS: &[&str] = &[
+    // Open a file the agent names, or its diff, in the viewer, where a
+    // Markdown document can be drawn with images loaded from any address:
+    // `diff` of a file git has no change in opens it drawn, and `show`
+    // keeps the view a tab of it already has.
+    "show",
+    "diff",
+    // Draws what the agent names: an HTML page in a frame that can reach
+    // the network, or a document with images from any address.
+    "present",
+    // Types a command into a terminal for the user to run, and moves the
+    // keyboard there.
+    "terminal",
+    // Starts a session. The window asks before the first start in a
+    // project unless the user let the caller start more there, and never
+    // before a resume.
+    "start",
+    // Act in the workbench's browser, in sites the user signed into there.
+    "browser_open",
+    "browser_tabs",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_console",
+    "browser_screenshot",
+    "browser_eval",
+    "browser_close",
+    // Type into or stop the caller's own sessions.
+    "send",
+    "stop",
+    // The tools of the workbench's own plugins. A plugin's tool reaches the
+    // agent as the plugin's name and the tool's, which any plugin enabled
+    // under that name could publish, so none is approved by name.
+    "todos_list",
+    "todos_add",
+    "todos_finish",
+    "git_status",
+    "git_log",
+    "git_commit",
+    "github_pr",
+];
+
 /// How long a plugin or the app has to answer a call before the agent is
 /// told it did not. A call that is over is over: the answer is dropped if
 /// it lands.
@@ -1502,6 +1578,69 @@ mod tests {
     fn home(name: &str) -> Scratch {
         let dir = Scratch::new(&format!("mcp-{name}"));
         dir
+    }
+
+    /// Every tool the server lists of its own, with no plugin running, is
+    /// on one of the two lists, so a new tool is never run without asking
+    /// for want of a decision; what the lists name besides is the
+    /// workbench's own plugins' tools, and a plugin's tool on neither asks.
+    /// Each name is one bare key, so neither the command line's dotted path
+    /// nor the entry's TOML can split or quote it.
+    #[test]
+    fn every_tool_of_the_server_runs_unasked_or_asks_on_purpose() {
+        let own: Vec<String> = all_tools(&home("lists"))
+            .into_iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+        for name in RUN_UNASKED.iter().chain(ASK_AS_POLICY_SAYS) {
+            assert!(
+                !name.is_empty()
+                    && name
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{name}: not a bare key"
+            );
+        }
+        for name in &own {
+            let unasked = RUN_UNASKED.contains(&name.as_str());
+            let asks = ASK_AS_POLICY_SAYS.contains(&name.as_str());
+            assert!(unasked ^ asks, "{name}: on both lists or on neither");
+        }
+        let mut named: Vec<&str> = RUN_UNASKED
+            .iter()
+            .chain(ASK_AS_POLICY_SAYS)
+            .copied()
+            .collect();
+        let count = named.len();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), count, "a tool named twice");
+        let mut plugins: Vec<&str> = named
+            .into_iter()
+            .filter(|name| !own.iter().any(|tool| tool == name))
+            .collect();
+        plugins.sort_unstable();
+        assert_eq!(
+            plugins,
+            [
+                "git_commit",
+                "git_log",
+                "git_status",
+                "github_pr",
+                "todos_add",
+                "todos_finish",
+                "todos_list"
+            ]
+        );
+        // No plugin's tool runs unasked: what does is the server's own.
+        for tool in RUN_UNASKED {
+            assert!(own.iter().any(|name| name == tool), "{tool}");
+        }
+        // Nor does a tool that draws what the agent names, types into a
+        // terminal or starts a session.
+        for tool in ["show", "diff", "present", "terminal", "start"] {
+            assert!(ASK_AS_POLICY_SAYS.contains(&tool), "{tool}");
+        }
     }
 
     fn first(home: &Path) -> Request {

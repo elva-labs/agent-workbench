@@ -377,13 +377,19 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
     assert_eq!(resume["threadId"], "019a-old");
     assert_eq!(resume["model"], "gpt-b");
     assert_eq!(resume["sandbox"], "read-only");
+    // On a resume as on a start, the listed tools are approved one by one
+    // and nothing is said for the whole server.
+    let approved: serde_json::Map<String, Value> = crate::mcp::RUN_UNASKED
+        .iter()
+        .map(|tool| (tool.to_string(), json!({"approval_mode": "approve"})))
+        .collect();
     assert_eq!(
         resume["config"]["mcp_servers"]["agent_workbench"],
         json!({
             "command": server.to_string_lossy(),
             "args": ["mcp"],
             "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator"},
-            "default_tools_approval_mode": "approve",
+            "tools": approved,
         })
     );
     h.stop();
@@ -742,6 +748,94 @@ fn each_answer_to_an_approval_reaches_the_agent_as_its_decision() {
     // withdrawn: it was answered.
     assert!(!kinds(&events).contains(&"withdrawn".to_string()));
     assert!(answer(&h.sessions, &h.id, "0", Choice::Allow, None).is_err());
+    h.stop();
+}
+
+/// A tool of the workbench's server that is off the list asks as Codex's
+/// other MCP requests do. The thread approves only the listed tools, so
+/// Codex asks before `browser_open` runs; the question docks in the
+/// conversation as a permission for that call, with Codex's choice to
+/// allow it for the rest of the session but not from now on, which has no
+/// entry to be kept in, and the answer goes back to Codex, which then runs
+/// it. A listed tool, `notify`, runs with no question.
+#[test]
+fn a_workbench_tool_off_the_list_asks_in_the_conversation() {
+    let ask = |id: u32, method: &str, params: &str| {
+        format!(r#"say {{"id":{id},"method":"{method}","params":{params}}}"#)
+    };
+    let scenario = [
+        ready_scenario(),
+        take("turn-1"),
+        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"agent_workbench","tool":"notify","arguments":{"text":"done"},"status":"inProgress"}"#),
+        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"agent_workbench","tool":"notify","status":"completed","result":{"content":[{"type":"text","text":"told"}]}}"#),
+        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"agent_workbench","tool":"browser_open","arguments":{"url":"https://example.com"},"status":"inProgress"}"#),
+        ask(7, "mcpServer/elicitation/request", r#"{"turnId":"turn-1","serverName":"agent_workbench","mode":"form","message":"Allow the agent_workbench MCP server to run tool \"browser_open\"?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_name":"browser_open","tool_params":{"url":"https://example.com"}}}"#),
+        r#"expect "id":7"#.into(),
+        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"agent_workbench","tool":"browser_open","status":"completed","result":{"content":[{"type":"text","text":"opened"}]}}"#),
+        done("turn-1", "completed"),
+        "drain".into(),
+    ]
+    .join("\n");
+    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let h = start_with("off-the-list", &scenario, |launch| {
+        launch.token = Some("token-1");
+        launch.mode = Some("read-only");
+        launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
+    });
+    h.until_type("ready");
+    let entry = &h.sent("thread/start")[0]["params"]["config"]["mcp_servers"]["agent_workbench"];
+    assert_eq!(entry["tools"]["notify"]["approval_mode"], "approve");
+    assert!(entry["tools"].get("browser_open").is_none(), "{entry}");
+    assert!(
+        entry.get("default_tools_approval_mode").is_none(),
+        "{entry}"
+    );
+
+    h.send("open the page");
+    let asked = h.until(|e| e["type"] == "permissionAsked");
+    let asked = asked.last().unwrap().clone();
+    assert_eq!(asked["tool"], "mcp__agent_workbench__browser_open");
+    assert_eq!(asked["call"], "open");
+    assert_eq!(asked["input"], json!({"url": "https://example.com"}));
+    let offered: Vec<&str> = asked["choices"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|offer| offer["choice"].as_str().unwrap())
+        .collect();
+    assert!(
+        offered.contains(&"allowSession") && !offered.contains(&"allowAlways"),
+        "{offered:?}"
+    );
+    h.until_state("asking");
+    answer(
+        &h.sessions,
+        &h.id,
+        asked["request"].as_str().unwrap(),
+        Choice::AllowSession,
+        None,
+    )
+    .unwrap();
+    let events = h.until_type("turnEnded");
+    // The one question was for the tool off the list.
+    let questions: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["type"] == "permissionAsked")
+        .collect();
+    assert_eq!(questions.len(), 1, "{questions:#?}");
+    let finished = |call: &str| {
+        events
+            .iter()
+            .find(|e| e["type"] == "toolFinished" && e["call"] == call)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(finished("told")["output"], "told");
+    assert_eq!(finished("open")["output"], "opened");
+    assert_eq!(
+        h.answers()[&7]["result"],
+        json!({"action": "accept", "content": null, "_meta": {"persist": "session"}})
+    );
     h.stop();
 }
 
@@ -1518,6 +1612,13 @@ mod model {
                 }
                 None => said("no echo tool"),
             }
+        } else if prompt.contains("NOTE") {
+            match tools.iter().find(|(_, name)| name.contains("notify")) {
+                Some((namespace, name)) => {
+                    called(name, namespace.as_deref(), json!({"text": "done"}))
+                }
+                None => said("no notify tool"),
+            }
         } else {
             said("pong")
         });
@@ -1529,8 +1630,9 @@ mod model {
     }
 }
 
-/// An MCP server with one tool, `echo`, in shell, standing in for the
-/// workbench's own: it writes its environment beside itself.
+/// An MCP server with two tools, in shell, standing in for the workbench's
+/// own: `notify`, which the thread approves by name, and `echo`, which it
+/// does not. It writes its environment beside itself.
 const ECHO_SERVER: &str = r#"#!/bin/sh
 env > "$(dirname "$0")/server-env"
 while IFS= read -r line; do
@@ -1538,7 +1640,7 @@ while IFS= read -r line; do
   [ -z "$id" ] && continue
   case "$line" in
     *'"method":"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"echo","version":"0"}}}\n' "$id" ;;
-    *'"method":"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"echo","description":"Echo.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}}\n' "$id" ;;
+    *'"method":"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"echo","description":"Echo.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}},{"name":"notify","description":"Note.","inputSchema":{"type":"object","properties":{"text":{"type":"string"}}}}]}}\n' "$id" ;;
     *'"method":"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"echoed"}]}}\n' "$id" ;;
     *) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
   esac
@@ -1681,14 +1783,40 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     assert_eq!(events.last().unwrap()["outcome"], "done", "{events:#?}");
     assert!(!work.join("made.txt").exists());
 
-    // The workbench's tool server runs its tools without asking.
-    let events = turn(&h, "MCP");
+    // A tool of the workbench's server that the thread approves by name
+    // runs without asking.
+    let events = turn(&h, "NOTE");
     let call = events
         .iter()
         .find(|e| e["type"] == "toolFinished" && e["output"] == "echoed")
         .unwrap_or_else(|| panic!("{events:#?}"));
     assert_eq!(call["error"], false);
     assert!(!events.iter().any(|e| e["type"] == "permissionAsked"));
+
+    // One it does not approve asks, as Codex's question for an MCP call,
+    // docked as a permission; allowed, it runs.
+    h.send("MCP");
+    let asked = h.until(|e| e["type"] == "permissionAsked");
+    let asked = asked.last().unwrap().clone();
+    assert!(
+        asked["tool"].as_str().unwrap().contains("echo"),
+        "{asked:#?}"
+    );
+    println!("off the list offers {}", asked["choices"]);
+    answer(
+        &sessions,
+        &h.id,
+        asked["request"].as_str().unwrap(),
+        Choice::Allow,
+        None,
+    )
+    .unwrap();
+    let events = h.until_type("turnEnded");
+    let call = events
+        .iter()
+        .find(|e| e["type"] == "toolFinished" && e["output"] == "echoed")
+        .unwrap_or_else(|| panic!("{events:#?}"));
+    assert_eq!(call["error"], false);
 
     // An interrupt while a command runs. The command sleeps for a time no
     // other process asks for, so that it alone is found by it.
@@ -1758,6 +1886,44 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
         "the tool server had the session's token: {}",
         env.lines().any(|l| l == "WORKBENCH_SESSION=token-real")
     );
+    // The resumed thread has the same approvals: a listed tool runs with
+    // no question, and one off the list asks again, docked. Refused, it
+    // does not run, and the turn still ends.
+    let events = turn(&h, "NOTE");
+    assert!(
+        events
+            .iter()
+            .any(|e| e["type"] == "toolFinished" && e["output"] == "echoed"),
+        "{events:#?}"
+    );
+    assert!(!events.iter().any(|e| e["type"] == "permissionAsked"));
+    h.send("MCP");
+    let asked = h.until(|e| e["type"] == "permissionAsked");
+    let asked = asked.last().unwrap().clone();
+    assert!(
+        asked["tool"].as_str().unwrap().contains("echo"),
+        "{asked:#?}"
+    );
+    answer(
+        &sessions,
+        &h.id,
+        asked["request"].as_str().unwrap(),
+        Choice::Deny,
+        None,
+    )
+    .unwrap();
+    let events = h.until_type("turnEnded");
+    let at = events
+        .iter()
+        .rposition(|e| e["type"] == "turnStarted")
+        .unwrap();
+    let refused = events[at..]
+        .iter()
+        .find(|e| e["type"] == "toolFinished" && e["call"] == asked["call"])
+        .unwrap_or_else(|| panic!("{events:#?}"));
+    assert_eq!(refused["error"], true, "{refused:#?}");
+    assert_ne!(refused["output"], "echoed", "{refused:#?}");
+    assert_eq!(events.last().unwrap()["outcome"], "done", "{events:#?}");
     assert_eq!(h.stop()["clean"], true);
 }
 
@@ -2250,8 +2416,8 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
         h.send(text);
         h.until_type("turnEnded");
     }
-    // In full access Codex fails a call that would ask; the workbench's own
-    // tools do not ask, so they run.
+    // In full access Codex approves every MCP call itself, so a tool of the
+    // workbench's that the thread does not approve by name runs as well.
     let called = h
         .events()
         .into_iter()
