@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, resetConductor, STOP_WHEN_DONE, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
 import { byKey, close, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
@@ -294,7 +294,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     fake.turn(core, "All done.");
     flushSync();
     await waited;
-    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."`);
+    expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."\n${STOP_WHEN_DONE}`);
   });
 
   describe("the account it runs under", () => {
@@ -334,12 +334,12 @@ describe("the orchestrator's tools with an integrated session", () => {
       // under another account.
       const caller = create(A, null, "claude-code", null, null, null, "Work", undefined, "terminal");
       started(caller.key, "pty-caller", "caller-1");
-      const { named, row, configDir, answer } = await startFrom(caller.token, A);
+      const { named, row, configDir, answer } = await startFrom(caller.token, B);
       expect(named).toMatchObject({ label: "Work", projects: false, bare: null });
       expect(row.kind).toBe("integrated");
       expect(row.account).toBe("Work");
       expect(configDir).toBe("~/.claude-work");
-      expect(answer.content).toContain(`in ${A}, under the Work account. It has the prompt.`);
+      expect(answer.content).toContain(`in ${B}, under the Work account. It has the prompt.`);
     });
 
     it("is the account chosen for an integrated caller, placed by its token", async () => {
@@ -576,7 +576,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       kid.working = false;
       flushSync();
       await waited;
-      expect(answerTo(later)?.content).toBe("Session kid-1 stopped working. It has left no line.");
+      expect(answerTo(later)?.content).toBe(`Session kid-1 stopped working. It has left no line.\n${STOP_WHEN_DONE}`);
     });
 
     it("ends a wait it holds, so the user's message is not held behind it, and says what is still out", async () => {
@@ -609,7 +609,7 @@ describe("the orchestrator's tools with an integrated session", () => {
     );
     const stopped = call("stop", { session: id });
     await handle(stopped);
-    expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}.`);
+    expect(answerTo(stopped)?.content).toBe(`Stopped session ${id}. It is off your list now, and not offered to resume.`);
     expect(byKey(key)).toBeNull();
     expect(forProject(A)).toHaveLength(0);
   });
