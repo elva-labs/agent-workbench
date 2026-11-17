@@ -26,6 +26,7 @@ fn launch_with<'a>(
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     adjust(&mut launch);
     AppServer::new(&launch)
@@ -1701,6 +1702,100 @@ fn model_effort_and_mode_are_settled_here_and_go_with_the_next_turn() {
     );
 }
 
+fn revert(driver: &mut AppServer, turn: &str) -> Result<(Value, String), String> {
+    match driver.control(&Control::Revert { turn: turn.into() })? {
+        Sending::Request { line, key } => Ok((serde_json::from_str(&line).unwrap(), key)),
+        _ => panic!("a request"),
+    }
+}
+
+#[test]
+fn a_thread_goes_back_to_before_a_turn_in_the_running_process() {
+    let mut driver = ready();
+    let (line, key) = revert(&mut driver, "turn-2").unwrap();
+    assert_eq!(line["method"], "thread/revert");
+    assert_eq!(
+        line["params"],
+        json!({"threadId": THREAD, "beforeTurnId": "turn-2"})
+    );
+    let reading = read(
+        &mut driver,
+        json!({"id": line["id"], "result": {"thread": {"id": THREAD, "turns": []},
+               "turnsBackwardsCursor": null, "itemsBackwardsCursor": null}}),
+    );
+    assert_eq!(reading.replies, [(key, Ok(Value::Null))]);
+    // What Codex says of it meanwhile is nothing the window draws.
+    assert!(events(
+        &mut driver,
+        &[
+            notification(
+                "thread/status/changed",
+                json!({"threadId": THREAD, "status": {"type": "notLoaded"}})
+            ),
+            notification(
+                "thread/status/changed",
+                json!({"threadId": THREAD, "status": {"type": "idle"}})
+            ),
+            notification("thread/reverted", json!({"threadId": THREAD})),
+        ],
+    )
+    .is_empty());
+    // Codex's refusal is the answer.
+    let (line, key) = revert(&mut driver, "nope").unwrap();
+    let reading = read(
+        &mut driver,
+        json!({"id": line["id"], "error": {"code": -32600, "message": "turn not found"}}),
+    );
+    assert_eq!(reading.replies, [(key, Err("turn not found".into()))]);
+    // Codex puts no files back.
+    assert_eq!(
+        driver
+            .control(&Control::RewindFiles {
+                message: "m".into(),
+                dry_run: true
+            })
+            .err()
+            .as_deref(),
+        Some(NO_FILES)
+    );
+    // Not while a turn runs.
+    turn(&mut driver, "11111111-1111-4111-8111-111111111111");
+    assert_eq!(revert(&mut driver, "turn-1").unwrap_err(), "a turn runs");
+}
+
+#[test]
+fn a_thread_kept_in_the_older_format_or_not_at_all_says_it_cannot_go_back() {
+    for (thread, why) in [
+        (
+            json!({"id": THREAD, "historyMode": "legacy", "ephemeral": false}),
+            OLDER,
+        ),
+        (
+            json!({"id": THREAD, "historyMode": "paginated", "ephemeral": true}),
+            UNKEPT,
+        ),
+    ] {
+        let mut driver = fresh();
+        let mut started = thread_started();
+        started["thread"] = thread;
+        handshake_with(
+            &mut driver,
+            json!({"account": {"type": "chatgpt"}, "requiresOpenaiAuth": true}),
+            started,
+        );
+        assert_eq!(revert(&mut driver, "turn-1").unwrap_err(), why);
+    }
+    let mut driver = fresh();
+    let mut started = thread_started();
+    started["thread"]["historyMode"] = json!("paginated");
+    handshake_with(
+        &mut driver,
+        json!({"account": {"type": "chatgpt"}, "requiresOpenaiAuth": true}),
+        started,
+    );
+    assert!(revert(&mut driver, "turn-1").is_ok());
+}
+
 #[test]
 fn compaction_with_instructions_is_refused() {
     let mut driver = ready();
@@ -1908,6 +2003,7 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     let prepared = CODEX_APP_SERVER.command(&launch).unwrap();
     assert!(prepared.files.is_empty());

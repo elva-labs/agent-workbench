@@ -159,6 +159,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     adjust(&mut launch);
     let started = super::start(
@@ -266,6 +267,115 @@ fn states(events: &[Value]) -> Vec<String> {
         .filter(|event| event["type"] == "state")
         .map(|event| event["state"].as_str().unwrap().to_string())
         .collect()
+}
+
+/// Codex taking the thread back to before a turn, as `thread/revert` does
+/// in the running process: it unloads the thread and loads the shorter one
+/// again, answers with it, and says it was reverted.
+fn reverted() -> String {
+    [
+        r#"expect "method":"thread/revert""#.to_string(),
+        notify("thread/status/changed", &format!(r#"{{"threadId":"{THREAD}","status":{{"type":"notLoaded"}}}}"#)),
+        format!(r#"reply {{"id":@ID@,"result":{{"thread":{{"id":"{THREAD}","historyMode":"paginated","ephemeral":false,"turns":[]}},"turnsBackwardsCursor":"c1","itemsBackwardsCursor":null}}}}"#),
+        notify("thread/status/changed", &format!(r#"{{"threadId":"{THREAD}","status":{{"type":"idle"}}}}"#)),
+        notify("thread/reverted", &format!(r#"{{"threadId":"{THREAD}"}}"#)),
+    ]
+    .join("\n")
+}
+
+fn not_again(_: &Again) -> Result<Started, String> {
+    panic!("Codex goes back without starting again")
+}
+
+#[test]
+fn a_thread_goes_back_to_before_a_turn_and_the_session_goes_on_with_it() {
+    let scenario = [
+        ready_scenario(),
+        take("turn-1"),
+        done("turn-1", "completed"),
+        reverted(),
+        take("turn-2"),
+        done("turn-2", "completed"),
+        "drain".to_string(),
+    ]
+    .join("\n");
+    let h = start("revert", &scenario);
+    h.until_type("ready");
+    let first = h.send("one");
+    h.until_type("turnEnded");
+    h.until_state("idle");
+    // Codex puts no files back, and changes nothing for being asked to.
+    assert_eq!(
+        rewind(
+            &h.sessions,
+            &h.id,
+            &first,
+            Back::Turn("turn-1".into()),
+            true,
+            &not_again
+        )
+        .unwrap_err(),
+        crate::codex_app_server::NO_FILES
+    );
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        &first,
+        Back::Turn("turn-1".into()),
+        false,
+        &not_again,
+    )
+    .unwrap();
+    assert_eq!(
+        went,
+        WentBack {
+            id: Some(h.id.clone()),
+            session_id: Some(THREAD.into()),
+            ..WentBack::default()
+        }
+    );
+    assert_eq!(
+        h.sent("thread/revert")[0]["params"],
+        json!({"threadId": THREAD, "beforeTurnId": "turn-1"})
+    );
+    let told = h.until_type("rewound");
+    assert_eq!(
+        told.last().unwrap(),
+        &json!({"id": h.id, "type": "rewound", "message": first, "conversation": true, "files": []})
+    );
+    // The same thread goes on.
+    let next = h.send("two");
+    let started = h.until_type("turnStarted");
+    assert_eq!(started.last().unwrap()["messages"], json!([next]));
+    assert_eq!(h.sent("turn/start")[1]["params"]["threadId"], THREAD);
+    h.until_type("turnEnded");
+    h.stop();
+}
+
+#[test]
+fn a_thread_kept_in_the_older_format_says_it_cannot_go_back() {
+    let scenario = [
+        ready_scenario().replace(r#""preview":"""#, r#""historyMode":"legacy","preview":"""#),
+        "drain".to_string(),
+    ]
+    .join("\n");
+    let h = start("revert-legacy", &scenario);
+    h.until_type("ready");
+    assert_eq!(
+        rewind(
+            &h.sessions,
+            &h.id,
+            "11111111-1111-4111-8111-111111111111",
+            Back::Turn("turn-1".into()),
+            false,
+            &not_again,
+        )
+        .unwrap_err(),
+        crate::codex_app_server::OLDER
+    );
+    assert!(h.sent("thread/revert").is_empty());
+    assert!(h.sessions.holds(&h.id));
+    h.stop();
 }
 
 #[test]
@@ -1690,6 +1800,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             instructions: None,
             start_only: false,
             afresh: false,
+            resume_at: None,
         };
         let started = super::start(
             recorder.clone(),
@@ -1968,6 +2079,7 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
             instructions: workflow.then_some(told),
             start_only,
             afresh: false,
+            resume_at: None,
         };
         let started = super::start(
             recorder.clone(),
@@ -2390,6 +2502,7 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     let started = super::start(
         recorder.clone(),

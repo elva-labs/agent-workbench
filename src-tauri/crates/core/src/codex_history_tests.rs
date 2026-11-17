@@ -1039,3 +1039,101 @@ fn only_a_data_url_is_an_image_here() {
     assert!(data_image("data:text/plain;base64,AAAA").is_none());
     assert!(data_image("https://example.com/a.png").is_none());
 }
+
+fn summary(id: &str, items: Vec<Value>) -> Value {
+    json!({ "id": id, "status": "completed", "itemsView": "summary", "items": items })
+}
+
+fn mark(message: &str, turn: &str, first: bool) -> Mark {
+    Mark {
+        message: message.into(),
+        turn: turn.into(),
+        first,
+    }
+}
+
+/// Every message of the user's with the turn it is in, oldest first: one
+/// that began its turn, one Codex took into a turn already running, which
+/// goes back with it, one sent from a terminal under Codex's own id, and
+/// none for a turn Codex began itself, such as to compact.
+#[test]
+fn a_thread_s_messages_are_read_with_their_turns_oldest_first() {
+    let thread = |mode: &str| {
+        Answer::Result(
+            json!({ "thread": { "id": THREAD, "historyMode": mode, "ephemeral": false } }),
+        )
+    };
+    let mut codex = Scripted::new(vec![
+        ("thread/read", thread("paginated")),
+        (
+            "thread/turns/list",
+            page(
+                vec![
+                    summary(
+                        "turn-4",
+                        vec![
+                            user("i-4", None, "from a terminal", 4),
+                            agent("a-4", "ok", 50),
+                        ],
+                    ),
+                    summary("turn-3", vec![]),
+                ],
+                Some("older"),
+            ),
+        ),
+        (
+            "thread/turns/list",
+            page(
+                vec![
+                    summary(
+                        "turn-2",
+                        vec![
+                            user("i-2", Some("m-2"), "two", 2),
+                            user("i-3", Some("m-3"), "and this", 3),
+                        ],
+                    ),
+                    summary("turn-1", vec![user("i-1", Some("m-1"), "one", 1)]),
+                ],
+                None,
+            ),
+        ),
+    ]);
+    let (marks, why) = marks_of(&mut codex, THREAD).unwrap();
+    assert_eq!(why, None);
+    assert_eq!(
+        marks,
+        [
+            mark("m-1", "turn-1", true),
+            mark("m-2", "turn-2", true),
+            mark("m-3", "turn-2", false),
+            mark("i-4", "turn-4", true),
+        ]
+    );
+    assert_eq!(codex.asked[1].1["itemsView"], "summary");
+    assert_eq!(codex.asked[1].1["sortDirection"], "desc");
+    assert_eq!(codex.asked[2].1["cursor"], "older");
+
+    // A thread kept the older way, or not kept, says why and reads no turn.
+    for (read, why) in [
+        (thread("legacy"), crate::codex_app_server::OLDER),
+        (
+            Answer::Result(
+                json!({ "thread": { "id": THREAD, "historyMode": "paginated", "ephemeral": true } }),
+            ),
+            "Codex does not keep this conversation, so it cannot go back.",
+        ),
+    ] {
+        let mut codex = Scripted::new(vec![("thread/read", read)]);
+        assert_eq!(marks_of(&mut codex, THREAD).unwrap(), (vec![], Some(why)));
+        assert_eq!(codex.asked.len(), 1);
+    }
+    // A thread Codex does not have says so plainly.
+    let mut codex = Scripted::new(vec![(
+        "thread/read",
+        Answer::Refused("no rollout found for thread id x".into()),
+    )]);
+    assert_eq!(
+        marks_of(&mut codex, THREAD).unwrap_err(),
+        "Codex does not have this conversation"
+    );
+}

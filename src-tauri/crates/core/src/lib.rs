@@ -32,6 +32,7 @@ pub mod processes;
 pub mod project;
 pub mod protocol;
 pub mod pty;
+pub mod rewind;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
 pub mod selection;

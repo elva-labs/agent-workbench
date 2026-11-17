@@ -54,6 +54,19 @@ struct Prepared {
 
 pub const SESSION_IDENTIFIED: &str = "session_identified";
 
+/// Why a message cannot be gone back to: it is not in the conversation.
+const UNSAID: &str = "That message is not in the conversation as the agent keeps it.";
+
+/// Why no message of a Claude Code conversation can be gone back to.
+const UNFOLLOWED: &str = "Claude Code's record of this conversation could not be followed.";
+
+/// Why a Claude Code conversation cannot go back to before a message.
+const COMPACTED: &str =
+    "The conversation was compacted after this message, so it cannot go back to before it.";
+
+/// Why a Codex conversation cannot go back to before a message alone.
+const TAKEN_INTO: &str = "Codex took this message into a turn that was running, which goes back with the message that began it.";
+
 /// Why a session that follows a workflow is not started: it would have no
 /// start tool to hand its work out with.
 pub const NO_TOOLS: &str = "This session follows a workflow, which hands out its work with the workbench's tools, and this machine has no tool server to give it them. Pick an agent to start one alone instead.";
@@ -92,6 +105,40 @@ pub struct Core {
     deadlines: Arc<crate::show::Deadlines>,
     /// The usage limits of each account on the machine.
     limits: Arc<crate::limits::Limits>,
+    /// How each integrated session running was started, by its id, so it
+    /// can be started again the same way.
+    runs: Arc<std::sync::Mutex<HashMap<String, Run>>>,
+    /// The points conversations went back to, held until their transcripts
+    /// hold the cut themselves.
+    held: Arc<crate::rewind::Held>,
+}
+
+/// How an integrated session was started: what [`Core::integrated_start`]
+/// was given, its conversation's id where the workbench knows it, and what
+/// undoing the going back that started it goes back to.
+#[derive(Debug, Clone)]
+struct Run {
+    agent: String,
+    project: PathBuf,
+    cwd: Option<PathBuf>,
+    session: Option<String>,
+    token: Option<String>,
+    model: Option<String>,
+    mode: Option<String>,
+    effort: Option<String>,
+    config_dir: Option<String>,
+    instructions: Option<String>,
+    start_only: bool,
+    afresh: bool,
+    undo: Option<Undo>,
+}
+
+/// The conversation as it was before going back: its id, and the entry it
+/// was held at then, where it was.
+#[derive(Debug, Clone)]
+struct Undo {
+    session: String,
+    at: Option<String>,
 }
 
 /// The sink the core hands to the ptys and the watcher: everything reaches
@@ -157,6 +204,8 @@ impl Core {
             settings,
             deadlines: Arc::default(),
             limits: Arc::new(crate::limits::Limits::new(home.as_deref())),
+            runs: Arc::default(),
+            held: Arc::new(crate::rewind::Held::new(home.as_deref())),
             home,
         }
     }
@@ -607,6 +656,50 @@ impl Core {
         start_only: bool,
         afresh: bool,
     ) -> Result<crate::integrated::Started, String> {
+        let run = Run {
+            agent: agent.to_string(),
+            project: project.to_path_buf(),
+            cwd: cwd.map(Path::to_path_buf),
+            session,
+            token: token.map(str::to_string),
+            model: model.map(str::to_string),
+            mode: mode.map(str::to_string),
+            effort: effort.map(str::to_string),
+            config_dir: config_dir.map(str::to_string),
+            instructions: instructions.map(str::to_string),
+            start_only,
+            afresh,
+            undo: None,
+        };
+        // A conversation held at the point it went back to goes on from
+        // there.
+        let at = match &run.session {
+            Some(session) if agent == crate::claude_stream::AGENT => {
+                self.held_at(&run, session).map(|(_, at)| at)
+            }
+            _ => None,
+        };
+        self.start_run(run, at)
+    }
+
+    /// Starts an integrated session as `run` says, from the entry `at` of a
+    /// conversation it resumes where one is given, and keeps how it was
+    /// started for as long as it runs.
+    fn start_run(
+        &self,
+        run: Run,
+        at: Option<String>,
+    ) -> Result<crate::integrated::Started, String> {
+        let agent = run.agent.as_str();
+        let project = run.project.as_path();
+        let cwd = run.cwd.as_deref();
+        let token = run.token.as_deref();
+        let model = run.model.as_deref();
+        let mode = run.mode.as_deref();
+        let effort = run.effort.as_deref();
+        let config_dir = run.config_dir.as_deref();
+        let instructions = run.instructions.as_deref();
+        let (start_only, afresh) = (run.start_only, run.afresh);
         let adapter = adapter_for(agent).ok_or_else(|| format!("no adapter for {agent}"))?;
         let protocol = adapter
             .integrated()
@@ -617,10 +710,13 @@ impl Core {
         let orchestrator = instructions.is_some();
         self.hooks_for(agent, project, cwd, config_dir);
         let project = cwd.unwrap_or(project);
-        let resume = session.is_some();
+        let resume = run.session.is_some();
         // The workbench chooses a fresh session's id for an agent that takes
         // one; one that makes its own says it in `ready`.
-        let session = session.or_else(|| adapter.takes_id().then(new_session_id));
+        let session = run
+            .session
+            .clone()
+            .or_else(|| adapter.takes_id().then(new_session_id));
         let config_dir = config_dir.filter(|dir| !dir.trim().is_empty());
         let expanded =
             config_dir.and_then(|dir| self.home.as_deref().map(|home| account::expand(home, dir)));
@@ -674,6 +770,7 @@ impl Core {
             instructions,
             start_only: instructions.is_some() && start_only,
             afresh: resume && afresh,
+            resume_at: at.as_deref().filter(|_| resume),
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
         let named = token
@@ -685,12 +782,20 @@ impl Core {
             Some(dir) => self.limits.tap(Arc::clone(&self.sink), agent, dir),
             None => Arc::clone(&self.sink),
         };
+        let kept = Run {
+            session: session.clone(),
+            ..run.clone()
+        };
+        let (runs, gone) = (Arc::clone(&self.runs), Arc::clone(&self.runs));
         crate::integrated::start(
             sink,
             Arc::clone(&self.integrated),
             protocol,
             &launch,
             Box::new(move |started| {
+                runs.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(started.id.clone(), kept);
                 if let Some(plugins) = starting {
                     plugins.session_started(
                         &started.id,
@@ -701,6 +806,9 @@ impl Core {
                 }
             }),
             Box::new(move |id| {
+                gone.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(id);
                 if let Some(plugins) = ending {
                     plugins.session_ended(id);
                 }
@@ -844,12 +952,20 @@ impl Core {
         };
         let environment = env::environment();
         match agent {
-            "claude-code" => Ok(Some(crate::claude_history::read_session(
-                &account::claude_dir(home, config_dir, &environment.vars),
-                project,
-                cwd,
-                session,
-            ))),
+            "claude-code" => {
+                let dir = account::claude_dir(home, config_dir, &environment.vars);
+                let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
+                    return Ok(Some(crate::integrated::History::default()));
+                };
+                // A conversation held at the point it went back to reads as
+                // far as that point.
+                let leaf = crate::claude_history::leaf(&path);
+                let at = self.held.at(session, leaf.as_deref());
+                Ok(Some(crate::claude_history::read_until(
+                    &path,
+                    at.as_deref(),
+                )))
+            }
             "codex" => {
                 let config_dir = config_dir
                     .filter(|dir| !dir.trim().is_empty())
@@ -865,6 +981,275 @@ impl Core {
             }
             _ => Ok(None),
         }
+    }
+
+    /// How an integrated session that runs was started.
+    fn run(&self, id: &str) -> Result<Run, String> {
+        self.runs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(id)
+            .cloned()
+            .ok_or_else(|| "no such session".to_string())
+    }
+
+    /// The transcript of a Claude Code conversation a run is on.
+    fn transcript(&self, run: &Run, session: &str) -> Option<PathBuf> {
+        let home = self.home.as_deref()?;
+        let dir = account::claude_dir(home, run.config_dir.as_deref(), &env::environment().vars);
+        crate::claude_history::find(&dir, &run.project, run.cwd.as_deref(), session)
+    }
+
+    /// The transcript of a Claude Code conversation and the entry it is
+    /// held at, where it went back and has not gone on since.
+    fn held_at(&self, run: &Run, session: &str) -> Option<(PathBuf, String)> {
+        let path = self.transcript(run, session)?;
+        let leaf = crate::claude_history::leaf(&path);
+        let at = self.held.at(session, leaf.as_deref())?;
+        Some((path, at))
+    }
+
+    /// The messages of a Codex thread, read by a Codex of its own.
+    fn codex_marks(
+        &self,
+        run: &Run,
+        thread: &str,
+    ) -> Result<(Vec<crate::codex_history::Mark>, Option<&'static str>), String> {
+        let environment = env::environment();
+        let config_dir = run
+            .config_dir
+            .as_deref()
+            .filter(|dir| !dir.trim().is_empty())
+            .zip(self.home.as_deref())
+            .map(|(dir, home)| account::expand(home, dir));
+        crate::codex_history::marks(
+            &environment.vars,
+            config_dir.as_deref(),
+            &run.project,
+            run.cwd.as_deref(),
+            thread,
+        )
+    }
+
+    /// Where an integrated session's conversation can go back to: each
+    /// message of the user's in it as its agent keeps it now, oldest first,
+    /// and whether the conversation and the files can each go back to
+    /// before it. Claude Code's are read from its transcript, as far as the
+    /// point the conversation is held at; Codex's through a Codex of its
+    /// own, which takes a second or two.
+    pub fn integrated_rewind_points(&self, id: &str) -> Result<crate::integrated::Points, String> {
+        use crate::integrated::{Point, Points};
+        let run = self.run(id)?;
+        let session = crate::integrated::conversation(&self.integrated, id)?;
+        match run.agent.as_str() {
+            crate::claude_stream::AGENT => {
+                let Some(path) = self.transcript(&run, &session) else {
+                    return Ok(Points::default());
+                };
+                let leaf = crate::claude_history::leaf(&path);
+                let at = self.held.at(&session, leaf.as_deref());
+                let Some(marks) = crate::claude_history::marks(&path, at.as_deref()) else {
+                    return Ok(Points {
+                        points: Vec::new(),
+                        why: Some(UNFOLLOWED.into()),
+                    });
+                };
+                Ok(Points {
+                    points: marks
+                        .into_iter()
+                        .map(|mark| Point {
+                            message: mark.message,
+                            conversation: mark.resumable,
+                            files: mark.files,
+                            why: (!mark.resumable).then(|| COMPACTED.to_string()),
+                        })
+                        .collect(),
+                    why: None,
+                })
+            }
+            crate::codex_app_server::AGENT => {
+                let (marks, why) = self.codex_marks(&run, &session)?;
+                Ok(Points {
+                    points: marks
+                        .into_iter()
+                        .map(|mark| Point {
+                            message: mark.message,
+                            conversation: mark.first,
+                            files: false,
+                            why: (!mark.first).then(|| TAKEN_INTO.to_string()),
+                        })
+                        .collect(),
+                    why: why.map(str::to_string),
+                })
+            }
+            _ => Ok(Points::default()),
+        }
+    }
+
+    /// What putting the files back as they were before a message would
+    /// change, as the agent's own dry run says, with nothing changed. Fails
+    /// in the agent's words where it cannot put them back to there, and for
+    /// an agent that puts no files back.
+    pub fn integrated_rewind_preview(
+        &self,
+        id: &str,
+        message: &str,
+    ) -> Result<crate::integrated::Preview, String> {
+        crate::integrated::preview(&self.integrated, id, message)
+    }
+
+    /// Takes an integrated session at rest back to before a message of the
+    /// user's: with `conversation`, the message and everything after it
+    /// leave the conversation; with `files`, the files go back as they were
+    /// before it, first. Claude Code is started again from the entry before
+    /// the message, on the same row's token and the settings it runs on
+    /// now, and the conversation is held at that entry until its transcript
+    /// holds the cut; before its first message, it starts a new
+    /// conversation. Codex goes back in the running process. Fails, with
+    /// nothing changed, where it cannot go back there.
+    pub fn integrated_rewind(
+        &self,
+        id: &str,
+        message: &str,
+        conversation: bool,
+        files: bool,
+    ) -> Result<crate::integrated::WentBack, String> {
+        use crate::integrated::Back;
+        crate::integrated::rest(&self.integrated, id)?;
+        if !conversation && !files {
+            return Err("neither the conversation nor the files were asked to go back".into());
+        }
+        let run = self.run(id)?;
+        let session = crate::integrated::conversation(&self.integrated, id)?;
+        // The entry the conversation is held at already, from going back
+        // before, which it goes on from where it does not go back now.
+        let mut held = None;
+        let back = match run.agent.as_str() {
+            crate::claude_stream::AGENT => {
+                let path = self.transcript(&run, &session).ok_or(UNSAID)?;
+                let leaf = crate::claude_history::leaf(&path);
+                held = self.held.at(&session, leaf.as_deref());
+                let mark = crate::claude_history::marks(&path, held.as_deref())
+                    .ok_or(UNFOLLOWED)?
+                    .into_iter()
+                    .find(|mark| mark.message == message)
+                    .ok_or(UNSAID)?;
+                if files && !mark.files {
+                    return Err("Claude Code kept no files from before this message.".into());
+                }
+                if !conversation {
+                    Back::Files
+                } else if !mark.resumable {
+                    return Err(COMPACTED.into());
+                } else {
+                    Back::Entry(mark.at)
+                }
+            }
+            crate::codex_app_server::AGENT => {
+                if files {
+                    return Err(crate::codex_app_server::NO_FILES.into());
+                }
+                let (marks, why) = self.codex_marks(&run, &session)?;
+                if let Some(why) = why {
+                    return Err(why.into());
+                }
+                let mark = marks
+                    .into_iter()
+                    .find(|mark| mark.message == message)
+                    .ok_or(UNSAID)?;
+                if !mark.first {
+                    return Err(TAKEN_INTO.into());
+                }
+                Back::Turn(mark.turn)
+            }
+            agent => return Err(format!("{agent} cannot go back")),
+        };
+        let restart = |again: &crate::integrated::Again| self.again(&run, again, held.as_deref());
+        let went = crate::integrated::rewind(
+            &self.integrated,
+            id,
+            message,
+            back.clone(),
+            files,
+            &restart,
+        )?;
+        // Going back by starting again can be undone, until the
+        // conversation goes on, where it put no files back.
+        if let (Back::Entry(_), Some(started), None, true) =
+            (&back, &went.id, &went.fallback, went.files.is_empty())
+        {
+            if let Some(started) = self
+                .runs
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get_mut(started)
+            {
+                started.undo = Some(Undo { session, at: held });
+            }
+        }
+        Ok(went)
+    }
+
+    /// Undoes the going back that started an integrated session: it is
+    /// started again on the conversation as it was, from its newest entry or
+    /// the one it was held at before. Only while the session is at rest and
+    /// nothing has gone on in it since. Fails, with nothing changed, where
+    /// it cannot.
+    pub fn integrated_rewind_undo(&self, id: &str) -> Result<crate::integrated::WentBack, String> {
+        let run = self.run(id)?;
+        let undo = run
+            .undo
+            .clone()
+            .ok_or("there is no going back to undo in this session")?;
+        let restart =
+            |again: &crate::integrated::Again| self.again(&run, again, undo.at.as_deref());
+        crate::integrated::undo(&self.integrated, id, &undo.session, &restart)
+    }
+
+    /// Starts a run again as `again` says, on the run's own launch
+    /// otherwise, from the entry [`Core::going_on`] says.
+    fn again(
+        &self,
+        run: &Run,
+        again: &crate::integrated::Again,
+        held: Option<&str>,
+    ) -> Result<crate::integrated::Started, String> {
+        let at = self.going_on(run, again, held)?;
+        let settings = &again.settings;
+        let next = Run {
+            session: again.session.clone(),
+            model: settings.model.clone().or_else(|| run.model.clone()),
+            mode: settings.mode.clone(),
+            effort: settings.effort.clone().or_else(|| run.effort.clone()),
+            undo: None,
+            ..run.clone()
+        };
+        self.start_run(next, at)
+    }
+
+    /// The entry a run started again goes on from: the one `again` names,
+    /// or for a conversation resumed from no entry in particular `held`,
+    /// the one it was held at before, where there was one. The conversation
+    /// is held at that entry, or let go where it goes on from its newest.
+    fn going_on(
+        &self,
+        run: &Run,
+        again: &crate::integrated::Again,
+        held: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let Some(session) = &again.session else {
+            return Ok(None);
+        };
+        let Some(at) = again.at.as_deref().or(held) else {
+            self.held.release(session);
+            return Ok(None);
+        };
+        let leaf = self
+            .transcript(run, session)
+            .and_then(|path| crate::claude_history::leaf(&path))
+            .ok_or(UNSAID)?;
+        self.held.hold(session, at, &leaf);
+        Ok(Some(at.to_string()))
     }
 
     /// The usage limits of an agent's account on this machine, under the
@@ -1623,6 +2008,8 @@ mod tests {
             settings: None,
             deadlines: Arc::default(),
             limits: Arc::new(crate::limits::Limits::new(Some(home))),
+            runs: Arc::default(),
+            held: Arc::new(crate::rewind::Held::new(Some(home))),
         }
     }
 
@@ -1740,6 +2127,130 @@ mod tests {
         // own settings decide.
         assert_eq!(mode(None, None), None);
         assert_eq!(mode(None, Some("s-2")), None);
+    }
+
+    /// A Claude Code conversation that went back is read as far as the
+    /// entry it went on from, until its transcript holds the cut itself:
+    /// a message sent from there hangs off that entry, and the point is
+    /// let go.
+    #[test]
+    fn a_conversation_held_where_it_went_back_reads_as_far_as_that_until_it_goes_on() {
+        let home = Scratch::new("api-held-history");
+        let claude = home.join(".claude-work");
+        let folder = Path::new("/projects/demo");
+        let dir = crate::transcripts::directory_for(&claude, folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let session = "5f0c2b1e-7a4d-4c1b-9e3f-2a6b8c0d1e2f";
+        let path = dir.join(format!("{session}.jsonl"));
+        std::fs::write(
+            &path,
+            include_str!("../fixtures/claude-history/rewind-compacted.jsonl"),
+        )
+        .unwrap();
+        let core = core_at(&home);
+        let messages = || -> Vec<String> {
+            core.integrated_history(
+                "claude-code",
+                folder,
+                None,
+                session,
+                Some(&claude.to_string_lossy()),
+            )
+            .unwrap()
+            .unwrap()
+            .items
+            .into_iter()
+            .filter_map(|said| match said.event {
+                crate::integrated::Event::Message { message, .. } => Some(message),
+                _ => None,
+            })
+            .collect()
+        };
+        assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4", "m-5"]);
+        core.held.hold(session, "a-5", "a-6");
+        assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4"]);
+        // Read again, by a core that starts again.
+        assert_eq!(
+            core_at(&home).held.at(session, Some("a-6")).as_deref(),
+            Some("a-5")
+        );
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        for line in [
+            r#"{"type":"user","uuid":"m-6","parentUuid":"a-5","isSidechain":false,"timestamp":"2026-11-17T17:00:00.000Z","message":{"role":"user","content":"instead"}}"#,
+            r#"{"type":"assistant","uuid":"a-7","parentUuid":"m-6","isSidechain":false,"timestamp":"2026-11-17T17:00:01.000Z","message":{"id":"msg_7","role":"assistant","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn"}}"#,
+        ] {
+            writeln!(file, "{line}").unwrap();
+        }
+        assert_eq!(messages(), ["m-1", "m-2", "m-3", "m-4", "m-6"]);
+        assert_eq!(core.held.at(session, Some("a-6")), None, "let go");
+    }
+
+    /// A conversation started again goes on from the entry asked for, or,
+    /// resumed from none in particular, from the one it was held at before
+    /// going back, so a fallback or an undo does not bring back what an
+    /// earlier going back left out; and is held there.
+    #[test]
+    fn a_conversation_started_again_goes_on_from_the_entry_asked_or_held_before() {
+        use crate::integrated::{Again, Settings};
+        let home = Scratch::new("api-going-on");
+        let claude = home.join(".claude-work");
+        let folder = Path::new("/projects/demo");
+        let dir = crate::transcripts::directory_for(&claude, folder);
+        std::fs::create_dir_all(&dir).unwrap();
+        let session = "5f0c2b1e-7a4d-4c1b-9e3f-2a6b8c0d1e2f";
+        std::fs::write(
+            dir.join(format!("{session}.jsonl")),
+            include_str!("../fixtures/claude-history/rewind-compacted.jsonl"),
+        )
+        .unwrap();
+        let core = core_at(&home);
+        let run = Run {
+            agent: "claude-code".into(),
+            project: folder.to_path_buf(),
+            cwd: None,
+            session: Some(session.into()),
+            token: Some("token-1".into()),
+            model: None,
+            mode: None,
+            effort: None,
+            config_dir: Some(claude.to_string_lossy().to_string()),
+            instructions: None,
+            start_only: false,
+            afresh: false,
+            undo: None,
+        };
+        let again = |session: Option<&str>, at: Option<&str>| Again {
+            session: session.map(str::to_string),
+            at: at.map(str::to_string),
+            settings: Settings::default(),
+        };
+        let held = || core.held.at(session, Some("a-6"));
+        assert_eq!(
+            core.going_on(&run, &again(Some(session), Some("a-5")), None),
+            Ok(Some("a-5".into()))
+        );
+        assert_eq!(held().as_deref(), Some("a-5"));
+        assert_eq!(
+            core.going_on(&run, &again(Some(session), None), Some("o-1")),
+            Ok(Some("o-1".into()))
+        );
+        assert_eq!(held().as_deref(), Some("o-1"));
+        // A new conversation leaves the one gone back from as it is held.
+        assert_eq!(core.going_on(&run, &again(None, None), None), Ok(None));
+        assert_eq!(held().as_deref(), Some("o-1"));
+        assert_eq!(
+            core.going_on(&run, &again(Some(session), None), None),
+            Ok(None)
+        );
+        assert_eq!(held(), None);
+        // With no transcript there is nothing to go on from.
+        assert!(core
+            .going_on(&run, &again(Some("other-session"), Some("a-5")), None)
+            .is_err());
     }
 
     #[test]
