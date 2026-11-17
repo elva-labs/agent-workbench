@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { NO_WORKFLOW, PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
 
 /**
  * Compact mode: the sessions pane out of the layout, slid in over the
@@ -235,4 +235,138 @@ test("keeps the setting across a reload, and leaves the fold and the width as th
   await expect.poll(async () => (await boxOf(page, pane)).width).toBeLessThan(100);
   await page.keyboard.press(`${MOD}+b`);
   await expect.poll(async () => Math.round((await boxOf(page, pane)).width)).toBe(340);
+});
+
+/** The colour the page shows at a point, read from a screenshot of it. */
+async function pixel(page: Page, x: number, y: number): Promise<string> {
+  const shot = await page.screenshot({ clip: { x, y, width: 1, height: 1 } });
+  return page.evaluate(async (data) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${data}`;
+    await image.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext("2d")!;
+    context.drawImage(image, 0, 0);
+    return [...context.getImageData(0, 0, 1, 1).data.slice(0, 3)].join(",");
+  }, shot.toString("base64"));
+}
+
+for (const look of ["modern", "terminal"] as const)
+  test(`stands over the focused card's mark, in the ${look} look`, async ({ page }) => {
+    await start(page, { look, appearance: "light" });
+    await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+    // The focused pane's mark: the card's top edge in the modern look, the
+    // box's border in the terminal look.
+    const card = await boxOf(page, look === "modern" ? `${AGENT} > .body` : AGENT);
+    const y = Math.round(card.y) + (look === "modern" ? 1 : 0);
+    const mark = await pixel(page, Math.round(card.x + card.width - 60), y);
+    await page.mouse.move(2, 400, { steps: 2 });
+    await slidIn(page);
+    await page.mouse.move(150, 400);
+    // Where the mark runs under the pane, the pane's own ground shows, as
+    // it does a few pixels further down.
+    const over = await pixel(page, 150, y);
+    expect(over).not.toBe(mark);
+    // In the modern look the pane's own ground shows there, as it does at
+    // its empty foot.
+    const pane = await boxOf(page, SESSIONS);
+    if (look === "modern") expect(over).toBe(await pixel(page, 150, Math.round(pane.y + pane.height - 20)));
+  });
+
+test("stands under a question asked over the agent", async ({ page }) => {
+  const OTHER = "/home/ada/dev/other";
+  await page.setViewportSize({ width: 706, height: 800 });
+  await installFakeCore(page, {
+    open: [PROJECT, OTHER],
+    settings: { ...NO_WORKFLOW, compact: true, keys: { "focus.sessions": BOUND } },
+  });
+  await page.goto("/");
+  await slidOut(page);
+  await page.getByTestId("start-agent").click();
+  await page.evaluate(
+    ({ project, other }) =>
+      (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
+        id: "c-1",
+        tool: "start",
+        arguments: { project: other, prompt: "Write the release notes." },
+        cwd: project,
+        session: "session-1",
+      }),
+    { project: PROJECT, other: OTHER },
+  );
+  const ask = page.getByTestId("conduct-ask");
+  await expect(ask).toBeVisible();
+  await page.mouse.move(2, 600, { steps: 2 });
+  await slidIn(page);
+  await page.mouse.move(150, 600);
+  // Where the question and the pane overlap, the question is on top.
+  const box = await ask.boundingBox();
+  const pane = await boxOf(page, SESSIONS);
+  const x = Math.round(Math.max(box!.x, pane.x) + 20);
+  expect(x).toBeLessThan(pane.x + pane.width);
+  const top = await page.evaluate(
+    ([x, y]) => document.elementFromPoint(x, y)?.closest("[data-testid='conduct-ask']") !== null,
+    [x, Math.round(box!.y + box!.height / 2)],
+  );
+  expect(top).toBe(true);
+});
+
+// A question in the pane goes with it: whatever puts the pane away
+// answers Cancel, so nothing waits out of sight. Only the pointer and a
+// press outside wait for the answer.
+test("takes a question in the pane away with it, by the chord, Cmd+B or a change of session", async ({ page }) => {
+  await page.clock.install();
+  await start(page, { integrated: ["claude-code"] });
+  await page.getByTestId("start-agent").click();
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+  await page.evaluate(
+    `(() => { const f = window.__integrated; f.send("int-1", crypto.randomUUID(), "Keep the cache."); f.startTurn("int-1"); })()`,
+  );
+  const question = page.getByTestId("reopen-session");
+  await expect(page.locator(`${SESSIONS} .session .dot.working`)).toHaveCount(1);
+
+  const ask = async () => {
+    await page.keyboard.press(PRESS_BOUND);
+    await slidIn(page);
+    await page
+      .locator(`${SESSIONS} [data-testid='session-row']`)
+      .filter({ has: page.locator(".dot.working") })
+      .click({ button: "right" });
+    await page.getByTestId("session-menu-reopen").click();
+    await expect(question).toBeVisible();
+  };
+
+  // The pointer away does not take it: the question holds the pane.
+  await ask();
+  await page.mouse.move(900, 400, { steps: 2 });
+  await page.clock.runFor(AWAY_AFTER * 3);
+  await expect(question).toBeVisible();
+
+  await page.keyboard.press(PRESS_BOUND);
+  await slidOut(page);
+  await expect(question).toHaveCount(0);
+  await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
+  // Back again, nothing waits.
+  await page.keyboard.press(PRESS_BOUND);
+  await slidIn(page);
+  await expect(question).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await slidOut(page);
+
+  await ask();
+  await page.keyboard.press(`${MOD}+b`);
+  await slidOut(page);
+  await expect(question).toHaveCount(0);
+
+  // A second session, and the question up over the first's row: stepping
+  // to the other session puts the pane away with it.
+  await page.keyboard.press(PRESS_BOUND);
+  await slidIn(page);
+  await page.getByTestId("new-session").click();
+  await slidOut(page);
+  await ask();
+  await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
+  await slidOut(page);
+  await expect(question).toHaveCount(0);
 });

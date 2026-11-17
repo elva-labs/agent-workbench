@@ -170,7 +170,8 @@
   /* The focused card's accent runs along its top and down into its
      rounded corners, where it ends square. It and the outline stand over
      everything the card holds, whose layers stay below theirs, and under
-     what stands over the panes, such as an agent's question, from 5 up. */
+     what stands over the panes from 5 up: a card's own menus, then the
+     peeked sessions pane at 6, then an agent's question at 7. */
   .pane.focused > .body::before {
     content: "";
     position: absolute;

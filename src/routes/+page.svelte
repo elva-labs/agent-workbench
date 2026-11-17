@@ -1217,10 +1217,13 @@
   }
 
   /* Peeked: the pane takes its open width over the agent beside it, and
-     the column, the splitter and everything else stay where they are. */
+     the column, the splitter and everything else stay where they are. It
+     stands over every layer the panes draw, the focused card's mark and
+     their menus included, and under the questions asked over the agent,
+     the status bar and the dialogs. */
   .sessions-slot.peeking {
     position: relative;
-    z-index: 4;
+    z-index: 6;
   }
 
   .sessions-slot.peeking :global(.pane) {
@@ -1247,7 +1250,7 @@
      sight. It slides between the two on the panes' curve. */
   .sessions-slot.compact {
     position: relative;
-    z-index: 4;
+    z-index: 6;
   }
 
   .sessions-slot.compact :global([data-pane="sessions"]) {

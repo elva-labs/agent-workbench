@@ -173,7 +173,6 @@
   <div
     class="mark"
     class:hidden={layout.sessionsPeek}
-    title="{waiting} waiting for you"
     aria-hidden="true"
     data-testid="compact-mark"
   ></div>

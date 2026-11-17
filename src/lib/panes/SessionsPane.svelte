@@ -1071,11 +1071,18 @@
     }
   }
 
-  // The question about closing a session or a project is answered in the
-  // pane: when the pane folds, a peek put away above all, it goes, and
-  // nothing is closed.
+  // A question in the pane, about closing a session or a project or about
+  // reopening a session the other way, is answered in the pane: when the
+  // pane folds, a peek put away above all, or in compact mode goes out of
+  // sight by any way at all, the question goes with it, and nothing is
+  // closed or reopened.
+  let away = $derived(folded || (compact.on && !layout.sessionsPeek));
   $effect(() => {
-    if (folded && editor.closing !== null) untrack(closingCancel);
+    if (!away) return;
+    untrack(() => {
+      if (editor.closing !== null) closingCancel();
+      reopenAsk = null;
+    });
   });
 
   /** The question about closing a session or a project, while it is up. */
@@ -1515,6 +1522,11 @@
       pressHeld = false;
       setTimeout(() => (pressing = false));
     };
+    // A press let go outside the window may never be reported: the pointer
+    // moving with no button down is the press over.
+    const moved = (e: PointerEvent) => {
+      if (pressHeld && e.buttons === 0) pressHeld = false;
+    };
     const leave = () => {
       pointerIn = false;
       pointed = null;
@@ -1532,6 +1544,7 @@
     pane.addEventListener("pointerdown", press, true);
     window.addEventListener("pointerup", release, true);
     window.addEventListener("pointercancel", release, true);
+    window.addEventListener("pointermove", moved, true);
     return () => {
       if (timer !== null) clearTimeout(timer);
       pane.removeEventListener("pointerenter", enter);
@@ -1539,6 +1552,7 @@
       pane.removeEventListener("pointerdown", press, true);
       window.removeEventListener("pointerup", release, true);
       window.removeEventListener("pointercancel", release, true);
+      window.removeEventListener("pointermove", moved, true);
     };
   });
 

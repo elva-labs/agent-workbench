@@ -282,8 +282,14 @@ half a second it slides back out, and so it does at once on a press
 anywhere outside it. While a menu of its own is open, the new-session
 choice stands under a project, a question is up in it, a press that began
 in it is held, or the keyboard came to it by its chord or walks its rows,
-it stays wherever the pointer goes. The pointer that left the window by
-the left edge finds it there on the way back. The slide is the panes'
+it stays wherever the pointer goes. A question in it goes with it: the
+chord, <kbd>Cmd</kbd><kbd>B</kbd> or another session coming on screen
+puts the pane away and the question with it, as Cancel would, so nothing
+is closed or reopened and nothing waits out of sight. The same holds for
+the peeked pane and the fold. The pointer that left the window by the
+left edge finds it there on the way back. It stands over everything the
+panes draw, the focused card's mark included, and under a question asked
+over the agent. The slide is the panes'
 own motion, and none where the system asks for reduced motion.
 
 <kbd>Cmd</kbd><kbd>1</kbd>, or whatever chord the focus on the sessions
