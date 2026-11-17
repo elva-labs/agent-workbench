@@ -110,6 +110,7 @@ import { lastRun } from "$lib/thread";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
+import { nameSessionsBy } from "$lib/thread";
 import { mixesScripts, readsAsWorkbench, readsAsYou, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
@@ -3129,6 +3130,22 @@ export function startedFor(key: string | null): string | null {
 // A session a caller started answers to the caller: the rows do not call
 // for the user over it unless it needs a permission.
 onDirected((session) => startedFor(session.key) !== null);
+
+// The thread words a call on the workbench's tools by the rows' names: a
+// session by its id, and the sessions a wait that names none is watching
+// when exactly one caller is waiting.
+nameSessionsBy({
+  named: (id) => {
+    const row = byId(id);
+    return row === null ? null : label(row);
+  },
+  watching: () => {
+    const holding = Object.keys(conductor.listening);
+    if (holding.length !== 1) return null;
+    const rows = startedBy(holding[0]).filter((row) => isLive(row));
+    return rows.length === 0 ? null : rows.map((row) => label(row));
+  },
+});
 
 // The name a start gave a session is kept on its caller's list, and is the
 // session's row's name while its agent's own title names nothing.

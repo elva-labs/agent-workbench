@@ -223,6 +223,162 @@ export function phraseText(phrase: Phrase): string {
   return phrase.object === null ? lead : `${lead} ${phrase.object}`;
 }
 
+/** The name an MCP server is called by in a phrase: the connectors the
+    Claude apps add carry a `claude_ai_` prefix that says nothing to a
+    person. */
+function serverShown(server: string): string {
+  const bare = server.replace(/^claude_ai_/, "");
+  return bare === "" ? server : bare;
+}
+
+/** The MCP server the workbench itself runs for its agents. */
+const WORKBENCH = "agent-workbench";
+
+/** How the window answers what the workbench's tools name. */
+export interface SessionNames {
+  /** The name a session's row shows, by the session's id; null for an id
+      no row has. */
+  named(id: string): string | null;
+  /** The names of the sessions a wait that names none is watching, when
+      that is known; null when it is not. */
+  watching(): string[] | null;
+}
+
+let sessionNames: SessionNames = { named: () => null, watching: () => null };
+
+/** Sets who names the sessions the workbench's tools talk about. */
+export function nameSessionsBy(names: SessionNames) {
+  sessionNames = names;
+}
+
+/** The session an input names by its id, and the name its row shows. */
+function sessionOf(input: unknown, key = "session"): { named: boolean; name: string | null } {
+  const id = field(input, key);
+  return { named: id !== null, name: id === null ? null : sessionNames.named(id) };
+}
+
+/** What a call on one of the workbench's own tools is, in a person's
+    words: what the agent does with the workbench, drawn from the call's
+    arguments where they say something. Null for a tool the workbench does
+    not have, which is worded as any server's tool is. */
+function workbenchTitle(
+  tool: string,
+  input: unknown,
+  call: ToolCall,
+  running: boolean,
+  root: string | null,
+): Phrase | null {
+  const say = (now: string, then: string, object: string | null = null): Phrase => ({
+    lead: [running ? now : then],
+    object,
+  });
+  const file = (path: string | null) => (path === null ? null : shortPath(path, root));
+  const aSession = (now: string, then: string) => {
+    const { name } = sessionOf(input);
+    return name === null ? say(`${now} a session`, `${then} a session`) : say(now, then, name);
+  };
+  switch (tool) {
+    case "wait": {
+      const one = sessionOf(input);
+      if (one.name !== null) return say("Waiting on", "Waited on", one.name);
+      if (one.named) return say("Waiting on a session", "Waited on a session");
+      const watched = running ? sessionNames.watching() : null;
+      if (watched !== null && watched.length === 1) return say("Waiting on", "Waited on", watched[0]);
+      if (watched !== null && watched.length > 1) return say(`Waiting on ${watched.length} sessions`, "Waited on its sessions");
+      return say("Waiting on its sessions", "Waited on its sessions");
+    }
+    case "start": {
+      const resumes = sessionOf(input);
+      const id = STARTED.exec(`${call.result ?? ""} `)?.[1] ?? null;
+      const name = resumes.name ?? (id === null ? null : sessionNames.named(id)) ?? field(input, "name");
+      const [now, then] = resumes.named ? ["Resuming", "Resumed"] : ["Starting", "Started"];
+      return name === null ? say(`${now} a session`, `${then} a session`) : say(now, then, name);
+    }
+    case "send":
+      return aSession("Writing to", "Wrote to");
+    case "read":
+      return aSession("Reading", "Read");
+    case "stop":
+      return aSession("Stopping", "Stopped");
+    case "sessions":
+      return say("Listing its sessions", "Listed its sessions");
+    case "projects":
+      return say("Listing the open projects", "Listed the open projects");
+    // The note lands on the session's row, which is where it is read.
+    case "notify":
+      return say("Leaving a note on its row", "Left a note on its row", firstLine(field(input, "text")));
+    case "show":
+      return say("Showing", "Showed", file(field(input, "path")));
+    case "diff":
+      return say("Showing the changes in", "Showed the changes in", file(field(input, "path")));
+    case "present": {
+      const listed = (input as { files?: unknown } | null)?.files;
+      const files = Array.isArray(listed) ? listed.filter((one): one is string => typeof one === "string") : [];
+      const first = file(files[0] ?? null);
+      return say("Presenting", "Presented", first !== null && files.length > 1 ? `${first} and ${files.length - 1} more` : first);
+    }
+    case "selection":
+      return say("Looking at what you have open", "Looked at what you have open");
+    case "terminal":
+      return say("Opening a terminal for", "Opened a terminal for", firstLine(field(input, "command")));
+    case "browser_open":
+      return say("Opening", "Opened", field(input, "url"));
+    case "browser_navigate": {
+      const url = field(input, "url");
+      if (url !== null) return say("Going to", "Went to", url);
+      switch (field(input, "action")) {
+        case "back":
+          return say("Going back a page", "Went back a page");
+        case "forward":
+          return say("Going forward a page", "Went forward a page");
+        case "reload":
+          return say("Reloading the page", "Reloaded the page");
+      }
+      return say("Navigating the page", "Navigated the page");
+    }
+    case "browser_snapshot":
+      return say("Reading the page", "Read the page");
+    case "browser_screenshot":
+      return say("Taking a screenshot of the page", "Took a screenshot of the page");
+    case "browser_click":
+      return say("Clicking in the page", "Clicked in the page");
+    case "browser_type":
+      return say("Typing in the page", "Typed in the page");
+    case "browser_console":
+      return say("Reading the page's console", "Read the page's console");
+    case "browser_eval":
+      return say("Running a script in the page", "Ran a script in the page");
+    case "browser_tabs":
+      return say("Listing the open tabs", "Listed the open tabs");
+    case "browser_close":
+      return say("Closing a tab", "Closed a tab");
+    case "settings":
+      return say("Reading the workbench's settings", "Read the workbench's settings");
+    case "settings_change":
+      return say("Changing the workbench's settings", "Changed the workbench's settings");
+    case "theme_save":
+      return say("Saving a theme", "Saved a theme", field(input, "label") ?? field(input, "name"));
+    case "styles_write":
+      return say("Writing the workbench's stylesheet", "Wrote the workbench's stylesheet");
+    case "git_status":
+      return say("Checking the git status", "Checked the git status");
+    case "git_log":
+      return say("Reading the git log", "Read the git log");
+    case "git_commit":
+      return say("Committing", "Committed", firstLine(field(input, "message")));
+    case "github_pr":
+      return say("Looking at pull requests", "Looked at pull requests");
+    case "todos_list":
+      return say("Listing the todos", "Listed the todos");
+    case "todos_add":
+      return say("Adding a todo", "Added a todo", firstLine(field(input, "text") ?? field(input, "title")));
+    case "todos_finish":
+      return say("Finishing a todo", "Finished a todo");
+    default:
+      return null;
+  }
+}
+
 /** What a call is, as a step in the work: what it did, and the thing it
     did it to, which is drawn as code. Present tense while it runs. */
 export function stepTitle(
@@ -265,7 +421,11 @@ export function stepTitle(
     case "mcp": {
       const named = mcpName(call.name);
       if (named === null) return say("Using", "Used", call.name);
-      return say("Using", "Used", named.tool, named.server);
+      if (named.server === WORKBENCH) {
+        const own = workbenchTitle(named.tool, input, call, running, root);
+        if (own !== null) return own;
+      }
+      return say("Using", "Used", named.tool, serverShown(named.server));
     }
     default:
       return say("Using", "Used", call.name);

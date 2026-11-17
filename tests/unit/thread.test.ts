@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Conversation, type Part, type TextPart, type ToolCall } from "$lib/conversation.svelte";
 import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
 import { REPORTS_HEAD } from "$lib/instructions";
@@ -17,6 +17,7 @@ import {
   inputPath,
   lastRun,
   mcpName,
+  nameSessionsBy,
   requestPaths,
   revealed,
   place,
@@ -588,6 +589,100 @@ describe("a name an MCP server gave", () => {
     expect(what.lead).toEqual(["use ", { name: server }, "'s"]);
     expect(stepTitle(call({ tool: "mcp", name: "mcp__" + server + "__push" })).lead).toEqual(["Used ", { name: server }, "'s"]);
     expect(phraseText(what)).toBe(`use ${server}'s push`);
+  });
+});
+
+describe("the workbench's own tools in a step's title", () => {
+  const rows: Record<string, string> = { "s-1": "Fix the flake", "s-2": "Tidy the docs" };
+  let watching: string[] | null = null;
+  const own = (tool: string, input: unknown, over: Partial<ToolCall> = {}) =>
+    phraseText(stepTitle(call({ tool: "mcp", name: `mcp__agent-workbench__${tool}`, input, ...over })));
+
+  beforeEach(() => {
+    watching = null;
+    nameSessionsBy({ named: (id) => rows[id] ?? null, watching: () => watching });
+  });
+  afterEach(() => nameSessionsBy({ named: () => null, watching: () => null }));
+
+  it("names a session by its row, running and done", () => {
+    expect(own("wait", { session: "s-1" }, { done: false })).toBe("Waiting on Fix the flake");
+    expect(own("wait", { session: "s-1" })).toBe("Waited on Fix the flake");
+    expect(own("send", { session: "s-2", text: "go" }, { done: false })).toBe("Writing to Tidy the docs");
+    expect(own("send", { session: "s-2", text: "go" })).toBe("Wrote to Tidy the docs");
+    expect(own("read", { session: "s-1" }, { done: false })).toBe("Reading Fix the flake");
+    expect(own("read", { session: "s-1" })).toBe("Read Fix the flake");
+    expect(own("stop", { session: "s-1" }, { done: false })).toBe("Stopping Fix the flake");
+    expect(own("stop", { session: "s-1" })).toBe("Stopped Fix the flake");
+  });
+
+  it("never shows an id no row answers to", () => {
+    expect(own("wait", { session: "s-9" }, { done: false })).toBe("Waiting on a session");
+    expect(own("wait", { session: "s-9" })).toBe("Waited on a session");
+    expect(own("send", { session: "s-9", text: "go" })).toBe("Wrote to a session");
+    expect(own("read", {}, { done: false })).toBe("Reading a session");
+    expect(own("stop", { session: "s-9" }, { done: false })).toBe("Stopping a session");
+  });
+
+  it("words a wait that names no session by what it watches", () => {
+    expect(own("wait", {}, { done: false })).toBe("Waiting on its sessions");
+    watching = ["Fix the flake"];
+    expect(own("wait", { seconds: 60 }, { done: false })).toBe("Waiting on Fix the flake");
+    watching = ["a", "b", "c", "d"];
+    expect(own("wait", {}, { done: false })).toBe("Waiting on 4 sessions");
+    expect(own("wait", {})).toBe("Waited on its sessions");
+  });
+
+  it("names a start by its row once it answered, else by the name it was given", () => {
+    expect(own("start", { name: "Fix the flake", prompt: "p" }, { done: false })).toBe("Starting Fix the flake");
+    expect(own("start", { prompt: "p" }, { done: false })).toBe("Starting a session");
+    expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-2 in demo. " })).toBe("Started Tidy the docs");
+    expect(own("start", { name: "Given", prompt: "p" }, { result: "Started session s-9 in demo. " })).toBe("Started Given");
+    expect(own("start", { prompt: "p" })).toBe("Started a session");
+    expect(own("start", { session: "s-1" }, { done: false })).toBe("Resuming Fix the flake");
+    expect(own("start", { session: "s-1" })).toBe("Resumed Fix the flake");
+  });
+
+  it("words the other tools for a person", () => {
+    expect(own("sessions", {}, { done: false })).toBe("Listing its sessions");
+    expect(own("sessions", {})).toBe("Listed its sessions");
+    expect(own("projects", {})).toBe("Listed the open projects");
+    expect(own("notify", { text: "Tests green" }, { done: false })).toBe("Leaving a note on its row Tests green");
+    expect(own("show", { path: "/a/b.ts" })).toBe("Showed /a/b.ts");
+    expect(own("diff", { path: "/a/b.ts" }, { done: false })).toBe("Showing the changes in /a/b.ts");
+    expect(own("present", { files: ["/a/one.png", "/a/two.pdf"] })).toBe("Presented /a/one.png and 1 more");
+    expect(own("selection", {}, { done: false })).toBe("Looking at what you have open");
+    expect(own("terminal", { command: "npm run dev" })).toBe("Opened a terminal for npm run dev");
+    expect(own("browser_open", { url: "https://a.b" }, { done: false })).toBe("Opening https://a.b");
+    expect(own("browser_navigate", { url: "https://a.b" })).toBe("Went to https://a.b");
+    expect(own("browser_navigate", { action: "reload" }, { done: false })).toBe("Reloading the page");
+    expect(own("browser_navigate", { action: "back" })).toBe("Went back a page");
+    expect(own("browser_click", { ref: "e1" }, { done: false })).toBe("Clicking in the page");
+    expect(own("browser_type", { ref: "e1", text: "secret" })).toBe("Typed in the page");
+    expect(own("browser_snapshot", {})).toBe("Read the page");
+    expect(own("browser_screenshot", {}, { done: false })).toBe("Taking a screenshot of the page");
+    expect(own("browser_console", {})).toBe("Read the page's console");
+    expect(own("browser_eval", { script: "1" })).toBe("Ran a script in the page");
+    expect(own("browser_tabs", {})).toBe("Listed the open tabs");
+    expect(own("browser_close", { tab: 1 }, { done: false })).toBe("Closing a tab");
+    expect(own("settings", {})).toBe("Read the workbench's settings");
+    expect(own("settings_change", {}, { done: false })).toBe("Changing the workbench's settings");
+    expect(own("theme_save", { name: "dusk", label: "Dusk" })).toBe("Saved a theme Dusk");
+    expect(own("styles_write", { css: "" })).toBe("Wrote the workbench's stylesheet");
+    expect(own("git_status", {}, { done: false })).toBe("Checking the git status");
+    expect(own("git_log", {})).toBe("Read the git log");
+    expect(own("git_commit", { message: "fix: a" })).toBe("Committed fix: a");
+    expect(own("todos_add", { text: "Ship" }, { done: false })).toBe("Adding a todo Ship");
+    expect(own("todos_finish", {})).toBe("Finished a todo");
+    expect(own("todos_list", {})).toBe("Listed the todos");
+  });
+
+  it("leaves other servers' tools in the general wording", () => {
+    expect(stepTitle(call({ tool: "mcp", name: "mcp__github__list_issues", done: false }))).toEqual({
+      lead: ["Using ", { name: "github" }, "'s"],
+      object: "list_issues",
+    });
+    expect(stepTitle(call({ tool: "mcp", name: "mcp__claude_ai_Linear__list_issues" })).lead).toEqual(["Used ", { name: "Linear" }, "'s"]);
+    expect(own("no_such_tool", {})).toBe("Used agent-workbench's no_such_tool");
   });
 });
 

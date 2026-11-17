@@ -577,7 +577,11 @@ each tool call with what it did to what, its input, a command's output as it
 came, the files it changed as diffs, and a subagent's own run under the call
 that started it. The changes pane stays the place to review changes. While a
 turn runs, a line at its foot says what the agent is doing now: running a
-command, reading a file, thinking, waiting for an answer. A plan is drawn
+command, reading a file, thinking, waiting for an answer. The workbench's own
+tools are worded for a person, by the session's name in the sessions list
+where a call names one: waiting on a session, writing to it, starting one,
+and the same in the past tense once the call is done. Another server's tool
+reads as using that server's tool. A plan is drawn
 where it came and changed in place, a question the user answered with the
 answer, a secret one without it, and a compaction, a notice or an error
 where it happened. The sessions an agent started with the workbench's start
