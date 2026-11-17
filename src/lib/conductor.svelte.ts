@@ -2223,12 +2223,14 @@ function modeNow(session: Session): string | null {
   return session.modeSeen ?? session.modeNamed;
 }
 
-/** The mode a session's run began in where the workbench named none, so
-    its agent chose it from its own settings: an integrated run's as its
-    agent said when it came up, a terminal's as its hooks said in its first
-    turn. Null where the workbench named one, or it is not known. */
+/** The mode a session's run began in where the workbench named none and
+    the run is no resumed one, so its agent chose it from its own settings:
+    an integrated run's as its agent said when it came up, a terminal's as
+    its hooks first said where nobody could have changed it before. Null
+    where the workbench named one, for a resumed run, which goes on in the
+    mode its conversation last ran in, and where it is not known. */
 function modeChosen(session: Session): string | null {
-  if (session.modeNamed !== null) return null;
+  if (session.modeNamed !== null || session.resumedFrom !== null) return null;
   if (session.kind === "integrated") return linkOf(session.key)?.conversation.ready?.mode ?? null;
   return session.modeFirst;
 }
@@ -2239,8 +2241,8 @@ function modeChosen(session: Session): string | null {
  * session begins in the one its agent chooses from its settings, which the
  * window learns from the sessions of that agent, under that account, in
  * that project and run the way the agent is set to run, that it saw begin
- * in this run of the window with no mode named: the caller's own among
- * them. The widest of those is taken. A caller whose mode the window does
+ * in this run of the window as `modeChosen` counts them: the caller's own
+ * among them. The widest of those is taken. A caller whose mode the window does
  * not know is not compared; one whose mode it knows is taken as narrower
  * where no such session is known, or where a mode is not one it ranks.
  */

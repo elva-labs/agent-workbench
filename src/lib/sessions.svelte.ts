@@ -163,10 +163,16 @@ export interface Session {
       named none and the agent chose one from its own settings. */
   modeNamed: string | null;
   /** For a terminal run, the permission mode its hooks last said it runs
-      in, and the one they first said, in its first turn. Null until they
-      say, and for an agent whose hooks do not, as Codex's do not. */
+      in. Null until they say, and for an agent whose hooks do not, as
+      Codex's do not. */
   modeSeen: string | null;
+  /** For a terminal run, the mode its hooks first said it runs in, where
+      nobody could have changed it before: the run was started with its
+      prompt, or no key of the user's had reached it yet. Null otherwise,
+      and until they say. */
   modeFirst: string | null;
+  /** A key of the user's has reached this run's terminal. */
+  keyed: boolean;
   /** How many turns the agent has begun in this run, as its hooks or its
       events say, or, without them, as its output does. */
   turns: number;
@@ -1673,6 +1679,7 @@ function row(
     modeNamed: null,
     modeSeen: null,
     modeFirst: null,
+    keyed: false,
     turns: 0,
     changedAt: Date.now(),
     exitCode: null,
@@ -1719,6 +1726,7 @@ export async function launch(
   session.modeNamed = mode;
   session.modeSeen = null;
   session.modeFirst = null;
+  session.keyed = false;
   try {
     const { ptyId, sessionId } = await core().spawn(
       {
@@ -2348,6 +2356,7 @@ export function typed(ptyId: string, data: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   if (REPORT.test(data) || REPLY.test(data)) return;
+  session.keyed = true;
   if (data.includes("\r") || data.includes("\n")) {
     session.engaged = true;
     stirred(session);
@@ -2729,8 +2738,11 @@ export function exact(
   // is theirs to say.
   interrupts.delete(session.key);
   if (typeof more.mode === "string" && more.mode !== "") {
+    // The first mode the hooks say is the one the run began in only where
+    // nobody could have changed it before its first turn: the agent took
+    // its prompt as it started, or no key of the user's had reached it.
+    if (session.modeSeen === null && (session.prompt !== null || !session.keyed)) session.modeFirst = more.mode;
     session.modeSeen = more.mode;
-    session.modeFirst ??= more.mode;
   }
   answered.delete(session.key);
   // The line a run that a reopen stops leaves on its way out is not left

@@ -1650,6 +1650,30 @@ describe("a start in the caller's own project, held to what the caller may do", 
     await unasked({ project: A }, "sid-2");
   });
 
+  it("counts no first mode the user could have changed, nor a resumed run's, as the mode a session begins in", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    // The user typed its first prompt, and may have changed its mode first:
+    // the mode its first hook says is not its settings' word.
+    typed("pty-caller", "Fix the cache\r");
+    exact("caller-1", "prompt", null, false, { mode: "default" });
+    expect(caller.modeFirst).toBeNull();
+    expect(await asks({ project: A })).toBe(true);
+    // A resumed run goes on in its conversation's mode, which counts neither.
+    const back = create(A, "old-1", "claude-code", null, null, null, null, null);
+    started(back.key, "pty-back", "old-1");
+    exact("old-1", "prompt", null, false, { mode: "default" });
+    expect(await asks({ project: A })).toBe(true);
+    // A session started with its prompt began in its settings' mode, wider
+    // than the caller's first hook said: still asked.
+    const sibling = create(A, null, "claude-code", null, "Bump the client", null, null, null);
+    started(sibling.key, "pty-sib", "sib-1");
+    exact("sib-1", "prompt", null, false, { mode: "acceptEdits" });
+    expect(await asks({ project: A })).toBe(true);
+    // In that mode itself, the caller's start goes ahead.
+    exact("caller-1", "stop", null, false, { mode: "acceptEdits" });
+    await unasked({ project: A }, "sid-1");
+  });
+
   it("asks for a caller started in a kept mode until a session there is seen to begin in no wider one", async () => {
     const caller = live(A, "pty-caller", "caller-1");
     caller.modeNamed = "acceptEdits";
