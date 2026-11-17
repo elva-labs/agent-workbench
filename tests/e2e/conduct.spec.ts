@@ -470,6 +470,31 @@ test.describe("the conductor", () => {
   });
 });
 
+test.describe("a start while the settings ask before every one", () => {
+  test("puts a start in the caller's own project to the user, with Allow once or No", async ({ page }) => {
+    await installFakeCore(page, { settings: { ...NO_WORKFLOW, askEveryStart: true } });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await page.getByTestId("start-agent").click();
+    await expect(rows(page)).toHaveCount(1);
+    await push(page, {
+      id: "c-own",
+      tool: "start",
+      arguments: { project: PROJECT, prompt: "Fix the flaky test" },
+      session: "session-1",
+    });
+    const ask = page.getByTestId("conduct-ask");
+    await expect(ask).toBeVisible();
+    await expect(ask).toContainText(PROJECT);
+    await expect(ask.getByTestId("conduct-once")).toHaveText("Allow once");
+    await expect(ask.getByTestId("conduct-allow")).toHaveCount(0);
+    await ask.getByTestId("conduct-once").click();
+    await expect(ask).toHaveCount(0);
+    await expect.poll(() => answerTo(page, "c-own")).not.toBeNull();
+    expect((await answerTo(page, "c-own"))!.content).toContain("Started session session-2");
+  });
+});
+
 test.describe("what a starter is told", () => {
   test.beforeEach(async ({ page }) => {
     await installFakeCore(page, { settings: NO_WORKFLOW });

@@ -16,6 +16,7 @@ import {
   KEEP_WAITING,
   STOP_WHEN_DONE,
   ID_START,
+  runsShell,
   WAIT_EARLY,
   WAKE_AFTER,
   WAKE_QUIET,
@@ -97,6 +98,7 @@ import ConductAsk from "$lib/components/ConductAsk.svelte";
 import Started from "$lib/components/conversation/Started.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetFolder } from "$lib/orchestratorFolder.svelte";
+import { resetStartAsk, startAsk } from "$lib/startAsk.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { BOUNDED, BOUNDED_TYPED, FORGED } from "../forgedName";
@@ -326,6 +328,7 @@ let unwatch: () => void;
 beforeEach(() => {
   // A session follows no workflow here unless a test gives it one.
   resetWorkflows();
+  resetStartAsk();
   resetAccounts();
   vi.useFakeTimers();
   unwatch = watchStops();
@@ -1564,6 +1567,149 @@ describe("a start in the caller's own project", () => {
     await unasked({ project: A, step: "Review", work: "work-0001" }, "review-2", "orch");
     const round = await asked({ project: A, step: "Review", work: "work-0001" }, { session: "orch" });
     expect(round.round).toMatchObject({ step: "Review", work: "work-0001", done: 2, limit: 1 });
+  });
+});
+
+describe("a start in the caller's own project, held to what the caller may do", () => {
+  /** A start from a caller, answered once its session is up, without the
+      user being asked. */
+  async function unasked(args: Record<string, unknown>, id: string, caller = "caller-1") {
+    const answering = handle(call("start", { prompt: "Fix it", ...args }, { session: caller }));
+    await settle();
+    expect(conductor.asking).toBeNull();
+    const row = forProject(String(args.project)).at(-1)!;
+    started(row.key, `pty-${id}`, id);
+    flushSync();
+    await answering;
+    expect(last().error).toBeNull();
+    return row;
+  }
+
+  /** Whether a start from a caller is put to the user; refused there when
+      it is, and left to go ahead when it is not. */
+  async function asks(args: Record<string, unknown>, caller = "caller-1"): Promise<boolean> {
+    void handle(call("start", { prompt: "Fix it", ...args }, { session: caller }));
+    await settle();
+    const asked = conductor.asking !== null;
+    if (asked) refuse();
+    await settle();
+    return asked;
+  }
+
+  it("refuses a line or a prompt that begins with ! for a terminal, however it is written", async () => {
+    own(A, "pty-1", "sid-1");
+    for (const line of ["!rm -rf ~", "​！ls", "  !ls"]) {
+      expect(runsShell(line)).toBe(true);
+      await handle(call("send", { session: "sid-1", text: line }));
+      expect(last().error).toContain("is run by the agent as a shell command");
+    }
+    expect(written).toEqual([]);
+    expect(runsShell("Say ! when done")).toBe(false);
+    await handle(call("start", { project: B, prompt: "!ls" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toContain("starts none in a terminal with such a prompt");
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("gives a session it started unasked no command but /compact, in a line, its prompt or a resume", async () => {
+    live(A, "pty-caller", "caller-1");
+    await unasked({ project: A }, "sid-1");
+    expect(conductor.started[tok("caller-1")][0].unasked).toBe(true);
+    await handle(call("send", { session: "sid-1", text: "/permissions" }, { session: "caller-1" }));
+    expect(last().error).toBe(
+      "Session sid-1 was started in your own project without the user being asked, so the workbench gives it no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.",
+    );
+    const compacting = handle(call("send", { session: "sid-1", text: "/compact" }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await compacting;
+    expect(last().error).toBeNull();
+    await handle(call("start", { project: A, prompt: "/add-dir /" }, { session: "caller-1" }));
+    expect(conductor.asking).toBeNull();
+    expect(last().error).toContain("takes no command but /compact, so its prompt is words");
+    ended({ id: "pty-sid-1", code: 0, clean: true });
+    flushSync();
+    await handle(call("start", { session: "sid-1", prompt: "/permissions" }, { session: "caller-1" }));
+    expect(last().error).toContain("Session sid-1 was started in your own project without the user being asked");
+    // One the user allowed takes a command as before.
+    const allowed = await startAllowed(call("start", { project: B, prompt: "Fix it" }, { session: "caller-1" }), "pty-2", "sid-2");
+    expect(conductor.started[tok("caller-1")].find((entry) => entry.id === "sid-2")?.unasked).toBeUndefined();
+    const sending = handle(call("send", { session: "sid-2", text: "/model opus" }, { session: "caller-1" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await sending;
+    expect(last().error).toBeNull();
+    expect(written).toContainEqual([allowed.ptyId!, "/model opus"]);
+  });
+
+  it("asks once a terminal caller's hooks say it runs in a narrower mode than it began in", async () => {
+    live(A, "pty-caller", "caller-1");
+    exact("caller-1", "prompt", null, false, { mode: "acceptEdits" });
+    await unasked({ project: A }, "sid-1");
+    exact("caller-1", "stop", null, false, { mode: "plan" });
+    expect(await asks({ project: A })).toBe(true);
+    exact("caller-1", "prompt", null, false, { mode: "bypassPermissions" });
+    await unasked({ project: A }, "sid-2");
+  });
+
+  it("asks for a caller started in a kept mode until a session there is seen to begin in no wider one", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    caller.modeNamed = "acceptEdits";
+    expect(await asks({ project: A })).toBe(true);
+    // A session of the same agent and account there began in that mode.
+    live(A, "pty-sib", "sib-1");
+    exact("sib-1", "prompt", null, false, { mode: "acceptEdits" });
+    await unasked({ project: A }, "sid-1");
+    // One that began wider makes a start from the caller wider too.
+    live(A, "pty-sib2", "sib-2");
+    exact("sib-2", "prompt", null, false, { mode: "auto" });
+    expect(await asks({ project: A })).toBe(true);
+  });
+
+  it("does not compare a caller whose mode the window cannot know", async () => {
+    const row = create(A, null, "codex", null, null, null, null, null);
+    started(row.key, "pty-codex", "codex-caller");
+    await unasked({ project: A, agent: "codex" }, "sid-1", "codex-caller");
+  });
+
+  it("asks every time while the settings say so, offering this one session or none", async () => {
+    live(A, "pty-caller", "caller-1");
+    startAsk.every = true;
+    void handle(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }));
+    await settle();
+    expect(conductor.asking?.project).toBe(A);
+    expect(conductor.asking?.once).toBe(true);
+    // Allowing it gives no standing answer: the next start is asked again.
+    allow();
+    await settle();
+    started(forProject(A).at(-1)!.key, "pty-1", "sid-1");
+    flushSync();
+    await settle();
+    expect(allowedProjects(tok("caller-1"))).toEqual([]);
+    expect(conductor.started[tok("caller-1")][0].unasked).toBeUndefined();
+    expect(await asks({ project: A })).toBe(true);
+    // A standing answer given before is not used either.
+    startAsk.every = false;
+    await startAllowed(call("start", { project: B, prompt: "Fix it" }, { session: "caller-1" }), "pty-2", "sid-2");
+    expect(allowedProjects(tok("caller-1"))).toEqual([B]);
+    startAsk.every = true;
+    expect(await asks({ project: B })).toBe(true);
+  });
+
+  it("matches the project exactly: another form of its path is not open, and a worktree opened as a project is another", async () => {
+    live(A, "pty-caller", "caller-1");
+    for (const project of [`${A}/`, "/home/ada/link/one"]) {
+      await handle(call("start", { project, prompt: "Fix it" }, { session: "caller-1" }));
+      expect(conductor.asking).toBeNull();
+      expect(last().error).toBe(`No project at ${project} is open in the workbench.`);
+    }
+    const tree = `${A}/.worktrees/side`;
+    workspace.open.push(repo(tree));
+    expect(await asks({ project: tree })).toBe(true);
+    const inside = create(tree, null, "claude-code", null, null, null, null, null);
+    started(inside.key, "pty-inside", "caller-2");
+    expect(await asks({ project: A }, "caller-2")).toBe(true);
+    // A model of the caller's own agent is no wider: unasked.
+    const row = await unasked({ project: A, agent: "claude-code", model: "opus" }, "sid-1");
+    expect(row.model).toBe("opus");
   });
 });
 
@@ -3573,6 +3719,24 @@ describe("starting in a workflow's shape", () => {
     expect(last().error).toBeNull();
     return row;
   }
+
+  it("carries a piece on from a work session it stopped, named whole or by the start of its id", async () => {
+    orchestrating();
+    await begun({ step: "Work" }, "work-0001");
+    await begun({ step: "Review", work: "work-0001" }, "review-01");
+    ended({ id: "pty-review-01", code: 0, clean: true });
+    flushSync();
+    await handle(call("stop", { session: "work-0001" }, { session: "orch" }));
+    expect(last().content).toContain("Stopped session work-0001.");
+    expect(await refusedWith({ session: "work-0001", prompt: "Fix what the review found" })).toContain(
+      "Session work-0001 is not one you started.",
+    );
+    const next = await begun({ step: "Work", work: "work-0001" }, "kept-0002");
+    expect(placeOf(next.key)).toMatchObject({ step: "Work", piece: "work-0001", round: 2 });
+    await handle(call("stop", { session: "kept-0002" }, { session: "orch" }));
+    const again = await begun({ step: "Work", work: "work-000" }, "kept-0003");
+    expect(placeOf(again.key)).toMatchObject({ step: "Work", piece: "work-0001", round: 2 });
+  });
 
   it("refuses a start that names no step, with the steps there are", async () => {
     orchestrating();

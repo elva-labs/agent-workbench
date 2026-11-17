@@ -101,6 +101,7 @@ import { screen, takesPaste } from "$lib/screens";
 import {
   conversationOf,
   handleOf,
+  linkOf,
   notesFrom,
   send as sendIntegrated,
   sendAsWorkbench,
@@ -116,6 +117,8 @@ import { within } from "$lib/show.svelte";
 import { handOver, printable } from "$lib/terminals.svelte";
 import { projectLabel, workspace } from "$lib/workspace.svelte";
 import { startsIn } from "$lib/orchestratorFolder.svelte";
+import { kindFor } from "$lib/sessionKind.svelte";
+import { startAsk } from "$lib/startAsk.svelte";
 
 /** How many sessions one caller may have running at a time. */
 export const CAP = 8;
@@ -285,6 +288,10 @@ export interface Ask {
       Null for a round of an existing session, which neither takes a
       standing answer nor gives one. */
   login: Login | null;
+  /** The question offers this one session or none, never a standing
+      answer: for an agent the workbench did not start, and while the
+      settings ask before every start. */
+  once: boolean;
   /** What the question says of the account, when it names it. */
   named: Named | null;
 }
@@ -365,6 +372,10 @@ export interface Started {
       whose row is open, or that has had none since the app last started. A
       version that does not know it reads the record without it. */
   left?: "closed" | "ended";
+  /** It was started in its caller's own project without the user being
+      asked, so it takes no command but /compact from its caller. A version
+      that does not know it reads the record without it. */
+  unasked?: true;
 }
 
 /** Where a started session stands in its caller's workflow. */
@@ -1095,7 +1106,7 @@ function wholeIds(call: Placed): Placed | { refusal: string } {
   for (const name of ID_ARGUMENTS[call.tool] ?? []) {
     const given = text(call, name);
     if (given === null || given.length < ID_START || byId(given) !== null) continue;
-    const own = ownIds(call.caller);
+    const own = ownIds(call.caller, name === "work");
     if (own.has(given)) continue;
     const fits = [...own].filter((id) => id.startsWith(given)).sort();
     if (fits.length > 1)
@@ -1107,13 +1118,15 @@ function wholeIds(call: Placed): Placed | { refusal: string } {
   return args === call.arguments ? call : { ...call, arguments: args };
 }
 
-/** The ids of the sessions a caller started: its rows, the ones it
-    remembers, and the ones its workflow placed. */
-function ownIds(caller: string): Set<string> {
+/** The ids of the sessions a caller started: its rows and the ones it
+    remembers, and with `withPlaced` the ones its workflow placed as well,
+    which keep the sessions it stopped. Only the work a start carries on
+    may name one of those, so they make no other id's start ambiguous. */
+function ownIds(caller: string, withPlaced: boolean): Set<string> {
   const ids = new Set<string>();
   for (const row of startedBy(caller)) if (row.id !== null) ids.add(row.id);
   for (const entry of conductor.started[caller] ?? []) ids.add(entry.id);
-  for (const id of Object.keys(conductor.runs[caller]?.places ?? {})) ids.add(id);
+  if (withPlaced) for (const id of Object.keys(conductor.runs[caller]?.places ?? {})) ids.add(id);
   return ids;
 }
 
@@ -2007,10 +2020,12 @@ async function startFitted(
       }
     : null;
   const beyond = fit?.beyond ?? null;
-  const answer =
-    beyond === null && ownStart(request, project, agent, account)
-      ? "once"
-      : await askUser(request, project, prompt, wants, { account, bare }, named, beyond);
+  if (kindFor(agent) === "terminal" && runsShell(oneLine(prompt))) return refused(SHELL_PROMPT);
+  const unasked = !startAsk.every && beyond === null && ownStart(request, project, agent, account);
+  if (unasked && mayChangeModel(oneLine(prompt))) return refused(UNASKED_PROMPT);
+  const answer = unasked
+    ? "once"
+    : await askUser(request, project, prompt, wants, { account, bare }, named, beyond);
   if (answer === "no") {
     if (beyond !== null) stopAtLimit(callerOf(request), beyond);
     return {
@@ -2088,6 +2103,7 @@ async function startFitted(
     agent,
     name: called,
     account,
+    ...(unasked ? { unasked: true as const } : {}),
   });
   // Kept by the session's id as well, as any name is, so the row is called
   // so after a restart; unless the agent named it meanwhile.
@@ -2161,16 +2177,18 @@ function underFor(
 }
 
 /**
- * Whether a start is the caller's to make without asking the user: a
- * session in the project the caller runs in, on a worktree of it or not,
- * that holds no more than the caller does. It runs the caller's agent under
- * the caller's account, so it has the same login and reads the same
- * settings the caller started from, and it is given no permission mode of
- * its own, so it starts in the mode those settings name, as a new session
- * the user opens there does. Another agent or another account reads other
- * settings, whose mode may be wider, so such a start is asked about. So is
- * every start an agent the workbench did not start asks for, which has no
- * project of its own to the workbench.
+ * Whether a start is the caller's to make without asking the user: the
+ * caller is a session the workbench runs, and the session would run in the
+ * caller's own project, on a worktree of it or not, on the caller's agent,
+ * under the caller's account, while the caller's mode, where the window
+ * knows it, is no narrower than the one the session would begin in. The
+ * same agent and account mean the same login and the same directory of the
+ * agent's own settings. The project's settings files are read where the
+ * session starts, which need not be where the caller started, and may have
+ * changed since. A start names no permission mode, so the session begins
+ * in the one its agent chooses from those settings. Every other start is
+ * asked about, an agent the workbench did not start, which has no project
+ * of its own to the workbench, among them.
  */
 function ownStart(request: Placed, project: string, agent: AgentId, account: string | null): boolean {
   const calling = callingSession(request);
@@ -2178,8 +2196,68 @@ function ownStart(request: Placed, project: string, agent: AgentId, account: str
     calling !== null &&
     calling.project === project &&
     calling.agent === agent &&
-    calling.account === account
+    calling.account === account &&
+    !narrower(calling, project, agent, account)
   );
+}
+
+/** How much a permission mode lets a session do with no one asked, by the
+    agent's names for its modes, narrowest first. Claude Code's Don't ask
+    refuses what Default would ask about, so neither does more unasked, and
+    they stand on one step. A mode not named here is not ranked. */
+const MODE_RANKS: Record<AgentId, Record<string, number>> = {
+  "claude-code": { plan: 0, dontAsk: 1, default: 1, acceptEdits: 2, auto: 3, bypassPermissions: 4 },
+  codex: { "read-only": 0, auto: 1, "full-access": 2 },
+};
+
+function modeRank(agent: AgentId, mode: string): number | null {
+  return Object.hasOwn(MODE_RANKS[agent], mode) ? MODE_RANKS[agent][mode] : null;
+}
+
+/** The mode a session runs in now, where the window knows it: an
+    integrated session's as its agent says, a terminal's as its hooks last
+    said, or else the one the workbench started it in. Null where none is
+    known, as for a Codex terminal the workbench named no mode for. */
+function modeNow(session: Session): string | null {
+  if (session.kind === "integrated") return linkOf(session.key)?.conversation.settings.mode ?? null;
+  return session.modeSeen ?? session.modeNamed;
+}
+
+/** The mode a session's run began in where the workbench named none, so
+    its agent chose it from its own settings: an integrated run's as its
+    agent said when it came up, a terminal's as its hooks said in its first
+    turn. Null where the workbench named one, or it is not known. */
+function modeChosen(session: Session): string | null {
+  if (session.modeNamed !== null) return null;
+  if (session.kind === "integrated") return linkOf(session.key)?.conversation.ready?.mode ?? null;
+  return session.modeFirst;
+}
+
+/**
+ * Whether a caller runs in a narrower mode, as far as the window knows,
+ * than a session it starts would begin in. A start names no mode, so the
+ * session begins in the one its agent chooses from its settings, which the
+ * window learns from the sessions of that agent, under that account, in
+ * that project and run the way the agent is set to run, that it saw begin
+ * in this run of the window with no mode named: the caller's own among
+ * them. The widest of those is taken. A caller whose mode the window does
+ * not know is not compared; one whose mode it knows is taken as narrower
+ * where no such session is known, or where a mode is not one it ranks.
+ */
+function narrower(calling: Session, project: string, agent: AgentId, account: string | null): boolean {
+  const now = modeNow(calling);
+  if (now === null) return false;
+  const kind = kindFor(agent);
+  const began = sessions.all
+    .filter((row) => row.project === project && row.agent === agent && row.account === account && row.kind === kind)
+    .map(modeChosen)
+    .filter((mode): mode is string => mode !== null);
+  const mine = modeRank(agent, now);
+  if (mine === null || began.length === 0) return true;
+  return began.some((mode) => {
+    const rank = modeRank(agent, mode);
+    return rank === null || rank > mine;
+  });
 }
 
 /** The session a placed call comes from, while it runs: the one its token
@@ -2497,6 +2575,10 @@ async function resumeSession(
     );
 
   const prompt = text(request, "prompt");
+  if (prompt !== null && kindFor(agent) === "terminal" && runsShell(oneLine(prompt)))
+    return refused(SHELL_PROMPT);
+  if (prompt !== null && entry.unasked === true && mayChangeModel(oneLine(prompt)))
+    return refused(unaskedLine(id));
   // A session resumed for a step of the caller's workflow goes on in that
   // step, on a model the step allows, held to the step as a start is: a
   // work step's room, and for a review given a prompt, another round.
@@ -2684,16 +2766,22 @@ async function sendText(request: Placed): Promise<Answered> {
     );
   if (!reachable(session)) return unreachable();
   const typed = integrated ? line : oneLine(line);
+  if (!integrated && runsShell(typed)) return refused(SHELL_LINE);
   const at = placeOf(session.key);
   const flow = callerFlow(request);
   if ("refusal" in flow) return refused(flow.refusal);
-  // A session started for a step stays on the model the step gave it, and a
-  // caller under a workflow changes the model of none it reaches.
-  if ((at !== null || flow.workflow !== null) && mayChangeModel(typed))
+  // A session started for a step stays on the model the step gave it, a
+  // caller under a workflow changes the model of none it reaches, and a
+  // session started without the user being asked is given no command that
+  // could change what it may do.
+  const unasked = session.id !== null && remembered(callerOf(request), session.id)?.unasked === true;
+  if ((at !== null || flow.workflow !== null || unasked) && mayChangeModel(typed))
     return refused(
       at !== null
         ? keepsItsModel(id, at)
-        : `You follow a workflow, so the workbench gives the sessions you reach no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`,
+        : flow.workflow !== null
+          ? `You follow a workflow, so the workbench gives the sessions you reach no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`
+          : unaskedLine(id),
     );
   // A line to a review that has finished its round asks it for another
   // look, which is another round of the piece.
@@ -2774,8 +2862,36 @@ async function sendText(request: Placed): Promise<Answered> {
     that draw nothing are passed over and a wide slash is read as a slash,
     which takes a path at its start for one as well. */
 export function mayChangeModel(line: string): boolean {
-  const typed = line.normalize("NFKC").replace(/^[\s\p{Cf}]+/u, "");
+  const typed = asTyped(line);
   return typed.startsWith("/") && !/^\/compact(\s|$)/i.test(typed);
+}
+
+/** A line as an agent reads its start: in its compatibility form, so a
+    wide mark is read as the plain one, with the characters that draw
+    nothing before it passed over. */
+const asTyped = (line: string) => line.normalize("NFKC").replace(/^[\s\p{Cf}]+/u, "");
+
+/** Whether a line typed into an agent's terminal runs as a shell command:
+    Claude Code takes a line that begins with ! for one, and so do recent
+    versions of Codex, and runs it in the user's shell with no permission
+    asked. Read as `mayChangeModel` reads a slash. */
+export function runsShell(line: string): boolean {
+  return asTyped(line).startsWith("!");
+}
+
+/** What a caller is told of a line for a session's terminal, or a prompt
+    for a session that runs in one, that begins with !. */
+const SHELL_LINE =
+  "A line that begins with ! is run by the agent as a shell command when it is typed into its terminal, with no permission asked, so the workbench types none into a session's terminal. Put a word before it.";
+const SHELL_PROMPT =
+  "A prompt that begins with ! is run by the agent as a shell command when its session runs in a terminal, with no permission asked, so the workbench starts none in a terminal with such a prompt. Put a word before it.";
+
+/** What a caller is told of a command for a session it started in its own
+    project without the user being asked. */
+const UNASKED_PROMPT =
+  "A session you start in your own project without the user being asked takes no command but /compact, so its prompt is words: the workbench starts none with a prompt that begins with a slash, a path included. Put a word before it.";
+function unaskedLine(id: string): string {
+  return `Session ${id} was started in your own project without the user being asked, so the workbench gives it no command but /compact, and takes a line that begins with a slash, a path included, for one. Say what you want in words, with a word before any path.`;
 }
 
 /** What a caller is told when a line or a prompt for a session placed in
@@ -3022,24 +3138,51 @@ export function oneLine(text: string): string {
   return printable(text.replace(/[\r\n]+/g, " ")).trim();
 }
 
-/** What a session at rest is doing, in the words a wait answers with: it
-    ended, it is asking for permission, it stopped at a usage limit or on
-    an error, the user interrupted it, it ended its turn with commands
-    still running that start its next one, or it stopped working. */
-function restText(session: Session): string {
+/** How a session came to rest: it ended, it is asking for permission, an
+    error or a usage limit ended its turn, the user interrupted it, it ended
+    its turn with work still running in the background, or it ended its turn
+    itself with nothing left running. What a wait, a note and a wake say of
+    it all turn on this. */
+type RestWay =
+  | { way: "ended" }
+  | { way: "permission" }
+  | { way: "failed"; failure: Failure }
+  | { way: "cut" }
+  | { way: "background"; running: string }
+  | { way: "done" };
+
+function restWay(session: Session): RestWay {
+  if (!isLive(session)) return { way: "ended" };
+  if (session.needs === "permission") return { way: "permission" };
+  const failure = failureFor(session);
+  if (failure !== null) return { way: "failed", failure };
+  if (session.turnEnd === "cut") return { way: "cut" };
+  const running = backgroundWords(session);
+  if (running !== null) return { way: "background", running };
+  return { way: "done" };
+}
+
+/** What a session at rest is doing, in the words a wait answers with. */
+function restText(session: Session, rest: RestWay = restWay(session)): string {
   const name = namedAs(session);
   const last = lastLine(session);
-  if (!isLive(session)) return `Session ${name} ${stateOf(session)}. ${last}`;
-  if (session.needs === "permission") return `Session ${name} is asking for permission. ${last}`;
-  const failure = failureFor(session);
-  if (failure !== null) {
-    const shown = failure.line === null || failure.line === session.note ? null : quotedLine(failure.line);
-    return `Session ${name} ${failureWords(failure)}. ${shown === null ? "" : `Its error: ${shown}. `}${last}`;
+  switch (rest.way) {
+    case "ended":
+      return `Session ${name} ${stateOf(session)}. ${last}`;
+    case "permission":
+      return `Session ${name} is asking for permission. ${last}`;
+    case "failed": {
+      const { failure } = rest;
+      const shown = failure.line === null || failure.line === session.note ? null : quotedLine(failure.line);
+      return `Session ${name} ${failureWords(failure)}. ${shown === null ? "" : `Its error: ${shown}. `}${last}`;
+    }
+    case "cut":
+      return `Session ${name} stopped: the user interrupted its turn. ${last}`;
+    case "background":
+      return `Session ${name} ended its turn with ${rest.running}. ${last}`;
+    case "done":
+      return `Session ${name} stopped working. ${last}`;
   }
-  if (session.turnEnd === "cut") return `Session ${name} stopped: the user interrupted its turn. ${last}`;
-  const running = backgroundWords(session);
-  if (running !== null) return `Session ${name} ended its turn with ${running}. ${last}`;
-  return `Session ${name} stopped working. ${last}`;
 }
 
 /** What a wait adds, on a line of its own, for a session that ended its
@@ -3047,17 +3190,13 @@ function restText(session: Session): string {
 export const STOP_WHEN_DONE =
   "Once its work is taken up and nothing more is wanted from it, stop it; keep it if you may ask it again soon.";
 
-/** What a wait answers for a session that came to rest while at work: what
-    a note or a wake says of it, and for one that ended its turn itself with
-    nothing left running, when to stop it. */
+/** What a wait answers for a session at rest: what a note or a wake says
+    of it, and for one that ended its turn itself with nothing left
+    running, when to stop it. */
 function waitText(session: Session): string {
-  const rest = restText(session);
-  const itself =
-    session.needs !== "permission" &&
-    failureFor(session) === null &&
-    session.turnEnd !== "cut" &&
-    backgroundWords(session) === null;
-  return itself ? `${rest}\n${STOP_WHEN_DONE}` : rest;
+  const rest = restWay(session);
+  const said = restText(session, rest);
+  return rest.way === "done" ? `${said}\n${STOP_WHEN_DONE}` : said;
 }
 
 /** How many of the last lines on a session's screen are read for what
@@ -3349,8 +3488,9 @@ function agentOf(request: ConductRequest, project: string): AgentId {
  * round past a review's limit is always asked, and so is every start a
  * call that names no session asks for: the workbench cannot tell which
  * agent makes it, one run outside the workbench or a session that left its
- * name out, so it neither uses nor gives a standing answer. A
- * question that arrives while another is up waits behind it.
+ * name out, so it neither uses nor gives a standing answer. Nor does any
+ * start while the settings ask before every start. A question that
+ * arrives while another is up waits behind it.
  */
 function askUser(
   request: Placed,
@@ -3362,8 +3502,9 @@ function askUser(
   round: Beyond | null = null,
 ): Promise<Choice> {
   const outside = outsideFolder(callerOf(request));
+  const once = outside !== null || startAsk.every;
   if (
-    outside === null &&
+    !once &&
     round === null &&
     login !== null &&
     allowed.has(allowance(callerOf(request), project, login))
@@ -3385,6 +3526,7 @@ function askUser(
     round,
     login,
     named,
+    once,
   };
   return new Promise<Choice>((settle) => {
     queue.push({ ask, settle });
@@ -3406,11 +3548,12 @@ function answerAsk(choice: Choice) {
   conductor.asking = null;
   pending = null;
   // A round past the limit is allowed once, whatever the button, and so is
-  // a session for an agent the workbench did not start.
+  // a session for an agent the workbench did not start, and every session
+  // while the settings ask before every start.
   if (
     ask !== null &&
     choice === "allow" &&
-    ask.outside === null &&
+    !ask.once &&
     ask.round === null &&
     ask.login !== null
   )

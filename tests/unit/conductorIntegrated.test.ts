@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushSync } from "svelte";
 import type { ConductRequest } from "$lib/core";
-import { allow, conductor, handle, resetConductor, STOP_WHEN_DONE, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
+import { allow, conductor, handle, refuse, resetConductor, STOP_WHEN_DONE, unheard, USER_WROTE, WAKE_AFTER, WAKES_MAX, watchStops } from "$lib/conductor.svelte";
 import { conversationOf, handleOf, launch, linkFor, listenIntegrated, resetIntegrated, resume, send, userWaiting } from "$lib/integrated.svelte";
 import { byKey, close, create, ended as endedTerminal, forProject, label, reopenOtherWay, reset as resetSessions, sessions, started, titled, type Session } from "$lib/sessions.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
@@ -295,6 +295,45 @@ describe("the orchestrator's tools with an integrated session", () => {
     flushSync();
     await waited;
     expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."\n${STOP_WHEN_DONE}`);
+  });
+
+  describe("a start in an integrated caller's own project", () => {
+    /** A start from the caller in its own project, with whether it was
+        put to the user; refused there when it was. */
+    async function startHere(token: string, prompt: string): Promise<boolean> {
+      const request = { ...call("start", { project: A, prompt }), session: token };
+      const answering = handle(request);
+      await settle();
+      if (conductor.asking !== null) {
+        refuse();
+        await answering;
+        return true;
+      }
+      const row = forProject(A).at(-1)!;
+      await launch(row.key);
+      flushSync();
+      await answering;
+      expect(answerTo(request)?.error).toBeNull();
+      return false;
+    }
+
+    it("goes ahead in the mode the caller began in, and is asked once the caller is in a narrower one", async () => {
+      setKind("claude-code", "integrated");
+      const caller = create(A, null, "claude-code", null, null, null, null, undefined, "integrated");
+      await launch(caller.key);
+      const token = byKey(caller.key)!.token;
+      expect(conversationOf(caller.key).settings.mode).toBe("default");
+      expect(await startHere(token, "Scan the history")).toBe(false);
+      conversationOf(caller.key).settings = { ...conversationOf(caller.key).settings, mode: "plan" };
+      expect(await startHere(token, "Scan it again")).toBe(true);
+    });
+
+    it("takes a line that begins with ! as words for an integrated session", async () => {
+      const { id } = await own();
+      const request = call("send", { session: id, text: "!ls" });
+      await handle(request);
+      expect(answerTo(request)?.error).toBeNull();
+    });
   });
 
   describe("the account it runs under", () => {
