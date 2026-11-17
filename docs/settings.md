@@ -254,8 +254,9 @@ user's to change, and an agent's settings tools refuse it.
 
 Whether you are asked before every session another session starts. Off to
 begin with: a session that starts one in its own project, on its own agent
-and account and in no wider a mode than its own, goes ahead without a
-question, and a start anywhere else is put to you. Every time puts each
+and account, goes ahead without a question, and the session begins in the
+starting session's own mode where the workbench knows it; a start anywhere
+else is put to you. Every time puts each
 one to you, in the starting session's own project too, with Allow once or
 No and never an answer that stands, as
 [orchestrator](orchestrator.md#what-the-user-is-asked) describes. It is

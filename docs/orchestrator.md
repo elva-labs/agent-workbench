@@ -583,42 +583,46 @@ whatever it has been told to do by something it read.
 
 A session that starts another in its own project, on a worktree of it or
 not, is not asked about when the session would run on the starter's agent
-and under the starter's account, and the starter's mode, where the
-workbench knows it, is no narrower than the one the session would begin
-in. A start names no permission mode, so the session begins in the one
-its agent chooses from its settings: those of its account, and the
-project's own files where it starts, which need not be where the starter
-started, may have changed since, and may have been written by the starter
-itself. What is compared is the agent, the account and the starter's mode,
-not what those files say when the session starts.
+and under the starter's account. The session begins in the starter's
+permission mode, so it holds no more than its starter: the workbench names
+that mode when it starts the session, integrated or in a terminal, as it
+names a kept mode on a resume, whatever the settings of the session's
+account would choose. A mode the workbench starts no session in gives the
+nearest one below it, Auto for Bypass permissions. A session whose agent
+does not take the mode it is given, as Auto where its account or model
+has none, runs integrated in the nearest narrower mode its agent offers,
+said in a notice; in a terminal it runs in the one its agent falls back
+to, which the window cannot change. What the settings files allow still
+applies before anything is asked, as for any session.
 
 The workbench knows the starter's mode for an integrated session, as its
-agent says it; for a Claude Code session in a terminal, as its hooks say
-it with each turn; and for a terminal session it resumed in the mode it
-keeps for the conversation, which is that mode until the hooks say
-otherwise. A mode changed in the middle of a turn is known only once the
-next hook says it, so a start made in that same turn is compared with the
-mode before. It cannot know the mode of a Codex session in a terminal that
-it started in no mode, nor of a terminal session whose hooks are off, and
-does not compare those. The mode a session would begin in is learned from
-the sessions of that agent, under that account, in that project and run
-the way the agent is set to run, that the window saw begin in this run of
-the app with no mode named, the starter's own among them; the widest of
-those is taken. A resumed session goes on in the mode its conversation
-last ran in, so none counts. Nor does a terminal session whose mode
-somebody could have changed before its hooks first said it: its first mode
-counts only when the workbench started it with its prompt, or when no key
-of the user's had reached it yet. A session the user opened in a terminal
-and typed into first is not counted, so the starts such a session makes
-in its own project are asked about until a session started there has said
-the mode it began in. Where none is known, or a mode is not one the
-workbench ranks, the start is asked about. Claude Code's modes rank Plan
-first, then Default and Don't ask together, since Don't ask refuses what
-Default would ask about, then Accept edits, Auto and Bypass permissions;
-Codex's rank Read only, Auto and Full access.
+agent says it now; for a Claude Code session in a terminal, as its hooks
+last said it; and for a terminal session it resumed in the mode it keeps
+for the conversation, which is that mode until the hooks say otherwise. So
+a starter that went on after a restart in the mode it ran in before gives
+that mode. A mode changed in the middle of a turn is known only once the
+next hook says it, so a start made in that same turn gives the mode
+before. It cannot know the mode of a Codex session in a terminal that it
+started in no mode, nor of a terminal session whose hooks are off: a
+session such a starter starts begins in the mode its agent chooses from
+its settings, as one the user starts does, and the two are not compared.
+A starter whose mode the workbench knows but cannot place, by a name it
+does not know, is asked about, and its session begins as its settings
+say.
 
-A start there on another agent or under another account reads other
-settings, whose mode may be wider, and is asked about as a start anywhere
+The modes stand on one scale for both agents: Claude Code's Plan first,
+then Default and Don't ask together, since Don't ask refuses what Default
+would ask about, with Codex's Read only beside them, then Accept edits,
+Codex's Auto, which runs commands without asking only inside its sandbox,
+Claude Code's Auto, and last Bypass permissions with Codex's Full access.
+A session on the starter's agent begins in the starter's own mode. One on
+the other agent, which is always asked about, begins in the widest of its
+agent's modes that goes no further than the starter's, or in the narrowest
+it has where none is that narrow, as Read only for a Codex session
+started from Plan.
+
+A start there on another agent or under another account runs under
+another login and other settings, and is asked about as a start anywhere
 else is. A start on an agent or a model its workflow's step does not allow
 is refused before anything is asked. The session's row and the answer to
 the starter say what was started either way.

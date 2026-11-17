@@ -1,9 +1,9 @@
 /**
  * Whether the user is asked before every session another session starts.
  *
- * Off, a start in the starter's own project, on its agent and account and
- * in no wider a mode than its own, goes ahead without a question, and only
- * the rest are put to the user. On, every start is. It is a setting kept
+ * Off, a start in the starter's own project, on its agent and account,
+ * goes ahead without a question, the session beginning in the starter's
+ * mode where that is known, and only the rest are put to the user. On, every start is. It is a setting kept
  * with the others for the machine, off unless the user turns it on, and the
  * user's alone to change.
  */

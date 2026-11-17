@@ -147,16 +147,20 @@ says which.
 A session starts in the mode a terminal session of its agent would start
 in, chosen by the agent from the user's own settings, and the window shows
 the mode the agent says it runs in. The workbench names a mode at the start
-in two cases only. A session that starts again, or a conversation resumed
+in three cases only. A session that starts again, or a conversation resumed
 or reopened integrated, names the mode it last ran in integrated, which the
 window keeps for each conversation. A Claude Code conversation resumed with
 no such mode names the one its transcript last records, the way Claude
 Code's terminal resumes a conversation, since its stream would start one as
-a new conversation. Neither is ever bypassing permissions, nor any mode a
-session cannot be switched to; those are left to the agent's own settings.
-Nothing else names a mode, so a start never grants more than those
-settings would in a terminal, and every tool call that asks is answered in
-the window by the user.
+a new conversation. A new conversation another session started names the
+mode its starter gave it, the starter's own as far as its agent has it, so
+it holds no more than the session that started it (see
+[orchestrator](orchestrator.md#what-the-user-is-asked)). None is ever
+bypassing permissions, nor any mode a session cannot be switched to; those
+are left to the agent's own settings. Nothing else names a mode, so a
+start never grants more than those settings would in a terminal, or than
+the session that started it holds, and every tool call that asks is
+answered in the window by the user.
 
 For Claude Code that is the `permissions.defaultMode` of its settings,
 which a stream session takes from the same files as the terminal, with
@@ -182,14 +186,17 @@ the next start. A run that was killed, as a stop on Windows or a crash
 ends one, wrote nothing down, and the window's record decides the next
 start. A record still held by a terminal run when the window starts is
 let go, since the app's quit hung up on that run.
-A mode is the conversation's own: a new session, one another session
-starts among them, names none, and no conversation takes another's.
+A mode is the conversation's own: a new session the user starts names
+none, and no conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept
 the same way.
 
 A mode the agent was asked to start in and did not, such as auto where the
 account or the model has none, is said in a notice, and the session runs in
-the one the agent chose. A mode from the agent's own settings that it does
+the one the agent chose. A session another started is switched instead to
+the nearest mode below the one it was given that its agent offers, said in
+a second notice, so it holds neither more than its starter nor less than
+it may. A mode from the agent's own settings that it does
 not offer to switch to, such as bypassing permissions or a Codex approval
 policy and sandbox that make none of its modes, is shown on the chip in
 plain words, and once another is chosen it comes back only in a new

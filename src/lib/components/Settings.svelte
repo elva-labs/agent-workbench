@@ -698,9 +698,10 @@
             <h3>When a session starts another</h3>
             <UnreadEntries field="askEveryStart" />
             <p class="note">
-              A session can start others. One it starts in its own project, on its own agent and
-              account and in no wider a permission mode than its own, goes ahead without a question;
-              anywhere else, you are asked first. Choose Every time to be asked before each one.
+              A session can start others, each in the starting session's own permission mode where
+              the workbench knows it. One it starts in its own project, on its own agent and account,
+              goes ahead without a question; anywhere else, you are asked first. Choose Every time to
+              be asked before each one.
             </p>
             <div class="seg" role="radiogroup" aria-label="When to ask before a session starts another">
               <button

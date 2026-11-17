@@ -153,9 +153,9 @@ pub const ASK_AS_POLICY_SAYS: &[&str] = &[
     // Starts a session. The window asks before the first start in another
     // project unless the user let the caller start more there, and never
     // before a resume. A start in the caller's own project on its agent and
-    // account, in a mode no narrower than the caller's, is not asked by the
-    // window unless a setting says to, so for that one Codex's question,
-    // where its policy asks, is the only one.
+    // account, which begins in the caller's mode where the window knows it,
+    // is not asked by the window unless a setting says to, so for that one
+    // Codex's question, where its policy asks, is the only one.
     "start",
     // Act in the workbench's browser, in sites the user signed into there.
     "browser_open",
@@ -707,7 +707,7 @@ pub fn sessions_tool() -> Value {
 pub fn start_tool() -> Value {
     json!({
         "name": "start",
-        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Then keep calling wait until it and the others you started are done, without handing the turn back while any is running unless you need the user, send to answer anything one asks, and stop each once its work is taken up and nothing more is wanted from it. With a session named, one you started before that is no longer running, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed.",
+        "description": "Starts a session in the user's Agent Workbench with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. It begins in your own permission mode where the workbench knows it, and never in a wider one. Then keep calling wait until it and the others you started are done, without handing the turn back while any is running unless you need the user, send to answer anything one asks, and stop each once its work is taken up and nothing more is wanted from it. With a session named, one you started before that is no longer running, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2208,6 +2208,11 @@ mod tests {
                 "{tool}"
             );
         }
+        // A starter is told the mode a session it starts begins in.
+        assert!(named("start")["description"]
+            .as_str()
+            .unwrap()
+            .contains("It begins in your own permission mode where the workbench knows it"));
         assert_eq!(named("read")["inputSchema"]["required"], json!(["session"]));
         assert_eq!(named("projects")["inputSchema"]["properties"], json!({}));
         assert_eq!(
