@@ -21,9 +21,14 @@
     /** Changes when the file may have: a later call for it, or the
         working tree moving under it. */
     reload?: string;
+    /** Changes each time the file is presented, or read again in the
+        file viewer. A page is then drawn afresh and the files it loads read
+        anew, even when the page itself is the same, so screenshots made
+        again under the same names show. */
+    again?: string;
   }
 
-  let { path, alt, reload = "" }: Props = $props();
+  let { path, alt, reload = "", again = "" }: Props = $props();
 
   let loaded = $state<Loaded | null>(null);
 
@@ -74,7 +79,7 @@
     {@html loaded.html}
   </div>
 {:else if "page" in loaded}
-  <MediaPage html={loaded.page} title={alt} />
+  <MediaPage html={loaded.page} title={alt} page={path} {again} />
 {:else if "diagram" in loaded}
   {#if drawn === null}
     <p class="empty">Drawing…</p>

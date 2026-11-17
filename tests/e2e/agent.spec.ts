@@ -229,6 +229,9 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         notify: async (title: string, body: string) => {
           fake.notified.push({ title, body });
         },
+        unnotify: async () => {},
+        onNoticeClicked: async () => () => {},
+        onWindowFocus: async () => () => {},
         chime: async () => {
           fake.chimes += 1;
         },

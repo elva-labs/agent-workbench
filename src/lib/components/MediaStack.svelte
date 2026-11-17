@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MediaItem } from "$lib/media.svelte";
+  import { media, type MediaItem } from "$lib/media.svelte";
   import { files as changes } from "$lib/files.svelte";
   import { lastSegment } from "$lib/paths";
   import MediaFile from "$lib/components/MediaFile.svelte";
@@ -26,6 +26,7 @@
         path={file}
         alt={item.caption ?? lastSegment(file)}
         reload="{item.at}:{changes.treeReads}:{changes.shownReads}"
+        again="{item.at}:{media.calls[item.id] ?? 0}"
       />
     </section>
   {/each}

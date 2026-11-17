@@ -42,12 +42,12 @@ describe("the workbench's note in a message", () => {
     expect(spoken(`Fix it ${OUTCOME_ASK}`)).toEqual({ text: "Fix it", instructions: OUTCOME_ASK, reports: null });
   });
 
-  it("names each session as the user knows it, where its row is known", () => {
+  it("names each session as the user knows it, and one with no name kept as a session, never by its id", () => {
     const names: Record<string, string> = { "sid-1": "Fix the cache", "sid-2": "Run the tests" };
     expect(reportsShown(spoken(`${NOTE}\n\nHi`, true).reports!, (id) => names[id] ?? null)).toBe(
       [
         'Fix the cache stopped working. Its last line: "the cache is fixed"',
-        "Still at work when you wrote: Run the tests and sid-3.",
+        "Still at work when you wrote: Run the tests and a session.",
       ].join("\n"),
     );
   });
@@ -65,7 +65,7 @@ describe("the workbench's message to a session it woke", () => {
       atWorkLine("sid-2 and sid-3"),
     ].join("\n");
     expect(wakeShown(text, name)).toBe(
-      'Fix the cache stopped working. Its last line: "the cache is fixed"\nSession sid-4 ended. It has left no line.\nStill at work: Add tests and Docs.',
+      'Fix the cache stopped working. Its last line: "the cache is fixed"\nA session ended. It has left no line.\nStill at work: Add tests and Docs.',
     );
   });
 

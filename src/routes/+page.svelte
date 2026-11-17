@@ -112,10 +112,11 @@
     viewed,
     onScreenNow,
   } from "$lib/sessions.svelte";
-  import { attention, badge, followFocus } from "$lib/attention.svelte";
+  import { attention, badge, followFocus, tabFocused, windowFocused } from "$lib/attention.svelte";
   import { askForSession, followLimits, lookAtWork } from "$lib/limitsPoll";
   import { primeChime } from "$lib/chime";
-  import { announce } from "$lib/notify.svelte";
+  import { announce, clicked, seen } from "$lib/notify.svelte";
+  import { heedAsks, openAsks } from "$lib/askNotices.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
   import {
     activeShell,
@@ -248,7 +249,13 @@
       .onSettingsRequest((request) => void settingsRequested(request))
       .then((unlisten) => offs.push(unlisten));
     core()
-      .onBrowserFocused(() => browserFocused())
+      .onBrowserFocused(() => {
+        browserFocused();
+        tabFocused();
+      })
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onWindowFocus((focused) => windowFocused(focused))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginState((event) => pluginStateChanged(event))
@@ -324,6 +331,11 @@
     offs.push(primeChime());
     onWaiting(announce);
     offs.push(() => onWaiting(null));
+    // A click on one of the app's notifications brings the window forward,
+    // and the window goes to what it was about.
+    core()
+      .onNoticeClicked(clicked)
+      .then((unlisten) => offs.push(unlisten));
     return () => offs.forEach((off) => off());
   });
 
@@ -342,13 +354,17 @@
     untrack(() => lookAtWork(sessions.all));
   });
 
-  // Looking at a session is what reads it: the one on screen, in a window
-  // that has focus. Either changing is a look, except that a session marked
-  // unread while on screen is read only once another has been on screen.
+  // Looking at a session is what reads it, and what takes away the
+  // notification that it waits: the one on screen, in a window that has
+  // focus. Either changing is a look, except that a session marked unread
+  // while on screen is read only once another has been on screen.
   $effect(() => {
     const key = sessions.active;
     onScreenNow(key);
-    if (attention.focused && key !== null) viewed(key);
+    if (attention.focused && key !== null) {
+      viewed(key);
+      untrack(() => seen(key));
+    }
   });
 
   // Switching to a session puts its viewer back as it was left, then opens
@@ -401,6 +417,13 @@
 
   $effect(() => {
     badge(unreadCount());
+  });
+
+  // A question that waits on the user is told of through the system when
+  // it comes while the window is behind, and taken away once it is over.
+  $effect(() => {
+    const now = openAsks();
+    untrack(() => heedAsks(now));
   });
 
   // The native layer takes a chord back from a browser tab's page on the

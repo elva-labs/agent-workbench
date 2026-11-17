@@ -1206,6 +1206,16 @@ export function identified(
   if (title !== null) named(session.key, title);
 }
 
+/** Keeps the name a session's row goes by under its id, for when the row
+    has gone: the title it has, or the name its caller gave it, and never
+    its number, nor a name the user's or the workbench's own would read
+    as. */
+export function keepName(session: Session) {
+  if (session.id === null) return;
+  const name = session.title ?? givenName(session);
+  if (name !== null && name.trim() !== "" && !reservedName(name)) rememberName(session.id, name);
+}
+
 /** The agent's index calls the session this. Taken as it is, unlike a
     terminal title, which carries the agent's own name around it. */
 export function named(key: string, title: string) {
