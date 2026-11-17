@@ -2,13 +2,16 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   BAND,
-  FILL,
+  CALM,
   FIRST,
+  FULL_TINT,
   GRAIN_SPECK,
   HARMONIES,
   LEAST_CONTRAST,
+  PAD,
   READY_MADE,
-  TERMINAL_STRENGTH,
+  SLIDER,
+  TEXT_ROOM,
   TEXT_TOKENS,
   addDot,
   checkBackground,
@@ -21,18 +24,26 @@ import {
   groundsOf,
   hexToRgb,
   labToRgb,
+  lowestText,
   luminance,
   mix,
   moveDot,
+  padColour,
+  padLightness,
   paintOf,
+  positionOf,
   ratio,
   readyMadeOf,
   removeDot,
   rgbToLab,
   rounded,
   sameBackground,
+  strengthAt,
+  strengthPercent,
+  throughAt,
   toneOf,
   validBackgrounds,
+  vividAt,
   withHarmony,
   type Appearance,
   type Background,
@@ -148,9 +159,9 @@ describe("a background as the rules keep it", () => {
     expect(validBackgrounds([1])).toEqual({});
   });
 
-  it("is kept in whole degrees and hundredths", () => {
-    const kept = rounded(background([[359.7, 0.333]], { strength: 0.555, grain: 0.004 }));
-    expect(kept).toEqual({ dots: [{ hue: 0, chroma: 0.33 }], harmony: "single", strength: 0.56, grain: 0 });
+  it("is kept in whole degrees, thousandths for the strength and hundredths for the rest", () => {
+    const kept = rounded(background([[359.7, 0.333]], { strength: 0.5555, grain: 0.004 }));
+    expect(kept).toEqual({ dots: [{ hue: 0, chroma: 0.33 }], harmony: "single", strength: 0.556, grain: 0 });
     expect(sameBackground(background([[10.2, 0.5]]), background([[10, 0.501]]))).toBe(true);
     expect(sameBackground(background([[10, 0.5]]), null)).toBe(false);
   });
@@ -160,8 +171,10 @@ describe("a background as the rules keep it", () => {
     const own = { dots: lagoon.dots, harmony: lagoon.harmony, strength: 0.3, grain: 0 };
     expect(readyMadeOf(own)).toBe("lagoon");
     expect(readyMadeOf(moveDot(own, 1, { hue: 10, chroma: 0.8 }))).toBeNull();
-    expect(describeBackground(own)).toBe("Lagoon, strength 30%, grain 0%");
-    expect(describeBackground(background([[10, 0.4], [40, 1]]))).toBe("2 colours, strength 60%, grain 25%");
+    // The strength in words is where the slider shows it.
+    expect(describeBackground(own)).toBe("Lagoon, strength 5%, grain 0%");
+    expect(describeBackground(background([[10, 0.4], [40, 1]]))).toBe("2 colours, strength 10%, grain 25%");
+    expect(describeBackground({ ...own, strength: 1 })).toBe("Lagoon, strength 100%, grain 0%");
     expect(describeBackground(null)).toBe("None");
   });
 });
@@ -235,6 +248,70 @@ describe("moving the dots", () => {
   });
 });
 
+describe("the Strength slider", () => {
+  it("runs from the least strength kept to the colours themselves, each place one strength and back", () => {
+    expect(positionOf(0)).toBe(0);
+    expect(positionOf(1)).toBe(1);
+    expect(strengthAt(0)).toBe(0.1);
+    expect(strengthAt(1)).toBe(1);
+    for (let place = strengthPercent(0.1); place <= 100; place++) {
+      // A strength kept in thousandths shows at the place it was set from.
+      const kept = Math.round(strengthAt(place / 100) * 1000) / 1000;
+      expect(strengthPercent(kept), `${place}%`).toBe(place);
+    }
+    for (let at = 1; at < SLIDER.length; at++) {
+      expect(SLIDER[at][0]).toBeGreaterThan(SLIDER[at - 1][0]);
+      expect(SLIDER[at][1]).toBeGreaterThan(SLIDER[at - 1][1]);
+    }
+  });
+
+  it("shows a background kept before at the place its picture now sits", () => {
+    const shown = (strength: number) => strengthPercent(strength);
+    expect([0.1, 0.25, 0.5, 0.6, 0.75, 0.8, 0.85, 0.9, 0.95, 1].map(shown)).toEqual([2, 4, 8, 10, 16, 33, 50, 66, 83, 100]);
+  });
+
+  /** How far the window's ground has come on its way from no background,
+      at each of N + 1 strengths, as a share of the whole way: measured in
+      OKLab, over every hue at the rim, on one chrome. */
+  function travelled(tone: Appearance, N: number): number[] {
+    const ground = deepOf(coloursOf("teal", tone));
+    const sums = new Array<number>(N + 1).fill(0);
+    for (let hue = 0; hue < 360; hue += 30) {
+      const at = (strength: number) =>
+        rgbToLab(mix(ground, labToRgb(dotColour({ hue, chroma: 0.9 }, tone, strength)), throughAt(strength)));
+      let before = at(0);
+      for (let i = 1; i <= N; i++) {
+        const now = at(i / N);
+        sums[i] += Math.hypot(now[0] - before[0], now[1] - before[1], now[2] - before[2]);
+        before = now;
+      }
+    }
+    for (let i = 1; i <= N; i++) sums[i] += sums[i - 1];
+    return sums.map((sum) => sum / sums[N]);
+  }
+
+  it("changes the picture by about as much at every step, light and dark taken together, with no dead stretch and no jump", () => {
+    const N = 1000;
+    const ways = { light: travelled("light", N), dark: travelled("dark", N) };
+    const read = (way: number[], strength: number) => way[Math.round(strength * N)];
+    for (let place = 0.1; place <= 1.0001; place += 0.1) {
+      // The slider's first tenth starts from no background at all.
+      const [from, to] = [place < 0.15 ? 0 : strengthAt(place - 0.1), strengthAt(place)];
+      const light = read(ways.light, to) - read(ways.light, from);
+      const dark = read(ways.dark, to) - read(ways.dark, from);
+      const said = `from ${Math.round((place - 0.1) * 100)}% to ${Math.round(place * 100)}%`;
+      // A tenth of the slider is about a tenth of the way, on the average.
+      expect((light + dark) / 2, said).toBeGreaterThan(0.085);
+      expect((light + dark) / 2, said).toBeLessThan(0.115);
+      // On either chrome it is never under half nor over half again as much.
+      for (const [tone, step] of [["light", light], ["dark", dark]] as const) {
+        expect(step, `${tone} ${said}`).toBeGreaterThan(0.05);
+        expect(step, `${tone} ${said}`).toBeLessThan(0.15);
+      }
+    }
+  });
+});
+
 describe("the ready-made backgrounds", () => {
   it("hold colours that belong together: none spread wider than a third of a turn from the first", () => {
     for (const ready of READY_MADE) {
@@ -275,6 +352,66 @@ describe("the colours a background paints", () => {
         }
       }
     }
+  });
+
+  it("paint a background as they always have up to CALM: the calm tint let through by the strength", () => {
+    const colours = coloursOf("rose", "dark");
+    for (const strength of [0.1, 0.25, 0.5, CALM]) {
+      expect(throughAt(strength)).toBe(strength);
+      expect(vividAt(strength)).toBe(0);
+      const painted = paintOf(background([[350, 0.9], [40, 0.9], [300, 0.9]], { strength }), "modern", colours);
+      painted.colours.forEach((lab, at) => {
+        expect(lab).toEqual(dotColour(painted.colours.length === 3 ? [{ hue: 350, chroma: 0.9 }, { hue: 40, chroma: 0.9 }, { hue: 300, chroma: 0.9 }][at] : { hue: 0, chroma: 0 }, "dark"));
+      });
+      expect(painted.grounds.side).toMatch(new RegExp(`, ${(1 - strength).toFixed(3)}\\)$`));
+    }
+  });
+
+  it("show the calm tint whole by FULL_TINT and rise to the pad's colours at the top", () => {
+    expect(throughAt(FULL_TINT)).toBe(1);
+    expect(throughAt(1)).toBe(1);
+    expect(vividAt(FULL_TINT)).toBe(0);
+    expect(vividAt(1)).toBe(1);
+    for (const tone of ["light", "dark"] as Appearance[]) {
+      for (let hue = 0; hue < 360; hue += 30) {
+        const dot = { hue, chroma: 0.9 };
+        expect(dotColour(dot, tone, FULL_TINT)).toEqual(dotColour(dot, tone));
+        expect(labToRgb(dotColour(dot, tone, 1)).map(Math.round)).toEqual(hexToRgb(padColour(dot, tone)));
+        expect(dotColour(dot, tone, 1)[0]).toBeCloseTo(padLightness(hue, tone), 6);
+        // On the way the lightness moves steadily from the one to the other.
+        let before = BAND[tone].lightness;
+        for (const strength of [0.8, 0.85, 0.9, 0.95, 1]) {
+          const now = dotColour(dot, tone, strength)[0];
+          expect(tone === "dark" ? now > before : now < before).toBe(true);
+          before = now;
+        }
+      }
+    }
+  });
+
+  it("rise to as light as each hue is fullest, so yellows and limes read clean, within the pad's floor and cap", () => {
+    for (const tone of ["light", "dark"] as Appearance[]) {
+      const { lightness, most } = PAD[tone];
+      let before = padLightness(0, tone);
+      for (let hue = 0; hue <= 360; hue += 1) {
+        const now = padLightness(hue, tone);
+        expect(now).toBeGreaterThanOrEqual(lightness);
+        expect(now).toBeLessThanOrEqual(most);
+        // It follows the hue smoothly round the wheel.
+        expect(Math.abs(now - before)).toBeLessThan(0.02);
+        before = now;
+      }
+      // Pinks, reds, blues and violets sit at the floor; yellows and limes
+      // are lifted to where they are fullest, which at the floor they are
+      // far from.
+      for (const hue of [355, 20, 260, 305]) expect(padLightness(hue, tone)).toBe(lightness);
+      for (const hue of [100, 112, 125]) expect(padLightness(hue, tone)).toBeGreaterThan(lightness + 0.05);
+    }
+    // In dark the Zen pick's lime is light enough to read as lime: as much
+    // green as red, and well over half of each.
+    const lime = labToRgb(dotColour({ hue: 112, chroma: 1 }, "dark", 1));
+    expect(lime[1]).toBeGreaterThan(200);
+    expect(lime[0]).toBeGreaterThan(190);
   });
 
   it("take the band of the chrome they lie on, whatever the appearance is called", () => {
@@ -412,7 +549,13 @@ function shown(painted: ReturnType<typeof paintOf>, ground: Rgb, u: number, v: n
       : speck < 0
         ? (colour.map((value) => value * (1 - alpha)) as Rgb)
         : (colour.map((value) => value + (255 - value) * alpha) as Rgb);
-  return mix(ground, specked, painted.strength);
+  return mix(ground, specked, painted.through);
+}
+
+/** A paint the stylesheets lay as rgba(), as a colour and an opacity. */
+function rgbaOf(css: string): [Rgb, number] {
+  const [r, g, b, a] = css.match(/[\d.]+/g)!.map(Number);
+  return [[r, g, b], a];
 }
 
 /** Relative luminance as WCAG reckons it, worked out here apart from the
@@ -462,12 +605,11 @@ function lowestContrast(
 ) {
   const low: Record<string, number> = {};
   const texts = TEXT_TOKENS.map((token) => [token, luminance(hexToRgb(painted.text[token]))] as const);
-  const fills: [Rgb, number][] = [
-    [hexToRgb(colours.ink), FILL.ink],
-    [hexToRgb(colours.accent), FILL.accent],
-  ];
+  void colours;
+  // The fills a hovered and a chosen row lay, as the stylesheets have them.
+  const fills: [Rgb, number][] = [rgbaOf(painted.fill), rgbaOf(painted.fillAccent)];
   const alpha = painted.grain * GRAIN_SPECK;
-  const strength = painted.strength;
+  const strength = painted.through;
   let darkest = 1;
   let lightest = 0;
   // The layers over one point, in plain numbers: this runs some millions
@@ -525,7 +667,7 @@ describe("the guard", () => {
 
   for (const [palette, appearance] of SWEPT) {
     for (const look of LOOKS) {
-      for (const strength of [0.1, 0.3, 1]) {
+      for (const strength of [0.1, 0.3, 0.6, FULL_TINT]) {
         it(`keeps every text at 4.5:1 or more, the way it already leans, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
           const colours = coloursOf(palette, appearance, THEMES);
           const texts = textGrounds(colours, look);
@@ -543,6 +685,67 @@ describe("the guard", () => {
                 throw new Error(
                   `${token} at ${low[token].toFixed(3)}:1, ${own.toFixed(3)} to ${now.toFixed(3)}, with ${JSON.stringify(choice.dots)} at ${strength}`,
                 );
+              }
+              // The calm tint keeps the palette's text: a text that reads
+              // as it is stays as it is, and one that does not is drawn
+              // just strong enough, never stepped from black or white.
+              const said = `${token} with ${JSON.stringify(choice.dots)} at ${strength}`;
+              if (painted.asked[token] >= LEAST_CONTRAST + 0.05) expect(painted.text[token], said).toBe(colours[token]);
+              else expect(painted.contrast[token], said).toBeLessThan(LEAST_CONTRAST + 0.25);
+            }
+          }
+        });
+      }
+
+      // Above the calm tint the colours are the user's to make too strong:
+      // nothing is held back, and the text has the most contrast there is.
+      // The stretch where a dark chrome's text turns from white to black
+      // runs between 0.85 and 0.95, so it is read a step at a time.
+      for (const strength of [0.8, 0.85, 0.9, 0.95, 1]) {
+        it(`gives every text 4.5:1 where black or white can, and else the better of them, ${palette}, ${look}, ${appearance}, at ${strength * 100}%`, () => {
+          const colours = coloursOf(palette, appearance, THEMES);
+          const texts = textGrounds(colours, look);
+          const ground = (luminance(hexToRgb(colours.bg)) + luminance(hexToRgb(colours.surface))) / 2;
+          const lighter = luminance(hexToRgb(colours.ink)) > ground;
+          const ends = { black: "#000000", white: "#ffffff" };
+          for (const choice of choices) {
+            const painted = paintOf({ ...choice, strength }, look, colours);
+            const low = lowestContrast(painted, texts, colours);
+            const reach = lowestContrast({ ...painted, text: { ...painted.text, ink: ends.black, "ink-2": ends.white } }, texts, colours);
+            const black = reach.ink;
+            const white = reach["ink-2"];
+            const lean = lighter ? white : black;
+            const best = Math.max(black, white);
+            for (const token of TEXT_TOKENS) {
+              const own = luminance(hexToRgb(colours[token]));
+              const now = luminance(hexToRgb(painted.text[token]));
+              const said = `${token} at ${low[token].toFixed(3)}:1 with ${JSON.stringify(choice.dots)} at ${strength}`;
+              // It turns from the palette's lean only where that end cannot
+              // hold 4.5:1, a hair of the guard's coarser grid allowed.
+              if ((lighter ? now < own : now > own) && lean >= LEAST_CONTRAST + 0.1) throw new Error(`${said} turned`);
+              // It holds 4.5:1 or comes within a hair of the best end.
+              if (low[token] < Math.min(LEAST_CONTRAST, best) - 0.1) throw new Error(`${said}, the best end reaches ${best.toFixed(3)}`);
+            }
+            // Where the ink is drawn as an end itself, the text keeps its
+            // steps: the secondary text quieter than the ink, the quiet text
+            // quieter again, and the accent, add and remove plainly apart
+            // from the ink.
+            if ((painted.text.ink === ends.black || painted.text.ink === ends.white) && painted.contrast.ink >= TEXT_ROOM * (LEAST_CONTRAST + 0.05)) {
+              const said = `with ${JSON.stringify(choice.dots)} at ${strength}`;
+              const c = painted.contrast;
+              if (c.ink < c["ink-2"] * 1.05 || c["ink-2"] < c["ink-3"] * 1.03) {
+                throw new Error(`steps of ${c.ink.toFixed(2)}, ${c["ink-2"].toFixed(2)} and ${c["ink-3"].toFixed(2)} ${said}`);
+              }
+              for (const token of ["accent", "add", "del"] as const) {
+                // A palette whose accent is a grey, as mono's is, has no
+                // colour to keep it apart.
+                const [, pa, pb] = rgbToLab(hexToRgb(colours[token]));
+                if (Math.hypot(pa, pb) < 0.04) continue;
+                const [a1, b1] = [rgbToLab(hexToRgb(painted.text[token])), rgbToLab(hexToRgb(painted.text.ink))];
+                const apart = Math.hypot(a1[0] - b1[0], a1[1] - b1[1], a1[2] - b1[2]);
+                // Twice what the eye just tells apart, at the least: near white
+                // or black the screen has little colour left to keep.
+                if (apart < 0.04) throw new Error(`${token} ${apart.toFixed(3)} from the ink ${said}`);
               }
             }
           }
@@ -567,22 +770,108 @@ describe("the guard", () => {
 
   it("leaves a text that already holds as it is, and draws one that does not a step stronger", () => {
     const colours = coloursOf("teal", "light");
-    const painted = paintOf(background([[200, 1]], { strength: 1 }), "modern", colours);
+    const painted = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", colours);
     expect(painted.text.ink).toBe(colours.ink);
     expect(painted.asked["ink-3"]).toBeLessThan(LEAST_CONTRAST);
     expect(painted.contrast["ink-3"]).toBeGreaterThanOrEqual(LEAST_CONTRAST);
     expect(luminance(hexToRgb(painted.text["ink-3"]))).toBeLessThan(luminance(hexToRgb(colours["ink-3"])));
-    const dark = paintOf(background([[200, 1]], { strength: 1 }), "modern", coloursOf("teal", "dark"));
+    const dark = paintOf(background([[200, 1]], { strength: FULL_TINT }), "modern", coloursOf("teal", "dark"));
     expect(luminance(hexToRgb(dark.text["ink-3"]))).toBeGreaterThan(luminance(hexToRgb(DEFAULTS.dark["ink-3"])));
   });
 
-  it("holds the terminal look at half strength with no grain", () => {
+  // What the calm tint paints for text, as the guard drew it before
+  // strength could rise above it: the default palette at the strength a
+  // new background starts at, in light and dark, at the default grain and
+  // the most. The step from an end that vivid colours take never reaches
+  // in here.
+  const CALM_TEXT: Record<string, string[]> = {
+    "lagoon light 0.25": ["#14181a", "#4e5959", "#515959", "#13625c", "#2a623a", "#953844", "#6d5318"],
+    "lagoon light 1": ["#14181a", "#465150", "#495050", "#115854", "#265834", "#87323e", "#624b16"],
+    "lagoon dark 0.25": ["#e6eae9", "#a3aeac", "#949e9d", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "lagoon dark 1": ["#e6eae9", "#a4afad", "#a6aead", "#58c0b4", "#7fbf8c", "#e498a2", "#d8b45e"],
+    "amber light 0.25": ["#14181a", "#4e5959", "#515858", "#13615c", "#2a623a", "#943844", "#6d5318"],
+    "amber light 1": ["#14181a", "#465050", "#494f4f", "#115753", "#265834", "#86323e", "#624b16"],
+    "amber dark 0.25": ["#e6eae9", "#a3aeac", "#8f9998", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "amber dark 1": ["#e6eae9", "#a3aeac", "#a1a9a8", "#58c0b4", "#7fbf8c", "#e2919c", "#d8b45e"],
+    "sky light 0.25": ["#14181a", "#4e5a59", "#525959", "#13625d", "#2b633b", "#963845", "#6e5419"],
+    "sky light 1": ["#14181a", "#475151", "#495150", "#115854", "#265935", "#87333e", "#634c16"],
+    "sky dark 0.25": ["#e6eae9", "#a3aeac", "#949d9c", "#58c0b4", "#7fbf8c", "#e08894", "#d8b45e"],
+    "sky dark 1": ["#e6eae9", "#a4aeac", "#a6aead", "#58c0b4", "#7fbf8c", "#e497a1", "#d8b45e"],
+  };
+
+  it("paints the calm tint's text as it always has, at the strength a new background starts at", () => {
+    const shapes: Record<string, [number, number][]> = {
+      lagoon: [[192, 0.9], [252, 0.8]],
+      amber: [[30, 1]],
+      sky: [[200, 1]],
+    };
+    for (const [key, expected] of Object.entries(CALM_TEXT)) {
+      const [name, appearance, grain] = key.split(" ");
+      const painted = paintOf(
+        background(shapes[name], { strength: FIRST.strength, grain: Number(grain) }),
+        "modern",
+        coloursOf("teal", appearance as Appearance),
+      );
+      expect(TEXT_TOKENS.map((token) => painted.text[token]), key).toEqual(expected);
+    }
+  });
+
+  it("keeps the text's steps on vivid chrome: the ink an end itself, the secondary and quiet text steps toward the ground", () => {
+    const owner = background([[355, 0.9], [45, 0.9], [305, 0.9]], { harmony: "analogous", strength: 1 });
+    const shown = (strength: number, appearance: Appearance) =>
+      paintOf({ ...owner, strength }, "modern", coloursOf("rose", appearance), 0.11);
+    for (const [strength, appearance, end] of [
+      [1, "dark", "#000000"],
+      [strengthAt(0.5), "dark", "#ffffff"],
+      [1, "light", "#000000"],
+      [strengthAt(0.5), "light", "#000000"],
+    ] as const) {
+      const painted = shown(strength, appearance);
+      const c = painted.contrast;
+      const said = `${appearance} at ${strengthPercent(strength)}%`;
+      expect(painted.text.ink, said).toBe(end);
+      // Each a step quieter than the one before, the quiet text at the least
+      // that reads.
+      expect(c.ink, said).toBeGreaterThan(c["ink-2"] * 1.1);
+      expect(c["ink-2"], said).toBeGreaterThan(c["ink-3"] * 1.1);
+      expect(c["ink-3"], said).toBeGreaterThanOrEqual(LEAST_CONTRAST);
+      expect(c["ink-3"], said).toBeLessThan(LEAST_CONTRAST + 0.2);
+      // The quieter text takes on the ground's colour as it steps toward it.
+      expect(painted.text["ink-2"], said).not.toMatch(/^#(..)\1\1$/);
+    }
+    // Where even the better end only just holds, nothing is stepped: every
+    // text is drawn as strong as the colours allow.
+    const tight = shown(strengthAt(0.75), "dark");
+    expect(new Set(TEXT_TOKENS.map((token) => tight.text[token])).size).toBe(1);
+  });
+
+  it("turns the text on colours too light for white in dark to black, with chips and a chosen row to match", () => {
+    const colours = coloursOf("rose", "dark");
+    const painted = paintOf(background([[62, 1], [112, 1], [12, 1]], { strength: 1 }), "modern", colours);
+    for (const token of TEXT_TOKENS) {
+      expect(luminance(hexToRgb(painted.text[token])), token).toBeLessThan(luminance(hexToRgb(colours[token])));
+    }
+    expect(painted.text.ink).toBe("#000000");
+    expect(lowestText(painted)).toBeGreaterThanOrEqual(LEAST_CONTRAST);
+    // A chip and a chosen row lay white over the colours, and a glyph on
+    // the accent reads against the darker accent.
+    expect(painted.patch).toMatch(/^rgba\(255, 255, 255, /);
+    expect(painted.fillAccent).toMatch(/^rgba\(255, 255, 255, /);
+    expect(ratio(luminance(hexToRgb(painted.onAccent)), luminance(hexToRgb(painted.text.accent)))).toBeGreaterThanOrEqual(3);
+    // In the calm range they are the palette's own.
+    const calm = paintOf(background([[62, 1], [112, 1], [12, 1]], { strength: FULL_TINT }), "modern", colours);
+    expect(calm.patch).toBe(colours.surface);
+    expect(calm.onAccent).toBe(colours.bg);
+  });
+
+  it("takes the full strength in the terminal look too, with no grain", () => {
     const painted = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "terminal", coloursOf("rose", "dark"));
-    expect(painted.strength).toBe(TERMINAL_STRENGTH);
+    expect(painted.through).toBe(1);
+    expect(painted.colours[0][0]).toBeGreaterThan(BAND.dark.lightness + 0.1);
     expect(painted.grain).toBe(0);
     expect(Object.keys(painted.grounds).sort()).toEqual(["frame", "status"]);
     const modern = paintOf(background([[40, 1]], { strength: 0.9, grain: 1 }), "modern", coloursOf("rose", "dark"));
-    expect(modern.strength).toBe(0.9);
+    expect(modern.colours).toEqual(painted.colours);
     expect(Object.keys(modern.grounds).sort()).toEqual(["side", "status", "surf"]);
   });
 });
@@ -615,7 +904,10 @@ describe("the modern look's ground", () => {
 
 describe("the lines on a background", () => {
   const alpha = (css: string) => Number(/, ([\d.]+)\)$/.exec(css)![1]);
-  const over = (under: Rgb, ink: Rgb, css: string) => mix(under, ink, alpha(css));
+  const over = (under: Rgb, css: string) => {
+    const [ink, amount] = rgbaOf(css);
+    return mix(under, ink, amount);
+  };
 
   for (const look of LOOKS) {
     for (const appearance of APPEARANCES) {
@@ -628,41 +920,51 @@ describe("the lines on a background", () => {
               ? mix(hexToRgb(colours.surface), ink, 0.18)
               : hexToRgb(colours.rule);
           const grounds = groundsOf(colours, look);
-          for (const choice of [background([[30, 1]]), background([[192, 1], [300, 1]], { strength: 1 })]) {
+          for (const choice of [
+            background([[30, 1]]),
+            background([[192, 1], [300, 1]], { strength: FULL_TINT }),
+            background([[62, 1], [112, 1], [12, 1]], { strength: 1 }),
+          ]) {
             const painted = paintOf(choice, look, colours);
             for (const ground of Object.values(grounds)) {
               const target = ratio(luminance(today), luminance(ground!));
               for (let i = 0; i <= 10; i++) {
                 const under = shown(painted, ground!, i / 10, i / 10, 0);
-                const line = over(under, ink, painted.line);
+                const line = over(under, painted.partLine);
                 expect(ratio(luminance(line), luminance(under))).toBeGreaterThanOrEqual(target - 0.01);
               }
             }
             // On a solid surface the line is at least today's.
             const surface = hexToRgb(colours.surface);
-            const onSurface = ratio(luminance(over(surface, ink, painted.line)), luminance(surface));
+            const onSurface = ratio(luminance(over(surface, painted.line)), luminance(surface));
             expect(onSurface).toBeGreaterThanOrEqual(ratio(luminance(today), luminance(surface)) - 0.01);
             expect(alpha(painted.lineStrong)).toBeGreaterThanOrEqual(alpha(painted.line));
+            expect(alpha(painted.partLineStrong)).toBeGreaterThanOrEqual(alpha(painted.partLine));
+            // While the text keeps the palette's lean, every line is one paint.
+            if (painted.patch === colours.surface) expect(painted.partLine).toBe(painted.line);
           }
         }
       });
     }
   }
 
-  it("stay quieter than the quiet text and leave the accent of a control above 3:1", () => {
+  it("stay quieter than the quiet text, and in the calm range leave the accent of a control above 3:1", () => {
     for (const appearance of APPEARANCES) {
       for (const palette of PALETTES) {
         const colours = coloursOf(palette, appearance);
-        const ink = hexToRgb(colours.ink);
         const grounds = groundsOf(colours, "modern");
-        const painted = paintOf(background([[192, 1], [300, 1]], { strength: 1, grain: 1 }), "modern", colours);
-        for (const ground of Object.values(grounds)) {
-          for (let i = 0; i <= 10; i++) {
-            const under = shown(painted, ground!, i / 10, 1 - i / 10, 0);
-            const line = luminance(over(under, ink, painted.line));
-            const quiet = luminance(hexToRgb(painted.text["ink-3"]));
-            expect(ratio(quiet, line)).toBeGreaterThan(2);
-            expect(ratio(luminance(hexToRgb(colours.accent)), luminance(under))).toBeGreaterThanOrEqual(3);
+        for (const strength of [FULL_TINT, 1]) {
+          const painted = paintOf(background([[192, 1], [300, 1]], { strength, grain: 1 }), "modern", colours);
+          for (const ground of Object.values(grounds)) {
+            for (let i = 0; i <= 10; i++) {
+              const under = shown(painted, ground!, i / 10, 1 - i / 10, 0);
+              const line = luminance(over(under, painted.partLine));
+              const quiet = luminance(hexToRgb(painted.text["ink-3"]));
+              expect(ratio(quiet, line)).toBeGreaterThan(2);
+              if (strength === FULL_TINT) {
+                expect(ratio(luminance(hexToRgb(colours.accent)), luminance(under))).toBeGreaterThanOrEqual(3);
+              }
+            }
           }
         }
       }

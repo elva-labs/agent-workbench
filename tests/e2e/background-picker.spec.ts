@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, backgroundAtRest, installFakeCore } from "./fake";
 
 /**
  * The background picker by pointer: placing a colour on the pad and
@@ -59,6 +59,10 @@ test("places a colour where the pad is clicked, and keeps it", async ({ page }) 
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" });
 });
 
+/** The ground the window paints behind the sessions pane, as worked out. */
+const ground = (page: Page) =>
+  page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--tint-backdrop").trim());
+
 test("repaints the window as a dot is dragged, and keeps it when let go", async ({ page }) => {
   await open(page, { backgrounds: { teal: { dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" } } });
   const centre = await pad(page);
@@ -67,11 +71,12 @@ test("repaints the window as a dot is dragged, and keeps it when let go", async 
   await page.mouse.down();
   // Straight down from the centre is a quarter turn of hue.
   await page.mouse.move(centre.x, centre.y + centre.r * 0.8, { steps: 6 });
-  const painting = await page.evaluate(() => document.getElementById("workbench-background")?.textContent ?? "");
+  await expect.poll(() => ground(page)).not.toBe("");
+  const painting = await ground(page);
   expect(await kept(page)).toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }] });
   await page.mouse.move(centre.x, centre.y + centre.r * 0.9);
-  const later = await page.evaluate(() => document.getElementById("workbench-background")?.textContent ?? "");
-  expect(later).not.toBe(painting);
+  // Painted at the next frame, wherever the pointer is by then.
+  await expect.poll(() => ground(page)).not.toBe(painting);
   await page.mouse.up();
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 90, chroma: 0.9 }] });
   // Past the rim the dot stays on it, and says why.
@@ -83,6 +88,42 @@ test("repaints the window as a dot is dragged, and keeps it when let go", async 
   expect(Math.hypot(held.x, held.y)).toBeCloseTo(1, 1);
   await page.mouse.up();
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 90, chroma: 1 }] });
+});
+
+// In WebKit a stylesheet changed makes the whole window's style and layout
+// be worked out again, which with a day's work open held a step of a drag
+// for most of 30 ms: a colour being dragged is laid on the root, and the
+// sheet is written once, when it is let go.
+test("paints a dragged colour without writing the background's sheet, and writes it once let go", async ({ page }) => {
+  await open(page, { backgrounds: { teal: { dots: [{ hue: 0, chroma: 0.5 }], harmony: "single" } } });
+  await backgroundAtRest(page);
+  await page.evaluate(() => {
+    const w = window as unknown as { __sheetWrites: number };
+    w.__sheetWrites = 0;
+    new MutationObserver((changes) => (w.__sheetWrites += changes.length)).observe(
+      document.getElementById("workbench-background")!,
+      { childList: true, characterData: true, subtree: true },
+    );
+  });
+  const writes = () => page.evaluate(() => (window as unknown as { __sheetWrites: number }).__sheetWrites);
+  const onRoot = () => page.evaluate(() => document.documentElement.style.getPropertyValue("--tint-backdrop"));
+  const centre = await pad(page);
+  const start = await dotAt(page, 0);
+  await page.mouse.move(centre.x + start.x * centre.r, centre.y + start.y * centre.r);
+  await page.mouse.down();
+  for (let step = 1; step <= 12; step++) {
+    const angle = (step / 12) * Math.PI;
+    await page.mouse.move(centre.x + Math.cos(angle) * centre.r * 0.7, centre.y + Math.sin(angle) * centre.r * 0.7);
+  }
+  await expect.poll(onRoot).not.toBe("");
+  const during = await onRoot();
+  await page.mouse.move(centre.x - centre.r * 0.7, centre.y - centre.r * 0.2);
+  await expect.poll(onRoot).not.toBe(during);
+  expect(await writes()).toBe(0);
+  await page.mouse.up();
+  await expect.poll(writes).toBeGreaterThan(0);
+  await expect.poll(onRoot).toBe("");
+  await expect.poll(() => kept(page)).not.toMatchObject({ dots: [{ hue: 0, chroma: 0.5 }] });
 });
 
 test("spreads a harmony from the first colour, and carries the others with it", async ({ page }) => {
@@ -155,16 +196,35 @@ test("chooses a ready-made background keeping the strength, and None takes it aw
   await expect.poll(() => kept(page)).toBeNull();
 });
 
-test("sets the strength and grain, and holds the terminal look to half strength with no grain", async ({ page }) => {
+test("sets the strength and grain, and the terminal look takes the strength with no grain", async ({ page }) => {
   await open(page, { backgrounds: { teal: { dots: [{ hue: 200, chroma: 0.8 }], harmony: "single", strength: 0.6, grain: 0.25 } } });
+  // The slider is even to the eye; 90% along it keeps a strength of 0.97.
   await page.getByTestId("background-strength").fill("90");
-  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.9 });
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.97 });
+  await expect(page.getByTestId("background-strength-value")).toHaveText("90%");
   await page.getByTestId("background-grain").fill("0");
   await expect.poll(() => kept(page)).toMatchObject({ grain: 0 });
   await page.getByTestId("look-terminal").click();
   await expect(page.getByTestId("background-grain")).toBeDisabled();
-  await expect(page.getByTestId("background-picker")).toContainText("90%, held at 50% here");
+  await expect(page.getByTestId("background-picker")).toContainText("90%");
+  await expect(page.getByTestId("background-picker")).not.toContainText("held at");
   await expect(page.getByTestId("background-picker")).toContainText("None in this look");
+});
+
+test("says quietly when text on the colours reads under 4.5 to 1, and shows them all the same", async ({ page }) => {
+  await open(page, {
+    appearance: "dark",
+    backgrounds: { teal: { dots: [{ hue: 200, chroma: 0.9 }], harmony: "single", strength: 0.821, grain: 1 } },
+  });
+  await expect(page.getByTestId("background-strength-value")).toHaveText("40%");
+  await expect(page.getByTestId("background-low")).toHaveCount(0);
+  await page.getByTestId("background-strength").fill("60");
+  await expect(page.getByTestId("background-low")).toHaveText(
+    "Text on it reads at 3.5 to 1 in dark, under the 4.5 to 1 that reads easily.",
+  );
+  // The colours are not held back for it: the window paints what is kept.
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.881 });
+  await expect(page.getByTestId("background-note")).toContainText("Text on it is drawn as clear as the colours allow.");
 });
 
 test("each palette has a background of its own", async ({ page }) => {
@@ -218,34 +278,30 @@ test.describe("cards", () => {
     expect(await cardPainted(page)).toBe(false);
   });
 
-  test("says in plain words where the guard holds it back", async ({ page }) => {
+  test("lets the whole share through and says in plain words when a terminal colour reads under 4.5 to 1", async ({ page }) => {
     await open(page, {
       palette: "mono",
       backgrounds: { mono: { ...LAGOON, dots: [{ hue: 185, chroma: 0.85 }, { hue: 305, chroma: 0.85 }, { hue: 65, chroma: 0.85 }], harmony: "triad", strength: 1 } },
       cards: { mono: 0.25 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("100%, held at 48% in light");
-    await expect(page.getByTestId("background-cards")).toHaveAttribute("aria-valuetext", "100%, held at 48% in light");
-    await expect(page.getByTestId("background-note")).toContainText(
-      "Held at 48% in light, since more would leave a terminal colour hard to read.",
-    );
+    await expect(page.getByTestId("background-cards-value")).toHaveText("100%");
+    await expect(page.getByTestId("background-cards")).toHaveAttribute("aria-valuetext", "100%");
+    await expect(page.getByTestId("background-low")).toContainText("A terminal colour on the panes reads under 4.5 to 1 in light");
   });
 
-  test("says when in dark the cards would melt into the ground", async ({ page }) => {
-    // At full strength the ground is the background itself, so a card that
-    // let all of it through would be the ground.
+  test("says when in dark the cards barely stand off the window around them", async ({ page }) => {
+    // With the calm tint whole, a card that let all of it through would be
+    // nearly the ground.
     await open(page, {
       appearance: "dark",
-      backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 1, grain: 0.25 } },
+      backgrounds: { teal: { dots: [{ hue: 250, chroma: 0.3 }], harmony: "single", strength: 0.75, grain: 0.25 } },
       cards: { teal: 0.25 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("100%, held at 96% in dark");
-    await expect(page.getByTestId("background-note")).toContainText(
-      "Held at 96% in dark, since more would melt the cards into the ground.",
-    );
+    await expect(page.getByTestId("background-cards-value")).toHaveText("100%");
+    await expect(page.getByTestId("background-low")).toContainText("The panes barely stand off the window around them in dark.");
   });
 
-  test("says when none shows through, and leaves the window as with none asked", async ({ page }) => {
+  test("lets a share through where a terminal colour would read under 4.5 to 1, and says so", async ({ page }) => {
     // A theme whose terminal blue holds 4.5:1 on its light card by a hair.
     await open(page, {
       appearance: "light",
@@ -254,12 +310,10 @@ test.describe("cards", () => {
       backgrounds: { tight: LAGOON },
       cards: { tight: 0.2 },
     });
-    await expect(page.getByTestId("background-cards-value")).toHaveText("80%, none in light");
-    await expect(page.getByTestId("background-note")).toContainText(
-      "None shows through in light, since any would leave a terminal colour hard to read.",
-    );
-    await expect(page.locator("html")).not.toHaveAttribute("data-cards", "");
-    expect(await cardPainted(page)).toBe(false);
+    await expect(page.getByTestId("background-cards-value")).toHaveText("80%");
+    await expect(page.getByTestId("background-low")).toContainText("A terminal colour on the panes reads under 4.5 to 1 in light");
+    await expect(page.locator("html")).toHaveAttribute("data-cards", "");
+    expect(await cardPainted(page)).toBe(true);
   });
 
   test("is greyed with the reason while the system asks for more contrast", async ({ page }) => {

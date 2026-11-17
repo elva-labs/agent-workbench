@@ -119,9 +119,18 @@ test("reaches every control in order and walks the rows with the arrows", async 
   await expect(page.getByTestId("ready-fog")).toHaveAttribute("aria-checked", "true");
   await expect.poll(() => kept(page)).toMatchObject({ dots: [{ hue: 250, chroma: 0.3 }] });
 
+  // The strength moves a step of 1 along its even scale with an arrow,
+  // from 10% to 9%, and 10 with Shift.
   await page.getByTestId("background-strength").focus();
   await page.keyboard.press("ArrowLeft");
-  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.55 });
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.551 });
+  await expect(page.getByTestId("background-strength-value")).toHaveText("9%");
+  await page.keyboard.press("Shift+ArrowRight");
+  await expect(page.getByTestId("background-strength-value")).toHaveText("19%");
+  await expect.poll(() => kept(page)).toMatchObject({ strength: 0.759 });
+  // Page Up moves it a tenth of the way, as the browser moves any slider.
+  await page.keyboard.press("PageUp");
+  await expect(page.getByTestId("background-strength-value")).toHaveText(/^(28|29)%$/);
 });
 
 for (const look of ["terminal", "modern"]) {
