@@ -1198,7 +1198,8 @@ test.describe("working, and waiting for you", () => {
     await event("stop");
     await expect(named(page, "session 1")).toContainText("waiting for you");
     await named(page, "session 1").click();
-    await expect(named(page, "session 1")).toContainText("running");
+    // The hooks said the turn ended: at rest it is idle.
+    await expect(named(page, "session 1")).toContainText("idle");
   });
 
   // Claude Code says it is waiting a minute after a turn ends, and again a
