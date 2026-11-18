@@ -135,7 +135,14 @@ missing, as workflow artifacts, for trying the workflow out.
 The app was called Agent Workbench, and its casks were `agent-workbench`
 and `agent-workbench@beta`. Chord keeps the bundle identifier, so either of
 those installs the same app under its old name, sharing Chord's settings
-and stored state, and the Chord casks name both as conflicts. The tap moves
+and stored state. Each Chord cask names the other Chord cask as a conflict,
+and the old cask that the tap does not rename to it: `chord@beta` names
+`chord` and `agent-workbench`, and `chord` names `chord@beta` and
+`agent-workbench@beta`. Neither names the old cask renamed to it, since
+Homebrew follows the rename and would load that cask as the Chord cask
+itself, refusing every upgrade of it as a conflict with itself. Nothing is
+lost by it: installing over the old cask moves it onto the new token
+first. The tap moves
 a user from an old cask to the new one with a rename, which Homebrew
 follows by itself: `cask_renames.json` at the top of the tap maps the old
 token to the new, and the old cask's file is gone. `brew update` then moves

@@ -3,9 +3,13 @@
 # Prints the Homebrew cask for a published release, checksums included, to
 # put in the organisation's tap. The channel is stable, which is
 # Casks/chord.rb, or beta, which is Casks/chord@beta.rb. Both install the
-# same app, so each names the other as a conflict, and both name the casks
-# the app had under its earlier name, agent-workbench and
-# agent-workbench@beta, which install it under the same bundle identifier.
+# same app, so each names the other as a conflict, and the cask the app had
+# under its earlier name on the other channel, which installs it under the
+# same bundle identifier: chord names agent-workbench@beta and chord@beta
+# names agent-workbench. Neither names the old cask the tap renames to it,
+# which Homebrew would load as itself and refuse every upgrade over; an
+# installed old cask is moved onto the new token before anything is
+# checked.
 # The beta channel takes any version, a stable one too; the stable channel
 # refuses a pre-release.
 #
@@ -33,7 +37,7 @@ case "$channel" in
         ;;
     esac
     token="chord"
-    conflicts='"chord@beta", "agent-workbench", "agent-workbench@beta"'
+    conflicts='"chord@beta", "agent-workbench@beta"'
     livecheck=$(cat <<'RUBY'
   livecheck do
     url :url
@@ -44,7 +48,7 @@ RUBY
     ;;
   beta)
     token="chord@beta"
-    conflicts='"chord", "agent-workbench", "agent-workbench@beta"'
+    conflicts='"chord", "agent-workbench"'
     # Pre-releases count here, which the latest release never is.
     livecheck=$(cat <<'RUBY'
   livecheck do
