@@ -60,7 +60,7 @@ function xdotool(args: string[]): string {
 /** Where the window's content starts on the screen: the largest window
     carrying the app's title, since the toolkit may make smaller ones. */
 function windowOrigin(): { x: number; y: number } {
-  const ids = xdotool(["search", "--name", "Agent Workbench"]).trim().split("\n");
+  const ids = xdotool(["search", "--name", "Chord"]).trim().split("\n");
   let best = { x: 0, y: 0, area: -1 };
   for (const id of ids) {
     const shell = xdotool(["getwindowgeometry", "--shell", id]);

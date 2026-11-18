@@ -1,4 +1,4 @@
-//! Agent Workbench, the desktop app.
+//! Chord, the desktop app.
 //!
 //! The core lives in its own crate with no window attached; this is the
 //! window. Every command is a thin wrapper that routes by the path or id it

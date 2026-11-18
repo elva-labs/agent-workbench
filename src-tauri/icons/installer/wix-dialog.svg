@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 312">
+  <!-- The MSI's welcome and finish dialogs, 493 by 312: the art in the left 164, the installer's words on white to its right. -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34222d"/><stop offset="1" stop-color="#150c13"/></linearGradient></defs>
+  <rect width="493" height="312" fill="#ffffff"/>
+  <rect width="164" height="312" fill="url(#g)"/>
+  <path d="M125.65 130.53A46 46 0 1 1 62.99 74.11Z" fill="#f8f0f4"/>
+  <path d="M68.8 71.94A46 46 0 0 1 127.2 124.53Z" fill="#f28db6"/>
+</svg>

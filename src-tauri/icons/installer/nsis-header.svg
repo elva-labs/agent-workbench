@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 57">
+  <!-- The installer's header, 150 by 57, on the right of a white strip. -->
+  <rect width="150" height="57" fill="#ffffff"/>
+  <path d="M139 34.41A18 18 0 1 1 114.34 12.21Z" fill="#27161f"/>
+  <path d="M117.09 11.18A18 18 0 0 1 139.73 31.58Z" fill="#d6407a"/>
+</svg>

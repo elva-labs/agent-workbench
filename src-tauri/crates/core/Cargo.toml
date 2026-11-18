@@ -2,7 +2,7 @@
 name = "workbench-core"
 version = "1.0.0-beta.4"
 license = "MIT"
-description = "Agent Workbench core: ptys, git, watching, transcripts and hooks, with no window attached"
+description = "Chord core: ptys, git, watching, transcripts and hooks, with no window attached"
 edition = "2021"
 
 [lib]

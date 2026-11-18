@@ -1931,7 +1931,7 @@ impl Stream {
                     "response": {
                         "subtype": "error",
                         "request_id": id,
-                        "error": "not handled by Agent Workbench",
+                        "error": "not handled by Chord",
                     },
                 })
                 .to_string(),

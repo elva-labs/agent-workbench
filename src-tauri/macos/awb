@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Opens folders in Agent Workbench as projects, the current one when none is
+# Opens folders in Chord as projects, the current one when none is
 # named. The app's Homebrew cask links it onto the PATH.
 #
 #   awb [folder ...]
@@ -17,21 +17,21 @@ self=$(realpath "$0")
 app=${self%/Contents/*}
 case "$app" in
   *.app) ;;
-  *) app="Agent Workbench" ;;
+  *) app="Chord" ;;
 esac
 
 case "${1:-}" in
   help | -h | --help)
     echo "usage: awb [folder ...]"
-    echo "Opens each folder in Agent Workbench, the current one when none is named."
+    echo "Opens each folder in Chord, the current one when none is named."
     echo
     echo "  help, -h, --help  show this help"
-    echo "  -v, --version     show the version of Agent Workbench"
+    echo "  -v, --version     show the version of Chord"
     exit 0
     ;;
   -v | --version)
     if [ ! -f "$app/Contents/Info.plist" ]; then
-      echo "awb: not inside the Agent Workbench app bundle" >&2
+      echo "awb: not inside the Chord app bundle" >&2
       exit 1
     fi
     echo "awb $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"

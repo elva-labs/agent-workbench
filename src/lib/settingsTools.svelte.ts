@@ -279,7 +279,7 @@ export function describeSettings(): string {
   const names = (list: { name: string }[]) => list.map((item) => item.name).join(", ");
   const own = Object.entries(theme.themes);
   const lines = [
-    "Agent Workbench's settings, on the machine the user's window runs on.",
+    "Chord's settings, on the machine the user's window runs on.",
     "",
     `appearance: ${theme.choice} (one of ${names(APPEARANCES)})`,
     `look: ${theme.look} (one of ${names(LOOKS)})`,
