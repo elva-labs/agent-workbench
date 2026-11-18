@@ -501,6 +501,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
             "args": ["mcp"],
             "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"},
             "tools": approved,
+            "tool_timeout_sec": crate::adapter::CODEX_TOOL_SECONDS,
         })
     );
     h.stop();

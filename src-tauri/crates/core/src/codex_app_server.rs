@@ -1509,6 +1509,7 @@ impl AppServer {
                         "args": ["mcp"],
                         "env": env,
                         CODEX_TOOLS: tools,
+                        crate::adapter::CODEX_TOOL_TIMEOUT: crate::adapter::CODEX_TOOL_SECONDS,
                     }
                 }),
             );

@@ -22,6 +22,10 @@ import {
   WAKE_QUIET,
   WAKE_TAKEN,
   WAKES_MAX,
+  HOLD,
+  CALLER_GONE,
+  DROPPED_ASKING,
+  DROPPED_UNDER_WAY,
   accountWords,
   allow,
   allowedProjects,
@@ -357,6 +361,7 @@ beforeEach(() => {
   localStorage.removeItem("workbench.runs");
   localStorage.removeItem("workbench.tokens");
   localStorage.removeItem("workbench.carried");
+  localStorage.removeItem("workbench.later");
   workspace.open.push(repo(A), repo(B));
 });
 
@@ -1098,7 +1103,7 @@ describe("the account a started session runs under", () => {
       expect(conductor.asking).toBeNull();
       expect(last().content).toBeNull();
       expect(last().error).toBe(
-        "There is no account called Play. The accounts are Home, Work.",
+        "There is no account called Play. The accounts are Home, Work, and Default for the agents' own login.",
       );
       expect(forProject(A)).toHaveLength(1);
     });
@@ -1109,8 +1114,28 @@ describe("the account a started session runs under", () => {
         call("start", { project: A, prompt: "Fix it", account: "Work" }),
       );
       expect(last().error).toBe(
-        "There are no accounts in the workbench's settings; leave the account out.",
+        "There are no accounts in the workbench's settings, only Default for the agents' own login: leave the account out.",
       );
+    });
+
+    it("takes Default, in any case, for the agents' own login, which a start under a named account is asked about", async () => {
+      caller(A, "Work");
+      // From a caller under Work, in a project of the agents' own: the
+      // other login, asked about, and said.
+      for (const word of ["Default", "default", " DEFAULT "]) {
+        void handle(call("start", { project: A, prompt: "Fix it", account: word }, { session: "caller-1" }));
+        expect(conductor.asking).not.toBeNull();
+        expect(conductor.asking!.login).toEqual({ account: null, bare: null });
+        refuse();
+        await settle();
+      }
+      const row = await start({ account: "Default" });
+      expect(row.account).toBeNull();
+      expect(conductor.started[tok("caller-1")].at(-1)!.account).toBeNull();
+      // Into a project with an account of its own, the question and the
+      // answer say it.
+      accounts.overrides[B] = "Home";
+      expect(await question({ project: B, account: "default" })).toBe("Under the Default account, not the project's own.");
     });
   });
 
@@ -4341,6 +4366,38 @@ describe("starting in a workflow's shape", () => {
     expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
   });
 
+  it("answers a line that waits on the user for another round before the agent gives up, sends it once allowed, and tells how it went", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    reviewed(review);
+    await handle(call("sessions", {}, { session: "orch" }));
+    const request = call("send", { session: "r1", text: "Review it once more" }, { session: "orch" });
+    const answering = handle(request);
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2 });
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    expect(answers.find((answer) => answer.id === request.id)).toMatchObject({
+      error: null,
+      content:
+        "The user is asked in the workbench about another round of the review and has not answered yet, so the line has not been sent. Do not ask for the same line again: call wait, which tells you how it went.",
+    });
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
+    once();
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await settle();
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(1);
+    const waiting = call("wait", { seconds: 5 }, { session: "orch" });
+    await handle(waiting);
+    expect(answers.find((answer) => answer.id === waiting.id)?.content).toContain(
+      'Your line to session r1 went ahead: Sent to session r1, for step "Review" round 3',
+    );
+  });
+
   it("puts work sent back in the round after its review's, for a line, a resume and a start that carries the piece on", async () => {
     orchestrating();
     const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
@@ -4822,7 +4879,7 @@ describe("starting in a workflow's shape", () => {
     // One it does not have is refused with the ones there are, and none
     // is chosen for a step that names none.
     expect(await refusedWith({ step: "Work", account: "Home" })).toBe(
-      "There is no account called Home. The accounts are Work.",
+      "There is no account called Home. The accounts are Work, and Default for the agents' own login.",
     );
     ended({ id: "pty-w1b", code: 0, clean: true });
     flushSync();
@@ -6189,5 +6246,309 @@ describe("a session the user closed or the app lost", () => {
     expect(lines[1]).toContain("not running since the workbench was restarted");
     await handle(call("stop", { session: "sid-2" }, as));
     expect(last().content).toContain("it has not run since the workbench was restarted");
+  });
+});
+
+
+describe("a call that waits on the user", () => {
+  /** The caller: a terminal session in the first project that ended its
+      last turn itself, as its hooks say. */
+  function caller(id = "caller-1", ptyId = "pty-0") {
+    const row = live(A, ptyId, id);
+    exact(id, "prompt");
+    exact(id, "stop");
+    flushSync();
+    return row;
+  }
+
+  /** A start in the other project, which the user is asked about. */
+  const elsewhere = (from = "caller-1", prompt = "Fix the flake") =>
+    call("start", { project: B, prompt }, { session: from });
+
+  const answerTo = (request: ConductRequest) => answers.find((answer) => answer.id === request.id);
+
+  const WAITS =
+    "The user is asked about this start in the workbench and has not answered yet, so nothing has started. Do not ask for the same start again: call wait, which tells you how it went, with the new session's id if it started.";
+
+  /** Starts it held past the hold, answered that it waits on the user. */
+  async function heldPast(request: ConductRequest) {
+    const answering = handle(request);
+    await settle();
+    expect(conductor.asking).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    return request;
+  }
+
+  /** The session the user allowed comes up. */
+  async function comesUp(ptyId: string, id: string) {
+    await settle();
+    const row = forProject(B).at(-1)!;
+    started(row.key, ptyId, id);
+    flushSync();
+    await settle();
+    return row;
+  }
+
+  it("is answered within the hold, as before, when the user answers in time", async () => {
+    caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    await vi.advanceTimersByTimeAsync(HOLD - 1000);
+    once();
+    await comesUp("pty-1", "sid-1");
+    await answering;
+    expect(answerTo(request)?.content).toContain("Started session sid-1");
+    expect(conductor.later).toEqual({});
+  });
+
+  it("answers before the agent gives up that a start waits on the user, and tells how it went through wait, once", async () => {
+    caller();
+    const request = await heldPast(elsewhere());
+    expect(answerTo(request)).toMatchObject({ content: WAITS, error: null });
+    // The question stays, and nothing has started.
+    expect(conductor.asking).not.toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+    // Asked for again, it is not asked twice.
+    await handle(elsewhere());
+    expect(last().error).toBe(
+      `Your start of "Fix the flake" in ${B} is on its way already, waiting on the user's answer, and nothing was asked again. Call wait, which tells you how it went.`,
+    );
+    // A wait sits for it, with no session yet to watch.
+    const waiting = call("wait", { seconds: 600 }, { session: "caller-1" });
+    const waited = handle(waiting);
+    await settle();
+    expect(answerTo(waiting)).toBeUndefined();
+    // The user allows it later: one session, and the wait says so.
+    once();
+    await comesUp("pty-1", "sid-1");
+    await waited;
+    expect(answerTo(waiting)?.content).toMatch(
+      new RegExp(`^Your start of "Fix the flake" in ${B} went ahead: Started session sid-1 in ${B}\\.`),
+    );
+    expect(forProject(B)).toHaveLength(1);
+    expect(conductor.later).toEqual({});
+    // Told once: the next wait has nothing of it to say.
+    const again = call("wait", { seconds: 5 }, { session: "caller-1" });
+    const second = handle(again);
+    await vi.advanceTimersByTimeAsync(5000);
+    await second;
+    expect(answerTo(again)?.content).toContain("Nothing happened");
+    expect(answerTo(again)?.content).not.toContain("Your start");
+  });
+
+  it("tells through wait a start the user refused after it was answered, and a wait that runs out says it still waits", async () => {
+    caller();
+    await heldPast(elsewhere());
+    const early = call("wait", { seconds: 5 }, { session: "caller-1" });
+    const first = handle(early);
+    await vi.advanceTimersByTimeAsync(5000);
+    await first;
+    expect(answerTo(early)?.content).toBe(
+      `Nothing happened within 5 seconds: no session stopped and none asked anything. Your start of "Fix the flake" in ${B} still waits on the user's answer.`,
+    );
+    refuse();
+    await settle();
+    const late = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(late);
+    expect(answerTo(late)?.content).toBe(
+      `Your start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("goes on with a start the agent gave up on, writes it no answer, and tells how it went", async () => {
+    caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    cancelled(request.id);
+    once();
+    await comesUp("pty-1", "sid-1");
+    await answering;
+    expect(answerTo(request)).toBeUndefined();
+    expect(forProject(B)).toHaveLength(1);
+    const waiting = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(waiting);
+    expect(answerTo(waiting)?.content).toContain(`Your start of "Fix the flake" in ${B} went ahead: Started session sid-1`);
+  });
+
+  it("takes a stopped caller's question down, starts nothing for it, and puts none of its questions up", async () => {
+    const first = caller();
+    const held = await heldPast(elsewhere());
+    // Another caller's start waits behind it.
+    const other = caller("caller-2", "pty-2");
+    const second = elsewhere("caller-2", "Fix the docs");
+    void handle(second);
+    await settle();
+    expect(conductor.asking?.caller).toBe(label(first));
+    // The first caller stops: its question goes, and the next comes up.
+    close(first.key);
+    flushSync();
+    await settle();
+    expect(conductor.asking?.caller).toBe(label(other));
+    expect(conductor.asking?.prompt).toBe("Fix the docs");
+    expect(forProject(B)).toHaveLength(0);
+    expect(answerTo(held)?.content).toBe(WAITS);
+    // A question of a caller that stopped while it waited behind another
+    // is passed over.
+    const third = caller("caller-3", "pty-3");
+    void handle(elsewhere("caller-3", "Fix the tests"));
+    await settle();
+    close(third.key);
+    flushSync();
+    refuse();
+    await settle();
+    expect(conductor.asking).toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("answers a call held on a question its caller stopped that nothing was done", async () => {
+    const first = caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    close(first.key);
+    flushSync();
+    await answering;
+    expect(answerTo(request)?.error).toBe(CALLER_GONE);
+    expect(conductor.asking).toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("refuses only the same start again, not one on another agent or model, under another login or by another name", async () => {
+    accounts.list = { Work: { claude: "~/.claude-work", codex: "~/.codex-work" } };
+    const row = create(A, null, "claude-code", null, null, null, "Work");
+    started(row.key, "pty-0", "caller-1");
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    await heldPast(elsewhere());
+    const refusedAtOnce = async (args: Record<string, unknown>) => {
+      const again = call("start", { project: B, prompt: "Fix the flake", ...args }, { session: "caller-1" });
+      void handle(again);
+      await settle();
+      return answerTo(again)?.error?.includes("is on its way already") === true;
+    };
+    // The same start, its login named as the one it resolves to, is the same.
+    expect(await refusedAtOnce({})).toBe(true);
+    expect(await refusedAtOnce({ account: "Work" })).toBe(true);
+    // The same work on the agents' own login, once Work is at its limit,
+    // is another start; so is one on another agent or model, or by another
+    // name. Each is put to the user in its turn.
+    expect(await refusedAtOnce({ account: "Default" })).toBe(false);
+    expect(await refusedAtOnce({ agent: "codex" })).toBe(false);
+    expect(await refusedAtOnce({ agent: "claude-code", model: "opus" })).toBe(false);
+    expect(await refusedAtOnce({ name: "Flake, second look" })).toBe(false);
+  });
+
+  it("leaves the caller's row as it was while a start it gave up on, or was answered early about, is not done", async () => {
+    const lead = create(A, null, "claude-code", null, null, null, null, defaultWorkflow());
+    started(lead.key, "pty-0", "caller-1");
+    flushSync();
+    // A refusal the row shows from before.
+    await handle(call("start", { project: B, prompt: "Fix it", step: "Nowhere" }, { session: "caller-1" }));
+    const before = conductor.refusals[lead.key];
+    expect(before).toContain("Nowhere");
+    // Given up on by the agent, the start is not refused.
+    const given = call("start", { project: B, prompt: "Fix it", step: "Work" }, { session: "caller-1" });
+    const answering = handle(given);
+    await settle();
+    cancelled(given.id);
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    expect(answerTo(given)).toBeUndefined();
+    expect(conductor.refusals[lead.key]).toBe(before);
+    // Answered early, it clears nothing either, until it is done.
+    refuse();
+    await settle();
+    await heldPast(call("start", { project: B, prompt: "Fix it again", step: "Work" }, { session: "caller-1" }));
+    expect(conductor.refusals[lead.key]).toBe(before);
+    once();
+    await comesUp("pty-1", "sid-1");
+    expect(conductor.refusals[lead.key]).toBeUndefined();
+  });
+
+  it("forgets what a caller had to hear once its row goes", async () => {
+    const row = caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    expect(Object.keys(conductor.later)).toEqual([row.token]);
+    close(row.key);
+    flushSync();
+    expect(conductor.later).toEqual({});
+    expect(JSON.parse(localStorage.getItem("workbench.later")!)).toEqual({});
+  });
+
+  it("says after the window came back that a start in front of the user was not done, and one under way may not have been", async () => {
+    caller();
+    await heldPast(elsewhere());
+    // The window goes with the question up, and comes back.
+    resetConductor();
+    loadStarted();
+    const waiting = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(waiting);
+    expect(answerTo(waiting)?.content).toBe(`Your start of "Fix the flake" in ${B} did not go ahead: ${DROPPED_ASKING}`);
+    // One the user allowed, whose session was still coming up.
+    await heldPast(elsewhere("caller-1", "Fix the docs"));
+    once();
+    await settle();
+    resetConductor();
+    loadStarted();
+    const again = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(again);
+    expect(answerTo(again)?.content).toBe(
+      `Your start of "Fix the docs" in ${B} may or may not have gone ahead: ${DROPPED_UNDER_WAY}`,
+    );
+    // Told once.
+    resetConductor();
+    loadStarted();
+    expect(conductor.later).toEqual({});
+  });
+
+  it("lists a start that waits on the user, and how it went, which counts as telling", async () => {
+    caller();
+    await heldPast(elsewhere());
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).toBe(
+      `Your start of "Fix the flake" in ${B} waits on the user's answer; wait tells you how it went.`,
+    );
+    once();
+    await comesUp("pty-1", "sid-1");
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).toContain(`Your start of "Fix the flake" in ${B} went ahead: Started session sid-1`);
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).not.toContain("Your start");
+  });
+
+  it("tells how it went with the user's next message, as a note", async () => {
+    caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    await handle(call("prompt", { agentSession: "caller-1" }, { session: "caller-1" }));
+    expect(last().content).toBe(
+      `${REPORTS_HEAD}\nYour start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+  });
+
+  it("wakes an idle caller with how it went", async () => {
+    caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    // Woken a moment later, the line typed a piece at a time, then Enter.
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER + 10_000);
+    await settle();
+    const typedIn = written
+      .filter(([id]) => id === "pty-0")
+      .map(([, data]) => data)
+      .join("");
+    expect(typedIn).toContain(
+      `${REPORTS_HEAD} Your start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+    expect(conductor.later).toEqual({});
   });
 });
