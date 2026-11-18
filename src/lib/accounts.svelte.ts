@@ -27,8 +27,15 @@ export const accounts = $state({
   overrides: {} as Record<string, string | null>,
 });
 
-/** What the agents' own directories are called where a name is shown. */
+/** What the agents' own directories are called where a name is shown, and
+    the name the start tool takes for them. No account of the user's can be
+    called so, in any case: the settings refuse it. */
 export const OWN_LABEL = "Default";
+
+/** Whether a name is the one the agents' own directories go by. */
+export function namesOwn(name: string): boolean {
+  return name.trim().toLowerCase() === OWN_LABEL.toLowerCase();
+}
 
 /** How long a name may be, and how many accounts there may be; what the
     core holds the settings to. */
@@ -153,11 +160,11 @@ export function nameProblem(name: string): string | null {
   if (trimmed === "") return "An account needs a name.";
   if (trimmed.length > LONGEST_NAME)
     return `A name is ${LONGEST_NAME} characters at most.`;
+  if (namesOwn(trimmed)) return `${OWN_LABEL} is the agents' own login, so no account can be called that.`;
   const taken = Object.keys(accounts.list).some(
     (known) => known.toLowerCase() === trimmed.toLowerCase(),
   );
-  if (taken || trimmed.toLowerCase() === OWN_LABEL.toLowerCase())
-    return `There is an account called ${trimmed} already.`;
+  if (taken) return `There is an account called ${trimmed} already.`;
   if (Object.keys(accounts.list).length >= MOST_ACCOUNTS)
     return `The settings hold ${MOST_ACCOUNTS} accounts at most.`;
   return null;
