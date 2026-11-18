@@ -41,6 +41,16 @@ pub fn expand(home: &Path, text: &str) -> PathBuf {
     PathBuf::from(text)
 }
 
+/// A path as the user would write it: under the home, with `~` standing
+/// for the home.
+pub fn shown(home: &Path, path: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
 /// The directory an agent process started with `env` runs with when no
 /// account names one: the absolute value of `var` in that environment, `~`
 /// standing for the home. An empty value is none, as the agents treat it. A
@@ -129,6 +139,22 @@ mod tests {
         assert_eq!(expand(home, " ~/.claude-work "), home.join(".claude-work"));
         assert_eq!(expand(home, "/srv/claude"), PathBuf::from("/srv/claude"));
         assert_eq!(expand(home, "~ada/x"), PathBuf::from("~ada/x"));
+    }
+
+    #[test]
+    fn shows_a_path_under_the_home_from_a_tilde() {
+        let home = Path::new("/home/ada");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            shown(home, &home.join(".claude-work")),
+            format!("~{sep}.claude-work")
+        );
+        assert_eq!(shown(home, home), "~");
+        assert_eq!(shown(home, Path::new("/srv/claude")), "/srv/claude");
+        assert_eq!(
+            shown(home, Path::new("/home/adam/.claude")),
+            "/home/adam/.claude"
+        );
     }
 
     #[test]

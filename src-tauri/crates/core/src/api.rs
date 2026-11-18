@@ -829,8 +829,8 @@ impl Core {
     /// or the agent's own: Claude Code's transcript of the session in the
     /// project, or in the folder under it the session ran in, and Codex's
     /// thread, through Codex itself. None for an agent whose history is not
-    /// read here; empty where there is none to read; an error where the
-    /// agent could not read it.
+    /// read here; an error where the agent could not read it, or where
+    /// Claude Code has no transcript of the session under the directory.
     pub fn integrated_history(
         &self,
         agent: &str,
@@ -844,12 +844,17 @@ impl Core {
         };
         let environment = env::environment();
         match agent {
-            "claude-code" => Ok(Some(crate::claude_history::read_session(
-                &account::claude_dir(home, config_dir, &environment.vars),
-                project,
-                cwd,
-                session,
-            ))),
+            "claude-code" => {
+                let dir = account::claude_dir(home, config_dir, &environment.vars);
+                crate::claude_history::read_session(&dir, project, cwd, session)
+                    .map(Some)
+                    .ok_or_else(|| {
+                        format!(
+                            "Claude Code has no transcript of it in {}",
+                            account::shown(home, &dir)
+                        )
+                    })
+            }
             "codex" => {
                 let config_dir = config_dir
                     .filter(|dir| !dir.trim().is_empty())
