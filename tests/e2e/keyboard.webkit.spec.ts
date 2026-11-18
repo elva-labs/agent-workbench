@@ -83,9 +83,12 @@ test("walks the thread as one stop, with the arrows", async ({ page }) => {
   await page.keyboard.press("Shift+Tab");
   expect(await focused(page)).toBe("thread");
   expect(await visiblyFocused(page)).toBe(true);
-  // Each message's Copy is on the walk, before what the message holds.
+  // Each message's Copy is on the walk, before what the message holds,
+  // and Go back to here after a message of the user's own at rest.
   await page.keyboard.press("ArrowDown");
   expect(await focused(page)).toBe("copy-message");
+  await page.keyboard.press("ArrowDown");
+  expect(await focused(page)).toBe("go-back-here");
   await page.keyboard.press("ArrowDown");
   expect(await focused(page)).toBe("copy-reply");
   await page.keyboard.press("ArrowDown");
@@ -128,6 +131,8 @@ test("reaches each Copy on the thread's walk, shows it there and copies with Ent
   };
   await walk("copy-message");
   await expect(page.getByTestId("copy-message")).toHaveCSS("opacity", "1");
+  await walk("go-back-here");
+  await expect(page.getByTestId("go-back-here")).toHaveCSS("opacity", "1");
   await walk("copy-reply");
   await expect(page.getByTestId("copy-message")).toHaveCSS("opacity", "0");
   await walk("copy-code");

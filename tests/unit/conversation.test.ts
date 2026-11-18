@@ -36,6 +36,7 @@ function outline(entries: Entry[]): string[] {
     if (entry.kind === "agent")
       return `agent:${entry.turn}:${entry.parts.map((part) => part.kind).join(",")}`;
     if (entry.kind === "note") return `note:${entry.tone}:${entry.text}`;
+    if (entry.kind === "rewound") return `rewound${entry.undo ? ":undo" : ""}`;
     return `compaction:${entry.done ? "done" : "running"}`;
   });
 }

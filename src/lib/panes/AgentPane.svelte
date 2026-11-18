@@ -30,6 +30,8 @@
     otherWay,
     launch,
     belled,
+    refusedAsHeld,
+    reopenOtherWay,
     reopeningRow,
     sessions,
     statusLabel,
@@ -360,6 +362,14 @@
     {:else if current.status !== "running"}
       <div class="overlay" data-testid="agent-status">
         <p class="message">{statusMessage(current)}</p>
+        {#if current.status === "failed" && refusedAsHeld(current.key)}
+          <!-- Its conversation went back to an earlier message, which the
+               terminal would bring back: it goes on from there as a
+               conversation, and its menu reopens it in a terminal anyway. -->
+          <button class="without" onclick={() => void reopenOtherWay(current!.key)} data-testid="open-held-as-conversation"
+            >Open as a conversation</button
+          >
+        {/if}
         {#if current.workflowLost !== null}
           <!-- The workflow this session followed is gone with its copy:
                going on without one is the user's to say. -->

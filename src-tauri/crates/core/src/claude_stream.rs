@@ -115,6 +115,11 @@ const STREAM_ARGS: &[&str] = &[
 /// moment no task it has not finished can still be at work.
 const SESSION_STATE_VAR: &str = "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS";
 
+/// Makes the agent keep the files it changes as they were before each
+/// message of the user's, as its terminal does, so that they can be put
+/// back with `rewind_files`. Print mode keeps none without it.
+const CHECKPOINTS_VAR: &str = "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING";
+
 /// The characters a value on the command line may hold besides letters
 /// and digits, by what it is. Nothing a shell or the Windows command
 /// interpreter reads as more than a character is among them: a `.cmd`
@@ -176,6 +181,11 @@ impl Protocol for ClaudeStream {
         )?;
         if launch.resume {
             command.args(["--resume", session]);
+            // The conversation as far as this entry, as the agent's own SDK
+            // resumes one at a point.
+            if let Some(at) = launch.resume_at {
+                command.args(["--resume-session-at", checked("session id", at)?]);
+            }
         } else {
             command.args(["--session-id", session]);
         }
@@ -223,6 +233,7 @@ impl Protocol for ClaudeStream {
 
         prepare_process(&mut command, launch.project, launch.env);
         command.env(SESSION_STATE_VAR, "1");
+        command.env(CHECKPOINTS_VAR, "true");
         // The tool server the agent starts reads which session it serves,
         // whether that session directs the others, and that it is drawn as
         // a conversation, from these.
@@ -342,6 +353,11 @@ enum Sent {
     Effort(String),
     /// A read of the account's limits, which nothing waits on.
     Usage,
+    /// The files put back as they were before a message, or with
+    /// `dry_run` what that would change.
+    RewindFiles {
+        dry_run: bool,
+    },
 }
 
 /// A permission request the agent waits on, kept until it is answered or
@@ -2072,6 +2088,26 @@ impl Stream {
                     }
                 }
             }
+            // The agent answers a dry run with what would change, and
+            // one it cannot make, or a run it made, with whether it can.
+            Sent::RewindFiles { dry_run } => {
+                if let Some(body) = body {
+                    reply = if body["canRewind"] == false {
+                        Err(body["error"]
+                            .as_str()
+                            .unwrap_or("the files cannot go back to before that message")
+                            .to_string())
+                    } else if dry_run {
+                        Ok(json!({
+                            "files": strings(&body["filesChanged"]),
+                            "insertions": body["insertions"].as_u64().unwrap_or(0),
+                            "deletions": body["deletions"].as_u64().unwrap_or(0),
+                        }))
+                    } else {
+                        Ok(Value::Null)
+                    };
+                }
+            }
             Sent::Usage => {}
         }
         out.replies.push((id.to_string(), reply));
@@ -2323,6 +2359,19 @@ impl Driver for Stream {
                     Sent::Effort(effort.clone()),
                     json!({ "subtype": "apply_flag_settings", "settings": { "effortLevel": effort } }),
                 )
+            }
+            Control::RewindFiles { message, dry_run } => self.request(
+                Sent::RewindFiles { dry_run: *dry_run },
+                json!({
+                    "subtype": "rewind_files",
+                    "user_message_id": checked("session id", message)?,
+                    "dry_run": dry_run,
+                }),
+            ),
+            // No request takes the conversation of a running process back:
+            // the session is started again from an entry of the transcript.
+            Control::Revert { .. } => {
+                return Err("Claude Code goes back by starting again".into());
             }
         };
         Ok(Sending::Request { line, key })
@@ -4369,6 +4418,91 @@ mod tests {
             })
             .collect();
         assert_eq!(ambient, [true, true, false]);
+    }
+
+    fn rewind_files(stream: &mut Stream, dry_run: bool) -> (Value, String) {
+        let Sending::Request { line, key } = stream
+            .control(&Control::RewindFiles {
+                message: M1.into(),
+                dry_run,
+            })
+            .unwrap()
+        else {
+            panic!("putting files back asks the agent");
+        };
+        (serde_json::from_str(&line).unwrap(), key)
+    }
+
+    fn replied(stream: &mut Stream, key: &str, response: Value) -> Result<Value, String> {
+        let mut reading = stream.read(
+            &json!({"type": "control_response", "response": response})
+                .to_string()
+                .replace("@ID@", key),
+        );
+        assert_eq!(reading.replies.len(), 1);
+        reading.replies.pop().unwrap().1
+    }
+
+    #[test]
+    fn files_go_back_with_the_agent_s_own_request_and_a_dry_run_says_what_would_change() {
+        let mut stream = stream();
+        let (line, key) = rewind_files(&mut stream, true);
+        assert_eq!(
+            line["request"],
+            json!({"subtype": "rewind_files", "user_message_id": M1, "dry_run": true})
+        );
+        assert_eq!(
+            replied(
+                &mut stream,
+                &key,
+                json!({"subtype": "success", "request_id": "@ID@", "response": {
+                    "canRewind": true, "filesChanged": ["/w/a.txt"], "insertions": 2, "deletions": 5}}),
+            ),
+            Ok(json!({"files": ["/w/a.txt"], "insertions": 2, "deletions": 5}))
+        );
+        // A message it kept no files for, in its words.
+        let (_, key) = rewind_files(&mut stream, true);
+        assert_eq!(
+            replied(
+                &mut stream,
+                &key,
+                json!({"subtype": "success", "request_id": "@ID@", "response": {
+                    "canRewind": false, "error": "No file checkpoint found for this message."}}),
+            ),
+            Err("No file checkpoint found for this message.".into())
+        );
+        // The real one says only whether it could.
+        let (line, key) = rewind_files(&mut stream, false);
+        assert_eq!(line["request"]["dry_run"], false);
+        assert_eq!(
+            replied(
+                &mut stream,
+                &key,
+                json!({"subtype": "success", "request_id": "@ID@", "response": {
+                    "canRewind": true, "skippedLinks": 0}}),
+            ),
+            Ok(Value::Null)
+        );
+        let (_, key) = rewind_files(&mut stream, false);
+        assert_eq!(
+            replied(
+                &mut stream,
+                &key,
+                json!({"subtype": "error", "request_id": "@ID@", "error": "File rewinding is not enabled."}),
+            ),
+            Err("File rewinding is not enabled.".into())
+        );
+        // An id that could be read as more than an id is not sent.
+        assert!(stream
+            .control(&Control::RewindFiles {
+                message: "--all".into(),
+                dry_run: true
+            })
+            .is_err());
+        // The conversation of a running process does not go back.
+        assert!(stream
+            .control(&Control::Revert { turn: "t".into() })
+            .is_err());
     }
 
     fn control_key(stream: &mut Stream, control: Control) -> String {

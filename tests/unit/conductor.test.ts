@@ -3687,6 +3687,24 @@ describe("resuming a session", () => {
     expect(last().error).toContain("claude was not found");
   });
 
+  it("says why a conversation held where it went back is not resumed in a terminal", async () => {
+    await startInTree();
+    const answering = handle(
+      call("start", { session: "sid-1" }, { session: "caller-1" }),
+    );
+    await settle();
+    const row = sessions.all.at(-1)!;
+    // What the core refuses the terminal start with, as the row keeps it.
+    failed(
+      row.key,
+      "held: This conversation went back to an earlier message, and a terminal would bring back what that left out. Send it a message in the workbench first, or agree to bring that back.",
+    );
+    flushSync();
+    await answering;
+    expect(last().error).toContain("went back to an earlier message");
+    expect(last().error).toContain("Send it a message in the workbench first");
+  });
+
   it("takes the place of a row that ended", async () => {
     await startInTree();
     const dead = create(A, "sid-1", "claude-code", tree);

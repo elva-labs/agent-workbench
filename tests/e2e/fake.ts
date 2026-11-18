@@ -749,14 +749,34 @@ export async function installFakeCore(
           (w.__limitsAsked ??= []).push(asked);
           return w.__accountLimits?.[`${asked.agent} ${asked.configDir ?? ""}`] ?? null;
         },
+        integratedRewindPoints: async (id: string) => integrated().rewindPoints(id),
+        integratedRewindPreview: async (id: string, message: string) =>
+          integrated().rewindPreview(id, message),
+        integratedRewind: async (
+          id: string,
+          message: string,
+          what: Parameters<FakeIntegrated["rewind"]>[2],
+        ) => {
+          // A test that puts a promise in __rewindGate holds the answer, as
+          // a Claude Code starting again does, until it settles.
+          await (window as unknown as { __rewindGate?: Promise<void> }).__rewindGate;
+          return integrated().rewind(id, message, what);
+        },
+        integratedRewindUndo: async (id: string) => integrated().rewindUndo(id),
+        integratedHeld: async (options: Parameters<FakeIntegrated["held"]>[0]) =>
+          integrated().held(options),
         integratedStop: async (id: string) => integrated().stop(id),
         onIntegratedEvent: async (
           handler: Parameters<FakeIntegrated["subscribe"]>[0],
         ) => integrated().subscribe(handler),
         spawn: async (
-          spawnOptions: { session?: string; token?: string },
+          spawnOptions: { agent?: string; session?: string; token?: string; bringBack?: boolean },
           onOutput: (bytes: Uint8Array) => void,
         ) => {
+          // A Claude Code conversation held where it went back is refused a
+          // terminal unless the user agreed, as the core refuses it.
+          if (spawnOptions.agent === "claude-code" && spawnOptions.session !== undefined)
+            integrated().terminalResume(spawnOptions.session, spawnOptions.bringBack === true);
           const ptyId = `pty-${++ptyCount}`;
           agentPtys.add(ptyId);
           const sessionId = spawnOptions.session ?? `session-${ptyCount}`;
