@@ -1801,8 +1801,8 @@ export async function launch(
     return false;
   } catch (error) {
     // A conversation held where it went back is not resumed in a terminal
-    // without the user's say: the row says so, and opens as a
-    // conversation, where it goes on from that point.
+    // without the user's say: the row says so, and offers to open it as a
+    // conversation, which goes on from that point.
     if (isHeld(error)) {
       heldAtStart.add(key);
       failed(key, String(error instanceof Error ? error.message : error).replace(/^held:\s*/, ""));

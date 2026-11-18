@@ -756,7 +756,12 @@ export async function installFakeCore(
           id: string,
           message: string,
           what: Parameters<FakeIntegrated["rewind"]>[2],
-        ) => integrated().rewind(id, message, what),
+        ) => {
+          // A test that puts a promise in __rewindGate holds the answer, as
+          // a Claude Code starting again does, until it settles.
+          await (window as unknown as { __rewindGate?: Promise<void> }).__rewindGate;
+          return integrated().rewind(id, message, what);
+        },
         integratedRewindUndo: async (id: string) => integrated().rewindUndo(id),
         integratedHeld: async (options: Parameters<FakeIntegrated["held"]>[0]) =>
           integrated().held(options),

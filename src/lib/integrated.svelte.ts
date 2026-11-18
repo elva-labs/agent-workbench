@@ -169,14 +169,19 @@ export class Link {
       have put it on another: no workflow puts it back. */
   startedOn = $state<AgentId | null>(null);
   /** Going back is on its way: the message gone back to, as it stood,
-      and how it goes back, until the core has answered. */
-  goingBack = $state<{ message: Message; way: BackWay } | null>(null);
+      how it goes back, and the messages the thread let go of for it, until
+      the core has answered. */
+  goingBack = $state<{ message: Message; way: BackWay; gone: string[] } | null>(null);
+  /** Counts the times going back did not go back, so a send held for it
+      goes only where it did. */
+  backMissed = $state(0);
   /** What the composer says of the last going back, until the next message
       is sent: the files put back, or why it did not go back. */
   backSaid = $state<string | null>(null);
-  /** The composer's words as going back left them, so undoing it takes
-      them out again where they stand unchanged. */
-  backDraft: string | null = null;
+  /** The composer's words as going back left them, and as they were
+      before, so undoing it, or its failing, puts back what was there where
+      they stand unchanged. */
+  backDraft: { after: string; before: Pick<Link, "draft" | "images" | "mentions" | "files"> } | null = null;
   /** What the user allowed for the rest of this run alone, in the words
       the offer said it keeps: what the run ends with it. A permission mode
       allowed so is not here, since the conversation's mode goes on into
@@ -311,7 +316,7 @@ function isWork(body: IntegratedEventBody): boolean {
 
 function deliver(key: string, link: Link, body: IntegratedEventBody) {
   if (body.type === "rewound") {
-    wentBack(key, link, body);
+    wentBack(link, body);
     return;
   }
   const before = link.conversation.state;
@@ -1240,12 +1245,16 @@ function timeOf(at: number | null): string {
 /**
  * Takes a session at rest back to before a message of the user's, the way
  * chosen, with `shown` the files a preview showed the user, which are those
- * put back. While the core goes back the session takes no message: what is
- * sent waits, as for a session starting again. What the run says meanwhile
- * waits too: a Claude Code session is started again under a new id, and
- * the run gone back from has ended by the time the core answers. The
- * conversation is cut where `rewound` says, and the message's words come
- * back to the composer. Resolves to why it did not go back, or null.
+ * put back. Going back with the conversation cuts the thread before the
+ * message and puts its words in the composer ahead of what is there at
+ * once, so they can be edited while the core goes back; where it does not
+ * go back, the thread is whole again and the words leave the composer
+ * where they stand unchanged. While the core goes back the session takes
+ * no message: what is sent waits, as for a session starting again, and
+ * goes only where it went back. What the run says meanwhile waits too: a
+ * Claude Code session is started again under a new id, and the run gone
+ * back from has ended by the time the core answers. Resolves to why it
+ * did not go back, or null.
  */
 export async function goBack(key: string, id: string, way: BackWay, shown: string[]): Promise<string | null> {
   const link = links.get(key);
@@ -1257,15 +1266,17 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
   const handle = link.handle;
   const conversation = way !== "files";
   const restarts = conversation && session.agent === "claude-code";
-  link.goingBack = { message: { ...said, images: [...said.images] }, way };
+  const asked = { message: { ...said, images: [...said.images] }, way };
   link.nowError = null;
   link.backSaid = null;
   link.held = [];
   if (restarts) link.restarting = true;
+  link.goingBack = { ...asked, gone: conversation ? cutBack(key, link, asked.message) : [] };
   let went: Awaited<ReturnType<ReturnType<typeof core>["integratedRewind"]>>;
   try {
     went = await core().integratedRewind(handle, id, { conversation, files: way === "conversation" ? null : shown });
   } catch (error) {
+    missedBack(link);
     settleBack(key, link, link.held ?? []);
     link.goingBack = null;
     return message(error);
@@ -1276,6 +1287,7 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
     byHandle.delete(handle);
     link.handle = null;
     if (went.id === null) {
+      missedBack(link);
       settleBack(key, link, held);
       link.goingBack = null;
       const why = `${agentName(session)} could not start again: ${went.error ?? "no reason was given"}.`;
@@ -1284,6 +1296,7 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
     }
     link.handle = went.id;
     byHandle.set(went.id, key);
+    if (went.fallback !== null) missedBack(link);
     settleBack(key, link, claim(went.id));
     if (went.sessionId !== null) identify(session, went.sessionId);
   } else settleBack(key, link, held);
@@ -1314,26 +1327,51 @@ function settleBack(key: string, link: Link, events: IntegratedEventBody[]) {
   for (const body of events) deliver(key, link, body);
 }
 
-/** The session went back: the conversation is cut before the message, the
-    reports the messages that left carried count as not told again, and in
-    the window that asked, the message's words come back to the composer,
-    the caret at their end. */
-function wentBack(key: string, link: Link, body: Extract<IntegratedEventBody, { type: "rewound" }>) {
+/** Cuts the thread before the message going back is to, and puts its
+    words in the composer ahead of what is there, the caret at the end;
+    returns the messages that left the thread. */
+function cutBack(key: string, link: Link, said: Message): string[] {
+  const gone = link.conversation.rewound(said.id, clock());
+  const before = { draft: link.draft, images: link.images, mentions: link.mentions, files: link.files };
+  link.upChain = null;
+  restore(key, { ...said, placed: true }, "end");
+  link.backDraft = { after: link.draft, before };
+  return gone;
+}
+
+/** The conversation did not go back: the thread is whole again, the
+    composer is as it was where the words going back put there stand
+    unchanged, and a send held for going back does not go. */
+function missedBack(link: Link) {
+  if (link.goingBack === null || link.goingBack.way === "files") return;
+  link.backMissed += 1;
+  link.conversation.unrewound();
+  putBackDraft(link);
+}
+
+/** The composer as it was before going back, where the words it put
+    there stand unchanged. */
+function putBackDraft(link: Link) {
+  const kept = link.backDraft;
+  link.backDraft = null;
+  if (kept === null || link.draft !== kept.after) return;
+  link.draft = kept.before.draft;
+  link.images = kept.before.images;
+  link.mentions = kept.before.mentions;
+  link.files = kept.before.files;
+}
+
+/** The session went back: the conversation is cut before the message,
+    where the window that asked has not cut it already, and the reports
+    the messages that left carried count as not told again. */
+function wentBack(link: Link, body: Extract<IntegratedEventBody, { type: "rewound" }>) {
   if (!body.conversation) return;
-  const asked = link.goingBack?.message.id === body.message ? link.goingBack.message : null;
-  const gone = link.conversation.rewound(body.message, clock());
+  const asked = link.goingBack?.message.id === body.message ? link.goingBack : null;
+  const gone = asked?.gone ?? link.conversation.rewound(body.message, clock());
   for (const id of gone) {
     toldBy.get(id)?.();
     toldBy.delete(id);
   }
-  if (asked === null) return;
-  link.draft = "";
-  link.images = [];
-  link.mentions = [];
-  link.files = [];
-  link.upChain = null;
-  restore(key, { ...asked, placed: true }, "end");
-  link.backDraft = link.draft;
 }
 
 /** Undoes going back that started the session again: it starts again on
@@ -1369,12 +1407,7 @@ export async function undoGoBack(key: string): Promise<string | null> {
   link.conversation.unrewound();
   settleBack(key, link, claim(went.id));
   if (went.sessionId !== null) identify(session, went.sessionId);
-  if (link.backDraft !== null && link.draft === link.backDraft) {
-    link.draft = "";
-    link.images = [];
-    link.mentions = [];
-  }
-  link.backDraft = null;
+  putBackDraft(link);
   link.backSaid = null;
   return null;
 }

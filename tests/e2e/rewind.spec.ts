@@ -152,6 +152,72 @@ test.describe("going back to an earlier message", () => {
     expect((await calls(page)).filter((call) => call.method === "rewindUndo")).toHaveLength(1);
   });
 
+  test("the words come back at the pick, and what is sent while Claude Code starts again waits for it", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await page.evaluate(() => {
+      const w = window as unknown as { __rewindGate?: Promise<void>; __openGate?: () => void };
+      w.__rewindGate = new Promise((done) => (w.__openGate = done));
+    });
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Enter");
+    await field.press("Enter");
+    // The thread is cut and the words are back before Claude Code is up.
+    await expect(page.getByTestId("rewound")).toBeVisible();
+    await expect(field).toHaveValue("Make the backoff jittered and cap it at 8 seconds.");
+    await expect(page.getByTestId("composer-going-back")).toHaveText(
+      "Claude Code is starting again from here. What you send waits for it.",
+    );
+    await field.fill("Make the backoff jittered and cap it at 5 seconds.");
+    await field.press("Enter");
+    const sends = async () => (await calls(page)).filter((call) => call.method === "send").map((call) => call.text);
+    expect(await sends()).toHaveLength(3);
+    await page.evaluate(() => (window as unknown as { __openGate: () => void }).__openGate());
+    await expect.poll(sends).toEqual([
+      "The upload client gives up on the first 503. Find where it retries.",
+      "Add a retry with backoff for 503 and 429.",
+      "Make the backoff jittered and cap it at 8 seconds.",
+      "Make the backoff jittered and cap it at 5 seconds.",
+    ]);
+    const last = (await calls(page)).findLast((call) => call.method === "send");
+    expect(last?.id).not.toBe(H);
+    await expect(field).toHaveValue("");
+  });
+
+  test("where Claude Code does not come up from there, the thread is whole and nothing held is sent", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __rewindGate?: Promise<void>;
+        __openGate?: () => void;
+        __integrated: { rewindFallback: string | null };
+      };
+      w.__rewindGate = new Promise((done) => (w.__openGate = done));
+      w.__integrated.rewindFallback = "claude ended with code 1";
+    });
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Enter");
+    await field.press("Enter");
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await field.press("End");
+    await field.pressSequentially(" Now.");
+    await field.press("Enter");
+    await page.evaluate(() => (window as unknown as { __openGate: () => void }).__openGate());
+    await expect(page.getByTestId("composer-back")).toHaveText(
+      "It did not go back: claude ended with code 1. The conversation goes on as it was.",
+    );
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("rewound")).toHaveCount(0);
+    // What was edited stays to be sent or not; nothing went.
+    await expect(field).toHaveValue("Make the backoff jittered and cap it at 8 seconds. Now.");
+    expect((await calls(page)).filter((call) => call.method === "send")).toHaveLength(3);
+  });
+
   test("the conversation and the files puts back the files the preview named, and says so", async ({ page }) => {
     await open(page);
     await talk(page);

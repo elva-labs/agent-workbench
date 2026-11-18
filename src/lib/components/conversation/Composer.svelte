@@ -630,17 +630,21 @@
   const IMAGES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
   const IMAGE_FILE = /\.(png|jpe?g|gif|webp)$/i;
 
-  /** A send asked for while images were still being read, made once they
-      are, so no image goes with the wrong message. */
+  /** A send asked for while images were still being read, or while the
+      session starts again or goes back, made once it can be, so no image
+      goes with the wrong message. */
   let held = $state(false);
+  /** How many times going back had missed when the send was held: one
+      held for going back that then missed does not go. */
+  let heldMissed = 0;
   /** A lone digit was about to go as a message while the agent waits on an
       answer: said, and sent only on a second Enter. */
   let digit = $state<string | null>(null);
 
   $effect(() => {
-    if (reading === 0 && held && !link.restarting) {
+    if (reading === 0 && held && !link.restarting && link.goingBack === null) {
       held = false;
-      untrack(submit);
+      if (link.backMissed === heldMissed) untrack(submit);
     }
   });
 
@@ -650,12 +654,13 @@
   });
 
   /** Sends what is written, or holds it to send once the session can take
-      it; says whether a message goes. A command, such as compact, is no
-      message. */
+      it, as while it starts again or goes back; says whether a message
+      goes. A command, such as compact, is no message. */
   function submit(): boolean {
     if (!ready || !hasWords || unlisted) return false;
-    if (reading > 0 || link.restarting) {
+    if (reading > 0 || link.restarting || link.goingBack !== null) {
       held = true;
+      heldMissed = link.backMissed;
       return true;
     }
     const lone = link.draft.trim();

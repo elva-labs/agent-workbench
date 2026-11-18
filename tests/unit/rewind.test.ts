@@ -269,6 +269,21 @@ describe("going back from the window", () => {
     expect(linkFor(key).goingBack).toBeNull();
   });
 
+  it("cuts the thread and puts the words ahead in the composer at once, and puts both back where it misses", async () => {
+    const key = await started();
+    await said(key, "One.");
+    const second = await said(key, "Two.");
+    linkFor(key).draft = "And this.";
+    fake.rewindFallback = "claude ended with code 1";
+    const going = goBack(key, second, "conversation", []);
+    expect(conversationOf(key).entries.map((entry) => entry.kind)).toEqual(["user", "agent", "rewound"]);
+    expect(linkFor(key).draft).toBe("Two.\nAnd this.");
+    expect(await going).toBe("claude ended with code 1");
+    expect(conversationOf(key).entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent"]);
+    expect(linkFor(key).draft).toBe("And this.");
+    expect(linkFor(key).backMissed).toBe(1);
+  });
+
   it("goes on whole where Claude Code does not come up from the point, and says why", async () => {
     const key = await started();
     await said(key, "One.");
