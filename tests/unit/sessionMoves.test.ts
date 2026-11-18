@@ -118,6 +118,7 @@ beforeEach(async () => {
     integratedAnswer: async (id: string, request: string, choice: never, message?: string) =>
       fake.answer(id, request, choice, message),
     integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) => fake.history(options),
+    integratedHeld: async (options: Parameters<FakeIntegrated["held"]>[0]) => fake.held(options),
     integratedConfigure: async (id: string, settings: never) => fake.configure(id, settings),
     onIntegratedEvent: async (handler: Parameters<FakeIntegrated["subscribe"]>[0]) => fake.subscribe(handler),
     conductAnswer: async (id: string, _cwd: string, content: string | null, error: string | null) => {
@@ -352,6 +353,9 @@ describe("switching how an agent's sessions run", () => {
     fake.endTurn(h);
     fake.emit(h, { type: "state", state: "idle" });
     flushSync();
+    // At rest, the core is asked whether the conversation went back first.
+    expect(held()).toMatchObject({ kind: "busy", why: "checking" });
+    await rest(0);
     expect(held()).toBeNull();
 
     const waiting = crypto.randomUUID();
@@ -363,7 +367,7 @@ describe("switching how an agent's sessions run", () => {
     expect(held()).toMatchObject({ kind: "busy" });
     fake.finishTask(h, task, "completed", "done", { reports: false });
     fake.emit(h, { type: "state", state: "idle" });
-    flushSync();
+    await rest(0);
     expect(held()).toBeNull();
 
     link.draft = "Half a thought";

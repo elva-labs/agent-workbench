@@ -287,6 +287,34 @@ const NOT_LOGGED_IN: &str =
 /// What a thread Codex marks as failed by an error of its own says.
 const SYSTEM_ERROR: &str = "Codex reported an error of its own on the thread";
 
+/// Why a thread kept in the older format cannot go back.
+pub(crate) const OLDER: &str = "This conversation was kept by an older Codex and cannot go back.";
+
+/// Why a thread Codex does not keep cannot go back.
+const UNKEPT: &str = "Codex does not keep this conversation, so it cannot go back.";
+
+/// Why Codex puts no files back.
+pub(crate) const NO_FILES: &str = "Codex cannot put files back.";
+
+/// Why a thread Codex says nothing of its format of cannot go back: a Codex
+/// that does not say so is older than the one `thread/revert` came with.
+const UNTOLD: &str =
+    "This Codex does not say how it keeps this conversation, so it cannot go back. A newer Codex can.";
+
+/// Why a thread, as Codex describes it, cannot be taken back with
+/// `thread/revert`, which takes only one kept in the paginated format; None
+/// for one that can.
+pub(crate) fn unrevertable(thread: &Value) -> Option<&'static str> {
+    if thread["ephemeral"] == true {
+        return Some(UNKEPT);
+    }
+    match thread["historyMode"].as_str() {
+        Some("paginated") => None,
+        Some(_) => Some(OLDER),
+        None => Some(UNTOLD),
+    }
+}
+
 /// A request this side sent, by what its answer means.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Sent {
@@ -307,6 +335,8 @@ enum Sent {
     Compact,
     /// A read of the account's limits, which nothing waits on.
     RateLimits,
+    /// The conversation taken back to before a turn.
+    Revert,
 }
 
 /// What a request from the server is, by what its answer takes.
@@ -706,6 +736,9 @@ struct AppServer {
     started: Option<Value>,
     ready: bool,
     thread: Option<String>,
+    /// Why the thread cannot be taken back, as its start or resume said:
+    /// kept in the older format, or not kept at all.
+    unrevertable: Option<&'static str>,
 
     model: Option<String>,
     mode: Option<String>,
@@ -1312,6 +1345,7 @@ impl AppServer {
             started: None,
             ready: false,
             thread: None,
+            unrevertable: None,
             model: None,
             mode: None,
             effort: None,
@@ -1475,6 +1509,7 @@ impl AppServer {
                         "args": ["mcp"],
                         "env": env,
                         CODEX_TOOLS: tools,
+                        crate::adapter::CODEX_TOOL_TIMEOUT: crate::adapter::CODEX_TOOL_SECONDS,
                     }
                 }),
             );
@@ -1543,6 +1578,7 @@ impl AppServer {
             return;
         };
         self.thread = Some(thread.clone());
+        self.unrevertable = unrevertable(&started["thread"]);
         if started["sandbox"]["type"] == "workspaceWrite" {
             self.workspace = Some(started["sandbox"].clone());
         }
@@ -1747,6 +1783,9 @@ impl AppServer {
                 }
                 out.replies.push((id.to_string(), reply));
             }
+            Sent::Revert => out
+                .replies
+                .push((id.to_string(), reply.map(|_| Value::Null))),
         }
     }
 
@@ -2684,6 +2723,28 @@ impl Driver for AppServer {
             // The core holds every message Codex has not been handed, and
             // steers and takes them back itself.
             Control::SendNow | Control::Withdraw(_) => Err("Codex has the message already".into()),
+            Control::RewindFiles { .. } => Err(NO_FILES.into()),
+            Control::Revert { turn } => {
+                if let Some(why) = self.unrevertable {
+                    return Err(why.into());
+                }
+                let thread = self
+                    .thread
+                    .clone()
+                    .ok_or("Codex has no conversation to take back yet")?;
+                if self.turn.is_some() || self.starting.is_some() {
+                    return Err("a turn runs".into());
+                }
+                let (line, id) = self.request(
+                    Sent::Revert,
+                    "thread/revert",
+                    json!({ "threadId": thread, "beforeTurnId": turn }),
+                );
+                Ok(Sending::Request {
+                    line,
+                    key: id.to_string(),
+                })
+            }
         }
     }
 

@@ -158,6 +158,31 @@ pub fn history_homeward(host: &str, mut history: Value) -> Value {
     history
 }
 
+/// What names files from a remote core, a preview of putting files back or
+/// what going back put back, with the host put back on each.
+pub fn files_homeward(host: &str, mut payload: Value) -> Value {
+    if let Some(files) = payload.get_mut("files").and_then(Value::as_array_mut) {
+        for file in files.iter_mut() {
+            if let Some(path) = file.as_str() {
+                *file = Value::String(with_host(host, path));
+            }
+        }
+    }
+    payload
+}
+
+/// What going back came to on a remote core, with the host put back on the
+/// session that goes on and the files put back. A session started again
+/// there is one of the machine's from then on.
+pub fn went_back_homeward(host: &str, went: Value) -> Value {
+    let mut went = files_homeward(host, went);
+    put_back(&mut went, "id", |id| with_host_id(host, id));
+    if let Some(id) = went["id"].as_str() {
+        integrated_started(host, id);
+    }
+    went
+}
+
 /// An event from a remote core, with the host put back on whatever names
 /// a pty or a path.
 pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
@@ -171,6 +196,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         workbench_core::integrated::INTEGRATED_EVENT => {
             put_back(&mut payload, "id", |id| with_host_id(host, id));
             put_back(&mut payload, "path", |path| with_host(host, path));
+            if payload["type"] == "rewound" {
+                payload = files_homeward(host, payload);
+            }
             if let Some(changes) = payload.get_mut("changes").and_then(Value::as_array_mut) {
                 for change in changes {
                     put_back(change, "path", |path| with_host(host, path));
@@ -604,6 +632,35 @@ mod tests {
         assert_eq!(history["items"][1]["model"], "m");
         assert!(history["items"][1]["event"].get("id").is_none());
         assert_eq!(history_homeward("lab", Value::Null), Value::Null);
+        let rewound = homeward(
+            "lab",
+            "integrated_event",
+            json!({"id": "int-3", "type": "rewound", "message": "m", "conversation": true,
+                   "files": ["/srv/a.rs"]}),
+        );
+        assert_eq!(rewound["id"], "ssh://lab#int-3");
+        assert_eq!(rewound["files"], json!(["ssh://lab/srv/a.rs"]));
+        let preview = files_homeward(
+            "lab",
+            json!({"files": ["/srv/a.rs", "/srv/b.rs"], "insertions": 2, "deletions": 0}),
+        );
+        assert_eq!(
+            preview["files"],
+            json!(["ssh://lab/srv/a.rs", "ssh://lab/srv/b.rs"])
+        );
+        assert_eq!(preview["insertions"], 2);
+        let went = went_back_homeward(
+            "lab",
+            json!({"id": "int-4", "sessionId": "s", "files": ["/srv/a.rs"], "fallback": null, "error": null}),
+        );
+        assert_eq!(went["id"], "ssh://lab#int-4");
+        assert_eq!(went["sessionId"], "s");
+        assert_eq!(went["files"], json!(["ssh://lab/srv/a.rs"]));
+        let none = went_back_homeward(
+            "lab",
+            json!({"id": null, "sessionId": null, "files": [], "fallback": null, "error": "e"}),
+        );
+        assert_eq!(none["id"], Value::Null);
         integrated_started("gone", "ssh://gone#int-1");
         integrated_started("gone", "ssh://gone#int-2");
         integrated_heard("gone", &json!({"id": "ssh://gone#int-2", "type": "ended"}));

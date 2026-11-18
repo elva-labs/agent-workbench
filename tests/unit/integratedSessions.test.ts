@@ -496,7 +496,7 @@ describe("an integrated session behind its row", () => {
     fake.withdrawAnswer = "the agent did not answer in time";
     expect(await takeBack(session.key, waiting)).toBe(true);
     expect(conversationOf(session.key).messages[waiting]).toBeUndefined();
-    expect(link.draft).toBe("a thought to finish\nsomething new");
+    expect(link.draft).toBe("a thought to finish\n\nsomething new");
     expect(link.nowError).toBeNull();
   });
 

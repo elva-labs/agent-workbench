@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { isUntrusted, type IntegratedEvent } from "$lib/core";
+import { isHeld, isUntrusted, type IntegratedEvent } from "$lib/core";
 import { fakeIntegrated } from "../fakeIntegrated";
 
 const M1 = "11111111-1111-4111-8111-111111111111";
@@ -64,6 +64,12 @@ describe("the seam's integrated sessions", () => {
       session: "s-1",
       configDir: "~/.claude-work",
     });
+    await seam.integratedRewindPoints("int-1");
+    await seam.integratedRewindPreview("int-1", M1);
+    await seam.integratedRewind("int-1", M1, { conversation: true, files: null });
+    await seam.integratedRewind("int-1", M1, { conversation: false, files: ["/repo/a.ts"] });
+    await seam.integratedRewindUndo("int-2");
+    await seam.integratedHeld({ agent: "claude-code", project: "/repo", session: "s-1" });
     await seam.integratedStop("int-1");
     expect(invoke.mock.calls).toEqual([
       [
@@ -122,8 +128,27 @@ describe("the seam's integrated sessions", () => {
           configDir: "~/.claude-work",
         },
       ],
+      ["integrated_rewind_points", { id: "int-1" }],
+      ["integrated_rewind_preview", { id: "int-1", message: M1 }],
+      ["integrated_rewind", { id: "int-1", message: M1, conversation: true, files: null }],
+      [
+        "integrated_rewind",
+        { id: "int-1", message: M1, conversation: false, files: ["/repo/a.ts"] },
+      ],
+      ["integrated_rewind_undo", { id: "int-2" }],
+      ["integrated_held", { agent: "claude-code", project: "/repo", session: "s-1" }],
       ["integrated_stop", { id: "int-1" }],
     ]);
+  });
+
+  it("tell a conversation held where it went back from other failures of a terminal start", () => {
+    expect(
+      isHeld(
+        new Error("held: This conversation went back to an earlier message, and a terminal would bring back what that left out."),
+      ),
+    ).toBe(true);
+    expect(isHeld("untrusted: /repo has not been trusted in claude yet")).toBe(false);
+    expect(isHeld(new Error("claude was not found on your PATH"))).toBe(false);
   });
 
   it("tell a folder that is not trusted from other failures", () => {
@@ -585,6 +610,185 @@ describe("the scripted integrated session", () => {
     await Promise.resolve();
     expect(heard.at(-1)).toMatchObject({ type: "ended", clean: true });
     expect(() => fake.send(id, M2, "anyone?")).toThrow();
+  });
+
+  it("goes back as the core does: Claude Code by starting again, held at the cut, until undone", async () => {
+    const { fake, heard, id } = started();
+    for (const [message, text] of [
+      [M1, "one"],
+      [M2, "two"],
+      [M3, "three"],
+    ]) {
+      fake.send(id, message, text);
+      fake.turn(id, `${text} done`);
+    }
+    fake.files.set(M2, { files: ["/repo/b.ts"], insertions: 1, deletions: 3 });
+    const conversation = fake.snapshot(id).ready!.sessionId;
+    expect(fake.rewindPoints(id)).toEqual({
+      points: [
+        { message: M1, conversation: true, files: false, why: null },
+        { message: M2, conversation: true, files: true, why: null },
+        { message: M3, conversation: true, files: false, why: null },
+      ],
+      why: null,
+    });
+    expect(fake.rewindPreview(id, M2)).toEqual({ files: ["/repo/b.ts"], insertions: 1, deletions: 3 });
+    expect(() => fake.rewindPreview(id, M3)).toThrow("No file checkpoint found for this message.");
+    expect(() => fake.rewind(id, M3, { conversation: true, files: [] })).toThrow(
+      "Claude Code kept no files from before this message.",
+    );
+    const went = fake.rewind(id, M3, { conversation: true, files: null });
+    expect(went).toMatchObject({ sessionId: conversation, files: [], fallback: null, error: null });
+    const next = went.id!;
+    expect(next).not.toBe(id);
+    // The session left ends before the answer; the one started again is
+    // ready, then says it went back.
+    expect(heard.filter((event) => event.id === id).at(-1)?.type).toBe("ended");
+    expect(kinds(heard.filter((event) => event.id === next))).toEqual(["ready", "state", "rewound"]);
+    expect(heard.find((event) => event.type === "rewound")).toEqual({
+      id: next,
+      type: "rewound",
+      message: M3,
+      conversation: true,
+      files: [],
+    });
+    const read = async () =>
+      (await fake.history({ agent: "claude-code", project: "/repo", session: conversation }))!.items
+        .flatMap((item) => (item.event.type === "message" ? [item.event.message] : []));
+    expect(await read()).toEqual([M1, M2]);
+    const held = () => fake.held({ agent: "claude-code", project: "/repo", session: conversation });
+    expect(held()).toBe(true);
+    // Undone: the conversation as it was.
+    const undone = fake.rewindUndo(next);
+    expect(undone.sessionId).toBe(conversation);
+    expect(await read()).toEqual([M1, M2, M3]);
+    expect(held()).toBe(false);
+    // Back to before the first: a new conversation, the old one kept.
+    const fresh = fake.rewind(undone.id!, M1, { conversation: true, files: null });
+    expect(fresh.sessionId).not.toBe(conversation);
+    expect(await read()).toEqual([M1, M2, M3]);
+    // Gone on since: there is nothing to undo.
+    fake.send(fresh.id!, "44444444-4444-4444-8444-444444444444", "anew");
+    fake.turn(fresh.id!, "ok");
+    expect(() => fake.rewindUndo(fresh.id!)).toThrow("the conversation has gone on since it went back");
+  });
+
+  it("puts only the files back in the same session, and refuses what the core refuses", () => {
+    const { fake, heard, id } = started();
+    fake.send(id, M1, "one");
+    fake.turn(id, "done");
+    fake.send(id, M2, "two");
+    fake.turn(id, "done");
+    fake.compaction(id, "asked");
+    fake.files.set(M2, { files: ["/repo/a.ts"], insertions: 0, deletions: 2 });
+    fake.send(id, M3, "three");
+    fake.startTurn(id);
+    expect(() => fake.rewind(id, M2, { conversation: false, files: ["/repo/a.ts"] })).toThrow("a turn runs");
+    fake.endTurn(id);
+    // Before the last compaction the conversation cannot go back, but the
+    // files can; the first message starts a new conversation still.
+    const points = fake.rewindPoints(id).points;
+    expect(points.map((point) => [point.message, point.conversation, point.files])).toEqual([
+      [M1, true, false],
+      [M2, false, true],
+      [M3, true, false],
+    ]);
+    expect(points[1].why).toMatch(/compacted/);
+    expect(() => fake.rewind(id, M2, { conversation: true, files: null })).toThrow(/compacted/);
+    const went = fake.rewind(id, M2, { conversation: false, files: ["/repo/a.ts"] });
+    expect(went).toEqual({
+      id,
+      sessionId: fake.snapshot(id).ready!.sessionId,
+      files: ["/repo/a.ts"],
+      fallback: null,
+      error: null,
+    });
+    expect(heard.at(-1)).toEqual({
+      id,
+      type: "rewound",
+      message: M2,
+      conversation: false,
+      files: ["/repo/a.ts"],
+    });
+    expect(() => fake.rewindUndo(id)).toThrow("there is no going back to undo in this session");
+  });
+
+  it("puts back only the files the user was shown, and is held until a message goes from there", () => {
+    const { fake, id } = started();
+    fake.send(id, M1, "one");
+    fake.turn(id, "done");
+    fake.send(id, M2, "two");
+    fake.turn(id, "done");
+    fake.files.set(M2, { files: ["/repo/a.ts"], insertions: 0, deletions: 2 });
+    const shown = fake.rewindPreview(id, M2).files;
+    // Between the preview and the choice another file comes to be put back.
+    fake.files.set(M2, { files: ["/repo/a.ts", "/repo/notes.md"], insertions: 0, deletions: 9 });
+    const calls = fake.calls.length;
+    expect(() => fake.rewind(id, M2, { conversation: true, files: shown })).toThrow(
+      "The files to put back changed since they were shown. Look at them again.",
+    );
+    expect(fake.calls.length).toBe(calls);
+    expect(fake.snapshot(id).ready).not.toBeNull();
+    const conversation = fake.snapshot(id).ready!.sessionId;
+    const went = fake.rewind(id, M2, { conversation: true, files: null });
+    const held = () => fake.held({ agent: "claude-code", project: "/repo", session: conversation });
+    expect(held()).toBe(true);
+    expect(fake.held({ agent: "codex", project: "/repo", session: conversation })).toBe(false);
+    // A terminal resume is refused while it is held, unless the user agreed,
+    // which lets the point go.
+    expect(() => fake.terminalResume(conversation, false)).toThrow(/^held: /);
+    fake.terminalResume(conversation, true);
+    expect(held()).toBe(false);
+    fake.terminalResume(conversation, false);
+    fake.send(went.id!, M3, "instead");
+    fake.turn(went.id!, "ok");
+    expect(held()).toBe(false);
+  });
+
+  it("starts a Claude Code conversation again whole where it does not come up from the point", () => {
+    const { fake, id } = started();
+    fake.send(id, M1, "one");
+    fake.turn(id, "done");
+    fake.send(id, M2, "two");
+    fake.turn(id, "done");
+    fake.rewindFallback = "claude ended with code 1: No message found";
+    const went = fake.rewind(id, M2, { conversation: true, files: null });
+    expect(went.fallback).toBe("claude ended with code 1: No message found");
+    expect(fake.rewindPoints(went.id!).points.map((point) => point.message)).toEqual([M1, M2]);
+    expect(() => fake.rewindUndo(went.id!)).toThrow();
+  });
+
+  it("goes back in the same Codex session, by the turn a message began", async () => {
+    const fake = fakeIntegrated();
+    const heard: IntegratedEvent[] = [];
+    fake.subscribe((event) => heard.push(event));
+    const { id } = fake.start({ agent: "codex", project: "/repo" });
+    fake.send(id, M1, "one");
+    fake.startTurn(id);
+    fake.send(id, M2, "and this");
+    fake.sendNow(id);
+    await Promise.resolve();
+    fake.endTurn(id);
+    fake.send(id, M3, "three");
+    fake.turn(id, "ok");
+    const thread = fake.snapshot(id).ready!.sessionId;
+    expect(fake.rewindPoints(id).points.map(({ message, conversation, files }) => [message, conversation, files])).toEqual([
+      [M1, true, false],
+      [M2, false, false],
+      [M3, true, false],
+    ]);
+    expect(() => fake.rewindPreview(id, M1)).toThrow("Codex cannot put files back.");
+    expect(() => fake.rewind(id, M2, { conversation: true, files: null })).toThrow(/took this message into a turn/);
+    const went = fake.rewind(id, M3, { conversation: true, files: null });
+    expect(went).toEqual({ id, sessionId: thread, files: [], fallback: null, error: null });
+    expect(heard.at(-1)).toMatchObject({ id, type: "rewound", message: M3, conversation: true });
+    const read = await fake.history({ agent: "codex", project: "/repo", session: thread });
+    expect(read!.items.flatMap((item) => (item.event.type === "message" ? [item.event.message] : []))).toEqual([M1, M2]);
+    fake.older.add(thread);
+    expect(fake.rewindPoints(id)).toEqual({
+      points: [],
+      why: "This conversation was kept by an older Codex and cannot go back.",
+    });
   });
 
   it("fails the turn, withdraws, and drops what waits when the process dies", () => {

@@ -166,15 +166,10 @@ test("waits for a command in the background to end, saying so, or is reopened fr
 });
 
 // A core that holds a conversation at a point it went back to says so
-// through `integratedHeld`, which a core without going back does not have:
-// this runs once the fake core has it.
+// through `integratedHeld`.
 test("asks the core whether a conversation went back before it moves one into a terminal", async ({ page }) => {
   await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
   await page.goto("/");
-  const held = await page.evaluate(
-    () => typeof (window as unknown as { __WORKBENCH_CORE__: { integratedHeld?: unknown } }).__WORKBENCH_CORE__.integratedHeld,
-  );
-  test.skip(held !== "function", "the core has no integratedHeld yet");
   await conversation(page, "int-1", "Resting");
   await switchTo(page, "terminal");
   await expect.poll(async () => (await spawns(page)).map((spawned) => spawned.session)).toEqual(["integrated-session-1"]);

@@ -590,6 +590,15 @@
     nav?.focus();
   }
 
+  /** The conversation held where it went back is kept as it is by a
+      message sent from there: the keyboard goes to its composer for one,
+      and nothing is reopened. */
+  function reopenWriteFirst() {
+    const ask = reopenAsk;
+    reopenAsk = null;
+    if (ask !== null) choose(ask.key);
+  }
+
   // The question goes with its session.
   $effect(() => {
     if (reopenAsk !== null && byKey(reopenAsk.key) === null) untrack(() => (reopenAsk = null));
@@ -2320,6 +2329,8 @@
           question={reopenQuestion.question}
           detail={reopenQuestion.detail}
           action="Stop and reopen"
+          alternative={reopenAsk?.held ? { label: "Write a message first", onClick: reopenWriteFirst } : null}
+          safe={reopenAsk?.held ?? false}
           onConfirm={reopenConfirm}
           onCancel={reopenCancel}
           testid="reopen-session"

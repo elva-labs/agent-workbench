@@ -199,6 +199,28 @@ left out, and a session another session started stays with its starter; see
 folder of an earlier version comes back too, and lists that folder again;
 see [orchestrator](orchestrator.md).
 
+A row that was unread when the app quit comes back unread, with the line
+it had under its name, whether it went unread by itself or was marked by
+hand; a row that was read comes back read, and none of its lines is kept,
+so marking it unread then puts no line back. A mark made by hand comes
+back with its rule. This holds for a
+terminal and an integrated session, whether its agent is started again or
+the row is left as it was, and for a session another session started, which
+comes back unread when its starter brings it back. A row that has not come
+back within a week, as when its project does not open again or its starter
+is not resumed, is let go, and comes back read if it ever does. What waits is kept as
+it changes, not on the way out, so a crash keeps it as a quit does. It
+counts at once in the status bar, on the app's icon and for the chord to
+the next session that needs you, and coming back says nothing through the
+system: what was unread was news before the quit. What happens after it is
+news as it would have been before. The session the restore puts on screen
+is not read by being put there, nor by the window being looked at: unread,
+it waits as a mark made on screen does, until another session has been on
+screen and the user comes back to it, writes to it, or marks it read. A
+session that ended before the quit is not among the rows that come back,
+and its unread with it. A version that does not keep what waits, run in
+between, leaves the rows to come back read.
+
 The yellow is the terminal's, so a theme that sets its yellow sets this dot
 too. In the amber palette, whose accent is a yellow, it is a lemon instead,
 so it is never taken for an unread session.
@@ -219,7 +241,9 @@ that started others how many of them it has not yet heard from, as the
 laid out apart, so the model never narrows the name. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
-name and its time, the time its transcript was last written. Those rows come after the running
+name and its time, the time its transcript was last written, unless it
+came back unread with a line, as [after a restart](#after-a-restart)
+says. Those rows come after the running
 ones, and once a project has more than three of them the first two stand
 and the rest fold into one row that counts them, such as `8 more from this
 week`, which opens in place. No row says which agent it runs.
@@ -333,8 +357,8 @@ and in the notification.
 Any row can be marked, a session another session started and a row left
 from the last quit among them. A past session, listed under its project
 or behind the fold, has no menu and cannot be marked: nothing of it is
-open to wait for the user, and opening it starts it again. A mark does
-not outlive a quit, as no unread row does.
+open to wait for the user, and opening it starts it again. A mark comes
+back after a restart, as [after a restart](#after-a-restart) describes.
 
 With the project's hooks on (Live updates, in the settings) the transitions
 are reported by the agent. Both agents' prompt, stop and permission hooks
@@ -538,8 +562,15 @@ the run would end a command it left running in the background or what was
 allowed for its session alone, or where a conversation went back to a point
 a terminal does not take, the pane asks first, saying what reopening ends
 or brings back, at the top of the pane above the field that opens go to, where it
-asks before closing busy shells. A row left from the last quit only
-changes the way it will start.
+asks before closing busy shells. For a conversation that went back, it
+also offers Write a message first, which puts the question away and the
+keyboard in the composer: a message sent from there lets the point go,
+leaving what was gone back on behind, and a terminal then has nothing of
+it to bring back. Any other
+start in a terminal of a conversation held where it went back, such as a
+past session resumed that way, does not start: the pane says why and
+offers Open as a conversation, which goes on from the point. A row left
+from the last quit only changes the way it will start.
 
 A terminal Claude Code session is quit as the user would quit it, with
 Ctrl+C a press at a time. Claude Code writes down the mode it resumed a
@@ -844,7 +875,11 @@ the composer, Cmd+Enter sends them now, with what is written when the
 agent is at work, and Cmd+Shift+Enter takes the newest of the user's own
 back (Ctrl off macOS), as its hint says; a chord the user has given to an
 action of the keymap is not named. Both are on the thread's arrow walk
-too. The thread at its foot keeps the waiting messages and their line in
+too. Up in the empty composer takes the newest back as well, where nothing
+is docked, with the caret at the start of its words, and Up again, while
+the composer holds only what Up took back, unchanged, takes the one before
+and puts it ahead, each in the order sent, so Enter sends them as one
+message; the hint under the composer says while there is one before. The thread at its foot keeps the waiting messages and their line in
 view above the composer and the dock as they come and change. While the
 dock holds a request the user answers there, the composer says Up
 reaches it, and a lone digit
@@ -942,6 +977,48 @@ composer give the mentions as they were typed. A message whose mentions
 were not kept, from another session or another window's store, shows its
 words as they are.
 
+A session at rest goes back to before one of the user's own messages, as
+[integrated](integrated.md#going-back) describes. Esc twice within a
+moment in its empty composer, or Go back to an earlier message in the
+palette, opens a list over the composer of the user's own messages the
+agent keeps, oldest first, with the newest marked; a first Esc says what a
+second does, and an Esc that stopped a turn or put something away opens
+nothing. Go back to here, shown on each of the user's messages as Copy is,
+opens the same list at the choices for that message. As the mark moves,
+the thread brings the message into view under a line and fades what would
+leave with it, and the list says what leaves, or why the conversation
+cannot go back there. Enter turns the list into the choices for the marked
+message: the conversation alone, and, where the agent puts files back and
+a dry run named some, the conversation and the files, and only the files,
+naming the files and counting what changes. Past three files a choice
+names two and counts the rest, and names them all once marked by a key or
+clicked, so none goes back unnamed. Enter takes the marked choice. A digit
+takes one that can be undone, and only marks one that cannot, which says
+so, for Enter to take. Esc goes back to the list and closes it from
+there, and typing closes it and types. A turn the agent begins by itself closes it, and the composer
+says why.
+
+Going back with the conversation cuts the thread at the message at once,
+marks the place with `Rewound here` and the time, and puts the message's
+words in the composer, a blank line above anything written there, to be
+edited and sent again. Claude Code starts again for it, which the choices say, with
+the commands it left running that stop with it, and while it starts the
+composer says what is sent waits for it. Gone back with the conversation
+alone, it can be undone from the mark until a message is sent or a turn
+runs. Files put back are named under the composer, with when they are
+from and a reminder that what commands changed stays. Where they went back
+and the conversation did not, as with only the files, or where Claude Code
+went on with the whole conversation or did not start again, the composer
+says so too, and the agent is told ahead of the user's next message, which
+the thread shows folded under it as `Files put back, from the workbench`;
+a message that never reaches the agent, or that the conversation goes back
+on, has it told again with the next. Codex goes back in place, puts no files back
+and cannot undo it, which the choices say. A report of a session it
+started that reached it in a message gone back on counts as not told, so
+it comes again. Where going back fails, the composer says why, the thread
+is whole again, the words leave the composer where they stand unchanged,
+and a message sent meanwhile is not sent.
+
 The row's id is the conversation's id as the agent says it once ready, so
 the agent's own tools find the row. Its state, working, asking or idle,
 comes from the session's events, never from the hooks or from output; the
@@ -1037,8 +1114,7 @@ what never ends by itself stays as it is, and its second line says why:
   is held at that point until a message is sent from there, says `Stays a
   conversation: it went back, and a terminal would bring back what was
   gone back on`, since Claude Code's terminal does not take the point.
-  Whether a conversation is held is the core's to say; where the core does
-  not hold conversations, none is.
+  Whether a conversation is held is the core's to say.
 
 Where the second line holds what the agent left, a word of it takes the
 place of the model, and a session another started says it where its model

@@ -46,6 +46,7 @@ import { liveUnder } from "$lib/projects.svelte";
 import { startsIn } from "$lib/orchestratorFolder.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
+import { canGoBack, openBack } from "$lib/rewind.svelte";
 import { compact } from "$lib/compact.svelte";
 
 /**
@@ -70,7 +71,7 @@ import { compact } from "$lib/compact.svelte";
 
 export type Mode = "goto" | "commands" | "new";
 
-export type CommandId = "new" | "newHere" | "newOther" | "open" | "remote";
+export type CommandId = "new" | "newHere" | "newOther" | "open" | "remote" | "goBack";
 
 /** An answer to one of the questions a new session asks. */
 export type Step =
@@ -368,6 +369,10 @@ export function commandItems(query: string): PaletteItem[] {
               : `New session in a terminal in ${projectLabel(here!)}`,
           ),
         ]),
+    // Going back is the session on screen's, while it is at rest.
+    ...(sessions.active !== null && canGoBack(sessions.active)
+      ? [command("goBack", "Go back to an earlier message")]
+      : []),
     command("open", "Open project"),
     command("remote", "Open remote project"),
   ];
@@ -709,6 +714,17 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
           return { type: "close", then: () => void pick() };
         case "remote":
           return { type: "close", then: () => void openRemote() };
+        case "goBack": {
+          const key = sessions.active;
+          if (key === null) return { type: "stay" };
+          return {
+            type: "close",
+            then: () => {
+              focusPane("agent");
+              void openBack(key);
+            },
+          };
+        }
       }
     case "action":
       return { type: "perform", action: actionFor(item.action) };
