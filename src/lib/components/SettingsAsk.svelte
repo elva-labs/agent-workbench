@@ -99,13 +99,14 @@
 
 <style>
   /* Over the agent pane, near the top, where the question is read before
-     the terminal under it; the same place a session's start is asked. */
+     the terminal under it, and over a peeked sessions pane; the same place
+     a session's start is asked. */
   .ask {
     position: fixed;
     top: 24px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 5;
+    z-index: 7;
     width: min(440px, calc(100vw - 48px));
     padding: 10px 12px 12px;
     border: 1px solid var(--accent);
@@ -269,7 +270,7 @@
     top: 24px;
     left: 50%;
     transform: translateX(-50%);
-    z-index: 5;
+    z-index: 7;
     display: flex;
     align-items: center;
     gap: 10px;

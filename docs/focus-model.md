@@ -20,9 +20,9 @@ default preset:
 
 | Keys                                                                    | Does                                                        |
 | ----------------------------------------------------------------------- | ----------------------------------------------------------- |
-| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back; while editing, see [the editor](#the-editor) |
+| <kbd>Cmd</kbd><kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd> | Focus sessions / agent / changes / terminal; while reviewing, <kbd>Cmd</kbd><kbd>1</kbd> peeks the sessions pane over the agent and puts it back; in [compact mode](layout.md#compact-mode) it slides the pane in and back; while editing, see [the editor](#the-editor) |
 | <kbd>Cmd</kbd><kbd>5</kbd>                                              | The keyboard to the [status bar](#the-status-bar)           |
-| <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane                              |
+| <kbd>Cmd</kbd><kbd>B</kbd>                                              | Show or hide the sessions pane; in compact mode, slide it in or back |
 | <kbd>Cmd</kbd><kbd>\\</kbd>                                             | Show or hide the right pane: the changes, or the agent while editing |
 | <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd>                              | Agent or editor in the middle                               |
 | <kbd>Cmd</kbd><kbd>J</kbd>                                              | Show or hide the terminal panel                             |
@@ -104,8 +104,8 @@ them, showing a session drawn under it as a click on its header does, with
 the keyboard in that session or, for a project with none, in the sessions
 pane. A sessions pane that is folded opens for that, or peeks over
 the agent while reviewing, so the viewer stays, and in a window too narrow for
-the pane it stays as the user set it and the keyboard goes to the agent pane's
-New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session
+the pane, or in compact mode, it stays as the user set it and the keyboard
+goes to the agent pane's New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session
 in that project, as below. A <kbd>&gt;</kbd> typed as the first character
 switches to the commands, with the rest of what was typed. With nothing open
 the list holds one row, Open project. The footer names only what the list on

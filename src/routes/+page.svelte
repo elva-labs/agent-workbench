@@ -21,6 +21,8 @@
   import SettingsAsk from "$lib/components/SettingsAsk.svelte";
   import UserStyles from "$lib/components/UserStyles.svelte";
   import StatusBar from "$lib/components/StatusBar.svelte";
+  import CompactEdge from "$lib/components/CompactEdge.svelte";
+  import { compact } from "$lib/compact.svelte";
   import {
     cancelled as conductCancelled,
     conductor,
@@ -134,6 +136,7 @@
     DEFAULT,
     defaultChanges,
     minChanges,
+    COMPACT_EDGE,
     folded,
     MIN,
     MIN_REVIEW,
@@ -543,10 +546,26 @@
   );
 
   /** The sessions column's width, folded or open or on its way, the splitter
-      beside it included. */
+      beside it included. In compact mode the pane is not in the layout, and
+      the column is only the edge before the panes. */
   let sessionsColumn = $derived(
-    `calc(${folded() + (layout.sessions - folded()) * sessionsOpen.current}px + var(--splitter-w))`,
+    compact.on
+      ? `${COMPACT_EDGE[theme.look]}px`
+      : `calc(${folded() + (layout.sessions - folded()) * sessionsOpen.current}px + var(--splitter-w))`,
   );
+
+  // Turning compact mode on or off lays the window out again in one step,
+  // the pane put back if it was drawn over the panes.
+  let compactWas = untrack(() => compact.on);
+  $effect.pre(() => {
+    const on = compact.on;
+    untrack(() => {
+      if (on === compactWas) return;
+      compactWas = on;
+      layout.sessionsPeek = false;
+      applyLayout(viewport, stack);
+    });
+  });
 
   // The terminal panel eases up and down, and the panes above it give up
   // and take back the height as it goes. The shells in it are never
@@ -824,9 +843,10 @@
         break;
       case "toggle":
         if (action.pane === "changes") toggleRight();
-        else if (editing && layout.sessionsForced) {
-          // A window that folds the pane for the editor has nothing to open
-          // it into: the chord peeks it, and puts it back.
+        else if (compact.on || (editing && layout.sessionsForced)) {
+          // Compact mode, or a window that folds the pane for the editor,
+          // has nothing to open it into: the chord peeks it, and puts it
+          // back.
           peekSessions(!layout.sessionsPeek);
           if (layout.sessionsPeek) focusPane("sessions");
         } else if (!sessionsVisible()) unfoldSessions();
@@ -1005,13 +1025,19 @@
          splitter gives way to a plain edge: there is nothing to drag. -->
     <div
       class="sessions-slot"
-      class:folded={!sessionsShown()}
-      class:peeking={layout.sessionsPeek}
+      class:folded={!compact.on && !sessionsShown()}
+      class:peeking={layout.sessionsPeek && !compact.on}
+      class:compact={compact.on}
+      class:out={compact.on && !layout.sessionsPeek}
+      inert={compact.on && !layout.sessionsPeek}
       style:--sessions-w="{layout.sessions}px"
       style:--peek-w={peekWidth}
+      data-testid="sessions-slot"
     >
       <SessionsPane />
-      {#if sessionsVisible()}
+      {#if compact.on}
+        <!-- Nothing beside the pane: it is drawn over the panes. -->
+      {:else if sessionsVisible()}
         <Splitter
           label="Resize projects and sessions"
           name="sessions"
@@ -1052,6 +1078,10 @@
           onCommit={saveLayout}
         />
       {/if}
+    {/if}
+
+    {#if compact.on}
+      <CompactEdge />
     {/if}
   </main>
 
@@ -1162,6 +1192,7 @@
 
   /* No padding here: clientWidth is then exactly the width the panes divide up. */
   .shell {
+    position: relative;
     display: grid;
     gap: 0;
     flex: 1;
@@ -1212,16 +1243,21 @@
   }
 
   /* Peeked: the pane takes its open width over the agent beside it, and
-     the column, the splitter and everything else stay where they are. */
+     the column, the splitter and everything else stay where they are. It
+     stands over every layer the panes draw, the focused card's mark and
+     their menus included, and under the questions asked over the agent,
+     the status bar and the dialogs. */
   .sessions-slot.peeking {
     position: relative;
-    z-index: 4;
+    z-index: 6;
   }
 
   .sessions-slot.peeking :global(.pane) {
     flex: none;
     width: var(--peek-w);
-    box-shadow: 12px 0 28px rgba(0, 0, 0, 0.3);
+    box-shadow:
+      1px 0 0 var(--compact-rim),
+      6px 0 16px -10px color-mix(in srgb, black var(--compact-cast), transparent);
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -1233,6 +1269,77 @@
   @keyframes -global-sessions-peek {
     from {
       width: var(--folded);
+    }
+  }
+
+  /* Compact mode: the pane is not in the layout. Peeked, it is drawn over
+     the panes from the window's left edge at its open width, on its own
+     ground with a soft shadow; otherwise it waits past the edge, out of
+     sight. It slides between the two on the panes' curve. */
+  .sessions-slot.compact {
+    position: relative;
+    z-index: 6;
+  }
+
+  .sessions-slot.compact :global([data-pane="sessions"]) {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: var(--sessions-w);
+    border-radius: 0 var(--compact-radius) var(--compact-radius) 0;
+    box-shadow:
+      1px 0 0 var(--compact-rim),
+      6px 0 16px -10px color-mix(in srgb, black var(--compact-cast), transparent);
+  }
+
+  .sessions-slot.compact.out :global([data-pane="sessions"]) {
+    transform: translateX(calc(-100% - 64px));
+    visibility: hidden;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .sessions-slot.compact :global([data-pane="sessions"]) {
+      transition:
+        transform 180ms cubic-bezier(0.33, 1, 0.68, 1),
+        visibility 0s;
+    }
+
+    .sessions-slot.compact.out :global([data-pane="sessions"]) {
+      transition:
+        transform 180ms cubic-bezier(0.33, 1, 0.68, 1),
+        visibility 0s linear 180ms;
+    }
+  }
+
+  .frame {
+    --compact-radius: 0px;
+    --compact-rim: transparent;
+    --compact-cast: 22%;
+  }
+
+  :global(:root[data-look="modern"]) .frame {
+    --compact-radius: 10px;
+    --compact-rim: color-mix(in srgb, var(--ink) 10%, transparent);
+  }
+
+  /* In the dark the pane's ground is the window's darkest tone, so its
+     rim and its lift are drawn a little stronger to read on the cards. */
+  :global(:root[data-theme="dark"]) .frame {
+    --compact-cast: 45%;
+  }
+
+  :global(:root[data-theme="dark"][data-look="modern"]) .frame {
+    --compact-rim: color-mix(in srgb, var(--ink) 16%, transparent);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme="light"])) .frame {
+      --compact-cast: 45%;
+    }
+
+    :global(:root:not([data-theme="light"])[data-look="modern"]) .frame {
+      --compact-rim: color-mix(in srgb, var(--ink) 16%, transparent);
     }
   }
 

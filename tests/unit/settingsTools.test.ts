@@ -59,6 +59,7 @@ import {
 import { HOLD } from "$lib/hold";
 import { setThemes, theme } from "$lib/theme.svelte";
 import { resetUserStyles, userStyles } from "$lib/userStyles.svelte";
+import { compact, resetCompact } from "$lib/compact.svelte";
 import {
   addWorkflow,
   adoptWorkflows,
@@ -613,6 +614,20 @@ describe("the user's stylesheet", () => {
     userStyles.css = "";
     userStyles.problem = "the stylesheet imports another";
     expect(describeSettings()).toContain("is not used: the stylesheet imports another");
+  });
+});
+
+describe("compact mode", () => {
+  afterEach(() => resetCompact());
+
+  it("is read out, and an agent may turn it on or off with the user's yes", () => {
+    expect(describeSettings()).toContain("compact: false (true or false)");
+    expect(plan({ compact: true }).changes).toEqual([
+      { field: "compact", label: "Compact mode", from: "Off", to: "On" },
+    ]);
+    compact.on = true;
+    expect(plan({ compact: true }).changes).toEqual([]);
+    expect(() => plan({ compact: "yes" })).toThrow(/true or false/);
   });
 });
 

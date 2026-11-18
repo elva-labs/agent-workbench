@@ -30,6 +30,7 @@
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
+  import { loadCompact } from "$lib/compact.svelte";
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { followSetting } from "$lib/sessionMoves.svelte";
   import { loadRemembered } from "$lib/sessions.svelte";
@@ -52,6 +53,7 @@
     loadHooks();
     loadUserStyles();
     loadLayout();
+    loadCompact();
     loadRemembered();
     loadUsed();
     loadStarted();

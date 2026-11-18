@@ -79,6 +79,7 @@
   } from "$lib/theme.svelte";
   import { DEFAULTS } from "$lib/customThemes";
   import { setUserStyles, userStyles } from "$lib/userStyles.svelte";
+  import { compact, setCompact } from "$lib/compact.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
   import { setAskEveryStart, startAsk } from "$lib/startAsk.svelte";
   import BackgroundPicker from "$lib/components/BackgroundPicker.svelte";
@@ -434,6 +435,29 @@
               </button>
             {/each}
           </div>
+
+          <h3>Compact mode</h3>
+          <UnreadEntries field="compact" />
+          <div class="seg" role="radiogroup" aria-label="Compact mode">
+            <button
+              role="radio"
+              aria-checked={compact.on}
+              class:on={compact.on}
+              onclick={() => setCompact(true)}
+              data-testid="compact-on">On</button
+            >
+            <button
+              role="radio"
+              aria-checked={!compact.on}
+              class:on={!compact.on}
+              onclick={() => setCompact(false)}
+              data-testid="compact-off">Off</button
+            >
+          </div>
+          <p class="note" data-testid="compact-note">
+            Hides the projects and sessions pane, so the other panes take the window's width. Point at the
+            window's left edge, or press {describe(keys.bindings["focus.sessions"])}, and it slides in over them.
+          </p>
 
           <h3>Font</h3>
           <UnreadEntries field={["terminalFont", "interfaceFont"]} />
