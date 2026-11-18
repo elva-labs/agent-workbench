@@ -55,6 +55,7 @@ import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 
 import { core, type ConductRequest, type ProjectInfo } from "$lib/core";
+import { HOLD } from "$lib/hold";
 import {
   nameTaken,
   named as nameRow,
@@ -467,7 +468,23 @@ export const conductor = $state({
   /** How many times the workbench has woken each starter, by the row's
       key, since a turn began that it did not start. */
   wakesInRow: {} as Record<string, number>,
+  /** The calls answered before they were done, by caller, until the
+      caller is told how each went: see `held`. */
+  later: {} as Record<string, Later[]>,
 });
+
+/** A call answered that it was on its way before it was done: a start, a
+    resume or a line that waited on the user, or on a session coming up. */
+export interface Later {
+  /** The call's id. */
+  call: string;
+  /** What the same call made again would be, to refuse it meanwhile. */
+  same: string;
+  /** The call in a few words, as "start of "Fix the cache" in /p". */
+  what: string;
+  /** How it went, once it is done: what the call would have answered. */
+  outcome: { went: boolean; text: string } | null;
+}
 
 /** A starter the workbench woke: the sessions it was woken for, by their
     row's key, with the name the row had then and how it was at rest, and
@@ -955,6 +972,9 @@ function remembered(caller: string, id: string): Started | null {
   );
 }
 
+/** The calls being answered, by id. */
+const calling = new Map<string, ConductRequest>();
+
 /** The ids of the calls handled lately, so a call delivered twice is
     handled once. */
 const seen = new Set<string>();
@@ -1004,6 +1024,167 @@ export function waitedOn(key: string): boolean {
 
 /** Calls given up on by the agent: their answer is not written. */
 const given = new Set<string>();
+
+/**
+ * A call that waits on the user.
+ *
+ * A start the user is asked about, a resume or a start for a round past a
+ * review's limit, and a line to a review past its limit wait on the user's
+ * answer to a question in the window, for as long as the user is away. An
+ * agent gives up on a call of its own accord after a while, Codex after a
+ * minute unless it is told otherwise, and the tool server after its own
+ * wait; it never reads an answer that comes after. So such a call is held
+ * no longer than `HOLD` (see the hold module): still not done by then, it is answered that it is
+ * on its way, that nothing is done yet, and that wait says how it went, and
+ * the question stays. A call the agent gives up on before then goes the
+ * same way. Once it is done, how it went is the caller's to hear, once: from
+ * its next wait, a listing, the note on the user's next message, or a wake.
+ * A call is done once, whoever hears of it, and the same start, resume or
+ * line asked for again while one waits is refused, so no work is started
+ * twice for it. One whose caller has stopped by the time the user answers
+ * does nothing, there being no one to hear of it or to direct it.
+ */
+
+export { HOLD };
+
+/** The tools whose calls can wait on the user. */
+const ON_USER = new Set(["start", "send"]);
+
+/** The calls being held, by id, until they are done or `HOLD` is up. */
+const holding = new Map<string, { caller: string; same: string; what: string; work: Promise<Answered> }>();
+
+/** The calls whose question is up, or waits behind another, by id. */
+const onUser = new Set<string>();
+
+/** Holds a call that can wait on the user until it is done, or `HOLD`. */
+async function held(request: ConductRequest): Promise<Answered> {
+  const caller = request.session ?? outsideCaller(request.cwd);
+  const { same, what } = callWords(request);
+  // The same call again, after the caller was told one is on its way, is
+  // that one asked for twice. Calls made together are each meant.
+  const already = (conductor.later[caller] ?? []).find((one) => one.outcome === null && one.same === same);
+  if (already !== undefined)
+    return refused(
+      `Your ${already.what} is on its way already${onUser.has(already.call) ? ", waiting on the user's answer," : ""} and nothing was asked again. Call wait, which tells you how it went.`,
+    );
+  // Begun at once, as any call is, so its question is up as it returns.
+  let work: Promise<Answered>;
+  try {
+    work = Promise.resolve(run(request)).catch((error: unknown) => refused(String(error)));
+  } catch (error) {
+    work = Promise.resolve(refused(String(error)));
+  }
+  holding.set(request.id, { caller, same, what, work });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = await Promise.race([
+    work,
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), HOLD);
+    }),
+  ]);
+  clearTimeout(timer);
+  const entry = holding.get(request.id);
+  holding.delete(request.id);
+  // Given up on meanwhile, it is the caller's news already.
+  if (entry === undefined || done !== null) return done ?? refused("The call was given up on.");
+  const asking = onUser.has(request.id);
+  later(request, entry);
+  return said(onItsWay(request, asking));
+}
+
+/** Makes a held call the caller's news once it is done. */
+function later(request: ConductRequest, entry: { caller: string; same: string; what: string; work: Promise<Answered> }) {
+  const item: Later = { call: request.id, same: entry.same, what: entry.what, outcome: null };
+  // Pushed onto the list the state holds, not the one handed to it.
+  conductor.later[entry.caller] = [...(conductor.later[entry.caller] ?? []), item];
+  void entry.work.then((answered) => {
+    if (request.tool === "start" && answered.byUser !== true) noteRefusal(request, answered.error);
+    const kept = conductor.later[entry.caller]?.find((one) => one.call === request.id);
+    if (kept === undefined) return;
+    kept.outcome =
+      answered.error === null
+        ? { went: true, text: answered.content ?? "" }
+        : { went: false, text: answered.error };
+    moved();
+  });
+}
+
+/** What a call that can wait on the user is, in a few words, and what the
+    same call made again would be. */
+function callWords(request: ConductRequest): { same: string; what: string } {
+  const args = request.arguments;
+  const word = (name: string) => (typeof args[name] === "string" ? (args[name] as string).trim() : "");
+  if (request.tool === "send") {
+    const to = word("session");
+    return { same: `send\n${to}\n${word("text")}`, what: `line to session ${idText(to)}` };
+  }
+  const resumed = word("session");
+  if (resumed !== "")
+    return { same: `resume\n${resumed}`, what: `resume of session ${idText(resumed)}` };
+  const prompt = oneLine(word("prompt"));
+  const called = word("name") !== "" ? word("name") : prompt;
+  return {
+    same: `start\n${word("project")}\n${word("step")}\n${word("work")}\n${prompt}`,
+    what: `start of ${quotedName(nameCut(oneLine(called)))} in ${oneLine(word("project"))}`,
+  };
+}
+
+/** What a held call answers when `HOLD` is up and it is not done. */
+function onItsWay(request: ConductRequest, asking: boolean): string {
+  const resume = request.tool === "start" && typeof request.arguments.session === "string";
+  const noun = request.tool === "send" ? "line" : resume ? "resume" : "start";
+  const nothing =
+    request.tool === "send"
+      ? "the line has not been sent"
+      : resume
+        ? "the session has not been resumed"
+        : "nothing has started";
+  const why = asking
+    ? request.tool === "start" && !resume && !roundAsked.has(request.id)
+      ? `The user is asked about this start in the workbench and has not answered yet, so ${nothing}.`
+      : `The user is asked in the workbench about another round of the review and has not answered yet, so ${nothing}.`
+    : `This ${noun} is still under way.`;
+  return `${why} Do not ask for the same ${noun} again: call wait, which tells you how it went${noun === "start" ? ", with the new session's id if it started" : ""}.`;
+}
+
+/** The calls whose question is about a round past a review's limit. */
+const roundAsked = new Set<string>();
+
+/** What the caller has not been told of the calls it was answered early,
+    each done: the calls and a line for each. */
+function laterNews(caller: string): { calls: string[]; lines: string[] } {
+  const done = (conductor.later[caller] ?? []).filter((one) => one.outcome !== null);
+  return {
+    calls: done.map((one) => one.call),
+    lines: done.map((one) =>
+      one.outcome!.went
+        ? `Your ${one.what} went ahead: ${one.outcome!.text}`
+        : `Your ${one.what} did not go ahead: ${one.outcome!.text}`,
+    ),
+  };
+}
+
+/** Whether the caller has a call answered early that is not done yet. */
+function laterWaiting(caller: string): Later[] {
+  return (conductor.later[caller] ?? []).filter((one) => one.outcome === null);
+}
+
+/** The caller has been told how these calls went. */
+function toldLater(caller: string, calls: string[]) {
+  const left = (conductor.later[caller] ?? []).filter((one) => !calls.includes(one.call) || one.outcome === null);
+  if (left.length > 0) conductor.later[caller] = left;
+  else delete conductor.later[caller];
+  moved();
+}
+
+/** Whether the session that made a call has stopped: a call from an agent
+    the workbench did not start has no session to stop. */
+function callerGone(request: ConductRequest): boolean {
+  return request.session !== null && callerRow(request) === null;
+}
+
+/** What a call answers whose caller stopped before the user answered. */
+const CALLER_GONE = "The session that asked has stopped, so nothing was done.";
 /** Callers whose last wait was given up on, as the user's message cutting
     it short does: the next note they are given says what is still out. */
 const cut = new Set<string>();
@@ -1013,6 +1194,16 @@ const cut = new Set<string>();
  * answering and tells nothing, since no one is there to hear it.
  */
 export function cancelled(id: string) {
+  // A call that can wait on the user goes on, and how it went is the
+  // caller's to hear.
+  const entry = holding.get(id);
+  if (entry !== undefined) {
+    holding.delete(id);
+    given.add(id);
+    const request = calling.get(id);
+    if (request !== undefined) later(request, entry);
+    return;
+  }
   const held = waiting.get(id);
   if (held === undefined) return;
   given.add(id);
@@ -1048,10 +1239,13 @@ export async function handle(request: ConductRequest): Promise<void> {
     if (oldest !== undefined) seen.delete(oldest);
   }
   let answered: Answered;
+  calling.set(request.id, request);
   try {
-    answered = await run(request);
+    answered = ON_USER.has(request.tool) ? await held(request) : await run(request);
   } catch (error) {
     answered = refused(String(error));
+  } finally {
+    calling.delete(request.id);
   }
   if (request.tool === "start" && answered.byUser !== true)
     noteRefusal(request, answered.error);
@@ -1552,7 +1746,10 @@ function reportNote(caller: string, ending: boolean): Note | null {
   if (ending) endWaits([caller], USER_WROTE);
   const news = kids.filter((kid) => !watched.has(kid.key) && untold(kid));
   const reported = news.map((kid) => [kid.key, stops.get(kid.key)?.rest ?? null] as const);
-  const lines = news.map((kid) => restText(kid));
+  // How a call answered before it was done went, unless a wait the caller
+  // holds is to tell it.
+  const went = holding.length > 0 && !ending ? { calls: [], lines: [] } : laterNews(caller);
+  const lines = [...went.lines, ...news.map((kid) => restText(kid))];
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
     lines.push(
@@ -1563,6 +1760,7 @@ function reportNote(caller: string, ending: boolean): Note | null {
     text: [REPORTS_HEAD, ...lines].join("\n"),
     deliver: () => {
       for (const [key, rest] of reported) tellAs(key, rest);
+      if (went.calls.length > 0) toldLater(caller, went.calls);
       cut.delete(caller);
       // A wait the message is about to cut short has had its still-out
       // line.
@@ -1707,7 +1905,12 @@ function planWakes() {
   void heard.version;
   const due = new Set(
     sessions.all
-      .filter((starter) => idle(starter) && !spent(starter) && wakeNews(starter).length > 0)
+      .filter(
+        (starter) =>
+          idle(starter) &&
+          !spent(starter) &&
+          (wakeNews(starter).length > 0 || laterNews(starter.token).calls.length > 0),
+      )
       .map((starter) => starter.key),
   );
   for (const [key, timer] of wakes)
@@ -1727,7 +1930,7 @@ async function wakeUp(key: string) {
   const starter = byKey(key);
   if (starter === null || !idle(starter) || spent(starter)) return;
   const news = wakeNews(starter);
-  if (news.length === 0) return;
+  if (news.length === 0 && laterNews(starter.token).calls.length === 0) return;
   const still = starter.kind === "terminal" ? keysStillIn(key, WAKE_QUIET) : 0;
   if (still > 0) {
     wakes.set(key, setTimeout(() => void wakeUp(key), still));
@@ -1764,7 +1967,11 @@ const barless = (line: string) => line.normalize("NFKC").replace(BAR_LIKE, "\u00
  */
 async function wake(starter: Session, news: Session[]) {
   const key = starter.key;
-  const lines = news.map((kid) => restText(kid));
+  // How a call answered before it was done went, first: told as the wake
+  // is sent, and untold again if it never reaches the starter.
+  const went = laterNews(starter.token);
+  const kept = (conductor.later[starter.token] ?? []).filter((one) => went.calls.includes(one.call));
+  const lines = [...went.lines, ...news.map((kid) => restText(kid))];
   const out = startedBy(starter.token).filter(atWork);
   if (out.length > 0) lines.push(atWorkLine(either(out.map(namedAs), "and")));
   const told = news.map((kid) => {
@@ -1772,14 +1979,22 @@ async function wake(starter: Session, news: Session[]) {
     return { key: kid.key, rest: mark.rest, before: mark.told, beforeTurn: mark.toldTurn };
   });
   for (const { key: kid, rest } of told) tellAs(kid, rest);
+  if (went.calls.length > 0) toldLater(starter.token, went.calls);
   const lost = () => {
     for (const { key: kid, rest, before, beforeTurn } of told) untell(kid, rest, before, beforeTurn);
+    if (kept.length > 0) {
+      const back = $state.snapshot(kept) as Later[];
+      conductor.later[starter.token] = [...back, ...(conductor.later[starter.token] ?? [])];
+      moved();
+    }
     gaveUp(key);
   };
-  conductor.woken[key] = {
-    by: news.map((kid) => ({ key: kid.key, name: label(kid), rest: stops.get(kid.key)!.rest! })),
-    at: Date.now(),
-  };
+  // The row says which sessions it was woken for; a call alone names none.
+  if (news.length > 0)
+    conductor.woken[key] = {
+      by: news.map((kid) => ({ key: kid.key, name: label(kid), rest: stops.get(kid.key)!.rest! })),
+      at: Date.now(),
+    };
   conductor.wakesInRow[key] = (conductor.wakesInRow[key] ?? 0) + 1;
   if (starter.kind === "integrated") {
     wakeTurns.set(key, null);
@@ -1890,14 +2105,24 @@ function sessionLines(request: Placed): string {
     (entry) =>
       byId(entry.id) === null && (only === null || entry.project === only),
   );
-  if (listed.length === 0 && gone.length === 0)
+  const caller = callerOf(request);
+  const news = laterNews(caller);
+  const owed = laterWaiting(caller);
+  if (listed.length === 0 && gone.length === 0 && news.calls.length === 0 && owed.length === 0)
     return "You have started no sessions.";
   const lines = [
+    ...news.lines,
+    ...owed.map((one) =>
+      onUser.has(one.call)
+        ? `Your ${one.what} waits on the user's answer; wait tells you how it went.`
+        : `Your ${one.what} is still under way; wait tells you how it went.`,
+    ),
     ...listed.map(describe),
-    ...gone.map((entry) => describeGone(callerOf(request), entry)),
+    ...gone.map((entry) => describeGone(caller, entry)),
   ];
-  // Listing a stop is telling it.
+  // Listing a stop is telling it, and so is listing how a call went.
   for (const session of listed) tell(session.key);
+  if (news.calls.length > 0) toldLater(caller, news.calls);
   return lines.join("\n");
 }
 
@@ -2072,6 +2297,7 @@ async function startFitted(
   const answer = unasked
     ? "once"
     : await askUser(request, project, prompt, wants, { account, bare }, named, beyond);
+  if (!unasked && callerGone(request)) return refused(CALLER_GONE);
   if (answer === "no") {
     if (beyond !== null) stopAtLimit(callerOf(request), beyond);
     return {
@@ -2659,20 +2885,13 @@ async function resumeSession(
   try {
     // Resuming is not asked about, the consent having been given when the
     // session was started, except for a round past the review's limit.
-    if (
-      beyond !== null &&
-      (await askUser(
-        request,
-        project,
-        prompt ?? "",
-        false,
-        null,
-        null,
-        beyond,
-      )) === "no"
-    ) {
-      stopAtLimit(caller, beyond);
-      return { ...refused(notAllowed(beyond)), byUser: true };
+    if (beyond !== null) {
+      const answer = await askUser(request, project, prompt ?? "", false, null, null, beyond);
+      if (callerGone(request)) return refused(CALLER_GONE);
+      if (answer === "no") {
+        stopAtLimit(caller, beyond);
+        return { ...refused(notAllowed(beyond)), byUser: true };
+      }
     }
     if (worktree !== null && !(await treeStands(project, worktree)))
       return refused(
@@ -2829,20 +3048,13 @@ async function sendText(request: Placed): Promise<Answered> {
     if (review?.kind === "review") {
       const done = roundsOf(caller, review.name, at.piece);
       const beyond = pastLimit(caller, review, at.work ?? at.piece, at.piece, done);
-      if (
-        beyond !== null &&
-        (await askUser(
-          request,
-          session.project,
-          typed,
-          false,
-          null,
-          null,
-          beyond,
-        )) === "no"
-      ) {
-        stopAtLimit(caller, beyond);
-        return refused(notAllowed(beyond));
+      if (beyond !== null) {
+        const answer = await askUser(request, session.project, typed, false, null, null, beyond);
+        if (callerGone(request)) return refused(CALLER_GONE);
+        if (answer === "no") {
+          stopAtLimit(caller, beyond);
+          return refused(notAllowed(beyond));
+        }
       }
       if (!reachable(session)) return unreachable();
       countRound(caller, review.name, at.piece);
@@ -2973,11 +3185,13 @@ async function waitFor(request: Placed): Promise<Answered> {
   let watched: Session[];
   if (id === null) {
     watched = startedBy(callerOf(request));
-    if (watched.length === 0 && (conductor.started[callerOf(request)] ?? []).length > 0)
+    // A call answered before it was done is waited on as a session is.
+    const owed = (conductor.later[callerOf(request)] ?? []).length > 0;
+    if (watched.length === 0 && !owed && (conductor.started[callerOf(request)] ?? []).length > 0)
       return said(
         "None of the sessions you started is running. The sessions tool lists them with why each is not; resume one with start, naming its session, to wait on it.",
       );
-    if (watched.length === 0)
+    if (watched.length === 0 && !owed)
       return refused(
         "You have started no sessions to wait for. Name one to wait for it, or start one first.",
       );
@@ -3032,6 +3246,8 @@ async function holdWait(
   // running has no one to hear it.
   const callerAt = callingSession(request)?.key ?? null;
   let reported: string | null = null;
+  /** The calls answered early whose outcome the answer tells. */
+  let toldCalls: string[] = [];
   let abandoned = false;
   let interrupted: string | null = null;
   let ending: (() => void) | null = null;
@@ -3062,6 +3278,14 @@ async function holdWait(
           settle(null);
           return;
         }
+      }
+      // How a call answered before it was done went comes first: the
+      // caller made it, and was told to wait for it.
+      const news = laterNews(owner);
+      if (news.calls.length > 0) {
+        toldCalls = news.calls;
+        settle(news.lines.join("\n"));
+        return;
       }
       // A session that ended or asks, and was told so already, is answered
       // again only when none of the others can still move; one the caller
@@ -3114,10 +3338,16 @@ async function holdWait(
   waiting.delete(request.id);
   if (abandoned) return said("");
   if (interrupted !== null) return said(interrupted);
-  if (happened === null)
+  if (happened === null) {
+    const still = laterWaiting(owner).map((one) => ` Your ${one.what} still waits on the user's answer.`);
     return said(
-      `Nothing happened within ${seconds} seconds: no session stopped and none asked anything.`,
+      `Nothing happened within ${seconds} seconds: no session stopped and none asked anything.${still.join("")}`,
     );
+  }
+  if (toldCalls.length > 0) {
+    const calls = toldCalls;
+    return { ...said(happened), delivered: () => toldLater(owner, calls) };
+  }
   // The stop is told once the answer is left where the call reads it, and
   // only as it was now: the core leaves none once the tool server has
   // stopped reading, and then the next wait answers with it.
@@ -3590,15 +3820,30 @@ function askUser(
     named,
     once,
   };
+  onUser.add(request.id);
+  if (round !== null) roundAsked.add(request.id);
   return new Promise<Choice>((settle) => {
-    queue.push({ ask, settle });
+    queue.push({
+      ask,
+      settle: (choice) => {
+        onUser.delete(request.id);
+        roundAsked.delete(request.id);
+        settle(choice);
+      },
+    });
     nextAsk();
   });
 }
 
+/** Puts up the next question, passing over those whose caller has stopped
+    meanwhile, which do nothing. */
 function nextAsk() {
   if (conductor.asking !== null) return;
-  const head = queue.shift();
+  let head = queue.shift();
+  while (head !== undefined && callerGone(head.ask.request)) {
+    head.settle("no");
+    head = queue.shift();
+  }
   if (head === undefined) return;
   conductor.asking = head.ask;
   pending = head.settle;
@@ -3792,6 +4037,11 @@ export function resetConductor() {
   reserved.clear();
   waiting.clear();
   given.clear();
+  holding.clear();
+  onUser.clear();
+  roundAsked.clear();
+  calling.clear();
+  conductor.later = {};
   cut.clear();
   conductor.listening = {};
   for (const timer of wakes.values()) clearTimeout(timer);

@@ -22,6 +22,7 @@ import {
   WAKE_QUIET,
   WAKE_TAKEN,
   WAKES_MAX,
+  HOLD,
   accountWords,
   allow,
   allowedProjects,
@@ -4343,6 +4344,38 @@ describe("starting in a workflow's shape", () => {
     expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
   });
 
+  it("answers a line that waits on the user for another round before the agent gives up, sends it once allowed, and tells how it went", async () => {
+    orchestrating(limitOne());
+    await begun({ step: "Work", name: "Fix the cache" }, "w1");
+    const review = await begun({ step: "Review", work: "w1" }, "r1");
+    reviewed(review);
+    expect((await sent("r1", "Look again")).content).toContain("round 2");
+    reviewed(review);
+    await handle(call("sessions", {}, { session: "orch" }));
+    const request = call("send", { session: "r1", text: "Review it once more" }, { session: "orch" });
+    const answering = handle(request);
+    await settle();
+    expect(conductor.asking?.round).toMatchObject({ step: "Review", done: 2 });
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    expect(answers.find((answer) => answer.id === request.id)).toMatchObject({
+      error: null,
+      content:
+        "The user is asked in the workbench about another round of the review and has not answered yet, so the line has not been sent. Do not ask for the same line again: call wait, which tells you how it went.",
+    });
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(0);
+    once();
+    await settle();
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await settle();
+    expect(written.filter(([, data]) => data.includes("once more"))).toHaveLength(1);
+    const waiting = call("wait", { seconds: 5 }, { session: "orch" });
+    await handle(waiting);
+    expect(answers.find((answer) => answer.id === waiting.id)?.content).toContain(
+      'Your line to session r1 went ahead: Sent to session r1, for step "Review" round 3',
+    );
+  });
+
   it("puts work sent back in the round after its review's, for a line, a resume and a start that carries the piece on", async () => {
     orchestrating();
     const work = await begun({ step: "Work", name: "Fix the cache" }, "w1");
@@ -6191,5 +6224,198 @@ describe("a session the user closed or the app lost", () => {
     expect(lines[1]).toContain("not running since the workbench was restarted");
     await handle(call("stop", { session: "sid-2" }, as));
     expect(last().content).toContain("it has not run since the workbench was restarted");
+  });
+});
+
+
+describe("a call that waits on the user", () => {
+  /** The caller: a terminal session in the first project that ended its
+      last turn itself, as its hooks say. */
+  function caller(id = "caller-1", ptyId = "pty-0") {
+    const row = live(A, ptyId, id);
+    exact(id, "prompt");
+    exact(id, "stop");
+    flushSync();
+    return row;
+  }
+
+  /** A start in the other project, which the user is asked about. */
+  const elsewhere = (from = "caller-1", prompt = "Fix the flake") =>
+    call("start", { project: B, prompt }, { session: from });
+
+  const answerTo = (request: ConductRequest) => answers.find((answer) => answer.id === request.id);
+
+  const WAITS =
+    "The user is asked about this start in the workbench and has not answered yet, so nothing has started. Do not ask for the same start again: call wait, which tells you how it went, with the new session's id if it started.";
+
+  /** Starts it held past the hold, answered that it waits on the user. */
+  async function heldPast(request: ConductRequest) {
+    const answering = handle(request);
+    await settle();
+    expect(conductor.asking).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    return request;
+  }
+
+  /** The session the user allowed comes up. */
+  async function comesUp(ptyId: string, id: string) {
+    await settle();
+    const row = forProject(B).at(-1)!;
+    started(row.key, ptyId, id);
+    flushSync();
+    await settle();
+    return row;
+  }
+
+  it("is answered within the hold, as before, when the user answers in time", async () => {
+    caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    await vi.advanceTimersByTimeAsync(HOLD - 1000);
+    once();
+    await comesUp("pty-1", "sid-1");
+    await answering;
+    expect(answerTo(request)?.content).toContain("Started session sid-1");
+    expect(conductor.later).toEqual({});
+  });
+
+  it("answers before the agent gives up that a start waits on the user, and tells how it went through wait, once", async () => {
+    caller();
+    const request = await heldPast(elsewhere());
+    expect(answerTo(request)).toMatchObject({ content: WAITS, error: null });
+    // The question stays, and nothing has started.
+    expect(conductor.asking).not.toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+    // Asked for again, it is not asked twice.
+    await handle(elsewhere());
+    expect(last().error).toBe(
+      `Your start of "Fix the flake" in ${B} is on its way already, waiting on the user's answer, and nothing was asked again. Call wait, which tells you how it went.`,
+    );
+    // A wait sits for it, with no session yet to watch.
+    const waiting = call("wait", { seconds: 600 }, { session: "caller-1" });
+    const waited = handle(waiting);
+    await settle();
+    expect(answerTo(waiting)).toBeUndefined();
+    // The user allows it later: one session, and the wait says so.
+    once();
+    await comesUp("pty-1", "sid-1");
+    await waited;
+    expect(answerTo(waiting)?.content).toMatch(
+      new RegExp(`^Your start of "Fix the flake" in ${B} went ahead: Started session sid-1 in ${B}\\.`),
+    );
+    expect(forProject(B)).toHaveLength(1);
+    expect(conductor.later).toEqual({});
+    // Told once: the next wait has nothing of it to say.
+    const again = call("wait", { seconds: 5 }, { session: "caller-1" });
+    const second = handle(again);
+    await vi.advanceTimersByTimeAsync(5000);
+    await second;
+    expect(answerTo(again)?.content).toContain("Nothing happened");
+    expect(answerTo(again)?.content).not.toContain("Your start");
+  });
+
+  it("tells through wait a start the user refused after it was answered, and a wait that runs out says it still waits", async () => {
+    caller();
+    await heldPast(elsewhere());
+    const early = call("wait", { seconds: 5 }, { session: "caller-1" });
+    const first = handle(early);
+    await vi.advanceTimersByTimeAsync(5000);
+    await first;
+    expect(answerTo(early)?.content).toBe(
+      `Nothing happened within 5 seconds: no session stopped and none asked anything. Your start of "Fix the flake" in ${B} still waits on the user's answer.`,
+    );
+    refuse();
+    await settle();
+    const late = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(late);
+    expect(answerTo(late)?.content).toBe(
+      `Your start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("goes on with a start the agent gave up on, writes it no answer, and tells how it went", async () => {
+    caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    cancelled(request.id);
+    once();
+    await comesUp("pty-1", "sid-1");
+    await answering;
+    expect(answerTo(request)).toBeUndefined();
+    expect(forProject(B)).toHaveLength(1);
+    const waiting = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(waiting);
+    expect(answerTo(waiting)?.content).toContain(`Your start of "Fix the flake" in ${B} went ahead: Started session sid-1`);
+  });
+
+  it("starts nothing for a caller that stopped before the user answered, and puts none of its questions up", async () => {
+    const first = caller();
+    await heldPast(elsewhere());
+    // Another caller's start waits behind it.
+    const other = caller("caller-2", "pty-2");
+    void handle(elsewhere("caller-2", "Fix the docs"));
+    await settle();
+    close(first.key);
+    once();
+    await settle();
+    expect(forProject(B)).toHaveLength(0);
+    // The second is up now; its caller stops too, and the next question
+    // would be one of its: none goes up.
+    expect(conductor.asking?.caller).toBe(label(other));
+    void handle(call("start", { project: B, prompt: "Fix the tests" }, { session: "caller-2" }));
+    await settle();
+    close(other.key);
+    refuse();
+    await settle();
+    expect(conductor.asking).toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("lists a start that waits on the user, and how it went, which counts as telling", async () => {
+    caller();
+    await heldPast(elsewhere());
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).toBe(
+      `Your start of "Fix the flake" in ${B} waits on the user's answer; wait tells you how it went.`,
+    );
+    once();
+    await comesUp("pty-1", "sid-1");
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).toContain(`Your start of "Fix the flake" in ${B} went ahead: Started session sid-1`);
+    await handle(call("sessions", {}, { session: "caller-1" }));
+    expect(last().content).not.toContain("Your start");
+  });
+
+  it("tells how it went with the user's next message, as a note", async () => {
+    caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    await handle(call("prompt", { agentSession: "caller-1" }, { session: "caller-1" }));
+    expect(last().content).toBe(
+      `${REPORTS_HEAD}\nYour start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+  });
+
+  it("wakes an idle caller with how it went", async () => {
+    caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    // Woken a moment later, the line typed a piece at a time, then Enter.
+    await vi.advanceTimersByTimeAsync(WAKE_AFTER + 10_000);
+    await settle();
+    const typedIn = written
+      .filter(([id]) => id === "pty-0")
+      .map(([, data]) => data)
+      .join("");
+    expect(typedIn).toContain(
+      `${REPORTS_HEAD} Your start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
+    );
+    expect(conductor.later).toEqual({});
   });
 });

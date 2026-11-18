@@ -26,6 +26,7 @@
  */
 
 import { noteSent } from "$lib/persist";
+import { HOLD } from "$lib/hold";
 import {
   checkBackground,
   describeBackground,
@@ -199,7 +200,20 @@ let pending: ((choice: Choice) => void) | null = null;
 let restore: (() => void) | null = null;
 let undoTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Answers one call, exactly once. */
+/** The changes answered that they wait on the user, until each is made
+    or not, by call: who asked, and what the same change asked again would
+    be. */
+const waiting = new Map<string, string>();
+
+/** What a change answers when it is still in front of the user, or waits
+    its turn behind another, as the agent is about to give up on it. */
+export const WAITS_ON_USER =
+  "The user has not answered yet: the change is in front of them, or waits its turn behind another, and is made only if they allow it. Do not ask for it again: the settings tool says whether it was made.";
+
+/** Answers one call, exactly once. A change still waiting on the user
+    when `HOLD` is up is answered that it does, and is made or not as the
+    user says all the same; the same change asked for again meanwhile is
+    not put to them twice. */
 export async function handle(request: SettingsRequest): Promise<void> {
   if (seen.has(request.id)) return;
   seen.add(request.id);
@@ -207,19 +221,34 @@ export async function handle(request: SettingsRequest): Promise<void> {
     const oldest = seen.values().next().value;
     if (oldest !== undefined) seen.delete(oldest);
   }
+  const same = `${request.session ?? request.cwd}\n${request.tool}\n${JSON.stringify(request.arguments ?? {})}`;
   let answered: Answered;
   try {
-    answered =
-      request.tool === "settings"
-        ? said(describeSettings())
-        : await change(
-            request,
-            request.tool === "theme_save"
-              ? planTheme
-              : request.tool === "styles_write"
-                ? planStyles
-                : plan,
-          );
+    if (request.tool === "settings") answered = said(describeSettings());
+    else if ([...waiting.values()].includes(same))
+      answered = refused(
+        "That change is in front of the user already, and was not asked again: the settings tool says whether it was made.",
+      );
+    else {
+      const work = change(
+        request,
+        request.tool === "theme_save" ? planTheme : request.tool === "styles_write" ? planStyles : plan,
+      ).catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = await Promise.race([
+        work,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), HOLD);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (done !== null) answered = done;
+      else {
+        waiting.set(request.id, same);
+        void work.finally(() => waiting.delete(request.id));
+        answered = said(WAITS_ON_USER);
+      }
+    }
   } catch (error) {
     answered = refused(error instanceof Error ? error.message : String(error));
   }
@@ -973,6 +1002,7 @@ export function dismissUndo() {
 /** Test seam. */
 export function resetSettingsTools() {
   seen.clear();
+  waiting.clear();
   line = Promise.resolve();
   pending = null;
   settingsAsk.asking = null;

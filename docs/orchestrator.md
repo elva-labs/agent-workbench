@@ -76,7 +76,8 @@ been told says so beside what it is doing, and listing it counts as
 telling. `start` starts a session in a project with a first prompt, on a
 worktree of its own if it asks for one, and answers with the new session's
 id and tells it to keep calling `wait` until every session it started is
-done. `send` types a line
+done. A start can wait on the user, as under [a call that waits on the
+user](#a-call-that-waits-on-the-user). `send` types a line
 into a running session, and Enter after it on its own, as a person does,
 though never one that begins with `!` (see [what the user is
 asked](#what-the-user-is-asked)). A long line goes in as a paste when the
@@ -673,8 +674,9 @@ agent the workbench did not start, and a standing answer given before is
 not used.
 
 The first time a session asks to start another anywhere else, the window
-puts the question up over the agent pane and holds the call until it is
-answered: allow it from now on, allow this one, or refuse. A round of
+puts the question up over the agent pane and holds the call while it is
+up, as under [a call that waits on the user](#a-call-that-waits-on-the-user):
+allow it from now on, allow this one, or refuse. A round of
 review past a workflow's limit is asked about every time, in the starter's
 own project too, however the project was allowed. It says the project the
 round runs in, then names the review and the work by the names the user
@@ -714,6 +716,41 @@ may have more than eight running at a time. Both hold by the token, so a
 session started by another is held to them from its first call, whatever
 its agent. An agent the workbench did not start has a cap of its own, by
 the directory it calls from.
+
+### A call that waits on the user
+
+A start the user is asked about, a start or a resume for a round of review
+past its limit, and a line `send` would give a review past its limit wait
+on the user's answer, for as long as the user is away. An agent gives up
+on a call of its own accord after a while, Codex after a minute where it
+is not given longer (see [agents](adapters.md#naming-the-session-to-its-tools)),
+and the tool server after ten minutes, and an answer that comes after it
+gave up is never read. So such a call is held no longer than forty
+seconds. Not done by then, it is answered that it waits on the user, that
+nothing has started or been sent yet, and that `wait` will say how it went;
+the question stays where it was. A start the user allowed whose session is
+still coming up by then is answered the same way, as under way.
+
+Once the call is done, how it went is the caller's to hear, once: what
+the call would have answered, after a few words that name it, such as
+`Your start of "Fix the cache" in /work/api went ahead:`, or `did not go
+ahead:` where it was refused. The next `wait`
+answers with it before anything else, and holds for it though no session
+the caller started is running; a `sessions` listing says it, or that it
+still waits on the user; the note on the user's next message carries it;
+and an idle caller is woken with it, as for a session that came to rest.
+Each counts as telling, as they do for a stop. A call the agent gave up on
+before its answer, as when the user interrupted the agent, goes the same
+way, and so does one the tool server gave up on: it tells the window, and
+says to the agent that the call may still go ahead and that `wait` will
+tell.
+
+One call is done once, however it is heard of, so it starts one session
+at most. The same start, resume or line asked for again by the caller
+while one it was told of waits is refused, saying that one is on its way,
+and nothing is asked twice; calls made together are each their own. A
+caller that has stopped by the time the user answers has nothing done for
+it, and a question of its still waiting behind another is not put up.
 
 ![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
 
