@@ -18,6 +18,7 @@ import {
   sendLine,
   startedDetail,
   startedDot,
+  stateWord,
   startedName,
   startedRows,
   stopAllQuestion,
@@ -222,6 +223,39 @@ describe("what an orchestrator has out", () => {
     // A child that has stopped, whatever it was doing, does not.
     child.status = "exited";
     expect(conducting(one)).toBe(false);
+  });
+
+  it("says what it is doing as its dot decides it, in every place", () => {
+    const one = live(LEAD, "pty-1", "sid-1");
+    expect(stateWord(one)).toBe("running");
+    expect(stateWord(null)).toBe("no session");
+
+    one.working = true;
+    expect(stateWord(one)).toBe("working");
+    one.working = false;
+
+    // At rest while a session it started works: the dot breathes, and the
+    // words say why, rather than idle.
+    const child = startedIn(A, one, "pty-2", "sid-2");
+    child.working = true;
+    expect(conducting(one)).toBe(true);
+    expect(stateWord(one)).toBe("a session working");
+    const other = startedIn(B, one, "pty-3", "sid-3");
+    other.working = true;
+    expect(stateWord(one)).toBe("2 sessions working");
+    other.working = false;
+    expect(startedDot(child)).toBe("busy");
+
+    // Its own call for attention is the row's state over the child's work.
+    one.needs = "permission";
+    expect(stateWord(one)).toBe("needs permission");
+    one.needs = null;
+    one.unread = true;
+    expect(stateWord(one)).toBe("waiting for you");
+    one.unread = false;
+
+    child.working = false;
+    expect(stateWord(one)).toBe("running");
   });
 
   it("lets its own call for attention hold the dot over a working child", () => {

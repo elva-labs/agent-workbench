@@ -24,9 +24,9 @@ async function open(page: Page, width = 1728) {
 }
 
 async function flip(page: Page) {
-  const was = await page.getByTestId("mode-readout").textContent();
+  const was = await page.getByTestId("shell").getAttribute("data-mode");
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+  await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
 }
 
 /** A double-click on the tab row near its end, where no tab is. */
@@ -126,13 +126,13 @@ test.describe("starting an untitled file", () => {
     await expect(page.locator(".cm-content")).toBeFocused();
 
     await flip(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     // The changes pane has the keyboard: on Windows and Linux the agent's
     // terminal keeps the chord.
     await page.keyboard.press(`${MOD}+3`);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
     await page.keyboard.press(`${MOD}+n`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(tab(page, "Untitled 2")).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(".cm-content")).toBeFocused();
   });
@@ -372,7 +372,7 @@ test.describe("closing an untitled file by the chord", () => {
     await page.addInitScript(() => Object.defineProperty(Navigator.prototype, "platform", { get: () => "MacIntel" }));
     await open(page);
     await page.keyboard.press("Meta+Shift+E");
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await page.keyboard.press("Meta+3");
     await page.keyboard.press("Meta+n");
     await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
@@ -471,7 +471,7 @@ test.describe("the keyboard", () => {
     await page.keyboard.press("Escape");
     await page.keyboard.press(`${MOD}+3`);
     await page.keyboard.press(`${MOD}+Shift+u`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(tab(page, "Untitled")).toBeVisible();
   });
 });
@@ -495,11 +495,11 @@ test.describe("on Windows and Linux", () => {
         ),
       )
       .toContain("\u000e");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("editor-tab")).toHaveCount(0);
 
     await page.keyboard.press("Control+Shift+E");
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await treeRow(page, "README.md").click();
     await page.keyboard.press("Control+n");
     await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");

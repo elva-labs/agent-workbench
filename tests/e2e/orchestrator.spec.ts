@@ -1025,7 +1025,7 @@ for (const width of [300, 240, 180]) {
     // Editing folds the pane in this window, and its column peeks it over
     // the tree's.
     await page.getByTestId("mode-editor").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     const pane = page.locator("section[data-pane='sessions']");
     const drawn = async () => Math.round((await pane.boundingBox())!.width);
     await expect.poll(drawn).toBeLessThan(width);
@@ -1037,7 +1037,7 @@ for (const width of [300, 240, 180]) {
     await page.keyboard.press("Escape");
     await page.setViewportSize({ width: 1728, height: 900 });
     await expect.poll(drawn).toBe(width);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await fits(page, width);
   });
 }

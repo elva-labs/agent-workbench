@@ -903,8 +903,8 @@ mod tests {
     }
 
     // The history of a Claude Code session goes out as the events a live
-    // one sends, each with its time; an agent with no reader here answers
-    // with none.
+    // one sends, each with its time; one with no transcript is an error; an
+    // agent with no reader here answers with none.
     #[test]
     fn a_conversations_history_comes_back_as_timed_events() {
         let dir = Scratch::absent("protocol-history");
@@ -945,6 +945,16 @@ mod tests {
         assert_eq!(items[1]["model"], "claude-sonnet-5-5");
         assert_eq!(items[2]["event"]["type"], "text");
         assert_eq!(items[3]["event"]["type"], "turnEnded");
+        // A session with no transcript there is an error, which says where
+        // it was looked for.
+        let mut missing = params("claude-code");
+        missing["session"] = json!("s2");
+        let error = dispatch(&core(), "integrated_history", missing, no_output).unwrap_err();
+        assert!(
+            error.starts_with("Claude Code has no transcript of it in ")
+                && error.ends_with(&*dir.file_name().unwrap().to_string_lossy()),
+            "{error}"
+        );
         // Codex's history is read through Codex, which a session id that
         // cannot be a thread's never reaches.
         let codex = dispatch(&core(), "integrated_history", params("codex"), no_output).unwrap();

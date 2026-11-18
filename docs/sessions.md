@@ -591,7 +591,14 @@ is never passed on; the agent's settings decide then.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. Short of room the project and
+asking the user or waiting for a permission. The header, the row's dot and
+the row's words decide it the same way, from the session's own events: a
+turn that only waits on the sessions it started is working, and a session
+at rest while sessions it started work reads `a session working` or `2
+sessions working`, with its dot breathing. At rest, a session reads `idle`
+where the app knows its turn ended, an integrated one or a terminal one
+whose hooks report its turns, and `running` where its activity is
+guessed. Short of room the project and
 the branch give way before what the session is doing, and each goes with
 its icon once it would show no more than a letter or two. A session another session
 started is named by the name its start gave, cut to 60 characters, or by
@@ -1040,22 +1047,27 @@ session that ended or could not start says why, and Resume starts it again
 on the same conversation, the thread drawn so far staying above what comes,
 with a quiet line saying when it resumed.
 
-An integrated session opened from the past sessions, or brought back after
-a restart, draws its earlier messages above what this run says, in the
-same look: Claude Code's read from its transcript, and Codex's from its
-thread, through Codex itself. The line where this run began is there at
+An integrated session opened from the past sessions, brought back after
+a restart, or moved from a terminal by the setting or by Reopen, draws its
+earlier messages above what this run says, in the same look: Claude
+Code's read from its transcript, and Codex's from its thread, through
+Codex itself. The line where this run began is there at
 once, with a breathing line above it while the earlier messages are read;
 the session can be written to meanwhile, and what it says goes under the
 line. The earlier messages fill in above it, and a thread with earlier
 messages sits at the foot of the pane while it is shorter than the pane,
 so nothing under them moves. A turn the agent's record gives no end, as
 when the app quit during it, is over, and its unfinished steps failed.
-When nothing earlier is found, a line above says so. A conversation too
-long to hold whole leaves out its start and says so. Earlier messages
-that cannot be read leave the session able to be written to, with a line
-saying they could not be read and why, such as that Codex does not have
-the conversation. [Integrated sessions](integrated.md#history) has what
-is read and how.
+A conversation too long to hold whole leaves out its start and says so.
+Earlier messages that cannot be read leave the session able to be written
+to, with a line at the top of the thread saying they could not be read
+and why, such as that Codex does not have the conversation, or that
+Claude Code has no transcript of it in the account's directory. A record
+that holds no message of a session that was spoken to is said to be so in
+the same way. The line stays above whatever the session says after it.
+A session nothing was said in, resumed after it ended, has nothing to
+read, and says nothing of earlier messages.
+[Integrated sessions](integrated.md#history) has what is read and how.
 
 The line reads `Resumed here, today 09:40`, naming the day when it is
 another. The first time shown on each day names its day too, as `Thu 18:02`,

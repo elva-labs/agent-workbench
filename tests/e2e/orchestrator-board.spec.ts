@@ -249,7 +249,7 @@ test.describe("the board for any session", () => {
     await event(page, "session-3", "prompt");
     await toStarter(page);
 
-    await expect(boardRow(page, "Fix the cache").getByTestId("board-detail")).toHaveText("Work · running, now");
+    await expect(boardRow(page, "Fix the cache").getByTestId("board-detail")).toHaveText("Work · idle, now");
     await expect(boardRow(page, "Review the cache fix").getByTestId("board-detail")).toHaveText(
       "Review, round 1 of 4 · working, now",
     );

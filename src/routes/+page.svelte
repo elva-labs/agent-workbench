@@ -1168,8 +1168,8 @@
      window's rounded one on macOS, in the modern look none before the
      sessions pane and the header row, which lie on the ground. */
   .frame {
-    height: calc(100vh - 26px);
-    padding: var(--frame-pad-top) var(--frame-pad) var(--frame-pad) var(--frame-pad-left);
+    height: calc(100vh - var(--status-height) - var(--status-reach));
+    padding: var(--frame-pad-top) var(--frame-pad) calc(var(--frame-pad) - var(--status-reach)) var(--frame-pad-left);
     background: var(--ground);
   }
 

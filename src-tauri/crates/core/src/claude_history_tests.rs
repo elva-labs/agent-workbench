@@ -385,9 +385,7 @@ fn skips_an_entry_whose_time_cannot_be_read_and_reads_the_rest() {
 fn finds_nothing_for_a_project_with_no_path() {
     let (home, _) = transcript("no-project", PROJECT, REWOUND);
     assert_eq!(find(&home, Path::new(""), None, SESSION), None);
-    assert!(read_session(&home, Path::new(""), None, SESSION)
-        .items
-        .is_empty());
+    assert!(read_session(&home, Path::new(""), None, SESSION).is_none());
 }
 
 #[test]
@@ -456,8 +454,7 @@ fn finds_nothing_for_an_id_that_is_not_one() {
 #[test]
 fn has_no_history_without_a_transcript() {
     let home = Scratch::new("claude-history-none");
-    let history = read_session(&home, Path::new(PROJECT), None, SESSION);
-    assert!(history.items.is_empty() && !history.cut);
+    assert!(read_session(&home, Path::new(PROJECT), None, SESSION).is_none());
 }
 
 #[test]

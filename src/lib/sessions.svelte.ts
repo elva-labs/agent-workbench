@@ -2452,11 +2452,16 @@ export function statusLabel(session: Session | null): string {
       return "starting";
     case "running":
       if (session.needs === "permission") return "needs permission";
+      // At rest is idle where the app knows the turn ended: an integrated
+      // session's events say so, and so do the hooks of a terminal session
+      // they report the turns of. Where activity is guessed, it is running.
       return session.working
         ? "working"
         : session.unread
           ? "waiting for you"
-          : "running";
+          : session.kind === "integrated" || (session.exact && session.agent !== "codex")
+            ? "idle"
+            : "running";
     case "exited":
       return "ended";
     default:

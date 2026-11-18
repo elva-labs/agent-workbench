@@ -151,11 +151,11 @@ test("a tab an agent opens for another session shows when the user switches to i
   const opened = await ask(page, "o1", "browser_open", "session-1", { url: "http://localhost:3000" });
   expect(opened.error).toBeNull();
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (0)");
-  await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
 
   await named(page, "session 1").click();
   await expect(page.locator(".session.on")).toContainText("session 1");
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (1)");
   await expect(page.getByTestId("browser-tab")).toHaveCount(1);
 });
@@ -170,7 +170,7 @@ test("with no session on screen the tab belongs to the project and shows there",
   await expect(page.locator(".session.on")).toContainText("session 1");
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (0)");
 
-  await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
   await page.getByTestId("session-row").hover();
   await page.getByTestId("close-session").click();
   await expect(page.getByTestId("session-row")).toHaveCount(0);
