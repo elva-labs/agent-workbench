@@ -5,8 +5,7 @@
    * the window by it, slides the pane in over the panes; the pointer away
    * from the pane for a moment, or a press outside it, sends it back,
    * unless something in it holds it there: a menu, the new-session choice,
-   * a question, a press, or the keyboard. While a session waits for the
-   * user, a quiet mark on the edge says so.
+   * a question, a press, or the keyboard.
    *
    * The edge is told from where the pointer is seen, not from an element
    * along it: a quick move is seen at only a few points, and may be seen
@@ -17,7 +16,6 @@
   import { AWAY_AFTER, EDGE_AFTER, EDGE_WIDTH, compact } from "$lib/compact.svelte";
   import { core } from "$lib/core";
   import { layout, peekSessions } from "$lib/layout.svelte";
-  import { sessions } from "$lib/sessions.svelte";
 
   interface Seen {
     x: number;
@@ -296,49 +294,4 @@
       settle();
     });
   });
-
-  /** A session other than the one on screen that waits for the user: it
-      went unread, or asks for a permission. */
-  let waiting = $derived(
-    sessions.all.filter(
-      (session) => session.key !== sessions.active && (session.unread || session.needs === "permission"),
-    ).length,
-  );
 </script>
-
-{#if waiting > 0}
-  <div
-    class="mark"
-    class:hidden={layout.sessionsPeek}
-    aria-hidden="true"
-    data-testid="compact-mark"
-  ></div>
-{/if}
-
-<style>
-  /* A short bar in the accent on the edge, where the pane comes from,
-     while a session waits for you. */
-  .mark {
-    position: absolute;
-    top: 50%;
-    left: calc(2px - var(--frame-pad-left));
-    width: 3px;
-    height: 28px;
-    margin-top: -14px;
-    border-radius: 99px;
-    background: var(--accent);
-    opacity: 0.85;
-    pointer-events: none;
-    z-index: 5;
-  }
-
-  .mark.hidden {
-    opacity: 0;
-  }
-
-  @media (prefers-reduced-motion: no-preference) {
-    .mark {
-      transition: opacity 180ms ease-out;
-    }
-  }
-</style>
