@@ -81,8 +81,9 @@ wait on.
 
 The window is told of the tabs whole, every tab's address, title, buttons
 and load, each time any of them changes. Word of a change reaches it by
-more than one path and can arrive out of order, so each account carries a
-number that only goes up, and the window keeps the newest it has had.
+more than one path and can arrive out of order, so each report of the tabs
+carries a number that only goes up, and the window keeps the newest it has
+had.
 
 Each tab is a native web view of its own, laid over a rectangle the viewer
 measures on its body. A page framed inside the app's own page would not do:
