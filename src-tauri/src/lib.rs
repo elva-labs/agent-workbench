@@ -1305,10 +1305,65 @@ fn cursor_in_window(window: tauri::Window) -> Option<(f64, f64)> {
     let cursor = window.cursor_position().ok()?;
     let origin = window.inner_position().ok()?;
     let scale = window.scale_factor().ok()?;
-    Some((
-        (cursor.x - f64::from(origin.x)) / scale,
-        (cursor.y - f64::from(origin.y)) / scale,
+    // macOS puts the cursor in pixels at the main screen's scale and the
+    // window's origin at the scale of the screen it is on; elsewhere both
+    // are the same pixels.
+    #[cfg(target_os = "macos")]
+    let cursor_scale = window.primary_monitor().ok()??.scale_factor();
+    #[cfg(not(target_os = "macos"))]
+    let cursor_scale = scale;
+    Some(point_in_window(
+        (cursor.x, cursor.y),
+        cursor_scale,
+        (f64::from(origin.x), f64::from(origin.y)),
+        scale,
     ))
+}
+
+/// The cursor in points from the window's origin, from the cursor and the
+/// origin each in pixels at a scale of its own.
+fn point_in_window(
+    cursor: (f64, f64),
+    cursor_scale: f64,
+    origin: (f64, f64),
+    window_scale: f64,
+) -> (f64, f64) {
+    (
+        cursor.0 / cursor_scale - origin.0 / window_scale,
+        cursor.1 / cursor_scale - origin.1 / window_scale,
+    )
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::point_in_window;
+
+    #[test]
+    fn the_cursor_is_in_the_window_s_points_on_screens_of_any_scale() {
+        // One scale: 100 points in and 50 down from a window at (200, 80).
+        assert_eq!(
+            point_in_window((600.0, 260.0), 2.0, (400.0, 160.0), 2.0),
+            (100.0, 50.0)
+        );
+        // A plain main screen, the window on a Retina screen to its right,
+        // its origin at (1920, 0) in points: 100 points in.
+        assert_eq!(
+            point_in_window((2020.0, 40.0), 1.0, (3840.0, 0.0), 2.0),
+            (100.0, 40.0)
+        );
+        // A Retina main screen, the window on a plain screen to its right at
+        // (1440, 0): the cursor on its left edge.
+        assert_eq!(
+            point_in_window((2880.0, 600.0), 2.0, (1440.0, 0.0), 1.0),
+            (0.0, 300.0)
+        );
+        // The same, the cursor 30 points past the edge, on the screen
+        // beside it.
+        assert_eq!(
+            point_in_window((2820.0, 600.0), 2.0, (1440.0, 0.0), 1.0),
+            (-30.0, 300.0)
+        );
+    }
 }
 
 /// The `orchestrator` folder under the workbench's home on this machine,
