@@ -42,7 +42,6 @@
     activeSession,
     sessions,
     since,
-    statusLabel,
     disown,
     type HistoryEntry,
     type Session,
@@ -57,7 +56,7 @@
     startSession,
     workspace,
   } from "$lib/workspace.svelte";
-  import { childrenOf, conducting, isAsking, ownFor, parentOf } from "$lib/orchestrator.svelte";
+  import { childrenOf, conducting, isAsking, ownFor, parentOf, stateWord } from "$lib/orchestrator.svelte";
   import { BRINGS_BACK, heldNow, holdWords, listed, reopenEnds } from "$lib/sessionMoves.svelte";
   import { folderShown, folderToRead, startsIn } from "$lib/orchestratorFolder.svelte";
   import {
@@ -1654,7 +1653,7 @@
         class:working={conducting(session)}
         class:unread={session.unread}
         class:permission={session.needs === "permission"}
-        title={statusLabel(session)}
+        title={stateWord(session)}
       ></span>
       <span class="first">
         <span
@@ -1701,7 +1700,7 @@
               {#each kids as kid (kid.key)}<span
                   class="dot mini"
                   class:live={isLive(kid)}
-                  class:working={kid.working}
+                  class:working={conducting(kid)}
                   class:permission={kid.needs === "permission"}
                 ></span>{/each}
             </span>
@@ -1729,7 +1728,7 @@
       <!-- The dot says what the agent is doing; the words are for a
            screen reader and for anything reading the row's text. -->
       <span class="state told"
-        >{statusLabel(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
+        >{stateWord(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
             woken,
           ).name ?? wokenWords(woken).count}{/if}{#if stays !== null && !staysSaid}, {stays.line}{/if}</span
       >
@@ -1905,10 +1904,10 @@
               class="dot"
               class:live={isLive(kid)}
               class:dormant={kid.status === "dormant"}
-              class:working={kid.working}
+              class:working={conducting(kid)}
               class:unread={kid.unread}
               class:permission={kid.needs === "permission"}
-              title={statusLabel(kid)}
+              title={stateWord(kid)}
             ></span>
             <span class="fit">
               <span class="label" class:unread={kid.unread || isAsking(kid)}>{label(kid)}</span>
@@ -1943,7 +1942,7 @@
             {/if}
             <span class="when">{since(lastChanged(kid), now)}</span>
             <span class="state told"
-              >{statusLabel(kid)}{#if news.includes(kid)}, not heard by {label(parent)} yet{/if}{#if kidStays !== null}, {kidStays.line}{/if}</span
+              >{stateWord(kid)}{#if news.includes(kid)}, not heard by {label(parent)} yet{/if}{#if kidStays !== null}, {kidStays.line}{/if}</span
             >
           </button>
           <span class="actions">

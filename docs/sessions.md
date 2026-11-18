@@ -560,7 +560,11 @@ is never passed on; the agent's settings decide then.
 
 The agent pane's header names the session, its project and the branch the
 folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. Short of room the project and
+asking the user or waiting for a permission. The header, the row's dot and
+the row's words decide it the same way, from the session's own events: a
+turn that only waits on the sessions it started is working, and a session
+at rest while sessions it started work reads `sessions working`, with its
+dot breathing. Short of room the project and
 the branch give way before what the session is doing, and each goes with
 its icon once it would show no more than a letter or two. A session another session
 started is named by the name its start gave, cut to 60 characters, or by

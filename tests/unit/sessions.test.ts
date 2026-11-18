@@ -540,6 +540,13 @@ describe("labels", () => {
     const other = live(A, "pty-2");
     ended({ id: "pty-2", code: 1, clean: false });
     expect(statusLabel(other)).toBe("stopped");
+
+    // An integrated session's events say when it is at rest.
+    const integrated = create(A, null, "claude-code", null, null, null, undefined, undefined, "integrated");
+    integrated.status = "running";
+    expect(statusLabel(integrated)).toBe("idle");
+    integrated.working = true;
+    expect(statusLabel(integrated)).toBe("working");
   });
 });
 

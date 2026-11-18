@@ -116,6 +116,16 @@ export function conducting(session: Session): boolean {
   return summary(session).working;
 }
 
+/** What a session is doing, in the words every place that says it uses:
+    the agent pane's header, a row's words and its dot's hover, a started
+    session's line. It decides as the dot does, so a session at rest while
+    sessions it started work says so rather than idle. */
+export function stateWord(session: Session | null): string {
+  if (session !== null && session.status === "running" && session.workflowLost === null && !session.working && conducting(session))
+    return "sessions working";
+  return statusLabel(session);
+}
+
 /** The line under an orchestrator's name: what it has out, and how much of
     it is waiting on you. */
 export function summaryLine(session: Session): string | null {
@@ -259,12 +269,12 @@ export function madeTrees(session: Session | null): boolean {
 export function startedDot(session: Session): "none" | "waiting" | "busy" | "ok" {
   if (!isLive(session)) return "none";
   if (isAsking(session)) return "waiting";
-  return session.working ? "busy" : "ok";
+  return conducting(session) ? "busy" : "ok";
 }
 
 /** What a started session is doing, in the words its rows elsewhere use. */
 export function startedState(session: Session): string {
-  return isAsking(session) ? "asking" : statusLabel(session);
+  return isAsking(session) ? "asking" : stateWord(session);
 }
 
 /** The line under a started session's name: its step and round where it

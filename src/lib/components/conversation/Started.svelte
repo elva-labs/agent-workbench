@@ -4,7 +4,8 @@
   import { focusPane } from "$lib/layout.svelte";
   import { modelLabel } from "$lib/models";
   import { placeTextOf } from "$lib/conductor.svelte";
-  import { isLive, label, sessions, statusLabel, type Session } from "$lib/sessions.svelte";
+  import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
+  import { stateWord } from "$lib/orchestrator.svelte";
   import { goTo } from "$lib/workspace.svelte";
 
   /** The sessions a run started with the workbench's start tool, one row
@@ -41,12 +42,12 @@
           class:working={session.working}
           class:asking={session.needs === "permission"}
           class:dormant={session.status === "dormant"}
-          title={statusLabel(session)}
+          title={stateWord(session)}
         ></span>
         {#if stepped}<span class="step" data-testid="started-step">{at?.step ?? ""}</span>{/if}
         <span class="name"><Plain text={label(session)} /></span>
         <span class="state" class:asking={session.needs === "permission"} data-testid="started-state">
-          {at?.round == null ? "" : `${at.round}, `}{session.needs === "permission" ? "asking" : statusLabel(session)}
+          {at?.round == null ? "" : `${at.round}, `}{session.needs === "permission" ? "asking" : stateWord(session)}
         </span>
         <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
         <button class="open" tabindex="-1" data-thread-item onclick={() => open(session)} data-testid="open-started">Open</button>

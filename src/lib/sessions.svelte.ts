@@ -2279,11 +2279,15 @@ export function statusLabel(session: Session | null): string {
       return "starting";
     case "running":
       if (session.needs === "permission") return "needs permission";
+      // An integrated session's events say when it is at rest; a terminal
+      // session's activity may not be known, so it is only running.
       return session.working
         ? "working"
         : session.unread
           ? "waiting for you"
-          : "running";
+          : session.kind === "integrated"
+            ? "idle"
+            : "running";
     case "exited":
       return "ended";
     default:

@@ -267,6 +267,26 @@ test.describe("an integrated session", () => {
     await expect(meta).toHaveText("idle");
   });
 
+  test("says working in the header and on its row while a turn only waits on its sessions", async ({ page }) => {
+    await openIntegrated(page);
+    const meta = page.locator(`${AGENT} header .meta`);
+    const row = page.getByTestId("session-row");
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Wait for the review.");
+       f.startTurn("${H}");
+       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+    );
+    await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
+    await expect(meta).toHaveText("working");
+    await expect(row.locator(".dot")).toHaveClass(/\bworking\b/);
+    await expect(row.locator(".dot")).toHaveAttribute("title", "working");
+    await agent(page, `f.endTurn("${H}");`);
+    await expect(meta).toHaveText("idle");
+    await expect(row.locator(".dot")).not.toHaveClass(/\bworking\b/);
+    await expect(row.locator(".dot")).toHaveAttribute("title", "idle");
+  });
+
   test("comes back after a restart, and resumes its conversation by its id", async ({ page }) => {
     await openIntegrated(page);
     await expect(page.getByTestId("conversation")).toBeVisible();
@@ -1914,7 +1934,7 @@ test.describe("in the sessions pane, an integrated session", () => {
     await openIntegrated(page);
     const own = page.getByTestId("session-row").filter({ hasText: "session 1" });
     await expect(own.locator(".dot")).toHaveClass(/live/);
-    await expect(own.locator(".state")).toHaveText("running");
+    await expect(own.locator(".state")).toHaveText("idle");
     await agent(page, `f.startTurn("${H}");`);
     await expect(own.locator(".dot")).toHaveClass(/working/);
     await expect(own.locator(".state")).toHaveText("working");

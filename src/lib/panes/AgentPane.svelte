@@ -32,7 +32,6 @@
     belled,
     reopeningRow,
     sessions,
-    statusLabel,
     resumeWithout,
     dismissKept,
     statusMessage,
@@ -43,6 +42,7 @@
   import type { SessionKind } from "$lib/sessionKind.svelte";
   import type { Session } from "$lib/sessions.svelte";
   import { handleOf, launch as launchIntegrated, linkFor, linkOf, unspoken } from "$lib/integrated.svelte";
+  import { stateWord } from "$lib/orchestrator.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { projectLabel, workspace } from "$lib/workspace.svelte";
@@ -84,22 +84,18 @@
         : `Agent · ${agentLabel(current.agent)}`,
   );
 
-  /** What the header says of the session: for an integrated one waiting
-      on the user before it can run, what it waits for. */
+  /** What the header says of the session, as its row says it: for an
+      integrated one waiting on the user before it can run, what it waits
+      for, and while it asks, whether it asks a question or a permission. */
   let meta = $derived.by(() => {
     if (current !== null && current.kind === "integrated") {
       const link = linkFor(current.key);
       if (link.untrusted) return "asks to trust the folder";
       if (link.conversation.notLoggedIn) return "not signed in";
-      // What the session is doing, from its own events: what it waits on
-      // when it waits on the user, else working or idle.
-      if (current.status === "running") {
-        const open = link.conversation.open[0];
-        if (open !== undefined) return open.asked.type === "questionAsked" ? "asks you" : "waits for permission";
-        return link.conversation.working ? "working" : "idle";
-      }
+      if (current.status === "running" && current.needs === "permission")
+        return link.conversation.open[0]?.asked.type === "questionAsked" ? "asks you" : "waits for permission";
     }
-    return statusLabel(current);
+    return stateWord(current);
   });
 
   let branch = $state<string | null>(null);
