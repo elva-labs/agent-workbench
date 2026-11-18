@@ -538,8 +538,15 @@ the run would end a command it left running in the background or what was
 allowed for its session alone, or where a conversation went back to a point
 a terminal does not take, the pane asks first, saying what reopening ends
 or brings back, at the top of the pane above the field that opens go to, where it
-asks before closing busy shells. A row left from the last quit only
-changes the way it will start.
+asks before closing busy shells. For a conversation that went back, it
+also offers Write a message first, which puts the question away and the
+keyboard in the composer: a message sent from there lets the point go,
+leaving what was gone back on behind, and a terminal then has nothing of
+it to bring back. Any other
+start in a terminal of a conversation held where it went back, such as a
+past session resumed that way, does not start: the pane says why and
+offers Open as a conversation, which goes on from the point. A row left
+from the last quit only changes the way it will start.
 
 A terminal Claude Code session is quit as the user would quit it, with
 Ctrl+C a press at a time. Claude Code writes down the mode it resumed a
@@ -844,7 +851,11 @@ the composer, Cmd+Enter sends them now, with what is written when the
 agent is at work, and Cmd+Shift+Enter takes the newest of the user's own
 back (Ctrl off macOS), as its hint says; a chord the user has given to an
 action of the keymap is not named. Both are on the thread's arrow walk
-too. The thread at its foot keeps the waiting messages and their line in
+too. Up in the empty composer takes the newest back as well, where nothing
+is docked, with the caret at the start of its words, and Up again, while
+the composer holds only what Up took back, unchanged, takes the one before
+and puts it ahead, each in the order sent, so Enter sends them as one
+message; the hint under the composer says while there is one before. The thread at its foot keeps the waiting messages and their line in
 view above the composer and the dock as they come and change. While the
 dock holds a request the user answers there, the composer says Up
 reaches it, and a lone digit
@@ -942,6 +953,39 @@ composer give the mentions as they were typed. A message whose mentions
 were not kept, from another session or another window's store, shows its
 words as they are.
 
+A session at rest goes back to before one of the user's own messages, as
+[integrated](integrated.md#going-back) describes. Esc twice within a
+moment in its empty composer, or Go back to an earlier message in the
+palette, opens a list over the composer of the user's own messages the
+agent keeps, oldest first, with the newest marked; a first Esc says what a
+second does, and an Esc that stopped a turn or put something away opens
+nothing. Go back to here, shown on each of the user's messages as Copy is,
+opens the same list at the choices for that message. As the mark moves,
+the thread brings the message into view under a line and fades what would
+leave with it, and the list says what leaves, or why the conversation
+cannot go back there. Enter turns the list into the choices for the marked
+message: the conversation alone, and, where the agent puts files back and
+a dry run named some, the conversation and the files, and only the files,
+naming the files and counting what changes. A digit or Enter takes one,
+Esc goes back to the list and closes it from there, and typing closes it
+and types. A turn the agent begins by itself closes it, and the composer
+says why.
+
+Going back with the conversation cuts the thread at the message at once,
+marks the place with `Rewound here` and the time, and puts the message's
+words in the composer, ahead of anything written there, to be edited and
+sent again. Claude Code starts again for it, which the choices say, with
+the commands it left running that stop with it, and while it starts the
+composer says what is sent waits for it. Gone back with the conversation
+alone, it can be undone from the mark until a message is sent or a turn
+runs. Files put back are named under the composer, with a reminder that
+what commands changed stays. Codex goes back in place, puts no files back
+and cannot undo it, which the choices say. A report of a session it
+started that reached it in a message gone back on counts as not told, so
+it comes again. Where going back fails, the composer says why, the thread
+is whole again, the words leave the composer where they stand unchanged,
+and a message sent meanwhile is not sent.
+
 The row's id is the conversation's id as the agent says it once ready, so
 the agent's own tools find the row. Its state, working, asking or idle,
 comes from the session's events, never from the hooks or from output; the
@@ -1034,8 +1078,7 @@ what never ends by itself stays as it is, and its second line says why:
   is held at that point until a message is sent from there, says `Stays a
   conversation: it went back, and a terminal would bring back what was
   gone back on`, since Claude Code's terminal does not take the point.
-  Whether a conversation is held is the core's to say; where the core does
-  not hold conversations, none is.
+  Whether a conversation is held is the core's to say.
 
 Where the second line holds what the agent left, a word of it takes the
 place of the model, and a session another started says it where its model

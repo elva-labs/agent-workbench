@@ -956,6 +956,19 @@ has to do itself:
   from. The other commands answer once what they wrote
   reached the agent, or the agent said it took it, and what they cause
   can come after, such as the end of an interrupted turn.
+- **Going back.** Claude Code goes back by ending the session and starting
+  another, whose events can come before the answer names it. So the window
+  holds what the old session says from the call until the answer, keeps
+  the events of the id it does not know yet, as for any start, and on the
+  answer binds the row to the new session and plays what it kept. The
+  window that asks cuts its thread and puts the message's words in its
+  composer at once, so they can be edited meanwhile, and makes both whole
+  again where the answer says the conversation did not go back; another
+  window cuts its thread at rewound, which comes before the answer. A
+  message sent meanwhile waits in the window until the answer, since the
+  session refuses one while it goes back, and goes only where it went
+  back. What the window marked as told in a message gone back on, such as
+  a report of a session it started, counts as not told again.
 - **The conversation's id.** The session's row, and resuming it, need the
   conversation's id. For an agent that makes its own ids the start
   answers with none, and the id is known only from ready.

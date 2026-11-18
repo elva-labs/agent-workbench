@@ -338,7 +338,13 @@ reached.
 | <kbd>Cmd</kbd><kbd>Enter</kbd> | Sends the messages that wait for the turn now, while they can go now, and with words written while the agent works, sends those and has them go now too; Ctrl off macOS. Named in the hint only while no action of the keymap holds it |
 | <kbd>Cmd</kbd><kbd>Shift</kbd><kbd>Enter</kbd> | Takes the newest of the user's own waiting messages back into the composer; Ctrl off macOS |
 | <kbd>Esc</kbd> | Stops the running turn; with none running, closes the viewer while reviewing, hands the keyboard back to the editor in editor mode, and does nothing else. While a header's popover or find is open it puts that away instead, and stops nothing |
-| <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started; <kbd>Esc</kbd> there comes back |
+| <kbd>Esc</kbd> <kbd>Esc</kbd> in an empty composer | With the agent at rest, in the working mode, two within about 0.6 seconds open the list of the user's own messages over the composer, to go back to before one; the first says what a second does. A burst in which an <kbd>Esc</kbd> did anything else, such as stopping a turn or closing a menu, opens nothing, so tapping <kbd>Esc</kbd> during a turn only stops it. Key repeats count for nothing |
+| <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Home</kbd> <kbd>End</kbd> in that list | Mark a message; the thread brings it into view under a line and fades what would leave with it |
+| <kbd>Enter</kbd> in that list | Turns it into the choices for the marked message: the conversation, the conversation and the files, only the files, each where the agent can |
+| <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> or <kbd>Enter</kbd> in the choices | Takes one: the session goes back, and the message's words come back to the composer |
+| <kbd>Esc</kbd> in the choices / in the list | Back to the list / closes it; typing closes it and types |
+| <kbd>↑</kbd> in an empty composer | Goes to the dock, when something waits there: the agent's own requests or those of the sessions it started; <kbd>Esc</kbd> there comes back. With nothing there, takes the newest of the user's own waiting messages back into the composer, the caret at its start |
+| <kbd>↑</kbd> again, the caret at the start | While the composer holds only what <kbd>↑</kbd> took back, unchanged, takes the one before, ahead of it; each comes back in the order sent, and <kbd>Enter</kbd> sends them as one. Once the words or the caret move, <kbd>↑</kbd> moves the caret |
 | <kbd>/</kbd> first in the composer | Opens the agent's commands and skills, for an agent that lists them |
 | <kbd>↑</kbd> <kbd>↓</kbd> in the slash menu | Mark a command or skill |
 | <kbd>Tab</kbd> or <kbd>Enter</kbd> in the slash menu | Puts the marked one in the composer, a space after it |
