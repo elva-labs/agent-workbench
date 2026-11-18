@@ -10,6 +10,7 @@
   import type { AgentId, Workflow } from "$lib/core";
   import { clock, modelName, tokens } from "$lib/thread";
   import {
+    allNamed,
     backCostOf,
     backOf,
     backSaidOf,
@@ -17,6 +18,8 @@
     closeBack,
     markBack,
     moveBack,
+    NAMED,
+    nameAll,
     openBack,
     pickBack,
     previewFiles,
@@ -227,8 +230,14 @@
   });
 
   /** Takes a choice for the marked message: the list shuts and the
-      session goes back. */
+      session goes back. A choice whose files wait behind "n more" is
+      marked and names them all first, so none goes back unnamed. */
   function pickChoice(index: number) {
+    if (!allNamed(sessionKey, index)) {
+      markBack(sessionKey, index);
+      nameAll(sessionKey, index);
+      return;
+    }
     void pickBack(sessionKey, index);
   }
 
@@ -266,8 +275,15 @@
       return take();
     }
     if (back.phase === "choices" && /^[1-9]$/.test(e.key)) {
+      // A digit takes a choice that can be undone; one that cannot it only
+      // marks, with all its files named, for Enter to take.
       const at = Number(e.key) - 1;
-      if (at < backChoices.length) pickChoice(at);
+      const choice = backChoices[at];
+      if (choice?.undoable) pickChoice(at);
+      else if (choice !== undefined) {
+        markBack(sessionKey, at);
+        nameAll(sessionKey, at);
+      }
       return take();
     }
     // Anything else is typing: the list goes, and the key types.
@@ -1082,7 +1098,15 @@
         {@const at = backChoices.indexOf(choice)}
         <span class="back-n" aria-hidden="true">{at + 1}</span>
         <span class="back-choice"
-          ><b>{choice.label}</b><span class="sep">,</span> <small><Plain text={choice.detail} /></small></span
+          ><b>{choice.label}</b><span class="sep">,</span>
+          <small
+            >{#if choice.files === null || choice.files.names.length <= NAMED || back.named.includes(choice.way)}<Plain
+                text={choice.detail}
+              />{:else}<Plain text={`${choice.files.before}${choice.files.names.slice(0, NAMED - 1).join(", ")} and `} /><span
+                class="back-more"
+                data-testid="back-more">{choice.files.names.length - NAMED + 1} more</span
+              ><Plain text={choice.files.after} />{/if}</small
+          ></span
         >
       {/snippet}
       {#snippet foot()}
@@ -1091,9 +1115,16 @@
         {/if}
       {/snippet}
       {#snippet keys()}
-        <span
-          >{#each backChoices as choice, at (choice.way)}<kbd>{at + 1}</kbd>{" "}{/each}or <kbd>↵</kbd> choose</span
-        >
+        {#if backChoices.every((choice) => choice.undoable)}
+          <span
+            >{#each backChoices as choice, at (choice.way)}<kbd>{at + 1}</kbd>{" "}{/each}or <kbd>↵</kbd> go back</span
+          >
+        {:else}
+          <span
+            ><kbd>↑</kbd> <kbd>↓</kbd> or {#each backChoices as choice, at (choice.way)}<kbd>{at + 1}</kbd>{" "}{/each}choose</span
+          >
+          <span><kbd>↵</kbd> go back</span>
+        {/if}
         <span><kbd>esc</kbd> back to the list</span>
       {/snippet}
     </CompletionMenu>
@@ -1746,6 +1777,13 @@
     font-size: calc(var(--row-size) - 0.5px);
     color: var(--ink-2);
     white-space: normal;
+  }
+
+  /* The files past the first few: a click on the choice names them. */
+  .back-more {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .back-said {

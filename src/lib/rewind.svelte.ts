@@ -1,6 +1,6 @@
 import { tick } from "svelte";
 import { core, type IntegratedPreview } from "$lib/core";
-import { fileNames, goBack, linkOf, type BackWay } from "$lib/integrated.svelte";
+import { goBack, joined, linkOf, shortNames, type BackWay } from "$lib/integrated.svelte";
 import { senderOf } from "$lib/senders.svelte";
 import { byKey } from "$lib/sessions.svelte";
 import { spoken } from "$lib/instructions";
@@ -43,8 +43,18 @@ export type Preview = IntegratedPreview | "reading" | { error: string };
 export interface BackChoice {
   way: BackWay;
   label: string;
+  /** What it does, every file it puts back named. */
   detail: string;
+  /** Where it puts files back, the words around their names and the
+      names, so all but the first can wait behind "n more". */
+  files: { before: string; names: string[]; after: string } | null;
+  /** Going back this way can be undone from the thread. */
+  undoable: boolean;
 }
+
+/** How many of a choice's files are named before the rest wait behind
+    "n more". */
+export const NAMED = 3;
 
 /** The list over one session's composer. */
 export class Back {
@@ -55,6 +65,8 @@ export class Back {
   marked = $state(0);
   /** The marked choice, in the choices. */
   choice = $state(0);
+  /** The choices whose files are all named, past the first few. */
+  named = $state<BackWay[]>([]);
   /** The core is asked where the conversation can go back to. */
   reading = $state(false);
   /** Why nothing can be gone back to, said in place of the rows. */
@@ -133,6 +145,7 @@ export async function openBack(key: string, at: string | null = null, choices = 
   back.rows = [];
   back.marked = 0;
   back.choice = 0;
+  back.named = [];
   back.why = null;
   back.previews = {};
   back.reading = true;
@@ -187,15 +200,32 @@ export function closeBack(key: string) {
   back.opened += 1;
 }
 
-/** Moves the list's mark by `step`, or to its first or last row. */
+/** Moves the list's mark by `step`, or to its first or last row. A
+    choice marked by a key names all its files. */
 export function moveBack(key: string, step: number | "first" | "last") {
   const back = backOf(key);
   const count = back.phase === "choices" ? choicesOf(key).length : back.rows.length;
   if (count === 0) return;
   const now = back.phase === "choices" ? back.choice : back.marked;
   const next = step === "first" ? 0 : step === "last" ? count - 1 : Math.min(count - 1, Math.max(0, now + step));
-  if (back.phase === "choices") back.choice = next;
-  else back.marked = next;
+  if (back.phase === "choices") {
+    back.choice = next;
+    nameAll(key, next);
+  } else back.marked = next;
+}
+
+/** Names all the files of the choice at `index`, past the first few. */
+export function nameAll(key: string, index: number) {
+  const back = backOf(key);
+  const way = choicesOf(key)[index]?.way;
+  if (way !== undefined && !back.named.includes(way)) back.named = [...back.named, way];
+}
+
+/** Whether every file the choice at `index` puts back is named. */
+export function allNamed(key: string, index: number): boolean {
+  const choice = choicesOf(key)[index];
+  if (choice === undefined) return false;
+  return choice.files === null || choice.files.names.length <= NAMED || backOf(key).named.includes(choice.way);
 }
 
 /** Marks a row of the list, or a choice, by its place. */
@@ -221,9 +251,16 @@ export function choicesOf(key: string): BackChoice[] {
   const files = previewFiles(preview);
   const counts =
     preview !== undefined && preview !== "reading" && !("error" in preview)
-      ? `, +${preview.insertions} −${preview.deletions}`
+      ? `, +${preview.insertions}\u00a0−${preview.deletions}`
       : "";
   const codex = byKey(key)?.agent === "codex";
+  const names = shortNames(files);
+  const as = `back as ${files.length === 1 ? "it was" : "they were"}${counts}.`;
+  const putting = (before: string, after: string) => ({
+    detail: `${before}${joined(names)}${after}`,
+    files: { before, names, after },
+    undoable: false,
+  });
   const out: BackChoice[] = [];
   if (row.conversation)
     out.push({
@@ -232,15 +269,22 @@ export function choicesOf(key: string): BackChoice[] {
       detail: codex
         ? "Your message comes back to edit."
         : "Your message comes back to edit. Files stay as they are.",
+      files: null,
+      undoable: !codex,
     });
   if (row.conversation && files.length > 0)
     out.push({
       way: "both",
       label: "The conversation and the files",
-      detail: `Also puts ${fileNames(files)} back as ${files.length === 1 ? "it was" : "they were"}${counts}. What commands changed stays.`,
+      ...putting("Also puts ", ` ${as} What commands changed stays. It cannot be undone.`),
     });
   if (files.length > 0)
-    out.push({ way: "files", label: "Only the files", detail: "The conversation stays as it is." });
+    out.push({
+      way: "files",
+      label: "Only the files",
+      // Only Claude Code puts files back.
+      ...putting("Puts ", ` ${as} The conversation stays as it is, and Claude Code is told of it. It cannot be undone.`),
+    });
   return out;
 }
 
@@ -251,6 +295,8 @@ export function toChoices(key: string): boolean {
   if (choicesOf(key).length === 0) return false;
   back.phase = "choices";
   back.choice = 0;
+  back.named = [];
+  nameAll(key, 0);
   return true;
 }
 
@@ -311,14 +357,7 @@ export function backCostOf(key: string): string {
     .map((task) => task.description ?? "a command")
     .filter((name, at, all) => all.indexOf(name) === at);
   if (running.length === 0) return "Claude Code starts again for this.";
-  const said = namesOfCommands(running);
-  return `Claude Code starts again for this, so ${said}, which it left running, ${running.length === 1 ? "stops" : "stop"}.`;
-}
-
-/** Commands by what they are, joined with an and. */
-function namesOfCommands(names: string[]): string {
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `Claude Code starts again for this, so ${joined(running)}, which it left running, ${running.length === 1 ? "stops" : "stop"}.`;
 }
 
 /** Test seam. */

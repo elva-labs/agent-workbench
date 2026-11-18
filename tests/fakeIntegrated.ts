@@ -191,6 +191,9 @@ export interface FakeIntegrated {
   /** While set, a Claude Code conversation that goes back does not come up
       from there, and is started again whole, saying this. */
   rewindFallback: string | null;
+  /** While set, a Claude Code conversation that goes back does not come up
+      at all: the session gone back from ends, and the answer says this. */
+  rewindFails: string | null;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
 
@@ -793,6 +796,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     files: new Map(),
     older: new Set(),
     rewindFallback: null,
+    rewindFails: null,
 
     rewindPoints(id) {
       const session = live(id);
@@ -845,6 +849,10 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       // Claude Code starts again, the session it goes back from ending
       // first: from the entry before the message, or for the first as a
       // new conversation, or whole where it does not come up from there.
+      if (fake.rewindFails !== null) {
+        fake.end(id, true);
+        return { id: null, sessionId: null, files, fallback: null, error: fake.rewindFails };
+      }
       const fallback = fake.rewindFallback;
       const first = points.points[0]?.message === message;
       const whole = fallback === null && !first ? cutAt(conversation, message) : null;

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   conversationOf,
+  fileNames,
   goBack,
   handleOf,
   launch,
@@ -16,7 +17,9 @@ import {
 } from "$lib/integrated.svelte";
 import { Conversation, type Message } from "$lib/conversation.svelte";
 import { byKey, create, reset as resetSessions } from "$lib/sessions.svelte";
+import { FILES_BACK_HEAD, spoken } from "$lib/instructions";
 import {
+  allNamed,
   backCostOf,
   backOf,
   backSaidOf,
@@ -193,6 +196,122 @@ describe("Up on a waiting message", () => {
   });
 });
 
+/** The words of the last message the window sent the agent. */
+function lastSent(): string {
+  const sent = fake.calls.findLast((call) => call.method === "send");
+  return sent?.method === "send" ? sent.text : "";
+}
+
+describe("telling the agent of files put back", () => {
+  it("says the files went back where the conversation goes on whole, and tells the agent once", async () => {
+    const key = await started();
+    await said(key, "One.");
+    const second = await said(key, "Two.");
+    fake.files.set(second, { files: ["/w/upload.ts"], insertions: 0, deletions: 2 });
+    fake.rewindFallback = "claude ended with code 1";
+    expect(await goBack(key, second, "both", ["/w/upload.ts"])).toBe("claude ended with code 1");
+    expect(linkFor(key).backSaid).toMatch(
+      /^It did not go back: claude ended with code 1\. The conversation goes on as it was, but upload\.ts is as it was at .+\. Claude Code is told with your next message\.$/,
+    );
+    send(key, "Go on.");
+    await settled();
+    const told = `${FILES_BACK_HEAD}\nAs before the message that begins "Two.":\n/w/upload.ts`;
+    expect(lastSent()).toBe(`${told}\n\nGo on.`);
+    expect(spoken(lastSent(), true)).toMatchObject({
+      text: "Go on.",
+      filesBack: 'As before the message that begins "Two.":\n/w/upload.ts',
+    });
+    fake.turn(handleOf(key)!, "Noted.");
+    send(key, "And then?");
+    await settled();
+    expect(lastSent()).toBe("And then?");
+  });
+
+  it("says the files went back where Claude Code does not start again at all", async () => {
+    const key = await started();
+    await said(key, "One.");
+    const second = await said(key, "Two.");
+    fake.files.set(second, { files: ["/w/upload.ts", "/w/notes.md"], insertions: 0, deletions: 2 });
+    fake.rewindFails = "claude was not found";
+    expect(await goBack(key, second, "both", ["/w/upload.ts", "/w/notes.md"])).toBe(
+      "Claude Code could not start again: claude was not found.",
+    );
+    expect(linkFor(key).backSaid).toMatch(
+      /^It did not go back: Claude Code could not start again: claude was not found\. The files went back all the same: upload\.ts and notes\.md are as they were at .+\. Claude Code is told with your next message\.$/,
+    );
+    expect(JSON.stringify(conversationOf(key).entries)).toContain("The files went back all the same: upload.ts and notes.md");
+    expect(conversationOf(key).entries.filter((entry) => entry.kind === "user")).toHaveLength(2);
+    expect(linkFor(key).filesBack).toEqual([
+      { path: "/w/upload.ts", message: second, line: "Two." },
+      { path: "/w/notes.md", message: second, line: "Two." },
+    ]);
+  });
+
+  it("tells the agent of files put back alone, again where that message never reaches it", async () => {
+    const key = await started();
+    const first = await said(key, "One.");
+    fake.files.set(first, { files: ["/w/upload.ts"], insertions: 0, deletions: 2 });
+    expect(await goBack(key, first, "files", ["/w/upload.ts"])).toBeNull();
+    expect(linkFor(key).backSaid).toMatch(
+      /^upload\.ts is as it was at .+\. What commands changed stays\. Claude Code is told with your next message\.$/,
+    );
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const through = seam.integratedSend;
+    seam.integratedSend = async () => {
+      throw new Error("the pipe broke");
+    };
+    send(key, "Go on.");
+    await settled();
+    expect(linkFor(key).filesBack.map((one) => one.path)).toEqual(["/w/upload.ts"]);
+    seam.integratedSend = through;
+    send(key, "Go on, again.");
+    await settled();
+    expect(lastSent()).toBe(`${FILES_BACK_HEAD}\nAs before the message that begins "One.":\n/w/upload.ts\n\nGo on, again.`);
+  });
+
+  it("lets go of files to tell once the conversation goes back past their message", async () => {
+    const key = await started();
+    await said(key, "One.");
+    const second = await said(key, "Two.");
+    fake.files.set(second, { files: ["/w/upload.ts"], insertions: 0, deletions: 2 });
+    expect(await goBack(key, second, "files", ["/w/upload.ts"])).toBeNull();
+    expect(linkFor(key).filesBack).toHaveLength(1);
+    expect(await goBack(key, second, "conversation", [])).toBeNull();
+    expect(linkFor(key).filesBack).toEqual([]);
+  });
+});
+
+describe("the choices", () => {
+  it("name every file they put back, the rest behind n more until marked, and say which can be undone", async () => {
+    const key = await started();
+    const first = await said(key, "One.");
+    const files = ["/w/src/a/upload.ts", "/w/src/b/upload.ts", "/w/queue.ts", "/w/retry.ts", "/w/notes.md"];
+    fake.files.set(first, { files, insertions: 9, deletions: 46 });
+    expect(await openBack(key, first, true)).toBe(true);
+    await settled();
+    const choices = choicesOf(key);
+    expect(choices.map((choice) => [choice.way, choice.undoable])).toEqual([
+      ["conversation", true],
+      ["both", false],
+      ["files", false],
+    ]);
+    expect(choices[1].detail).toBe(
+      "Also puts a/upload.ts, b/upload.ts, queue.ts, retry.ts and notes.md back as they were, +9\u00a0−46. What commands changed stays. It cannot be undone.",
+    );
+    expect(choices[2].files?.names).toHaveLength(5);
+    expect(allNamed(key, 0)).toBe(true);
+    expect(allNamed(key, 1)).toBe(false);
+    moveBack(key, 1);
+    expect(allNamed(key, 1)).toBe(true);
+    expect(allNamed(key, 2)).toBe(false);
+  });
+
+  it("tell files of the same name apart by their folders", () => {
+    expect(fileNames(["/w/a/upload.ts", "/w/b/upload.ts", "/w/z.ts"])).toBe("a/upload.ts, b/upload.ts and z.ts");
+    expect(fileNames(["/w/upload.ts"])).toBe("upload.ts");
+  });
+});
+
 describe("going back from the window", () => {
   it("lists the user's messages at rest, marks the newest, and says what leaves", async () => {
     const key = await started();
@@ -217,7 +336,9 @@ describe("going back from the window", () => {
     await settled();
     expect(toChoices(key)).toBe(true);
     expect(choicesOf(key).map((choice) => choice.way)).toEqual(["conversation", "both", "files"]);
-    expect(choicesOf(key)[1].detail).toBe("Also puts a.ts and b.ts back as they were, +3 −1. What commands changed stays.");
+    expect(choicesOf(key)[1].detail).toBe(
+      "Also puts a.ts and b.ts back as they were, +3\u00a0−1. What commands changed stays. It cannot be undone.",
+    );
     expect(backCostOf(key)).toBe("Claude Code starts again for this.");
     closeBack(key);
     expect(markedOf(key)).toBeNull();
@@ -277,7 +398,7 @@ describe("going back from the window", () => {
     fake.rewindFallback = "claude ended with code 1";
     const going = goBack(key, second, "conversation", []);
     expect(conversationOf(key).entries.map((entry) => entry.kind)).toEqual(["user", "agent", "rewound"]);
-    expect(linkFor(key).draft).toBe("Two.\nAnd this.");
+    expect(linkFor(key).draft).toBe("Two.\n\nAnd this.");
     expect(await going).toBe("claude ended with code 1");
     expect(conversationOf(key).entries.map((entry) => entry.kind)).toEqual(["user", "agent", "user", "agent"]);
     expect(linkFor(key).draft).toBe("And this.");

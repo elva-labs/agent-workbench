@@ -1,6 +1,6 @@
 import { tick } from "svelte";
 import { dirFor } from "$lib/accounts.svelte";
-import { spoken } from "$lib/instructions";
+import { filesBackNote, spoken } from "$lib/instructions";
 import { unsent, type Sent } from "$lib/mention";
 import { mentionedIn, mentionsOf } from "$lib/mentioned.svelte";
 import { reservedName, shown } from "$lib/unseen";
@@ -9,7 +9,7 @@ import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.sve
 import { keepMode, modeOf } from "$lib/sessionModes";
 import { nextNarrower } from "$lib/modeFit";
 import { heardLimits } from "$lib/limits.svelte";
-import { hostOf } from "$lib/remote.svelte";
+import { hostOf, pathOn } from "$lib/remote.svelte";
 import {
   core,
   isUntrusted,
@@ -178,6 +178,11 @@ export class Link {
   /** What the composer says of the last going back, until the next message
       is sent: the files put back, or why it did not go back. */
   backSaid = $state<string | null>(null);
+  /** Files put back while the conversation stayed as it was, which the
+      agent is told of ahead of the user's next message: each path on its
+      machine, and the message it is as before, with that message's first
+      line. */
+  filesBack: FileBack[] = [];
   /** The composer's words as going back left them, and as they were
       before, so undoing it, or its failing, puts back what was there where
       they stand unchanged. */
@@ -908,6 +913,13 @@ export function notesFrom(how: (key: string) => Note | null) {
   noteFor = how;
 }
 
+/** A file put back while the conversation stayed as it was. */
+interface FileBack {
+  path: string;
+  message: string;
+  line: string;
+}
+
 /** What follows a message the agent has not taken yet, by the message's
     id, with the row it went to: what happens once the agent takes it into
     a turn, and what happens when it never reaches the agent. */
@@ -982,12 +994,27 @@ export function send(
   if (link === undefined || link.handle === null || session === null) return null;
   if (words.trim() === "" && images.length === 0) return null;
   const note = from === null ? noteFor(key) : null;
-  const text = note === null ? words : `${note.text}\n\n${words}`;
+  // Files put back while the conversation stayed are told ahead of the
+  // user's own next message, and again where it never reaches the agent or
+  // the conversation goes back on it.
+  const files = from === null ? link.filesBack : [];
+  const told = files.length === 0 ? null : filesBackNote(files);
+  const text = [told, note?.text ?? null, words].filter((part) => part !== null).join("\n\n");
   const id = crypto.randomUUID();
   mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
   link.backSaid = null;
-  if (note !== null) notes.set(id, { key, taken: note.deliver, lost: () => {}, untold: note.untold ?? (() => {}) });
+  link.filesBack = from === null ? [] : link.filesBack;
+  if (note !== null || files.length > 0)
+    notes.set(id, {
+      key,
+      taken: note?.deliver ?? (() => {}),
+      lost: () => tellFilesAgain(link, files),
+      untold: () => {
+        note?.untold?.();
+        tellFilesAgain(link, files);
+      },
+    });
   // A message sent is the agent spoken to, by the user or by a session
   // that started it.
   session.engaged = true;
@@ -1149,7 +1176,7 @@ export function restore(key: string, said: Message, caret: "start" | "end" | nul
     caret = "start";
   } else {
     if (chain !== null && link.draft !== chain.draft) link.upChain = null;
-    link.draft = link.draft.trim() === "" ? back.draft : `${back.draft}\n${link.draft}`;
+    link.draft = link.draft.trim() === "" ? back.draft : `${back.draft}\n\n${link.draft}`;
     link.mentions = [...new Set([...link.mentions, ...back.picked])];
     link.images = [...said.images, ...link.images];
   }
@@ -1228,13 +1255,64 @@ export function upHolds(key: string): boolean {
     files. */
 export type BackWay = "conversation" | "both" | "files";
 
-/** Files by their names, the last part of each path, joined with an and,
-    the rest counted past three. */
+/** Each file by its name, the last part of its path, or as much of the
+    path as tells it from another of the same name. */
+export function shortNames(files: string[]): string[] {
+  const parts = files.map((file) => file.replaceAll("\\", "/").split("/").filter((part) => part !== ""));
+  return parts.map((one, at) => {
+    for (let take = 1; take < one.length; take += 1) {
+      const name = one.slice(-take).join("/");
+      if (!parts.some((other, there) => there !== at && other.slice(-take).join("/") === name)) return name;
+    }
+    return one.join("/") || files[at];
+  });
+}
+
+/** Words joined with commas and an and. */
+export function joined(words: string[]): string {
+  if (words.length <= 1) return words[0] ?? "";
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+}
+
+/** Every file by its name, joined with an and. */
 export function fileNames(files: string[]): string {
-  const names = files.map((file) => file.replaceAll("\\", "/").split("/").pop() ?? file);
-  if (names.length > 3) return `${names.slice(0, 2).join(", ")} and ${names.length - 2} more`;
-  if (names.length <= 1) return names[0] ?? "";
-  return `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return joined(shortNames(files));
+}
+
+/** The files put back, by name, and when they are as of. */
+function putBackAt(files: string[], at: string): string {
+  return `${fileNames(files)} ${files.length === 1 ? "is as it was" : "are as they were"} at ${at}`;
+}
+
+/** The first line of what a message of the user's own said, cut short. */
+function firstLineOf(said: Message): string {
+  const line =
+    spoken(said.text, true)
+      .text.split("\n")
+      .find((candidate) => candidate.trim() !== "")
+      ?.trim() ?? "";
+  return line.length > 80 ? `${line.slice(0, 79)}…` : line;
+}
+
+/** Files were put back as before `said` while the conversation stayed as
+    it was: the agent is told ahead of the user's next message. A file put
+    back again is told as it is now. */
+function filesToTell(link: Link, said: Message, files: string[]) {
+  const line = firstLineOf(said);
+  const told = files.map((file) => ({ path: pathOn(file), message: said.id, line }));
+  link.filesBack = [...link.filesBack.filter((one) => !told.some((now) => now.path === one.path)), ...told];
+}
+
+/** A message that told the agent of files put back never reached it, or
+    the conversation went back on it: they are told again, where the
+    message they are as before is still in the conversation and they have
+    not been put back since. */
+function tellFilesAgain(link: Link, files: FileBack[]) {
+  const again = files.filter(
+    (one) =>
+      link.conversation.messages[one.message] !== undefined && !link.filesBack.some((now) => now.path === one.path),
+  );
+  link.filesBack = [...again, ...link.filesBack];
 }
 
 /** The time of day a message was sent, as the thread shows it. */
@@ -1271,7 +1349,10 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
   link.backSaid = null;
   link.held = [];
   if (restarts) link.restarting = true;
-  link.goingBack = { ...asked, gone: conversation ? cutBack(key, link, asked.message) : [] };
+  const gone = conversation ? cutBack(key, link, asked.message) : [];
+  link.goingBack = { ...asked, gone };
+  const agent = agentName(session);
+  const at = timeOf(said.at);
   let went: Awaited<ReturnType<ReturnType<typeof core>["integratedRewind"]>>;
   try {
     went = await core().integratedRewind(handle, id, { conversation, files: way === "conversation" ? null : shown });
@@ -1290,8 +1371,16 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
       missedBack(link);
       settleBack(key, link, held);
       link.goingBack = null;
-      const why = `${agentName(session)} could not start again: ${went.error ?? "no reason was given"}.`;
-      link.conversation.apply({ type: "error", kind: "process", message: why });
+      const why = `${agent} could not start again: ${went.error ?? "no reason was given"}.`;
+      if (went.files.length === 0) {
+        link.conversation.apply({ type: "error", kind: "process", message: why });
+        return why;
+      }
+      // The files went back before the start failed, so they stay back.
+      const files = `The files went back all the same: ${putBackAt(went.files, at)}.`;
+      filesToTell(link, said, went.files);
+      link.conversation.apply({ type: "error", kind: "process", message: `${why} ${files}` });
+      link.backSaid = `It did not go back: ${why} ${files} ${agent} is told with your next message.`;
       return why;
     }
     link.handle = went.id;
@@ -1301,13 +1390,26 @@ export async function goBack(key: string, id: string, way: BackWay, shown: strin
     if (went.sessionId !== null) identify(session, went.sessionId);
   } else settleBack(key, link, held);
   link.goingBack = null;
-  const at = timeOf(said.at);
   if (went.fallback !== null) {
-    link.backSaid = `It did not go back: ${went.fallback}. The conversation goes on as it was.`;
+    if (went.files.length === 0) {
+      link.backSaid = `It did not go back: ${went.fallback}. The conversation goes on as it was.`;
+      return went.fallback;
+    }
+    filesToTell(link, said, went.files);
+    link.backSaid = `It did not go back: ${went.fallback}. The conversation goes on as it was, but ${putBackAt(went.files, at)}. ${agent} is told with your next message.`;
     return went.fallback;
   }
-  if (went.files.length > 0)
-    link.backSaid = `${fileNames(went.files)} ${went.files.length === 1 ? "is" : "are"} as ${went.files.length === 1 ? "it was" : "they were"} at ${at}. What commands changed stays.`;
+  // A conversation gone back no longer holds what files put back earlier
+  // were to be told against, and files that went back with it agree with
+  // it.
+  if (conversation) {
+    const now = went.files.map(pathOn);
+    link.filesBack = link.filesBack.filter((one) => !gone.includes(one.message) && !now.includes(one.path));
+  }
+  if (went.files.length > 0) {
+    if (!conversation) filesToTell(link, said, went.files);
+    link.backSaid = `${putBackAt(went.files, at)}. What commands changed stays.${conversation ? "" : ` ${agent} is told with your next message.`}`;
+  }
   // Claude Code's going back of the conversation alone can be undone, until
   // anything is said from there.
   if (restarts && went.files.length === 0) link.conversation.undoable(true);

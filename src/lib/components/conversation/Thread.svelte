@@ -1264,7 +1264,7 @@
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
   {@const words = from?.workbench
-    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null }
+    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null, filesBack: null }
     : spoken(said.text, from === null)}
   {@const putBack = from?.workbench ? undefined : onPutBack}
   <article
@@ -1326,6 +1326,20 @@
                 >{/if}{/if}{/each}</p
         >{/if}
     </div>
+    {#if words.filesBack !== null}
+      {@const shown = `${said.id}:files`}
+      <button
+        class="link instructions"
+        tabindex="-1"
+        data-thread-item
+        onclick={() => (unfolded[shown] = !unfolded[shown])}
+        aria-expanded={unfolded[shown] === true}
+        data-testid="workbench-files">Files put back, from the workbench</button
+      >
+      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-files-text"
+          ><Plain text={words.filesBack} /></p
+        >{/if}
+    {/if}
     {#if words.reports !== null}
       {@const shown = `${said.id}:reports`}
       <button
