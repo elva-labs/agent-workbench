@@ -1296,6 +1296,21 @@ fn controls_centre(window: tauri::Window, centre: u32) {
     chrome::set_controls_centre(&window, centre);
 }
 
+/// Where the cursor is, in the window's points from the top left of what
+/// it draws: what the page cannot tell once the pointer has left the view,
+/// or stopped where the view hears no move of it, as against the screen's
+/// edge. None when the window cannot say.
+#[tauri::command]
+fn cursor_in_window(window: tauri::Window) -> Option<(f64, f64)> {
+    let cursor = window.cursor_position().ok()?;
+    let origin = window.inner_position().ok()?;
+    let scale = window.scale_factor().ok()?;
+    Some((
+        (cursor.x - f64::from(origin.x)) / scale,
+        (cursor.y - f64::from(origin.y)) / scale,
+    ))
+}
+
 /// The `orchestrator` folder under the workbench's home on this machine,
 /// listed while it holds past sessions.
 #[tauri::command]
@@ -2066,6 +2081,7 @@ pub fn run() {
             settings_answer,
             orchestrator_dir,
             controls_centre,
+            cursor_in_window,
             worktree_add,
             worktrees,
             worktree_remove,

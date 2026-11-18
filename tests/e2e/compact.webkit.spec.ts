@@ -103,7 +103,7 @@ test("does not slide the pane in for a pointer the edge comes under", async ({ p
   await page.clock.install();
   await start(page);
   await page.evaluate(() => {
-    const edge = document.querySelector("[data-testid='compact-edge']")!;
+    const edge = document.elementFromPoint(0, 0) ?? document.body;
     for (const type of ["pointerover", "pointerenter", "pointermove"])
       edge.dispatchEvent(new PointerEvent(type, { bubbles: type !== "pointerenter", clientX: 0, clientY: 0 }));
   });
@@ -528,4 +528,94 @@ test("peeks over the focused card's mark while reviewing", async ({ page }) => {
   expect(x).toBeLessThan((await boxOf(page, pane)).x + (await boxOf(page, pane)).width);
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   expect(await pixel(page, x, y)).not.toBe(mark);
+});
+
+// However fast the pointer reaches the left edge, the pane comes: a few
+// points of a quick move are all the page sees of it, and the last may be
+// on the edge, beside the panes, past the window, or nowhere near.
+test.describe("a quick move to the edge", () => {
+  /** The clock held still, so the pane coming in without a rest is told
+      from one that came after it. */
+  async function still(page: Page) {
+    await page.clock.install();
+    await start(page);
+    await page.clock.pauseAt(Date.now() + 1000);
+  }
+
+  for (const [where, x, y] of [
+    ["onto the edge", 2, 400],
+    ["against the window's very edge", 0, 300],
+    ["onto the edge beside the status bar", 2, 885],
+  ] as const)
+    test(`brings the pane in at once, ${where}`, async ({ page }) => {
+      await still(page);
+      await page.mouse.move(900, 400);
+      await page.mouse.move(x, y, { steps: 1 });
+      await slidIn(page);
+    });
+
+  for (const [how, x, y] of [
+    ["just past the edge", -40, 400],
+    ["far past the edge", -400, 400],
+    ["past the edge on the way up", -120, -60],
+  ] as const)
+    test(`brings the pane in when it leaves the window ${how}`, async ({ page }) => {
+      await still(page);
+      await page.mouse.move(300, 200);
+      await page.mouse.move(x, y, { steps: 1 });
+      await slidIn(page);
+      // Away, it stays; back over it and off again, it goes.
+      await page.clock.runFor(AWAY_AFTER * 3);
+      await expect(page.locator(SESSIONS)).toBeVisible();
+      await page.mouse.move(100, 400, { steps: 2 });
+      await page.mouse.move(900, 400, { steps: 2 });
+      await page.clock.runFor(AWAY_AFTER * 3);
+      await slidOut(page);
+    });
+
+  test("leaves the pane out when the pointer leaves by the top", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(300, 100);
+    await page.mouse.move(250, -60, { steps: 1 });
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+  });
+
+  test("asks the window where the cursor came to rest when the page heard nothing at the edge", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(900, 400);
+    // The last the page hears is short of the edge, heading for it fast;
+    // the window says the cursor is against the screen's edge.
+    await page.evaluate(() => ((window as unknown as { __cursor: unknown }).__cursor = { x: 0, y: 400 }));
+    await page.mouse.move(60, 400, { steps: 1 });
+    await page.clock.runFor(200);
+    await slidIn(page);
+  });
+
+  test("leaves the pane out when the window says the cursor stopped short of the edge", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(900, 400);
+    await page.evaluate(() => ((window as unknown as { __cursor: unknown }).__cursor = { x: 60, y: 400 }));
+    await page.mouse.move(60, 400, { steps: 1 });
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+  });
+
+  test("rests a moment before a move along the edge brings it, and a pointer coming in across it brings nothing", async ({ page }) => {
+    await still(page);
+    // Into the window across the edge and on: nothing.
+    await page.mouse.move(-60, 400);
+    await page.mouse.move(2, 400, { steps: 1 });
+    await page.mouse.move(80, 400, { steps: 1 });
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    // Out by the top, in across the edge, then along it: only after the
+    // rest.
+    await page.mouse.move(250, -60, { steps: 1 });
+    await page.mouse.move(2, 300, { steps: 1 });
+    await page.mouse.move(2, 330, { steps: 1 });
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    await page.clock.runFor(200);
+    await slidIn(page);
+  });
 });
