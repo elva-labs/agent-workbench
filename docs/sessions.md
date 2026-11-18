@@ -563,8 +563,11 @@ folder has checked out, and what the session is doing: working, idle,
 asking the user or waiting for a permission. The header, the row's dot and
 the row's words decide it the same way, from the session's own events: a
 turn that only waits on the sessions it started is working, and a session
-at rest while sessions it started work reads `sessions working`, with its
-dot breathing. Short of room the project and
+at rest while sessions it started work reads `a session working` or `2
+sessions working`, with its dot breathing. At rest, a session reads `idle`
+where the app knows its turn ended, an integrated one or a terminal one
+whose hooks report its turns, and `running` where its activity is
+guessed. Short of room the project and
 the branch give way before what the session is doing, and each goes with
 its icon once it would show no more than a letter or two. A session another session
 started is named by the name its start gave, cut to 60 characters, or by

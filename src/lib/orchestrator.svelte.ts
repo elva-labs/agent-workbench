@@ -119,10 +119,12 @@ export function conducting(session: Session): boolean {
 /** What a session is doing, in the words every place that says it uses:
     the agent pane's header, a row's words and its dot's hover, a started
     session's line. It decides as the dot does, so a session at rest while
-    sessions it started work says so rather than idle. */
+    sessions it started work says how many of them do rather than idle. */
 export function stateWord(session: Session | null): string {
-  if (session !== null && session.status === "running" && session.workflowLost === null && !session.working && conducting(session))
-    return "sessions working";
+  if (session !== null && session.status === "running" && session.workflowLost === null && !session.working && conducting(session)) {
+    const count = startedRows(session).filter((child) => isLive(child) && child.working).length;
+    return count === 1 ? "a session working" : `${count} sessions working`;
+  }
   return statusLabel(session);
 }
 

@@ -239,7 +239,11 @@ describe("what an orchestrator has out", () => {
     const child = startedIn(A, one, "pty-2", "sid-2");
     child.working = true;
     expect(conducting(one)).toBe(true);
-    expect(stateWord(one)).toBe("sessions working");
+    expect(stateWord(one)).toBe("a session working");
+    const other = startedIn(B, one, "pty-3", "sid-3");
+    other.working = true;
+    expect(stateWord(one)).toBe("2 sessions working");
+    other.working = false;
     expect(startedDot(child)).toBe("busy");
 
     // Its own call for attention is the row's state over the child's work.

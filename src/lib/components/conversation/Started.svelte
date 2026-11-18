@@ -5,7 +5,7 @@
   import { modelLabel } from "$lib/models";
   import { placeTextOf } from "$lib/conductor.svelte";
   import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
-  import { stateWord } from "$lib/orchestrator.svelte";
+  import { conducting, stateWord } from "$lib/orchestrator.svelte";
   import { goTo } from "$lib/workspace.svelte";
 
   /** The sessions a run started with the workbench's start tool, one row
@@ -39,7 +39,7 @@
         <span
           class="dot"
           class:live={isLive(session)}
-          class:working={session.working}
+          class:working={conducting(session)}
           class:asking={session.needs === "permission"}
           class:dormant={session.status === "dormant"}
           title={stateWord(session)}
