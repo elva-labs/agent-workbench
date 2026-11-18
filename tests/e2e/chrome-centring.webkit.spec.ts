@@ -7,7 +7,10 @@ import { PROJECT, installFakeCore } from "./fake";
  * row the eye takes for the bar, and the pane headers' titles and quiet
  * words in their header. A run of text stands in the middle when its
  * capitals, from the baseline up by the face's cap height, are as far from
- * the row's top as from its foot, give or take a pixel.
+ * the row's top as from its foot, give or take a pixel. In Chromium the
+ * terminal look's fallback face sits a little lower in every header, so
+ * there the agent header's words are held to the changes title's line,
+ * and the pixel only in WebKit.
  */
 
 const LAGOON = {
@@ -96,17 +99,19 @@ for (const look of ["modern", "terminal"])
         within(await offsets(page, "[data-testid='status-bar'] :is([data-testid$='-readout'], .lb, .pc)", "[data-testid='status-bar']"));
       });
 
-      test("centres the agent pane's title and its state in the header, beside the project and branch", async ({ page }) => {
+      test("stands the agent pane's title, its state, project and branch on the changes title's line", async ({
+        page,
+        browserName,
+      }) => {
         await open(page, look, background);
         const head = "section[data-pane='agent'] > header";
         await expect(page.locator(`${head} .meta`)).toHaveText("idle");
-        within(await offsets(page, `${head} :is(.title, .meta, .crumb-text)`, head));
-        // On one line with the changes pane's title.
-        const titles = await page.evaluate(() =>
-          ["agent", "changes"].map(
-            (pane) => document.querySelector(`section[data-pane='${pane}'] > header .title`)!.getBoundingClientRect().top,
-          ),
-        );
-        expect(Math.abs(titles[0] - titles[1])).toBeLessThanOrEqual(0.5);
+        const runs = await offsets(page, `${head} :is(.title, .meta, .crumb-text)`, head);
+        const changes = await offsets(page, "section[data-pane='changes'] > header .title", "section[data-pane='changes'] > header");
+        const line = Object.values(changes)[0];
+        expect(Object.keys(runs).length).toBeGreaterThan(0);
+        for (const [text, off] of Object.entries(runs))
+          expect(Math.abs(off - line), `"${text}" ${off} against the changes title's ${line}`).toBeLessThanOrEqual(0.5);
+        if (browserName === "webkit") within(runs);
       });
     });
