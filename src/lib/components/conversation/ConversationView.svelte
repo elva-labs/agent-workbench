@@ -12,10 +12,12 @@
     takeBack,
     takeBackUp,
     trust,
+    undoGoBack,
     unspoken,
     upHasMore,
     upHolds,
   } from "$lib/integrated.svelte";
+  import { backOf, canGoBack, closeBack, markedOf, openBack, unrested } from "$lib/rewind.svelte";
   import { actionOf, describe } from "$lib/keys.svelte";
   import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
@@ -190,6 +192,41 @@
     return true;
   }
 
+  // The list over the composer is made as the view is, so what reads it
+  // from a derived value follows it. A view is its session's for life.
+  untrack(() => backOf(session.key));
+  /** Whether the session can go back to an earlier message now. */
+  let backable = $derived(canGoBack(session.key));
+  /** The message the list over the composer marks, which the thread draws
+      as the place it would go back to. */
+  let marked = $derived(markedOf(session.key));
+
+  /** "Go back to here" on a message: the choices for it, over the
+      composer, with the keyboard there. */
+  function goBackHere(message: Message) {
+    void openBack(session.key, message.id, true);
+    const field = view?.querySelector<HTMLTextAreaElement>("[data-testid='composer-input']");
+    field?.focus();
+  }
+
+  // The thread brings the marked message into view as the mark moves.
+  $effect(() => {
+    if (marked === null || thread === null) return;
+    const key = conversation.entries.find((entry) => entry.kind === "user" && entry.message === marked)?.key;
+    if (key !== undefined) untrack(() => void thread?.reveal(key, "center"));
+  });
+
+  // A turn the agent starts by itself, as background work that finishes
+  // can make it, closes the list, saying why.
+  $effect(() => {
+    const back = backOf(session.key);
+    if (back.phase === null || link.goingBack !== null || unrested(session.key) === null) return;
+    untrack(() => {
+      closeBack(session.key);
+      link.backSaid = `${name} began working by itself, so the list closed.`;
+    });
+  });
+
   /** The keyboard on the dock, when something waits there. */
   function toDock(): boolean {
     if (docked.length === 0 || dock === null) return false;
@@ -361,6 +398,9 @@
       {waiting}
       sender={(message) => senderOf(message)}
       opener={(path) => mentionOpener(session.key, path)}
+      {marked}
+      onGoBack={backable ? goBackHere : null}
+      onUndo={() => void undoGoBack(session.key)}
     />
     <div class="foot" style:--conv-width={width > 0 ? `${width}px` : null}>
       {#if over}
@@ -390,6 +430,7 @@
           onSendNow={sendWaiting}
           onTakeBack={takeNewest}
           onUp={() => takeBackUp(session.key, own)}
+          {backable}
           {nowHint}
           answers={docked.some(answerable)}
           defaultModel={session.model === null}

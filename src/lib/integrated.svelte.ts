@@ -21,6 +21,7 @@ import {
 } from "$lib/core";
 import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
+import { clock as timeOfDay } from "$lib/thread";
 import {
   nameTaken,
   adopt,
@@ -123,12 +124,14 @@ export class Link {
       agent lets go of each, when they go back to the composer. */
   takingBack = new Map<string, Message>();
   /** The messages Up took back, oldest first, with the words, mentions
-      and images of each the agent has let go of, and the composer's words
-      as Up last left them: while they stand there unchanged, Up takes the
-      one before, and each comes back in the order sent. */
+      and images of each the agent has let go of, the place among the
+      messages sent the oldest of them had, and the composer's words as Up
+      last left them: while they stand there unchanged, Up takes the one
+      before, and each comes back in the order sent. */
   upChain = $state<{
     ids: string[];
     back: Record<string, { draft: string; mentions: string[]; images: IntegratedImage[] }>;
+    from: number;
     draft: string;
   } | null>(null);
   /** Why the waiting messages could not be sent now, or a message taken
@@ -1174,7 +1177,7 @@ export function takeBackUp(key: string, own: (message: Message) => boolean): boo
   const going = chain !== null && link.draft === chain.draft && (chain.draft !== "" || chain.ids.length > 0);
   if (!going && !empty) return false;
   const order = link.conversation.order;
-  const oldest = going && chain.ids.length > 0 ? order.indexOf(chain.ids[0]) : order.length;
+  const oldest = going ? chain.from : order.length;
   const next = link.conversation.waiting.findLast(
     (message) =>
       message.state === "queued" &&
@@ -1183,7 +1186,10 @@ export function takeBackUp(key: string, own: (message: Message) => boolean): boo
       order.indexOf(message.id) < oldest,
   );
   if (next === undefined) return false;
-  link.upChain = going ? { ...chain, ids: [next.id, ...chain.ids] } : { ids: [next.id], back: {}, draft: link.draft };
+  const from = order.indexOf(next.id);
+  link.upChain = going
+    ? { ...chain, ids: [next.id, ...chain.ids], from }
+    : { ids: [next.id], back: {}, from, draft: link.draft };
   void takeBack(key, next.id);
   return true;
 }
@@ -1196,10 +1202,12 @@ export function upHasMore(key: string, own: (message: Message) => boolean): bool
   const chain = link?.upChain ?? null;
   if (link === undefined || chain === null || link.draft !== chain.draft || chain.ids.length === 0) return false;
   const order = link.conversation.order;
-  const oldest = order.indexOf(chain.ids[0]);
   return link.conversation.waiting.some(
     (message) =>
-      message.state === "queued" && own(message) && !link.takingBack.has(message.id) && order.indexOf(message.id) < oldest,
+      message.state === "queued" &&
+      own(message) &&
+      !link.takingBack.has(message.id) &&
+      order.indexOf(message.id) < chain.from,
   );
 }
 
@@ -1226,9 +1234,7 @@ export function fileNames(files: string[]): string {
 
 /** The time of day a message was sent, as the thread shows it. */
 function timeOf(at: number | null): string {
-  if (at === null) return "then";
-  const when = new Date(at);
-  return `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+  return at === null ? "then" : timeOfDay(at);
 }
 
 /**

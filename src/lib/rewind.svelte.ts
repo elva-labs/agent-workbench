@@ -1,5 +1,4 @@
 import { tick } from "svelte";
-import { SvelteMap } from "svelte/reactivity";
 import { core, type IntegratedPreview } from "$lib/core";
 import { fileNames, goBack, linkOf, type BackWay } from "$lib/integrated.svelte";
 import { senderOf } from "$lib/senders.svelte";
@@ -66,7 +65,9 @@ export class Back {
   opened = 0;
 }
 
-const backs = new SvelteMap<string, Back>();
+/** The lists by session; each holds its own state, so the map needs
+    none. */
+const backs = new Map<string, Back>();
 
 /** The list over a session's composer, made the first time it is asked
     for. */
@@ -82,8 +83,8 @@ export function backOf(key: string): Back {
 /** The message the list marks, while it is open: the one the thread
     draws as the place it would go back to. */
 export function markedOf(key: string): string | null {
-  const back = backs.get(key);
-  if (back === undefined || back.phase === null) return null;
+  const back = backOf(key);
+  if (back.phase === null) return null;
   return back.rows[back.marked]?.message ?? null;
 }
 

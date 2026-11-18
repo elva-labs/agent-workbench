@@ -8,7 +8,21 @@
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import { choose, heldModel, modeChoices, modeName, modelChoices, workflowChoices } from "$lib/settingChoices";
   import type { AgentId, Workflow } from "$lib/core";
-  import { modelName, tokens } from "$lib/thread";
+  import { clock, modelName, tokens } from "$lib/thread";
+  import {
+    backCostOf,
+    backOf,
+    backSaidOf,
+    choicesOf,
+    closeBack,
+    markBack,
+    moveBack,
+    openBack,
+    pickBack,
+    previewFiles,
+    toChoices,
+    toList,
+  } from "$lib/rewind.svelte";
   import { pieces } from "$lib/completion";
   import { complete, named, slashGroups, slashWord, sourceOf, waitingHint } from "$lib/slash";
   import {
@@ -46,6 +60,15 @@
    * otherwise takes the newest of the user's own waiting messages back;
    * Up again, while the composer holds only what Up took back with the
    * caret at its start, takes the one before.
+   *
+   * Two Escapes in a row, each within a moment of the last, in an empty
+   * composer of a session at rest, open the list of the user's own
+   * messages over the composer, to go back to before one: the first says
+   * what a second does. A burst in which an Escape did anything else, such
+   * as stopping a turn or closing a menu, opens nothing. While the list is
+   * open the arrows mark a message, Enter turns it into the choices for
+   * that message, which the digits and Enter take, and Escape goes back a
+   * step. Typing closes the list and types.
    *
    * A slash typed as the first thing in a message opens the agent's
    * commands and skills over the composer, for an agent that lists them:
@@ -116,6 +139,9 @@
     onUp?: () => boolean;
     /** What the composer says of the messages that wait, or null. */
     nowHint?: string | null;
+    /** Whether the session can go back to an earlier message now: it is
+        at rest and its thread holds a message of the user's own. */
+    backable?: boolean;
   }
 
   let {
@@ -139,7 +165,115 @@
     onTakeBack,
     onUp,
     nowHint = null,
+    backable = false,
   }: Props = $props();
+
+  // ---- going back to an earlier message ----
+
+  let back = $derived(backOf(sessionKey));
+  let backChoices = $derived(back.phase === "choices" ? choicesOf(sessionKey) : []);
+  let backId = $derived(`back-${sessionKey.replace(/[^\w-]/g, "_")}`);
+  let backRow = $derived(back.rows[back.marked]);
+  /** How long a second Escape has to come to make a pair with the first. */
+  const PAIR_MS = 600;
+  /** The Escapes pressed in a row, each within a moment of the last: when
+      the last came, how many asked for nothing else, and whether any did. */
+  let burst = { at: 0, plain: 0, spent: false };
+  /** The first Escape of a pair was pressed: the hint says what a second
+      does, while it counts. */
+  let pairing = $state(false);
+  let pairTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** An Escape: `did` when it did something else, which spends the burst
+      it is in. A second plain one within the moment opens the list. */
+  function escaped(did: boolean) {
+    const now = Date.now();
+    if (now - burst.at > PAIR_MS) burst = { at: now, plain: 0, spent: false };
+    burst.at = now;
+    const empty = link.draft === "" && link.images.length === 0 && link.files.length === 0;
+    if (did || !empty || !backable || layout.mode !== "working") {
+      burst.spent = true;
+      unpair();
+      return;
+    }
+    burst.plain += 1;
+    if (burst.plain >= 2 && !burst.spent) {
+      unpair();
+      burst = { at: 0, plain: 0, spent: false };
+      void openBack(sessionKey);
+      return;
+    }
+    pairing = true;
+    if (pairTimer !== null) clearTimeout(pairTimer);
+    pairTimer = setTimeout(unpair, PAIR_MS);
+  }
+
+  function unpair() {
+    pairing = false;
+    if (pairTimer !== null) clearTimeout(pairTimer);
+    pairTimer = null;
+  }
+
+  $effect(() => () => {
+    if (pairTimer !== null) clearTimeout(pairTimer);
+  });
+
+  /** What the list holds, for a screen reader, as it opens and turns. */
+  let backAnnounced = $derived.by(() => {
+    if (back.phase === "choices") return `${backChoices.length === 1 ? "One way" : `${backChoices.length} ways`} to go back`;
+    if (back.reading) return "Reading where the conversation can go back to";
+    if (back.rows.length === 0) return back.why ?? "";
+    return `${back.rows.length === 1 ? "One message" : `${back.rows.length} messages`} to go back to before`;
+  });
+
+  /** Takes a choice for the marked message: the list shuts and the
+      session goes back. */
+  function pickChoice(index: number) {
+    void pickBack(sessionKey, index);
+  }
+
+  /** The keys the list takes while it is open; true when one was taken.
+      A key it does not take closes it, and does what it does. */
+  function backKey(e: KeyboardEvent): boolean {
+    if (back.phase === null || e.isComposing || e.keyCode === 229) return false;
+    const plain = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
+    const take = () => {
+      e.preventDefault();
+      e.stopPropagation();
+      return true;
+    };
+    if (e.key === "Escape") {
+      if (back.phase === "choices") toList(sessionKey);
+      else closeBack(sessionKey);
+      return take();
+    }
+    if (!plain) {
+      if (["Shift", "Alt", "Meta", "Control"].includes(e.key)) return false;
+      closeBack(sessionKey);
+      return false;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      moveBack(sessionKey, e.key === "ArrowDown" ? 1 : -1);
+      return take();
+    }
+    if (e.key === "Home" || e.key === "End") {
+      moveBack(sessionKey, e.key === "Home" ? "first" : "last");
+      return take();
+    }
+    if (e.key === "Enter") {
+      if (back.phase === "choices") pickChoice(back.choice);
+      else toChoices(sessionKey);
+      return take();
+    }
+    if (back.phase === "choices" && /^[1-9]$/.test(e.key)) {
+      const at = Number(e.key) - 1;
+      if (at < backChoices.length) pickChoice(at);
+      return take();
+    }
+    // Anything else is typing: the list goes, and the key types.
+    closeBack(sessionKey);
+    return false;
+  }
 
   let link = $derived(linkFor(sessionKey));
   let field = $state<HTMLTextAreaElement | null>(null);
@@ -584,6 +718,14 @@
   }
 
   function onkeydown(e: KeyboardEvent) {
+    if (backKey(e)) return;
+    const pressed = e.key === "Escape" && !e.isComposing && !e.repeat;
+    keydown(e);
+    if (pressed) escaped(e.defaultPrevented);
+    else if (e.key !== "Shift") unpair();
+  }
+
+  function keydown(e: KeyboardEvent) {
     if (menuKey(e)) return;
     if (takeOut(e)) return;
     if (nowKey(e)) return;
@@ -878,7 +1020,79 @@
 </script>
 
 <div class="composer" bind:this={box} data-drop={sessionKey} data-testid="composer">
-  {#if slashMenu !== null}
+  {#if back.phase === "list"}
+    <CompletionMenu
+      id={backId}
+      label="Go back to before"
+      groups={[{ label: "", items: back.rows }]}
+      active={back.marked}
+      key={(row) => row.message}
+      action="go back"
+      onpick={(index) => {
+        markBack(sessionKey, index);
+        toChoices(sessionKey);
+      }}
+      onpoint={(index) => markBack(sessionKey, index)}
+      testid="back-menu"
+    >
+      {#snippet head()}<p class="back-head">Go back to before</p>{/snippet}
+      {#snippet row(row)}
+        {@const files = previewFiles(back.previews[row.message])}
+        {@const preview = back.previews[row.message]}
+        <span class="back-time num">{row.at === null ? "" : clock(row.at)}<span class="sep">,</span></span>
+        <span class="back-line" class:off={!row.conversation}><Plain text={row.line} /></span>
+        <span class="back-files" data-testid="back-files"
+          >{#if agentId !== "codex"}{#if preview === "reading"}…{:else if files.length > 0}<span class="sep">,</span>{files.length === 1
+                ? "1 file"
+                : `${files.length} files`}{/if}{/if}</span
+        >
+      {/snippet}
+      {#snippet foot()}<p class="back-said" data-testid="back-said"><Plain text={backSaidOf(sessionKey, agent)} /></p>{/snippet}
+      {#snippet keys()}
+        <span><kbd>↑</kbd> <kbd>↓</kbd> choose</span>
+        <span><kbd>↵</kbd> go back</span>
+        <span><kbd>esc</kbd> close</span>
+      {/snippet}
+      {#snippet empty()}
+        {#if back.reading}Reading where the conversation can go back to…{:else}<Plain text={back.why ?? ""} />{/if}
+      {/snippet}
+    </CompletionMenu>
+  {:else if back.phase === "choices" && backRow !== undefined}
+    <CompletionMenu
+      id={backId}
+      label="Go back to before {backRow.at === null ? 'this message' : clock(backRow.at)}"
+      groups={[{ label: "", items: backChoices }]}
+      active={back.choice}
+      key={(choice) => choice.way}
+      action="go back"
+      onpick={pickChoice}
+      onpoint={(index) => markBack(sessionKey, index)}
+      testid="back-choices"
+    >
+      {#snippet head()}
+        <p class="back-head">Go back to before {backRow.at === null ? "this message" : clock(backRow.at)}</p>
+        <p class="back-quote">“<Plain text={backRow.line} />”</p>
+      {/snippet}
+      {#snippet row(choice)}
+        {@const at = backChoices.indexOf(choice)}
+        <span class="back-n" aria-hidden="true">{at + 1}</span>
+        <span class="back-choice"
+          ><b>{choice.label}</b><span class="sep">,</span> <small><Plain text={choice.detail} /></small></span
+        >
+      {/snippet}
+      {#snippet foot()}
+        {#if backChoices.some((choice) => choice.way !== "files")}
+          <p class="back-said" class:warn={agentId !== "codex"} data-testid="back-cost"><Plain text={backCostOf(sessionKey)} /></p>
+        {/if}
+      {/snippet}
+      {#snippet keys()}
+        <span
+          >{#each backChoices as choice, at (choice.way)}<kbd>{at + 1}</kbd>{" "}{/each}or <kbd>↵</kbd> choose</span
+        >
+        <span><kbd>esc</kbd> back to the list</span>
+      {/snippet}
+    </CompletionMenu>
+  {:else if slashMenu !== null}
     <CompletionMenu
       id={menuId}
       label="Commands and skills"
@@ -965,7 +1179,9 @@
       {/snippet}
     </CompletionMenu>
   {/if}
-  <p class="sr" role="status" data-testid="slash-announce">{slashMenu !== null ? announced : fileAnnounced}</p>
+  <p class="sr" role="status" data-testid="slash-announce">
+    {back.phase !== null ? backAnnounced : slashMenu !== null ? announced : fileAnnounced}
+  </p>
   {#if link.images.length > 0 || link.files.length > 0 || reading > 0}
     <div class="attached" data-testid="attachments">
       {#each link.images as image, at (at)}
@@ -1037,13 +1253,23 @@
         : `${conversation.entries.length === 0 ? `Tell ${agent} what to do` : `Reply to ${agent}`}${keysSaid}`}
       aria-label="Message to {agent}"
       aria-autocomplete={slash || root !== null ? "list" : undefined}
-      aria-controls={slashMenu === "list" ? menuId : fileMenu === "list" ? fileMenuId : undefined}
-      aria-activedescendant={slashMenu === "list"
-        ? rowId(menuId, marking)
-        : fileMenu === "list"
-          ? rowId(fileMenuId, fileMarking)
-          : undefined}
-      data-menu={slashMenu !== null || fileMenu !== null || menu !== null ? "" : undefined}
+      aria-controls={back.phase !== null
+        ? backId
+        : slashMenu === "list"
+          ? menuId
+          : fileMenu === "list"
+            ? fileMenuId
+            : undefined}
+      aria-activedescendant={back.phase === "list" && back.rows.length > 0
+        ? rowId(backId, back.marked)
+        : back.phase === "choices"
+          ? rowId(backId, back.choice)
+          : slashMenu === "list"
+            ? rowId(menuId, marking)
+            : fileMenu === "list"
+              ? rowId(fileMenuId, fileMarking)
+              : undefined}
+      data-menu={back.phase !== null || slashMenu !== null || fileMenu !== null || menu !== null ? "" : undefined}
       data-testid="composer-input"
     ></textarea>
     {#if ghost !== null}
@@ -1052,7 +1278,15 @@
       </div>
     {/if}
   </div>
-  {#if digit !== null}
+  {#if pairing}
+    <p class="hint" data-testid="composer-esc"><kbd>esc</kbd> again to go back to an earlier message.</p>
+  {:else if link.goingBack !== null && link.goingBack.way !== "files" && agentId === "claude-code"}
+    <p class="hint" data-testid="composer-going-back">
+      Claude Code is starting again from here. What you send waits for it.
+    </p>
+  {:else if link.backSaid !== null}
+    <p class="hint" data-testid="composer-back"><Plain text={link.backSaid} /></p>
+  {:else if digit !== null}
     <p class="hint" data-testid="composer-digit">
       “{digit}” would go to {agent} as a message, not as an answer. Press ↑ to answer, or Enter again to send it.
     </p>
@@ -1430,6 +1664,93 @@
     padding: 0 2px;
     font-size: var(--conv-meta);
     color: var(--ink-2);
+  }
+
+  .hint kbd {
+    font: inherit;
+    font-size: calc(var(--meta-size) - 1px);
+    padding: 0 4px;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--rule-strong);
+    color: var(--ink-2);
+  }
+
+  /* The list of the user's own messages to go back to before, and the
+     choices for one, over the composer. */
+  .back-head {
+    margin: 0;
+    font-size: calc(var(--meta-size) - 0.5px);
+    font-weight: 600;
+    letter-spacing: var(--label-track-fine, 0);
+    text-transform: var(--label-case, none);
+    color: var(--ink-3);
+  }
+
+  .back-quote {
+    margin: 4px 0 2px;
+    overflow: hidden;
+    font-size: var(--row-size);
+    color: var(--ink-2);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .back-time {
+    color: var(--ink-3);
+    font-size: calc(var(--row-size) - 0.5px);
+  }
+
+  .back-line {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  .back-line.off {
+    color: var(--ink-3);
+  }
+
+  .back-files {
+    color: var(--ink-3);
+    font-size: calc(var(--row-size) - 0.5px);
+    white-space: nowrap;
+  }
+
+  .back-n {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px var(--rule-strong);
+    font-size: calc(var(--meta-size) - 1px);
+    color: var(--ink-2);
+  }
+
+  .back-choice {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    color: var(--ink);
+  }
+
+  .back-choice small {
+    font-size: calc(var(--row-size) - 0.5px);
+    color: var(--ink-2);
+    white-space: normal;
+  }
+
+  .back-said {
+    margin: 0;
+    font-size: calc(var(--meta-size) - 0.5px);
+    color: var(--ink-2);
+  }
+
+  .back-said.warn {
+    color: var(--warn, var(--ink-2));
   }
 
   .hint.bad {
