@@ -3138,7 +3138,7 @@ fn a_request_too_long_to_read_is_told_no() {
             &mut driver,
             r#"{"id":8,"method":"item/tool/call","params":{"arguments":"xx"#
         ),
-        [json!({"id": 8, "error": {"code": -32601, "message": "not handled by Agent Workbench"}})]
+        [json!({"id": 8, "error": {"code": -32601, "message": "not handled by Chord"}})]
     );
     // An id inside the params is not the request's.
     assert_eq!(

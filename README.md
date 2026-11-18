@@ -1,4 +1,6 @@
-# Agent Workbench
+# Chord
+
+<img src="docs/app-icon.png" width="128" height="128" alt="">
 
 A desktop app for working with coding agents that run as terminal programs,
 Claude Code and Codex CLI today. It puts the agent's own interface in the
@@ -81,8 +83,13 @@ and notarized. On macOS there is also a tap:
 
 ```
 brew tap elva-labs/elva
-brew install --cask agent-workbench
+brew install --cask chord@beta
 ```
+
+Chord was called Agent Workbench before 1.0. Until Chord's first stable
+release, the stable cask is still `agent-workbench`, the app under that
+name; [release](docs/release.md#the-casks-under-the-apps-earlier-name)
+says how the old casks move to the new ones.
 
 The cask also puts `awb` on the PATH, which opens a folder as a project from
 a terminal: `awb .` for the one you are in. See
@@ -95,8 +102,13 @@ npm install
 npm run tauri dev
 ```
 
-A development build wears an icon of its own, the figure on the accent
-rather than on black, so it is told from the installed app in the dock.
+A development build wears an icon of its own, its tile in the accent
+rather than dark, so it is told from the installed app in the dock. The
+icons are drawn from SVG sources beside them, and
+`node src-tauri/icons/generate.mjs` draws every size and bundle format
+from those, over the files in the tree. It needs Playwright's Chromium
+(`npx playwright install chromium`), and macOS for the disk image's
+background.
 
 Linux needs the WebKitGTK development packages Tauri asks for, plus
 `libxdo-dev`, `libayatana-appindicator3-dev` and `librsvg2-dev`.

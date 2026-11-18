@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Agent Workbench",
+  "productName": "Chord",
   "version": "1.0.0-beta.4",
   "identifier": "com.elva-labs.agent-workbench",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Agent Workbench",
+        "title": "Chord",
         "width": 1440,
         "height": 900,
         "minWidth": 706,
@@ -32,8 +32,21 @@
     "macOS": {
       "files": { "Resources/bin/awb": "macos/awb" }
     },
+    "windows": {
+      "wix": { "upgradeCode": "60ccaa4a-c22c-520c-888a-92859857c412" },
+      "nsis": { "installerHooks": "windows/hooks.nsh" }
+    },
+    "linux": {
+      "deb": {
+        "conflicts": ["agent-workbench"],
+        "replaces": ["agent-workbench"],
+        "provides": ["agent-workbench"]
+      },
+      "rpm": { "obsoletes": ["agent-workbench"] }
+    },
     "icon": [
       "icons/32x32.png",
+      "icons/64x64.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",

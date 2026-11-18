@@ -569,7 +569,7 @@ pub(crate) fn turned_down(id: &Value, method: &str) -> String {
         Some(result) => json!({ "id": id, "result": result }),
         None => json!({
             "id": id,
-            "error": { "code": -32601, "message": "not handled by Agent Workbench" },
+            "error": { "code": -32601, "message": "not handled by Chord" },
         }),
     }
     .to_string()
@@ -2486,7 +2486,7 @@ impl Driver for AppServer {
             json!({
                 "clientInfo": {
                     "name": CLIENT_NAME,
-                    "title": "Agent Workbench",
+                    "title": "Chord",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
                 "capabilities": { "experimentalApi": false },

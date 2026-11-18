@@ -180,7 +180,7 @@ export function activate(path: string) {
   const project = workspace.open.find((candidate) => candidate.path === path);
   if (project !== undefined) {
     core()
-      .setWindowTitle(`${projectLabel(project.path)} — Agent Workbench`)
+      .setWindowTitle(`${projectLabel(project.path)} — Chord`)
       .catch(() => {});
   }
 }

@@ -83,6 +83,9 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+      # Every line that still names the app by its earlier name has a reason
+      # the script knows, so new text in the old name fails here.
+      - run: node scripts/chord-words.mjs --check
       - run: npm run test:unit
 
   # The browser tests take a quarter of an hour on one runner, so they run

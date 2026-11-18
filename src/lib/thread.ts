@@ -251,12 +251,15 @@ export function phraseText(phrase: Phrase): string {
     Claude apps add carry a `claude_ai_` prefix that says nothing to a
     person. */
 function serverShown(server: string): string {
+  if (server === WORKBENCH || server === WORKBENCH_KEY) return "Chord";
   const bare = server.replace(/^claude_ai_/, "");
   return bare === "" ? server : bare;
 }
 
-/** The MCP server the workbench itself runs for its agents. */
+/** The MCP server the workbench itself runs for its agents, by the name
+    Claude Code knows it by and the key Codex does. */
 const WORKBENCH = "agent-workbench";
+const WORKBENCH_KEY = "agent_workbench";
 
 /** How the window answers what the workbench's tools name. */
 export interface SessionNames {

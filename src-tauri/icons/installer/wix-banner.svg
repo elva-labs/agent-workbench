@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 493 58">
+  <!-- The MSI's banner, 493 by 58: the installer writes its titles on the left. -->
+  <rect width="493" height="58" fill="#ffffff"/>
+  <path d="M479 34.91A18 18 0 1 1 454.34 12.71Z" fill="#27161f"/>
+  <path d="M457.09 11.68A18 18 0 0 1 479.73 32.08Z" fill="#d6407a"/>
+</svg>

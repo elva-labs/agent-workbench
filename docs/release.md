@@ -36,9 +36,9 @@ machine kind it can put one on.
 5. Put the release in the organisation's Homebrew tap. `scripts/cask.sh`
    with the version prints the cask for the app, and `scripts/formula.sh`
    the formula for the daemon, checksums included; they go in the tap as
-   `Casks/agent-workbench.rb` and `Formula/agent-workbench-remote.rb`. Users
+   `Casks/chord.rb` and `Formula/agent-workbench-remote.rb`. Users
    then get the app with `brew tap elva-labs/elva` and
-   `brew install --cask agent-workbench`, a remote machine gets the daemon
+   `brew install --cask chord`, a remote machine gets the daemon
    with `brew install elva-labs/elva/agent-workbench-remote`, and both
    update with `brew upgrade`.
 
@@ -64,16 +64,16 @@ signed as any release is, and differs in three ways:
   is a downgrade to it and has to be asked for as one.
 
 The tap has a beta channel beside the stable one: the cask
-`agent-workbench@beta` and the formula `agent-workbench-remote-beta`, a
+`chord@beta` and the formula `agent-workbench-remote-beta`, a
 formula's name having no room for `@beta`. The scripts print them when
 given the channel, `scripts/cask.sh 1.0.0-beta.1 beta` for
-`Casks/agent-workbench@beta.rb` and `scripts/formula.sh 1.0.0-beta.1 beta`
+`Casks/chord@beta.rb` and `scripts/formula.sh 1.0.0-beta.1 beta`
 for `Formula/agent-workbench-remote-beta.rb`. A pre-release goes on the
 beta channel only, and the scripts refuse to print it for the stable one.
 A stable release goes on both, so nobody on the beta channel is left on a
 pre-release of a version that has since been released.
 
-`brew install --cask agent-workbench@beta` installs the pre-release and
+`brew install --cask chord@beta` installs the pre-release and
 `brew upgrade` follows the channel from there. It is the same app as the
 stable one, with the same name, settings and stored state, so the two
 casks cannot be installed together and each names the other as a conflict.
@@ -129,3 +129,65 @@ missing, as workflow artifacts, for trying the workflow out.
   the secrets is tried out.
 - **Windows**: a code-signing certificate through the Tauri bundle
   configuration or Azure Trusted Signing. Not wired yet.
+
+## The casks under the app's earlier name
+
+The app was called Agent Workbench, and its casks were `agent-workbench`
+and `agent-workbench@beta`. Chord keeps the bundle identifier, so either of
+those installs the same app under its old name, sharing Chord's settings
+and stored state. Each Chord cask names the other Chord cask as a conflict,
+and the old cask that the tap does not rename to it: `chord@beta` names
+`chord` and `agent-workbench`, and `chord` names `chord@beta` and
+`agent-workbench@beta`. Neither names the old cask renamed to it, since
+Homebrew follows the rename and would load that cask as the Chord cask
+itself, refusing every upgrade of it as a conflict with itself. Nothing is
+lost by it: installing over the old cask moves it onto the new token
+first. The tap moves
+a user from an old cask to the new one with a rename, which Homebrew
+follows by itself: `cask_renames.json` at the top of the tap maps the old
+token to the new, and the old cask's file is gone. `brew update` then moves
+the installed cask to the new token, and `brew upgrade` takes `Agent
+Workbench.app` out and puts `Chord.app` in, leaving settings and state
+where they are.
+
+The first Chord pre-release does this for the beta channel. Its version
+is newer than the last pre-release under the earlier name, 1.0.0-beta.4,
+so that `brew upgrade` takes the renamed cask forward. After it the tap
+holds:
+
+- `Casks/chord@beta.rb`, printed by `scripts/cask.sh <version> beta`;
+- `Casks/agent-workbench.rb`, the last stable release under the old name,
+  printed again by `scripts/cask.sh <its version> earlier`: the same cask,
+  naming `chord` and `chord@beta` as conflicts as well, since Homebrew
+  checks a conflict only from the cask being installed, and without it
+  the old app would install beside Chord;
+- no `Casks/agent-workbench@beta.rb`;
+- `cask_renames.json` with `{ "agent-workbench@beta": "chord@beta" }`;
+- `Formula/agent-workbench-remote.rb` and
+  `Formula/agent-workbench-remote-beta.rb` under their names, since the
+  daemon keeps its name.
+
+The first stable Chord release does the same for the stable channel: it
+adds `Casks/chord.rb`, removes `Casks/agent-workbench.rb`, and adds
+`"agent-workbench": "chord"` to `cask_renames.json`. A Homebrew older than
+4.1 does not read the renames, and its `brew upgrade` says the old cask is
+no longer available; `brew install --cask chord@beta`, or `chord`, after
+`brew uninstall --cask` of the old one, does it by hand.
+
+Each platform loses what pointed at the app by its earlier name, which the
+release notes of the first Chord release say:
+
+- On macOS the app's tile in the Dock points at the app it was pinned
+  from, so after the move it is pinned again. A Mac that has the app from
+  a disk image keeps the copy under the earlier name beside the new one;
+  quit it and delete it before opening Chord, since the two are the same
+  app to macOS and the first one open is the one both open into.
+- On Windows the setup installer runs the old install's uninstaller, which
+  takes its shortcuts away and unpins them from the taskbar and Start, so
+  Chord's shortcut is pinned again.
+- On Linux the package is `chord` where it was `agent-workbench`: the
+  bundler names it after the product. Chord's package conflicts with,
+  replaces and provides `agent-workbench`, and its rpm obsoletes it, so
+  installing it takes the old package out. The desktop entry takes the
+  new name too, and GNOME's and KDE's favourites name the entry, so a
+  favourite of the app is added again.

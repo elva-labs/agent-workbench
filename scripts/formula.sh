@@ -53,7 +53,7 @@ cat <<FORMULA
 # frozen_string_literal: true
 
 class $class < Formula
-  desc "Agent Workbench on another machine: the daemon a desktop reaches over ssh"
+  desc "Chord on another machine: the daemon a desktop reaches over ssh"
   homepage "https://github.com/elva-labs/agent-workbench"
   version "$version"
   license "MIT"

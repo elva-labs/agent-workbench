@@ -672,7 +672,7 @@ impl AppServer {
             json!({
                 "clientInfo": {
                     "name": "agent-workbench",
-                    "title": "Agent Workbench",
+                    "title": "Chord",
                     "version": env!("CARGO_PKG_VERSION"),
                 },
                 "capabilities": { "experimentalApi": false },
