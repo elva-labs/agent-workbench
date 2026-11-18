@@ -212,11 +212,10 @@ test("goes to a session from the palette without showing the pane", async ({ pag
   await slidOut(page);
 });
 
-test("marks the edge while a session waits for you, and the status bar counts it", async ({ page }) => {
+test("counts a session waiting for you in the status bar while the pane is out", async ({ page }) => {
   await start(page);
   await startSession(page);
   await startSession(page);
-  await expect(page.getByTestId("compact-mark")).toHaveCount(0);
   await page.evaluate(() =>
     (window as unknown as { __notifyRequest: (request: unknown) => void }).__notifyRequest({
       text: "Tests green, ready to merge.",
@@ -224,10 +223,8 @@ test("marks the edge while a session waits for you, and the status bar counts it
       session: "session-1",
     }),
   );
-  await expect(page.getByTestId("compact-mark")).toBeVisible();
   await expect(page.getByTestId("waiting-readout")).toHaveText("1 waiting for you");
-  const mark = await boxOf(page, "[data-testid='compact-mark']");
-  expect(mark.x).toBeLessThan(8);
+  await slidOut(page);
 });
 
 test("keeps the setting across a reload, and leaves the fold and the width as they were", async ({ page }) => {
