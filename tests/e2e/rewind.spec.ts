@@ -1,0 +1,458 @@
+import { expect, test, type Page } from "@playwright/test";
+import { PROJECT, installFakeCore } from "./fake";
+
+// Going back to an earlier message, and Up on a waiting one, in an
+// integrated session on the fake core. The handle of the first session the
+// fake starts is int-1; Claude Code's started again is int-2 and on.
+
+const H = "int-1";
+
+/** Runs a script against the scripted session, as the agent would act. */
+function agent(page: Page, script: string) {
+  return page.evaluate(`(() => { const f = window.__integrated; ${script} })()`);
+}
+
+/** The calls the window made on the scripted session. */
+function calls(page: Page): Promise<{ method: string; [field: string]: unknown }[]> {
+  return page.evaluate(
+    () => (window as unknown as { __integrated: { calls: { method: string }[] } }).__integrated.calls,
+  );
+}
+
+async function open(page: Page, agentId: "claude-code" | "codex" = "claude-code") {
+  await installFakeCore(page, {
+    open: [PROJECT],
+    settings: { integrated: [agentId] },
+    ...(agentId === "codex" ? { agents: ["codex"], integrable: ["codex"] } : {}),
+  });
+  await page.goto("/");
+  await page.locator(`[data-row="project:${PROJECT}"]`).getByTestId("project-new-session").click();
+  await expect(page.getByTestId("composer-input")).toBeVisible();
+}
+
+/** Three messages of the user's, each answered, written in the composer as
+    the user writes them. */
+async function talk(page: Page, handle = H, kept = true) {
+  const field = page.getByTestId("composer-input");
+  for (const [said, answer] of [
+    ["The upload client gives up on the first 503. Find where it retries.", "It never retries."],
+    ["Add a retry with backoff for 503 and 429.", "Done. Tests pass."],
+    ["Make the backoff jittered and cap it at 8 seconds.", "The wait is jittered now."],
+  ]) {
+    await field.fill(said);
+    await field.press("Enter");
+    await expect(page.getByTestId("user-message").filter({ hasText: said })).toBeVisible();
+    await agent(page, `f.turn("${handle}", ${JSON.stringify(answer)});`);
+  }
+  await expect(page.getByTestId("agent-run")).toHaveCount(3);
+  if (!kept) return;
+  // Claude Code kept the files as they were before each message.
+  const sent = (await calls(page)).filter((call) => call.method === "send").map((call) => call.message as string);
+  await page.evaluate(
+    (ids) => {
+      const fake = (window as unknown as { __integrated: { files: Map<string, unknown> } }).__integrated;
+      ids.forEach((id, at) =>
+        fake.files.set(id, {
+          files: ["/home/ada/dev/demo/src/net/upload.ts", ...(at === 0 ? ["/home/ada/dev/demo/src/net/upload.retry.test.ts"] : [])],
+          insertions: 9 - at,
+          deletions: 46 - at * 10,
+        }),
+      );
+    },
+    sent,
+  );
+}
+
+/** The id the window gave the message that says `text`. */
+async function idOf(page: Page, text: string): Promise<string> {
+  const sent = (await calls(page)).filter((call) => call.method === "send" && call.text === text);
+  return sent[0].message as string;
+}
+
+test.describe("going back to an earlier message", () => {
+  test("Esc Esc opens the list over the composer, and the thread follows the mark", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await field.focus();
+    await field.press("Escape");
+    await expect(page.getByTestId("composer-esc")).toHaveText("esc again to go back to an earlier message.");
+    await field.press("Escape");
+    const list = page.getByTestId("back-menu");
+    await expect(list).toBeVisible();
+    await expect(list.getByTestId("back-menu-row")).toHaveCount(3);
+    // The newest is marked, next to the composer.
+    await expect(list.getByTestId("back-menu-row").nth(2)).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("back-said")).toHaveText(
+      "This message and what Claude did for it leave the conversation.",
+    );
+    await field.press("ArrowUp");
+    await expect(list.getByTestId("back-menu-row").nth(1)).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("back-said")).toHaveText(
+      "This message and the 1 after it leave the conversation, with what Claude did for them.",
+    );
+    // The thread draws the marked message under a line, and fades what
+    // would leave.
+    await expect(page.getByTestId("back-here")).toBeVisible();
+    const marked = page.locator(".row.back [data-testid='user-message']");
+    await expect(marked).toContainText("Add a retry with backoff");
+    await expect(page.locator(".row.leaves")).not.toHaveCount(0);
+    // The keyboard stays in the composer.
+    await expect(field).toBeFocused();
+    await field.press("Escape");
+    await expect(list).toHaveCount(0);
+    await expect(page.getByTestId("back-here")).toHaveCount(0);
+  });
+
+  test("Enter turns the list into the choices, and the conversation goes back with the words to edit", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    const second = await idOf(page, "Add a retry with backoff for 503 and 429.");
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("ArrowUp");
+    await field.press("Enter");
+    const choices = page.getByTestId("back-choices");
+    await expect(choices).toBeVisible();
+    await expect(choices.getByTestId("back-choices-head")).toContainText("Go back to before");
+    await expect(choices.getByTestId("back-choices-head")).toContainText("Add a retry with backoff for 503 and 429.");
+    const rows = choices.getByTestId("back-choices-row");
+    await expect(rows).toHaveCount(3);
+    await expect(rows.nth(0)).toContainText("The conversation");
+    await expect(rows.nth(0)).toHaveAttribute("aria-selected", "true");
+    await expect(rows.nth(1)).toContainText("The conversation and the files");
+    await expect(rows.nth(1)).toContainText("Also puts upload.ts back as it was, +8 −36.");
+    await expect(rows.nth(2)).toContainText("Only the files");
+    await expect(page.getByTestId("back-cost")).toHaveText("Claude Code starts again for this.");
+    // Esc goes back to the list, and Enter forward again.
+    await field.press("Escape");
+    await expect(page.getByTestId("back-menu")).toBeVisible();
+    await field.press("Enter");
+    await field.press("Enter");
+    await expect(choices).toHaveCount(0);
+    // The message and what came after it left the thread; a line marks the
+    // place; the words are back in the composer, the caret at their end.
+    await expect(page.getByTestId("user-message")).toHaveCount(1);
+    await expect(page.getByTestId("rewound")).toContainText("Rewound here,");
+    await expect(field).toHaveValue("Add a retry with backoff for 503 and 429.");
+    await expect(field).toBeFocused();
+    expect(await field.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(
+      "Add a retry with backoff for 503 and 429.".length,
+    );
+    const asked = (await calls(page)).filter((call) => call.method === "rewind");
+    expect(asked).toEqual([{ method: "rewind", id: H, message: second, conversation: true, files: null }]);
+    // Claude Code started again under a new id, on the same conversation.
+    expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(1);
+    // Undo stands on the line until something is sent; it brings it back.
+    await page.getByTestId("rewound-undo").click();
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("rewound")).toHaveCount(0);
+    await expect(field).toHaveValue("");
+    expect((await calls(page)).filter((call) => call.method === "rewindUndo")).toHaveLength(1);
+  });
+
+  test("the words come back at the pick, and what is sent while Claude Code starts again waits for it", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await page.evaluate(() => {
+      const w = window as unknown as { __rewindGate?: Promise<void>; __openGate?: () => void };
+      w.__rewindGate = new Promise((done) => (w.__openGate = done));
+    });
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Enter");
+    await field.press("Enter");
+    // The thread is cut and the words are back before Claude Code is up.
+    await expect(page.getByTestId("rewound")).toBeVisible();
+    await expect(field).toHaveValue("Make the backoff jittered and cap it at 8 seconds.");
+    await expect(page.getByTestId("composer-going-back")).toHaveText(
+      "Claude Code is starting again from here. What you send waits for it.",
+    );
+    await field.fill("Make the backoff jittered and cap it at 5 seconds.");
+    await field.press("Enter");
+    const sends = async () => (await calls(page)).filter((call) => call.method === "send").map((call) => call.text);
+    expect(await sends()).toHaveLength(3);
+    await page.evaluate(() => (window as unknown as { __openGate: () => void }).__openGate());
+    await expect.poll(sends).toEqual([
+      "The upload client gives up on the first 503. Find where it retries.",
+      "Add a retry with backoff for 503 and 429.",
+      "Make the backoff jittered and cap it at 8 seconds.",
+      "Make the backoff jittered and cap it at 5 seconds.",
+    ]);
+    const last = (await calls(page)).findLast((call) => call.method === "send");
+    expect(last?.id).not.toBe(H);
+    await expect(field).toHaveValue("");
+  });
+
+  test("where Claude Code does not come up from there, the thread is whole and nothing held is sent", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __rewindGate?: Promise<void>;
+        __openGate?: () => void;
+        __integrated: { rewindFallback: string | null };
+      };
+      w.__rewindGate = new Promise((done) => (w.__openGate = done));
+      w.__integrated.rewindFallback = "claude ended with code 1";
+    });
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Enter");
+    await field.press("Enter");
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await field.press("End");
+    await field.pressSequentially(" Now.");
+    await field.press("Enter");
+    await page.evaluate(() => (window as unknown as { __openGate: () => void }).__openGate());
+    await expect(page.getByTestId("composer-back")).toHaveText(
+      "It did not go back: claude ended with code 1. The conversation goes on as it was.",
+    );
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(page.getByTestId("rewound")).toHaveCount(0);
+    // What was edited stays to be sent or not; nothing went.
+    await expect(field).toHaveValue("Make the backoff jittered and cap it at 8 seconds. Now.");
+    expect((await calls(page)).filter((call) => call.method === "send")).toHaveLength(3);
+  });
+
+  test("the conversation and the files puts back the files the preview named, and says so", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    const first = await idOf(page, "The upload client gives up on the first 503. Find where it retries.");
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Home");
+    await expect(page.getByTestId("back-menu-row").nth(0)).toContainText("2 files");
+    await field.press("Enter");
+    await expect(page.getByTestId("back-choices-row").nth(1)).toContainText(
+      "Also puts upload.ts and upload.retry.test.ts back as they were, +9 −46.",
+    );
+    // A digit only marks a choice that cannot be undone; Enter takes it.
+    await field.press("2");
+    await expect(page.getByTestId("back-choices-row").nth(1)).toHaveAttribute("aria-selected", "true");
+    expect((await calls(page)).filter((call) => call.method === "rewind")).toEqual([]);
+    await field.press("Enter");
+    await expect(page.getByTestId("composer-back")).toContainText(
+      "upload.ts and upload.retry.test.ts are as they were at",
+    );
+    await expect(page.getByTestId("composer-back")).toContainText("What commands changed stays.");
+    const asked = (await calls(page)).filter((call) => call.method === "rewind");
+    expect(asked).toEqual([
+      {
+        method: "rewind",
+        id: H,
+        message: first,
+        conversation: true,
+        files: ["/home/ada/dev/demo/src/net/upload.ts", "/home/ada/dev/demo/src/net/upload.retry.test.ts"],
+      },
+    ]);
+    // Going back with the files put back is not undone.
+    await expect(page.getByTestId("rewound")).toBeVisible();
+    await expect(page.getByTestId("rewound-undo")).toHaveCount(0);
+  });
+
+  test("a choice names every file, the rest behind n more, and only the files tells the agent next", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    const first = await idOf(page, "The upload client gives up on the first 503. Find where it retries.");
+    const files = ["upload.ts", "upload.retry.test.ts", "queue.ts", "chunk.ts", "progress.ts"].map(
+      (name) => `/home/ada/dev/demo/src/net/${name}`,
+    );
+    await page.evaluate(
+      ({ id, files }) =>
+        (window as unknown as { __integrated: { files: Map<string, unknown> } }).__integrated.files.set(id, {
+          files,
+          insertions: 30,
+          deletions: 12,
+        }),
+      { id: first, files },
+    );
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Home");
+    await expect(page.getByTestId("back-menu-row").nth(0)).toContainText("5 files");
+    await field.press("Enter");
+    const rows = page.getByTestId("back-choices-row");
+    await expect(rows.nth(1)).toContainText(
+      "Also puts upload.ts, upload.retry.test.ts and 3 more back as they were, +30 −12.",
+    );
+    await expect(rows.nth(2).getByTestId("back-more")).toHaveText("3 more");
+    const all = "upload.ts, upload.retry.test.ts, queue.ts, chunk.ts and progress.ts";
+    // A digit marks a choice that cannot be undone and names all its files.
+    await field.press("3");
+    await expect(rows.nth(2)).toHaveAttribute("aria-selected", "true");
+    await expect(rows.nth(2)).toContainText(`Puts ${all} back as they were, +30 −12.`);
+    await expect(rows.nth(1).getByTestId("back-more")).toHaveCount(1);
+    // A click on a choice whose files wait behind n more names them first.
+    await rows.nth(1).click();
+    await expect(rows.nth(1).getByTestId("back-more")).toHaveCount(0);
+    await expect(rows.nth(1)).toContainText(`Also puts ${all} back`);
+    expect((await calls(page)).filter((call) => call.method === "rewind")).toEqual([]);
+    await field.press("ArrowDown");
+    await field.press("Enter");
+    await expect(page.getByTestId("composer-back")).toHaveText(
+      new RegExp(`^${all.replaceAll(".", "\\.")} are as they were at .+\\. What commands changed stays\\. Claude Code is told with your next message\\.$`),
+    );
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    // The agent is told ahead of the next message, and the thread shows it
+    // folded under the message, apart from the user's words.
+    await field.fill("Carry on with the retries.");
+    await field.press("Enter");
+    const sent = (await calls(page)).findLast((call) => call.method === "send");
+    expect(sent?.text).toMatch(/^From the workbench, not the user: files were put back/);
+    expect(sent?.text).toContain(
+      [
+        'As before the message that begins "The upload client gives up on the first 503. Find where it retries.":',
+        ...files,
+      ].join("\n"),
+    );
+    expect(sent?.text).toMatch(/\n\nCarry on with the retries\.$/);
+    const message = page.getByTestId("user-message").filter({ hasText: "Carry on with the retries." });
+    await expect(message.locator(".bubble")).toHaveText("Carry on with the retries.");
+    await message.getByTestId("workbench-files").click();
+    await expect(message.getByTestId("workbench-files-text")).toContainText("/home/ada/dev/demo/src/net/progress.ts");
+  });
+
+  test("where the conversation goes on whole after the files went back, it says so", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await agent(page, `f.rewindFallback = "claude ended with code 1";`);
+    await field.press("Escape");
+    await field.press("Escape");
+    await field.press("Home");
+    await field.press("Enter");
+    await field.press("2");
+    await field.press("Enter");
+    await expect(page.getByTestId("composer-back")).toHaveText(
+      /^It did not go back: claude ended with code 1\. The conversation goes on as it was, but upload\.ts and upload\.retry\.test\.ts are as they were at .+\. Claude Code is told with your next message\.$/,
+    );
+    await expect(page.getByTestId("user-message")).toHaveCount(3);
+    await expect(field).toHaveValue("");
+  });
+
+  test("the words that come back keep a blank line above a draft", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await field.fill("my draft, half written");
+    const message = page.getByTestId("user-message").filter({ hasText: "Add a retry" });
+    await message.hover();
+    await message.getByTestId("go-back-here").click();
+    await expect(page.getByTestId("back-choices")).toBeVisible();
+    await field.press("Enter");
+    await expect(field).toHaveValue("Add a retry with backoff for 503 and 429.\n\nmy draft, half written");
+  });
+
+  test("a single Esc during a turn stops the turn and opens nothing", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await field.fill("Now write a test.");
+    await field.press("Enter");
+    await agent(page, `f.startTurn("${H}");`);
+    await field.press("Escape");
+    await field.press("Escape");
+    await expect(page.getByTestId("back-menu")).toHaveCount(0);
+    expect((await calls(page)).filter((call) => call.method === "interrupt").length).toBeGreaterThan(0);
+  });
+
+  test("typing over the list closes it and types", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const field = page.getByTestId("composer-input");
+    await field.press("Escape");
+    await field.press("Escape");
+    await expect(page.getByTestId("back-menu")).toBeVisible();
+    await field.pressSequentially("ok");
+    await expect(page.getByTestId("back-menu")).toHaveCount(0);
+    await expect(field).toHaveValue("ok");
+  });
+
+  test("Go back to here on a message, and the palette, open the list at it", async ({ page }) => {
+    await open(page);
+    await talk(page);
+    const message = page.getByTestId("user-message").filter({ hasText: "Add a retry" });
+    await message.hover();
+    await message.getByTestId("go-back-here").click();
+    const choices = page.getByTestId("back-choices");
+    await expect(choices).toBeVisible();
+    await expect(choices.getByTestId("back-choices-head")).toContainText("Add a retry with backoff");
+    await expect(page.locator(".row.back [data-testid='user-message']")).toContainText("Add a retry");
+    await page.getByTestId("composer-input").press("Escape");
+    await page.getByTestId("composer-input").press("Escape");
+    await expect(page.getByTestId("back-menu")).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+Shift+P");
+    await page.keyboard.type("go back");
+    await page.getByRole("option", { name: /Go back to an earlier message/ }).click();
+    await expect(page.getByTestId("back-menu")).toBeVisible();
+    await expect(page.getByTestId("composer-input")).toBeFocused();
+  });
+
+  test("Codex goes back in the same session, with the conversation alone, and says files stay", async ({ page }) => {
+    await open(page, "codex");
+    await talk(page, H, false);
+    const field = page.getByTestId("composer-input");
+    await field.press("Escape");
+    await field.press("Escape");
+    await expect(page.getByTestId("back-menu-row")).toHaveCount(3);
+    await expect(page.getByTestId("back-files").first()).toHaveText("");
+    await field.press("ArrowUp");
+    await field.press("Enter");
+    const rows = page.getByTestId("back-choices-row");
+    await expect(rows).toHaveCount(1);
+    await expect(rows.nth(0)).toContainText("The conversation");
+    await expect(page.getByTestId("back-cost")).toHaveText(
+      "Codex cannot put files back: they stay as they are now. Going back cannot be undone.",
+    );
+    // Codex's going back cannot be undone: a digit marks it, Enter takes it.
+    await field.press("1");
+    await expect(page.getByTestId("back-choices")).toBeVisible();
+    await expect(page.getByTestId("back-choices").locator(".keys")).toContainText("↑ ↓ or 1 choose ↵ go back");
+    await field.press("Enter");
+    await expect(page.getByTestId("user-message")).toHaveCount(1);
+    await expect(field).toHaveValue("Add a retry with backoff for 503 and 429.");
+    await expect(page.getByTestId("rewound-undo")).toHaveCount(0);
+    // The same session goes on: nothing started again.
+    expect((await calls(page)).filter((call) => call.method === "start")).toHaveLength(1);
+  });
+});
+
+test.describe("Up on a waiting message", () => {
+  test("takes the newest back, again the one before, and sends them as one", async ({ page }) => {
+    await open(page);
+    await talk(page, H, false);
+    const field = page.getByTestId("composer-input");
+    await field.fill("Log each retry.");
+    await field.press("Enter");
+    await agent(page, `f.startTurn("${H}");`);
+    await field.fill("Use console.debug, not console.log.");
+    await field.press("Enter");
+    await field.fill("And put the attempt number first.");
+    await field.press("Enter");
+    await expect(page.getByTestId("message-waiting")).toHaveCount(2);
+    await expect(page.getByTestId("composer-now")).toContainText("↑ takes the newest back.");
+    await field.press("ArrowUp");
+    await expect(field).toHaveValue("And put the attempt number first.");
+    expect(await field.evaluate((el: HTMLTextAreaElement) => el.selectionStart)).toBe(0);
+    await expect(page.getByTestId("composer-now")).toHaveText(
+      "↑ again takes back the one before. ↵ sends this to wait again.",
+    );
+    await field.press("ArrowUp");
+    await expect(field).toHaveValue("Use console.debug, not console.log.\nAnd put the attempt number first.");
+    await expect(page.getByTestId("message-waiting")).toHaveCount(0);
+    await expect(page.getByTestId("composer-now")).toHaveText("↵ sends this to wait again.");
+    // Moving the caret gives Up back to the field.
+    await field.press("ArrowDown");
+    await field.press("Enter");
+    await expect(page.getByTestId("message-waiting")).toHaveCount(1);
+    await expect(page.getByTestId("message-waiting")).toHaveCount(1);
+    const sent = (await calls(page)).filter((call) => call.method === "send").at(-1);
+    expect(sent?.text).toBe("Use console.debug, not console.log.\nAnd put the attempt number first.");
+  });
+});

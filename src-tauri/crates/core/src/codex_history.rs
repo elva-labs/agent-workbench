@@ -82,6 +82,111 @@ pub(crate) fn read_within(
     read(&mut server, thread, folder)
 }
 
+/// A message of the user's in a thread, with the turn it is in, and whether
+/// it began that turn rather than being taken into it as it ran: going
+/// back to before a turn takes every message in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    pub message: String,
+    pub turn: String,
+    pub first: bool,
+}
+
+/// Turns asked for at once where only their messages are read.
+const MARKS_PAGE: u64 = 64;
+
+/// The messages of the user's in a thread, oldest first, each under the
+/// id the window sent it with where it did, with why none can go back
+/// where the thread cannot be taken back at all. Read by a Codex of its
+/// own, as a history is.
+pub fn marks(
+    env: &HashMap<String, String>,
+    config_dir: Option<&Path>,
+    project: &Path,
+    cwd: Option<&Path>,
+    thread: &str,
+) -> Result<(Vec<Mark>, Option<&'static str>), String> {
+    if project.as_os_str().is_empty() || !is_thread(thread) {
+        return Ok((Vec::new(), None));
+    }
+    let folder = cwd.unwrap_or(project);
+    let mut server =
+        AppServer::start(env, config_dir, folder, Instant::now() + READ_WAIT).map_err(plain)?;
+    server.introduce().map_err(plain)?;
+    marks_of(&mut server, thread)
+}
+
+pub(crate) fn marks_of(
+    server: &mut dyn Ask,
+    thread: &str,
+) -> Result<(Vec<Mark>, Option<&'static str>), String> {
+    match server.ask("thread/read", json!({ "threadId": thread })) {
+        Answer::Result(read) => {
+            if let Some(why) = crate::codex_app_server::unrevertable(&read["thread"]) {
+                return Ok((Vec::new(), Some(why)));
+            }
+        }
+        Answer::Refused(error) | Answer::Gone(error) => return Err(plain(error)),
+        Answer::TooLong => {}
+    }
+    // Newest first, each turn's messages in order.
+    let mut turns: Vec<Vec<Mark>> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let ask = |server: &mut dyn Ask, limit: u64| {
+            server.ask(
+                "thread/turns/list",
+                json!({
+                    "threadId": thread,
+                    "cursor": cursor,
+                    "limit": limit,
+                    "sortDirection": "desc",
+                    "itemsView": "summary",
+                }),
+            )
+        };
+        let page = match ask(server, MARKS_PAGE) {
+            Answer::TooLong => ask(server, 1),
+            answer => answer,
+        };
+        let page = match page {
+            Answer::Result(page) if page["data"].is_array() => page,
+            Answer::Result(_) => return Err("Codex answered with no turns".into()),
+            Answer::Refused(error) | Answer::Gone(error) => return Err(plain(error)),
+            Answer::TooLong => return Err("Codex's turns were too long to read".into()),
+        };
+        for turn in page["data"].as_array().into_iter().flatten() {
+            let Some(id) = turn["id"].as_str() else {
+                continue;
+            };
+            let said = turn["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|item| item["type"] == "userMessage")
+                .filter_map(|item| {
+                    item["clientId"]
+                        .as_str()
+                        .filter(|id| !id.is_empty())
+                        .or_else(|| item["id"].as_str())
+                })
+                .enumerate()
+                .map(|(at, message)| Mark {
+                    message: message.to_string(),
+                    turn: id.to_string(),
+                    first: at == 0,
+                })
+                .collect();
+            turns.push(said);
+        }
+        match page["nextCursor"].as_str() {
+            Some(next) if Some(next) != cursor.as_deref() => cursor = Some(next.to_string()),
+            _ => break,
+        }
+    }
+    Ok((turns.into_iter().rev().flatten().collect(), None))
+}
+
 /// Whether an id can be a thread's: Codex's are UUIDs.
 fn is_thread(id: &str) -> bool {
     !id.is_empty() && id.chars().all(|c| c.is_ascii_hexdigit() || c == '-')

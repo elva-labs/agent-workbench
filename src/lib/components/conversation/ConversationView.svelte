@@ -1,7 +1,23 @@
 <script lang="ts">
   import { agentProfile } from "$lib/agent.svelte";
   import { dirFor } from "$lib/accounts.svelte";
-  import { aloneOn, linkFor, onTheirWay, restore, resume, sendNow, sendNowBlocked, takeBack, trust, unspoken } from "$lib/integrated.svelte";
+  import {
+    aloneOn,
+    linkFor,
+    onTheirWay,
+    restore,
+    resume,
+    sendNow,
+    sendNowBlocked,
+    takeBack,
+    takeBackUp,
+    trust,
+    undoGoBack,
+    unspoken,
+    upHasMore,
+    upHolds,
+  } from "$lib/integrated.svelte";
+  import { backOf, canGoBack, closeBack, markedOf, openBack, unrested } from "$lib/rewind.svelte";
   import { actionOf, describe } from "$lib/keys.svelte";
   import { stepsGist, workflows } from "$lib/workflows.svelte";
   import { close, resumeWithout, type Session } from "$lib/sessions.svelte";
@@ -114,11 +130,25 @@
       !going,
   );
 
-  /** What the composer says of the messages that wait: the chords that
-      send them now and take the newest back, or why the last try failed. */
+  /** A message of the user's own, rather than another session's. */
+  const own = (message: Message) => senderOf(message) === null;
+
+  /** Whether Up in the composer takes a waiting message back: the
+      composer holds nothing, and nothing in the dock takes Up first. */
+  let upActs = $derived(
+    link.draft === "" && link.images.length === 0 && link.files.length === 0 && docked.length === 0,
+  );
+
+  /** What the composer says of the messages that wait: the keys that send
+      them now and take the newest back, after Up took one back what Up and
+      Enter do next, or why the last try failed. */
   let nowHint = $derived.by(() => {
     if (link.nowError !== null) return link.nowError;
-    const own = queued.filter((message) => senderOf(message) === null).length;
+    if (upHolds(session.key))
+      return upHasMore(session.key, own)
+        ? "↑ again takes back the one before. ↵ sends this to wait again."
+        : "↵ sends this to wait again.";
+    const owned = queued.filter(own).length;
     const send =
       sendChord === null
         ? null
@@ -128,9 +158,13 @@
             ? `${sendChord} sends ${queued.length > 1 ? "them" : "it"} now`
             : null;
     const take =
-      takeChord !== null && own > 0 && waiting.canTake
-        ? `${takeChord} takes ${own > 1 ? "the newest" : "it"} back`
-        : null;
+      owned === 0 || !waiting.canTake
+        ? null
+        : upActs
+          ? `↑ takes ${owned > 1 ? "the newest" : "it"} back`
+          : takeChord !== null
+            ? `${takeChord} takes ${owned > 1 ? "the newest" : "it"} back`
+            : null;
     const said = [send, take].filter((part) => part !== null).join(", ");
     return said === "" ? null : `${said.charAt(0).toUpperCase()}${said.slice(1)}.`;
   });
@@ -157,6 +191,41 @@
     void takeBack(session.key, newest.id);
     return true;
   }
+
+  // The list over the composer is made as the view is, so what reads it
+  // from a derived value follows it. A view is its session's for life.
+  untrack(() => backOf(session.key));
+  /** Whether the session can go back to an earlier message now. */
+  let backable = $derived(canGoBack(session.key));
+  /** The message the list over the composer marks, which the thread draws
+      as the place it would go back to. */
+  let marked = $derived(markedOf(session.key));
+
+  /** "Go back to here" on a message: the choices for it, over the
+      composer, with the keyboard there. */
+  function goBackHere(message: Message) {
+    void openBack(session.key, message.id, true);
+    const field = view?.querySelector<HTMLTextAreaElement>("[data-testid='composer-input']");
+    field?.focus();
+  }
+
+  // The thread brings the marked message into view as the mark moves.
+  $effect(() => {
+    if (marked === null || thread === null) return;
+    const key = conversation.entries.find((entry) => entry.kind === "user" && entry.message === marked)?.key;
+    if (key !== undefined) untrack(() => void thread?.reveal(key, "center"));
+  });
+
+  // A turn the agent starts by itself, as background work that finishes
+  // can make it, closes the list, saying why.
+  $effect(() => {
+    const back = backOf(session.key);
+    if (back.phase === null || link.goingBack !== null || unrested(session.key) === null) return;
+    untrack(() => {
+      closeBack(session.key);
+      link.backSaid = `${name} began working by itself, so the list closed.`;
+    });
+  });
 
   /** The keyboard on the dock, when something waits there. */
   function toDock(): boolean {
@@ -329,6 +398,9 @@
       {waiting}
       sender={(message) => senderOf(message)}
       opener={(path) => mentionOpener(session.key, path)}
+      {marked}
+      onGoBack={backable ? goBackHere : null}
+      onUndo={() => void undoGoBack(session.key)}
     />
     <div class="foot" style:--conv-width={width > 0 ? `${width}px` : null}>
       {#if over}
@@ -357,6 +429,8 @@
           onDock={toDock}
           onSendNow={sendWaiting}
           onTakeBack={takeNewest}
+          onUp={() => takeBackUp(session.key, own)}
+          {backable}
           {nowHint}
           answers={docked.some(answerable)}
           defaultModel={session.model === null}

@@ -12,9 +12,18 @@
 //! does the same with a command that ignores the signal asking it to end,
 //! and
 //! `linger` ignores the end of its stdin and, asked to end, writes a file
-//! beside the scenario and ends cleanly. It writes
+//! beside the scenario and ends cleanly, and `await` waits until a file of
+//! that name is beside the scenario. It writes
 //! its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
+//!
+//! Started again in the same folder, as a session that goes back is, the
+//! stand-in plays the scenario numbered for that start where there is one,
+//! `scenario.2` for the second, and keeps that start's arguments numbered
+//! the same way. As the real one does, it checks the entry a conversation
+//! is resumed at, `--resume-session-at`, before anything else: one that is
+//! not in the `transcript` beside the scenario is said not to be found, on
+//! stderr and as a result, and the stand-in ends with code 1.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -30,8 +39,24 @@ use crate::scratch::Scratch;
 
 const STAND_IN: &str = r#"#!/bin/sh
 dir=$(dirname "$FAKE_CLAUDE_SCENARIO")
+run=$(( $(cat "$dir/runs" 2>/dev/null || echo 0) + 1 ))
+printf '%s\n' "$run" > "$dir/runs"
+scenario=$FAKE_CLAUDE_SCENARIO
+[ -f "$scenario.$run" ] && scenario=$scenario.$run
 printf '%s\n' "$@" > "$dir/args"
+printf '%s\n' "$@" > "$dir/args.$run"
 env > "$dir/env"
+at=
+prev=
+for arg in "$@"; do
+  [ "$prev" = "--resume-session-at" ] && at=$arg
+  prev=$arg
+done
+if [ -n "$at" ] && ! grep -q "\"uuid\":\"$at\"" "$dir/transcript" 2>/dev/null; then
+  printf 'No message found with message.uuid of: %s\n' "$at" >&2
+  printf '{"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"session_id":"s","errors":["No message found with message.uuid of: %s"]}\n' "$at"
+  exit 1
+fi
 exec 3<&0
 id=
 while IFS= read -r step || [ -n "$step" ]; do
@@ -59,12 +84,13 @@ while IFS= read -r step || [ -n "$step" ]; do
       printf '","tool_use_id":"%s"}]},"parent_tool_use_id":null}\n' "$1" ;;
     "spawn") sleep 300 & echo $! > "$dir/child" ;;
     "deaf") (trap '' TERM; exec sleep 300) & echo $! > "$dir/child" ;;
+    "await "*) while [ ! -e "$dir/${step#await }" ]; do sleep 0.05; done ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
     "linger")
       trap 'echo yes > "$dir/termed"; exit 0' TERM
       while :; do sleep 1 & wait $!; done ;;
   esac
-done < "$FAKE_CLAUDE_SCENARIO"
+done < "$scenario"
 "#;
 
 /// The opening every scenario starts with: the initialize request
@@ -90,6 +116,7 @@ struct Harness {
     id: String,
     session: String,
     waits: Waits,
+    vars: HashMap<String, String>,
 }
 
 fn start(name: &str, scenario: &str) -> Harness {
@@ -164,6 +191,7 @@ fn start_in(
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     adjust(&mut launch);
     let started = super::start(
@@ -183,6 +211,7 @@ fn start_in(
         id: started.id,
         session,
         waits: Waits::default(),
+        vars,
     }
 }
 
@@ -232,6 +261,74 @@ impl Harness {
     fn stop(&self) -> Value {
         stop(&self.sessions, &self.id).unwrap();
         self.until_type("ended").pop().unwrap()
+    }
+
+    /// Everything the session `id` said, in order.
+    fn events_of(&self, id: &str) -> Vec<Value> {
+        self.recorder
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, payload)| name == INTEGRATED_EVENT && payload["id"] == id)
+            .map(|(_, payload)| payload.clone())
+            .collect()
+    }
+
+    /// The arguments the stand-in was started with the `run`th time.
+    fn args(&self, run: usize) -> Vec<String> {
+        std::fs::read_to_string(self.dir.join(format!("args.{run}")))
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Starts the stand-in again in the session's folder as `again` says,
+    /// the way the core starts a session again: on the conversation named,
+    /// or a new one, from the entry named, on the settings given.
+    fn again(&self, again: &Again) -> Result<Started, String> {
+        let fresh = format!("{}-anew", self.session);
+        let session = again.session.clone().unwrap_or(fresh);
+        let launch = Launch {
+            project: &self.dir,
+            env: &self.vars,
+            session: Some(&session),
+            token: Some("token-kept"),
+            resume: again.session.is_some(),
+            model: again.settings.model.as_deref(),
+            mode: again.settings.mode.as_deref(),
+            effort: again.settings.effort.as_deref(),
+            config_dir: None,
+            tool_server: None,
+            orchestrator: false,
+            instructions: None,
+            start_only: false,
+            afresh: false,
+            resume_at: again.at.as_deref(),
+        };
+        super::start(
+            self.recorder.clone(),
+            Arc::clone(&self.sessions),
+            &CLAUDE_STREAM,
+            &launch,
+            Box::new(|_| {}),
+            Box::new(|_| {}),
+        )
+    }
+
+    /// Writes the transcript the stand-in finds an entry to resume at in.
+    fn transcript(&self, entries: &[&str]) {
+        let lines: Vec<String> = entries
+            .iter()
+            .map(|uuid| json!({ "type": "assistant", "uuid": uuid }).to_string())
+            .collect();
+        std::fs::write(self.dir.join("transcript"), lines.join("\n")).unwrap();
+    }
+
+    /// Writes the scenario the stand-in plays the `run`th time it starts.
+    fn then(&self, run: usize, scenario: &str) {
+        std::fs::write(self.dir.join(format!("scenario.{run}")), scenario).unwrap();
     }
 }
 
@@ -395,6 +492,14 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     );
     assert!(has("KEEP_ME=yes"), "{env}");
     assert!(has("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1"), "{env}");
+    // The files are kept as they were before each message, as the
+    // terminal keeps them, so that they can go back.
+    assert!(
+        has("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true"),
+        "{env}"
+    );
+    // A conversation resumed from its newest entry names no other.
+    assert!(!args.contains(&"--resume-session-at".to_string()));
     assert!(!env.lines().any(|l| l.starts_with("ANTHROPIC_API_KEY=")));
     h.stop();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1281,6 +1386,485 @@ fn stop_all_ends_every_session() {
     b.until_type("ended");
 }
 
+const BACK_TO: &str = "11111111-1111-4111-8111-111111111111";
+
+/// The dry run of putting the files back, and putting them back.
+const FILES_BACK: &str = r#"expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt","/w/b.txt"],"insertions":1,"deletions":4}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"skippedLinks":0}}}"#;
+
+/// The files a preview showed, which going back puts back.
+fn shown() -> Vec<String> {
+    vec!["/w/a.txt".to_string(), "/w/b.txt".to_string()]
+}
+
+fn value_after(args: &[String], flag: &str) -> Option<String> {
+    let at = args.iter().position(|arg| arg == flag)?;
+    args.get(at + 1).cloned()
+}
+
+fn rewound(events: &[Value]) -> Vec<Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "rewound")
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn going_back_starts_the_conversation_again_from_the_entry_before_the_message() {
+    let h = start("rewind", &format!("{READY}\ndrain"));
+    h.transcript(&["entry-before"]);
+    h.then(2, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        None,
+        &|again| h.again(again),
+    )
+    .unwrap();
+    let next = went.id.clone().unwrap();
+    assert_ne!(next, h.id);
+    assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
+    assert_eq!((went.fallback, went.error), (None, None));
+    assert!(went.files.is_empty());
+    // The session it went back from ended cleanly before the answer came.
+    let ended = h.events();
+    assert_eq!(ended.last().unwrap()["type"], "ended");
+    assert_eq!(ended.last().unwrap()["clean"], true);
+    assert!(!h.sessions.holds(&h.id));
+    // Started again on the same conversation, from the entry, on the
+    // settings it ran on.
+    let args = h.args(2);
+    assert_eq!(value_after(&args, "--resume"), Some(h.session.clone()));
+    assert_eq!(
+        value_after(&args, "--resume-session-at").as_deref(),
+        Some("entry-before")
+    );
+    assert_eq!(value_after(&args, "--model").as_deref(), Some("haiku"));
+    assert_eq!(value_after(&args, "--effort").as_deref(), Some("high"));
+    assert_eq!(
+        value_after(&args, "--permission-mode").as_deref(),
+        Some("default")
+    );
+    // It says so once it is ready, before the answer, and goes on.
+    let events = h.events_of(&next);
+    assert_eq!(events[0]["type"], "ready");
+    assert_eq!(
+        rewound(&events),
+        [
+            json!({"id": next, "type": "rewound", "message": BACK_TO, "conversation": true, "files": []})
+        ]
+    );
+    rest(&h.sessions, &next).unwrap();
+    stop(&h.sessions, &next).unwrap();
+}
+
+#[test]
+fn the_files_go_back_first_while_the_message_is_still_in_the_conversation() {
+    let h = start("rewind-files", &format!("{READY}\n{FILES_BACK}\ndrain"));
+    h.transcript(&["entry-before"]);
+    h.then(2, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        Some(&shown()),
+        &|again| h.again(again),
+    )
+    .unwrap();
+    assert_eq!(went.files, ["/w/a.txt", "/w/b.txt"]);
+    // Asked of the session being left, a dry run for the list and then the
+    // real one, both before it was stopped.
+    let asked: Vec<Value> = h
+        .stdin()
+        .into_iter()
+        .filter(|line| line["request"]["subtype"] == "rewind_files")
+        .map(|line| line["request"].clone())
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            json!({"subtype": "rewind_files", "user_message_id": BACK_TO, "dry_run": true}),
+            json!({"subtype": "rewind_files", "user_message_id": BACK_TO, "dry_run": false}),
+        ]
+    );
+    let next = went.id.unwrap();
+    assert_eq!(
+        rewound(&h.events_of(&next))[0]["files"],
+        json!(["/w/a.txt", "/w/b.txt"])
+    );
+    stop(&h.sessions, &next).unwrap();
+}
+
+#[test]
+fn only_the_files_go_back_in_the_same_session() {
+    let h = start(
+        "rewind-only-files",
+        &format!("{READY}\n{FILES_BACK}\ndrain"),
+    );
+    h.until_type("ready");
+    let refused = rewind(&h.sessions, &h.id, BACK_TO, Back::Files, None, &|again| {
+        h.again(again)
+    });
+    assert!(refused.is_err());
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Files,
+        Some(&shown()),
+        &|again| h.again(again),
+    )
+    .unwrap();
+    assert_eq!(went.id.as_deref(), Some(h.id.as_str()));
+    assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
+    assert_eq!(went.files, ["/w/a.txt", "/w/b.txt"]);
+    // Told before the answer.
+    let told = rewound(&h.events());
+    assert_eq!(told[0]["conversation"], false);
+    assert!(h.sessions.holds(&h.id));
+    assert!(!h.dir.join("args.2").exists(), "nothing started again");
+    h.stop();
+}
+
+#[test]
+fn files_the_agent_cannot_put_back_change_nothing_and_say_why() {
+    let h = start(
+        "rewind-no-files",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":false,"error":"No file checkpoint found for this message."}}}"#
+        ),
+    );
+    h.until_type("ready");
+    let error = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        Some(&shown()),
+        &|again| h.again(again),
+    )
+    .unwrap_err();
+    assert_eq!(error, "No file checkpoint found for this message.");
+    // Nothing was put back, and the conversation goes on as it was.
+    assert_eq!(
+        h.stdin()
+            .iter()
+            .filter(|line| line["request"]["subtype"] == "rewind_files")
+            .count(),
+        1
+    );
+    assert!(h.sessions.holds(&h.id));
+    assert!(rewound(&h.events()).is_empty());
+    h.stop();
+}
+
+#[test]
+fn a_preview_says_what_putting_the_files_back_would_change() {
+    let h = start(
+        "rewind-preview",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt"],"insertions":3,"deletions":1}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"error","request_id":"@ID@","error":"File rewinding is not enabled."}}"#
+        ),
+    );
+    h.until_type("ready");
+    assert_eq!(
+        preview(&h.sessions, &h.id, BACK_TO).unwrap(),
+        Preview {
+            files: vec!["/w/a.txt".into()],
+            insertions: 3,
+            deletions: 1
+        }
+    );
+    assert_eq!(
+        preview(&h.sessions, &h.id, BACK_TO).unwrap_err(),
+        "File rewinding is not enabled."
+    );
+    h.stop();
+}
+
+#[test]
+fn an_entry_the_agent_cannot_find_starts_the_conversation_again_whole() {
+    let h = start("rewind-fallback", &format!("{READY}\ndrain"));
+    h.transcript(&["entry-kept"]);
+    // The second start refuses the entry and ends; the third is a plain
+    // resume.
+    h.then(3, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-gone".into())),
+        None,
+        &|again| h.again(again),
+    )
+    .unwrap();
+    let fallback = went.fallback.clone().unwrap();
+    assert!(
+        fallback.contains("No message found with message.uuid of: entry-gone"),
+        "{fallback}"
+    );
+    assert_eq!(went.error, None);
+    let next = went.id.unwrap();
+    assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
+    assert_eq!(
+        value_after(&h.args(2), "--resume-session-at").as_deref(),
+        Some("entry-gone")
+    );
+    let whole = h.args(3);
+    assert_eq!(value_after(&whole, "--resume"), Some(h.session.clone()));
+    assert!(!whole.contains(&"--resume-session-at".to_string()));
+    // The conversation did not go back, so nothing says it did.
+    assert!(rewound(&h.events_of(&next)).is_empty());
+    stop(&h.sessions, &next).unwrap();
+}
+
+#[test]
+fn going_back_before_the_first_message_starts_a_new_conversation() {
+    let h = start("rewind-first", &format!("{READY}\ndrain"));
+    h.then(2, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(None),
+        None,
+        &|again| h.again(again),
+    )
+    .unwrap();
+    let fresh = format!("{}-anew", h.session);
+    assert_eq!(went.session_id.as_deref(), Some(fresh.as_str()));
+    let args = h.args(2);
+    assert_eq!(value_after(&args, "--session-id"), Some(fresh));
+    assert!(!args.contains(&"--resume".to_string()));
+    stop(&h.sessions, &went.id.unwrap()).unwrap();
+}
+
+#[test]
+fn a_session_at_work_does_not_go_back_and_is_left_as_it_was() {
+    let h = start(
+        "rewind-busy",
+        &format!("{READY}\nexpect \"type\":\"user\"\n{TAKE}\n{INIT}\ndrain"),
+    );
+    h.until_type("ready");
+    h.send("work on");
+    h.until_type("turnStarted");
+    for back in [Back::Files, Back::Entry(None)] {
+        let error = rewind(
+            &h.sessions,
+            &h.id,
+            BACK_TO,
+            back,
+            Some(&shown()),
+            &|again| h.again(again),
+        )
+        .unwrap_err();
+        assert_eq!(error, "a turn runs");
+    }
+    assert_eq!(rest(&h.sessions, &h.id).unwrap_err(), "a turn runs");
+    assert!(h.sessions.holds(&h.id));
+    assert!(!h
+        .stdin()
+        .iter()
+        .any(|line| line["request"]["subtype"] == "rewind_files"));
+    h.stop();
+}
+
+/// Between the preview and the choice a file can change, the user's own
+/// save among them: putting back what the user was not shown is refused,
+/// before anything is put back.
+#[test]
+fn files_that_were_not_shown_are_not_put_back() {
+    let h = start(
+        "rewind-unshown",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt"],"insertions":0,"deletions":2}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt","/w/notes.md"],"insertions":0,"deletions":9}}}"#
+        ),
+    );
+    h.transcript(&["entry-before"]);
+    h.until_type("ready");
+    let shown = preview(&h.sessions, &h.id, BACK_TO).unwrap().files;
+    assert_eq!(shown, ["/w/a.txt"]);
+    let error = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        Some(&shown),
+        &|again| h.again(again),
+    )
+    .unwrap_err();
+    assert_eq!(error, UNSHOWN);
+    // Only the two dry runs went; nothing was put back, nothing restarted.
+    let asked: Vec<bool> = h
+        .stdin()
+        .iter()
+        .filter(|line| line["request"]["subtype"] == "rewind_files")
+        .map(|line| line["request"]["dry_run"] == true)
+        .collect();
+    assert_eq!(asked, [true, true]);
+    assert!(h.sessions.holds(&h.id));
+    assert!(!h.dir.join("args.2").exists());
+    rest(&h.sessions, &h.id).unwrap();
+    h.stop();
+}
+
+/// A message sent while the session goes back, by the window or by the
+/// workbench for a session this one started, would go to the process the
+/// restart ends: it is refused until the going back is over.
+#[test]
+fn nothing_is_sent_while_the_session_goes_back() {
+    let h = start(
+        "rewind-sending",
+        &format!(
+            "{READY}\n{}\ndrain",
+            r#"expect "subtype":"rewind_files"
+await go
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"filesChanged":["/w/a.txt"],"insertions":0,"deletions":2}}}
+expect "subtype":"rewind_files"
+reply {"type":"control_response","response":{"subtype":"success","request_id":"@ID@","response":{"canRewind":true,"skippedLinks":0}}}"#
+        ),
+    );
+    h.until_type("ready");
+    std::thread::scope(|scope| {
+        let going = scope.spawn(|| {
+            rewind(
+                &h.sessions,
+                &h.id,
+                BACK_TO,
+                Back::Files,
+                Some(&["/w/a.txt".to_string()]),
+                &|_: &Again| -> Result<Started, String> { unreachable!("only the files go back") },
+            )
+        });
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !h
+            .stdin()
+            .iter()
+            .any(|line| line["request"]["subtype"] == "rewind_files")
+        {
+            assert!(Instant::now() < deadline, "the dry run never went");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let message = uuid::Uuid::new_v4().to_string();
+        assert_eq!(
+            send(&h.sessions, &h.id, &message, "meanwhile", &[]).unwrap_err(),
+            GOING_BACK
+        );
+        assert_eq!(
+            control(&h.sessions, &h.id, &Control::Compact { instructions: None }).unwrap_err(),
+            GOING_BACK
+        );
+        std::fs::write(h.dir.join("go"), "").unwrap();
+        going.join().unwrap().unwrap();
+    });
+    // Over once it answered: the session takes messages again.
+    assert!(!h.events().iter().any(|event| event["type"] == "message"));
+    let message = uuid::Uuid::new_v4().to_string();
+    send(&h.sessions, &h.id, &message, "now", &[]).unwrap();
+    h.stop();
+}
+
+/// A start that fails before its process runs is started again whole, as
+/// one that ends before it is ready is.
+#[test]
+fn a_start_that_fails_goes_on_with_the_conversation_whole() {
+    let h = start("rewind-failed", &format!("{READY}\ndrain"));
+    h.then(2, &format!("{READY}\ndrain"));
+    h.until_type("ready");
+    let went = rewind(
+        &h.sessions,
+        &h.id,
+        BACK_TO,
+        Back::Entry(Some("entry-before".into())),
+        None,
+        &|again| match again.at {
+            Some(_) => Err("the transcript is not there".into()),
+            None => h.again(again),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        went.fallback.as_deref(),
+        Some("the transcript is not there")
+    );
+    assert_eq!(went.error, None);
+    assert_eq!(went.session_id.as_deref(), Some(h.session.as_str()));
+    let whole = h.args(2);
+    assert_eq!(value_after(&whole, "--resume"), Some(h.session.clone()));
+    assert!(!whole.contains(&"--resume-session-at".to_string()));
+    stop(&h.sessions, &went.id.unwrap()).unwrap();
+}
+
+#[test]
+fn going_back_is_undone_until_the_conversation_goes_on() {
+    let h = start("rewind-undo", &format!("{READY}\ndrain"));
+    h.transcript(&["entry-before"]);
+    h.then(2, &format!("{READY}\ndrain"));
+    h.then(3, &format!("{READY}\ndrain"));
+    h.then(
+        4,
+        &format!("{READY}\nexpect \"type\":\"user\"\n{TAKE}\n{INIT}\n{DONE}\ndrain"),
+    );
+    h.until_type("ready");
+    let back = |id: &str| {
+        rewind(
+            &h.sessions,
+            id,
+            BACK_TO,
+            Back::Entry(Some("entry-before".into())),
+            None,
+            &|again| h.again(again),
+        )
+        .unwrap()
+        .id
+        .unwrap()
+    };
+    let went = back(&h.id);
+    // Undone: the conversation as it was, from its newest entry.
+    let undone = undo(&h.sessions, &went, &h.session, &|again| h.again(again)).unwrap();
+    assert_eq!(undone.session_id.as_deref(), Some(h.session.as_str()));
+    let args = h.args(3);
+    assert_eq!(value_after(&args, "--resume"), Some(h.session.clone()));
+    assert!(!args.contains(&"--resume-session-at".to_string()));
+    // Gone back again and gone on: it cannot be undone any more.
+    let again = back(&undone.id.unwrap());
+    let message = uuid::Uuid::new_v4().to_string();
+    send(&h.sessions, &again, &message, "go on", &[]).unwrap();
+    let waits = Waits::default();
+    waits.until(|| h.events_of(&again), |event| event["type"] == "turnEnded");
+    waits.until(
+        || h.events_of(&again),
+        |event| event["type"] == "state" && event["state"] == "idle",
+    );
+    assert_eq!(
+        undo(&h.sessions, &again, &h.session, &|again| h.again(again)).unwrap_err(),
+        "the conversation has gone on since it went back"
+    );
+    assert!(h.sessions.holds(&again));
+    assert!(!h.dir.join("args.5").exists(), "nothing started again");
+    stop(&h.sessions, &again).unwrap();
+}
+
 #[test]
 fn a_missing_agent_explains_itself() {
     let vars = HashMap::from([("PATH".to_string(), "/nowhere".to_string())]);
@@ -1299,6 +1883,7 @@ fn a_missing_agent_explains_itself() {
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     let error = super::start(
         Arc::new(Recorder::default()),
@@ -1338,6 +1923,7 @@ fn real_claude_holds_a_short_turn() {
         instructions: None,
         start_only: false,
         afresh: false,
+        resume_at: None,
     };
     let started = super::start(
         recorder.clone(),
@@ -1355,6 +1941,7 @@ fn real_claude_holds_a_short_turn() {
         id: started.id,
         session,
         waits: Waits::default(),
+        vars: environment.vars.clone(),
     };
     let ready = h.until_type("ready");
     assert!(ready.last().unwrap()["version"].is_string());

@@ -23,7 +23,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose
   --include-partial-messages --forward-subagent-text --replay-user-messages
   --permission-prompt-tool stdio
   [--permission-mode <mode>] [--model <model>] [--effort <effort>]
-  --session-id <id> | --resume <id>
+  --session-id <id> | --resume <id> [--resume-session-at <entry>]
   [--disallowedTools <tools>] [--append-system-prompt-file <file>]
   [--system-prompt-snapshot off]
   [--mcp-config <file>]
@@ -42,7 +42,12 @@ MCP servers, and refuse the user's login.
 
 The agent is also asked, through its environment, to say when its session
 goes idle: after a turn, and after the turns that report the subagents it
-left running. That is the moment nothing it began can still be at work.
+left running. That is the moment nothing it began can still be at work. It
+is asked the same way to keep the files it changes as they were before
+each message of the user's, as its terminal does, so that they can be put
+back, as described under [going back](#going-back). The entry to resume at
+is given only when a conversation goes on from an earlier point than its
+newest.
 
 A model name, a mode, an effort and a session id are checked before they
 go on the command line: letters and digits, and for a model name a few
@@ -273,6 +278,11 @@ the same way.
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
 | Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, every subagent still at work as its start went out, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
 | History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running. It answers with none for an agent whose history is not read, and fails with why where the agent could not read it. |
+| Points | Says where a session's conversation can go back to: each message of the user's in it as the agent keeps it now, oldest first, whether the conversation can go back to before it, with why where it cannot, and whether the files can; or why none can. |
+| Preview | Says what putting the files back as they were before a message would change, as the agent's own dry run says: the files, and the lines that would come back and go. Changes nothing. Fails, in the agent's words, where it cannot put them back to there. |
+| Go back | Takes a session at rest back to before a message of the user's: the conversation, the files the user was shown in a preview, or both, as described under [going back](#going-back). Answers with the session that goes on, the same one or one started again, its conversation's id, the files put back, and why a conversation that was to go back goes on whole where it does. Fails, with nothing changed, where it cannot go back there, or where the files to put back are no longer those shown. |
+| Undo | Undoes going back that started a session again, while nothing has gone on in it since, and answers as going back does. Fails, with nothing changed, where it cannot. |
+| Held | Says whether a conversation is held at the point it went back to, as described under going back. Like history, it is addressed by the project's path and the conversation's id, and needs no session running. |
 | Stop | Closes the agent's stdin, which ends the conversation. An agent still there a few seconds later is asked to end, and one still there after that is killed. |
 
 Events can name an id before the command that hands it back has answered:
@@ -416,6 +426,10 @@ naming the session and its kind:
   the turn goes on.
 - **skipped**: streamed pieces left out because the window or its
   connection fell behind, as described under failure.
+- **rewound**: the session went back to before a message of the user's,
+  whether the conversation went back with it, and the files put back. It
+  is told on the session that goes on, after its ready where it was
+  started again, and before going back answers.
 - **state**, **error** and **ended**.
 
 For Codex, a file change's input comes whole again each time the patch it
@@ -552,6 +566,99 @@ already handed over or given to the running turn cannot be withdrawn. A
 message the user withdrew is withdrawn for every window; the window that
 withdrew it puts its words back in the composer when the withdrawn event
 comes, whatever the command answers.
+
+## Going back
+
+A session at rest goes back to before a message of the user's: the message
+and everything after it leave the conversation, the files the agent
+changed since go back as they were before it, or both. At rest is ready,
+with no turn running, nothing waiting for a turn or for the user, no
+compaction and no subagent at work, and going back is refused otherwise.
+From then until going back has answered, the session refuses a message and
+a compaction, whoever asks, saying it is going back, since the agent would
+take them in a run that is about to end. Each agent goes back its own way.
+
+Claude Code takes a conversation back only by starting again. The session
+is stopped, which ends the commands it left running in the background, its
+subagents and its MCP servers, and is started again on the same
+conversation from the entry of its transcript before the message: the last
+entry of the turn before, for a message that began a turn, and for one
+typed while the agent worked, the result in that turn after which the agent
+took it in. The model then has the turn as far as that result, and a
+message sent from there goes where the one gone back on was. The start
+keeps the session's token, its account, the workflow it follows, and the
+model, the effort and the mode it runs on, the mode only where it is one a
+session can switch to. The session started again has an id of its own,
+which the answer gives, and the one gone back from has ended by then.
+Going back to before the first message starts a new conversation, and
+leaves the old one as it was. Where the start fails, or does not come up,
+the agent having ended before it was ready, the conversation is started
+again whole, and the answer says why.
+
+A conversation Claude Code resumes is loaded from where it was last
+compacted, and an entry before that is not found, so a message before the
+last compaction cannot be gone back to. Its files still can.
+
+The files go back first, while the message is still part of the
+conversation, since that is where the agent finds what it kept of them. The
+window shows a dry run's files before the user chooses, and going back
+takes the files it showed. A dry run is made again then, and where it names
+a file the user was not shown, such as one the user saved in the meantime,
+nothing is put back and going back is refused; otherwise the agent puts
+them back. The agent
+keeps them as backups under the account's configuration directory, and
+removes them in time as its terminal does. It keeps none for a message
+typed while it worked, and none of what commands or subagents changed,
+except in files its own tools had changed before. A dry run counts the
+user's own later changes to a file it keeps as changes to put back.
+
+Claude Code writes nothing of going back until a message is sent from
+there, which then hangs off the entry the conversation went on from. Until
+then its transcript ends where it ended, and a plain resume, its terminal
+or a reading of it would go on with what was gone back on. So the core
+holds the conversation at that entry, with the newest entry the transcript
+had then, in a file of its own in the workbench's directory, for the most
+recent conversations, and every start and every history read of the
+conversation goes on from the entry held. Once the transcript's newest
+entry is another, because a message was sent from there or anything else
+went on with the conversation, the point is let go and the transcript is
+read as it is. A transcript that cannot be read for the moment keeps the
+point held.
+
+Claude Code's terminal does not take the point a stream session is started
+from: resumed at one, it shows and goes on with the newest entry. Opened
+and left, it writes nothing that moves the newest entry, but it shows what
+was gone back on, as Claude Code's own terminal does when it is quit before
+the next message, and a line typed there hangs off the newest entry, which
+lets the point go and makes what was gone back on the conversation again
+for good. So a terminal start that resumes a held conversation, from a row,
+from the list of past sessions or from the start tool, is refused with a
+reason of its own kind, which the window can tell from other failures,
+unless it says the user agreed to bring that back; then the point is let
+go and the terminal starts. The start tool answers the agent with the
+reason. The held command says whether a conversation is held, so that a
+window can say so before it opens one in a terminal, and offer to send a
+message first.
+
+Going back by starting again, with no files put back, can be undone until
+a message is sent or a turn runs: the session is started again on the
+conversation as it was, from its newest entry, or from the entry it was
+held at before.
+
+Codex takes a conversation back in the running process, with the turn the
+message began, and goes on in the same session and thread, the turns from
+there gone from what Codex keeps of the thread, past a compaction too. A
+message Codex took into a turn already running goes back with that turn,
+so going back is to the message that began it. Which turn a message began
+is read through a Codex of the core's own, as a history is. Codex puts no
+files back, and cannot take back a thread kept in the format older versions
+wrote, one it does not keep, or one whose format it does not say, as a
+Codex older than its going back does not; the points say why. Going back with Codex
+cannot be undone.
+
+For a session on another machine, the files a preview names and those put
+back have the host on their paths, and a session started again has the
+host on its id.
 
 ## Account limits
 
@@ -771,7 +878,8 @@ made at once, which hang off their calls. Where that line breaks off at a
 parent the transcript does not hold, every entry is kept in the order
 written. A last turn with no end in the transcript, no stop of the agent's
 own and no note of how long it took, is left open, as one that may still
-run.
+run. A conversation the core holds at the point it went back to is read as
+far as that point, as described under [going back](#going-back).
 
 The format is internal to the agent and changes between versions, so the
 reader is kept apart and reads defensively, as the title reader does: an
@@ -842,10 +950,29 @@ has to do itself:
 
 - **Order.** A session's events come in order. The first ones can arrive
   before the start answers, so the window keeps the events of an id it
-  does not know yet. A change of settings and a snapshot answer after the
-  events they caused. The other commands answer once what they wrote
+  does not know yet. A change of settings, a snapshot and going back
+  answer after the events they caused, going back after its rewound and,
+  for a session started again, after the end of the one it went back
+  from. The other commands answer once what they wrote
   reached the agent, or the agent said it took it, and what they cause
   can come after, such as the end of an interrupted turn.
+- **Going back.** Claude Code goes back by ending the session and starting
+  another, whose events can come before the answer names it. So the window
+  holds what the old session says from the call until the answer, keeps
+  the events of the id it does not know yet, as for any start, and on the
+  answer binds the row to the new session and plays what it kept. The
+  window that asks cuts its thread and puts the message's words in its
+  composer at once, so they can be edited meanwhile, and makes both whole
+  again where the answer says the conversation did not go back; another
+  window cuts its thread at rewound, which comes before the answer. A
+  message sent meanwhile waits in the window until the answer, since the
+  session refuses one while it goes back, and goes only where it went
+  back. What the window marked as told in a message gone back on, such as
+  a report of a session it started, counts as not told again. Files put
+  back while the conversation stayed as it was, with only the files or
+  where the answer says the conversation went on whole, leave the agent
+  believing what it changed in them stands, so the window tells it ahead
+  of the user's next message.
 - **The conversation's id.** The session's row, and resuming it, need the
   conversation's id. For an agent that makes its own ids the start
   answers with none, and the id is known only from ready.

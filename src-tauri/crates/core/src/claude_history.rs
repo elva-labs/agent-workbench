@@ -140,12 +140,19 @@ const MODE_ENTRY: &[u8] = b"permission-mode";
 /// which lines make up the conversation from their ids alone; the second
 /// reads those lines, each made into its events and let go before the next.
 pub fn read(path: &Path) -> History {
+    read_until(path, None)
+}
+
+/// What one transcript says was said and done, as far as the entry
+/// `until`, where the transcript holds it, rather than its newest: the
+/// conversation as a start from that entry goes on with it.
+pub fn read_until(path: &Path, until: Option<&str>) -> History {
     let found = survey(path);
     let Some(span) = found.span else {
         return History::default();
     };
     let partial = span.start > 0;
-    let kept = conversation(&found.placed, &found.parents, partial);
+    let kept = conversation(&found.placed, &found.parents, partial, until);
     let mut reader = Reader::new(Subagents::beside(path));
     let mut index = 0;
     lines(path, Some(span), |line| {
@@ -165,6 +172,133 @@ pub fn read(path: &Path) -> History {
     let mut history = reader.finish(modified_millis(path));
     history.cut |= partial;
     history
+}
+
+/// The newest entry of a transcript that says something, which a plain
+/// resume goes on from, by its id. None where there is none.
+pub fn leaf(path: &Path) -> Option<String> {
+    survey(path)
+        .placed
+        .iter()
+        .rev()
+        .find_map(|entry| entry.uuid.clone())
+}
+
+/// A message of the user's, as a transcript holds it, and what going back
+/// to before it takes: the entry before it, from which a start goes on
+/// without it, or None for the first, before which a conversation starts
+/// anew; whether a start can go on from that entry, which the agent loads
+/// only from where the conversation was last compacted; and whether the
+/// agent kept the files as they were before it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Mark {
+    pub message: String,
+    pub at: Option<String>,
+    pub resumable: bool,
+    pub files: bool,
+}
+
+/// The messages of the user's in a transcript's conversation, oldest first,
+/// as far as the entry `until` where one is given and held: those typed
+/// while the agent worked among them, which the agent kept no files for.
+/// None where the conversation's line cannot be followed from its end to
+/// its start, or only the end of the transcript is read.
+pub fn marks(path: &Path, until: Option<&str>) -> Option<Vec<Mark>> {
+    let found = survey(path);
+    let span = found.span?;
+    if span.start > 0 {
+        return None;
+    }
+    if found.placed.is_empty() {
+        return Some(Vec::new());
+    }
+    let line = line(&found.placed, &found.parents, until)?;
+    // The agent loads a conversation it resumes from its last compaction
+    // on, so an entry before that cannot be gone on from.
+    let mut loaded = HashSet::new();
+    for uuid in &line {
+        loaded.insert(uuid.clone());
+        if found.boundaries.contains(uuid) {
+            break;
+        }
+    }
+    let on: HashSet<&String> = line.iter().collect();
+    let kept: HashSet<usize> = found
+        .placed
+        .iter()
+        .filter(|entry| entry.uuid.as_ref().is_some_and(|uuid| on.contains(uuid)))
+        .map(|entry| entry.index)
+        .collect();
+    let mut marks: Vec<Mark> = Vec::new();
+    let mut index = 0;
+    lines(path, Some(span), |bytes| {
+        let at = index;
+        index += 1;
+        if !kept.contains(&at) {
+            return;
+        }
+        let Ok(entry) = serde_json::from_slice::<Value>(bytes) else {
+            return;
+        };
+        let Some(message) = said_by_user(&entry) else {
+            return;
+        };
+        if marks.iter().any(|mark| mark.message == message) {
+            return;
+        }
+        let before = entry["parentUuid"].as_str().map(str::to_string);
+        marks.push(Mark {
+            resumable: before.as_ref().is_none_or(|before| loaded.contains(before)),
+            files: found.snapshots.contains(&message),
+            message,
+            at: before,
+        });
+    });
+    Some(marks)
+}
+
+/// The id of the message of the user's an entry holds, the window's own
+/// where it sent it: a message that began a turn, or one typed while the
+/// agent worked, which it took into the turn. None for anything else.
+fn said_by_user(entry: &Value) -> Option<String> {
+    if flagged(entry, "isMeta") {
+        return None;
+    }
+    match entry["type"].as_str() {
+        Some("user") => {
+            if flagged(entry, "isCompactSummary")
+                || flagged(entry, "isVisibleInTranscriptOnly")
+                || results(entry).next().is_some()
+            {
+                return None;
+            }
+            match prompt(
+                &entry["message"]["content"],
+                entry["origin"]["kind"].as_str(),
+            ) {
+                Prompt::Said { .. } => entry["uuid"].as_str().map(str::to_string),
+                _ => None,
+            }
+        }
+        Some("attachment") => {
+            let attached = &entry["attachment"];
+            if attached["type"] != "queued_command"
+                || attached["commandMode"]
+                    .as_str()
+                    .is_some_and(|mode| mode != "prompt")
+            {
+                return None;
+            }
+            match prompt(&attached["prompt"], attached["origin"]["kind"].as_str()) {
+                Prompt::Said { .. } => attached["source_uuid"]
+                    .as_str()
+                    .or_else(|| entry["uuid"].as_str())
+                    .map(str::to_string),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// A line of a transcript that may say something, by where it stands among
@@ -188,6 +322,11 @@ struct Head {
     logical: Field,
     #[serde(rename = "isSidechain", default)]
     sidechain: Field,
+    #[serde(default)]
+    subtype: Field,
+    /// The message a snapshot of the files is kept for.
+    #[serde(rename = "messageId", default)]
+    snapshot: Field,
 }
 
 /// A field as a line has it: not there, or there with any value, null
@@ -241,6 +380,10 @@ struct Found {
     parents: HashMap<String, Link>,
     /// What was read, none for a file that could not be.
     span: Option<Span>,
+    /// The messages the agent kept the files as they were before.
+    snapshots: HashSet<String>,
+    /// The entries that mark where the conversation was compacted.
+    boundaries: HashSet<String>,
 }
 
 /// Where each line of a transcript stands, from what every line is read for
@@ -248,6 +391,8 @@ struct Found {
 fn survey(path: &Path) -> Found {
     let mut parents = HashMap::new();
     let mut placed = Vec::new();
+    let mut snapshots = HashSet::new();
+    let mut boundaries = HashSet::new();
     let mut index = 0;
     let span = lines(path, None, |line| {
         let at = index;
@@ -255,7 +400,16 @@ fn survey(path: &Path) -> Found {
         let Ok(head) = serde_json::from_slice::<Head>(line) else {
             return;
         };
+        let kind = head.kind.string();
+        if kind.as_deref() == Some("file-history-snapshot") {
+            snapshots.extend(head.snapshot.string());
+        }
         let uuid = head.uuid.string();
+        if kind.as_deref() == Some("system")
+            && head.subtype.string().as_deref() == Some("compact_boundary")
+        {
+            boundaries.extend(uuid.clone());
+        }
         let link = Link::of(&head);
         let parent = match &link {
             Link::To(parent) => Some(parent.clone()),
@@ -265,7 +419,7 @@ fn survey(path: &Path) -> Found {
             parents.insert(uuid.clone(), link);
         }
         if !matches!(
-            head.kind.string().as_deref(),
+            kind.as_deref(),
             Some("user" | "assistant" | "system" | "attachment")
         ) {
             return;
@@ -283,6 +437,8 @@ fn survey(path: &Path) -> Found {
         placed,
         parents,
         span,
+        snapshots,
+        boundaries,
     }
 }
 
@@ -359,43 +515,27 @@ fn lines(path: &Path, span: Option<Span>, mut each: impl FnMut(&[u8])) -> Option
 
 /// The entries that make up the conversation as it stands. A transcript
 /// can hold turns the user went back on, which branch off it: the
-/// conversation is the line from the last entry back through each one's
-/// parent to the first, with the results of the calls the agent made at
-/// once, which each hang off their call. Where that line breaks off, at a
-/// parent the transcript does not hold, every entry is kept in the order
-/// written. Answers the lines kept by where they stand, each saying whether
-/// it is kept only if it holds tool results, which its ids cannot tell.
+/// conversation is the line from the last entry, or from `until` where the
+/// transcript holds it, back through each one's parent to the first, with
+/// the results of the calls the agent made at once, which each hang off
+/// their call. Where that line breaks off, at a parent the transcript does
+/// not hold, every entry is kept in the order written. Answers the lines
+/// kept by where they stand, each saying whether it is kept only if it
+/// holds tool results, which its ids cannot tell.
 fn conversation(
     placed: &[Placed],
     parents: &HashMap<String, Link>,
     partial: bool,
+    until: Option<&str>,
 ) -> HashMap<usize, bool> {
     let every = || placed.iter().map(|entry| (entry.index, false)).collect();
     if partial {
         return every();
     }
-    let Some(leaf) = placed.iter().rev().find_map(|entry| entry.uuid.clone()) else {
+    let Some(line) = line(placed, parents, until) else {
         return every();
     };
-    let mut line = HashSet::new();
-    let mut at = Some(leaf);
-    let mut whole = false;
-    while let Some(uuid) = at {
-        if !line.insert(uuid.clone()) {
-            break;
-        }
-        at = match parents.get(&uuid) {
-            Some(Link::To(parent)) => Some(parent.clone()),
-            Some(Link::Root) => {
-                whole = true;
-                None
-            }
-            Some(Link::Unknown) | None => None,
-        };
-    }
-    if !whole {
-        return every();
-    }
+    let line: HashSet<String> = line.into_iter().collect();
     placed
         .iter()
         .filter_map(|entry| match &entry.uuid {
@@ -407,6 +547,38 @@ fn conversation(
                 .map(|_| (entry.index, true)),
         })
         .collect()
+}
+
+/// The conversation's line, from its last entry, or from `until` where the
+/// transcript holds it, back through each entry's parent to the first, the
+/// last entry first. None where it breaks off before the first.
+fn line(
+    placed: &[Placed],
+    parents: &HashMap<String, Link>,
+    until: Option<&str>,
+) -> Option<Vec<String>> {
+    let leaf = until
+        .filter(|until| parents.contains_key(*until))
+        .map(str::to_string)
+        .or_else(|| placed.iter().rev().find_map(|entry| entry.uuid.clone()))?;
+    let mut line = Vec::new();
+    let mut seen = HashSet::new();
+    let mut at = Some(leaf);
+    while let Some(uuid) = at {
+        if !seen.insert(uuid.clone()) {
+            return None;
+        }
+        at = match parents.get(&uuid) {
+            Some(Link::To(parent)) => Some(parent.clone()),
+            Some(Link::Root) => {
+                line.push(uuid);
+                return Some(line);
+            }
+            Some(Link::Unknown) | None => return None,
+        };
+        line.push(uuid);
+    }
+    None
 }
 
 /// The tool results a user entry carries.
