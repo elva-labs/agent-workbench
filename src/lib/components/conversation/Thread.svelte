@@ -1104,7 +1104,9 @@
     {#if conversation.earlierCut}
       <p class="intro" data-testid="earlier-cut">The start of this conversation is too long to show here.</p>
     {/if}
-    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")}
+    <!-- Earlier messages that could not be read are said to be missing for
+         as long as the thread is drawn, above whatever comes after. -->
+    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && (conversation.earlier === "unread" || (conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")))}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? `Earlier messages of this session ${notRead(conversation.earlierWhy)}` : intro}
       </p>

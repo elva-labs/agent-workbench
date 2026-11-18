@@ -134,14 +134,21 @@ export interface FakeIntegrated {
       and what it said and did in whole, each with when; nothing of what
       only streamed. Codex names no model on a turn and keeps no plan's
       steps, and a thread it does not have is an error, in the core's
-      words; Claude Code has nothing of a conversation it did not write. */
+      words; so is a conversation Claude Code wrote no transcript of. */
   history(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
   stop(id: string): void;
   subscribe(handler: (event: IntegratedEvent) => void): () => void;
 
   /** Writes a past conversation into the transcript of `session` ahead
-      of anything said in it since, as the agent given keeps it. */
-  transcript(session: string, items: IntegratedHistory["items"], agent?: "claude-code" | "codex"): void;
+      of anything said in it since, as the agent given keeps it: under the
+      account's configuration directory `configDir` where one is given,
+      and read from there alone. */
+  transcript(
+    session: string,
+    items: IntegratedHistory["items"],
+    agent?: "claude-code" | "codex",
+    configDir?: string,
+  ): void;
   /** Holds what the agent says to every answer and reply until
       `releaseAnswers`, as a core whose agent takes its time does: the call
       is taken and checked at once, and the answer told on release. */
@@ -384,6 +391,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
   const steersHeld: (() => void)[] = [];
   /** Each conversation's transcript, by its id. */
   const transcripts = new Map<string, Written[]>();
+  /** The configuration directory a transcript was written under, where a
+      test named one. */
+  const transcriptDirs = new Map<string, string>();
   /** The conversations Codex keeps, the rest being Claude Code's. */
   const threads = new Set<string>();
   let historyHeld: { wait: Promise<void>; release: () => void } | null = null;
@@ -730,13 +740,18 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       const own = threads.has(historyOptions.session) === codex;
       // Read when asked; a held read only answers late.
       const items = JSON.parse(JSON.stringify(own ? (transcripts.get(historyOptions.session) ?? []) : [])) as Written[];
+      const dir = transcriptDirs.get(historyOptions.session);
+      const kept = transcripts.has(historyOptions.session) && (dir === undefined || dir === historyOptions.configDir);
       if (historyHeld !== null) await historyHeld.wait;
       if (codex && !own) throw new Error("Codex does not have this conversation");
+      if (!codex && !kept)
+        throw new Error(`Claude Code has no transcript of it in ${historyOptions.configDir ?? "~/.claude"}`);
       return { items, cut: false };
     },
 
-    transcript(session, items, agent = "claude-code") {
+    transcript(session, items, agent = "claude-code", configDir) {
       if (agent === "codex") threads.add(session);
+      if (configDir !== undefined) transcriptDirs.set(session, configDir);
       transcripts.set(session, [...items, ...(transcripts.get(session) ?? [])]);
     },
 

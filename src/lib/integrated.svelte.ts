@@ -811,7 +811,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       const row = byKey(key);
       const earlier =
         row !== null && link.conversation.earlier === null && link.conversation.entries.length === 0
-          ? layEarlier(row, link.conversation, runFrom(snapshotting))
+          ? layEarlier(row, link.conversation, runFrom(snapshotting), undefined, spoken)
           : null;
       const snapshot = await snapshotting;
       const session = byKey(key);

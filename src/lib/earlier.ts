@@ -2,6 +2,7 @@ import { dirFor } from "$lib/accounts.svelte";
 import { core, type IntegratedHistory, type IntegratedSnapshot } from "$lib/core";
 import type { Conversation, Run } from "$lib/conversation.svelte";
 import type { Session } from "$lib/sessions.svelte";
+import { workflowsKnown } from "$lib/workflows.svelte";
 
 /**
  * What an integrated session said before this window took it up, read
@@ -20,18 +21,25 @@ import type { Session } from "$lib/sessions.svelte";
     said before. */
 export const EARLIER_WAIT = 5000;
 
+/** Why the earlier messages of a session that was spoken to are not
+    drawn, when its agent's record of it holds none. */
+export const NOTHING_KEPT = "its agent's record of it holds no message";
+
 /**
  * Reads what the session said before and lays it in its conversation once
  * read, with this run beginning where `run` says. Answers once it is laid,
  * or once `wait` is over. An agent whose history is not read, or a read
  * that fails, leaves the conversation saying it was not read, and why
- * where the read said.
+ * where the read said. So does a read that finds nothing for a session
+ * that was `spoken` to, which has something to find; for one that was not,
+ * there is nothing to say.
  */
 export function layEarlier(
   session: Session,
   conversation: Conversation,
   run: Run | null | Promise<Run | null>,
   wait = EARLIER_WAIT,
+  spoken = true,
 ): Promise<void> {
   const id = session.resumedFrom ?? session.id;
   conversation.earlier = "loading";
@@ -39,6 +47,11 @@ export function layEarlier(
     let history: IntegratedHistory | null = null;
     let why: string | null = null;
     try {
+      // The account's directory comes from the settings, which the window
+      // has by the time it has their workflows. A resumed start waits for
+      // them too; read before then, the agent's own directory would stand
+      // in for the account's, and the session is not kept there.
+      await workflowsKnown();
       if (id !== null)
         history = await core().integratedHistory({
           agent: session.agent,
@@ -52,7 +65,9 @@ export function layEarlier(
       why = typeof error === "string" ? error : error instanceof Error ? error.message : null;
     }
     const began = await Promise.resolve(run).catch(() => null);
-    if (history === null) conversation.unread(why);
+    if (!spoken) conversation.lay(history ?? { items: [], cut: false }, began);
+    else if (history === null) conversation.unread(why);
+    else if (history.items.length === 0) conversation.unread(NOTHING_KEPT);
     else conversation.lay(history, began);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -64,16 +79,17 @@ export function layEarlier(
 
 /**
  * What a start of the session's agent does with what it said before: a
- * resumed session whose thread has none of it yet draws the line where
- * this run begins and reads it, without waiting for it; one whose earlier
- * messages are still being read, as after a restart, draws the line for
- * them to go above; and one whose thread goes on from a run drawn here
- * marks where this run begins under it.
+ * resumed session whose thread holds nothing of it yet, at most notes the
+ * window made, draws the line where this run begins and reads it, without
+ * waiting for it; one whose earlier messages are still being read, as
+ * after a restart, draws the line for them to go above; and one whose
+ * thread goes on from a run drawn here marks where this run begins under
+ * it.
  */
 export function earlierAtStart(session: Session, conversation: Conversation) {
   const now = Date.now();
   if (session.resumedFrom === null) return;
-  if (conversation.earlier === null && conversation.entries.length === 0) {
+  if (conversation.earlier === null && conversation.entries.every((entry) => entry.kind === "note")) {
     conversation.beganAbove(now);
     void layEarlier(session, conversation, { at: now, since: null });
   } else if (conversation.earlier === "loading") conversation.beganAbove(now);
