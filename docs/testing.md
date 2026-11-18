@@ -103,11 +103,14 @@ The app takes its environment, its home among it, from whatever starts it,
 and the agent's tools reach the app through the files in that home. On Linux
 each test file's app therefore gets WebDriver ports of its own, the harness
 asks for a session only once the driver behind `tauri-driver` answers, and
-both drivers are ended whether the app came up or not. Once the app is up,
-the harness waits for the heartbeat its core writes in the run's home, and
-fails there if none comes. A browser tool call the app leaves unanswered
-says whether the core still writes that heartbeat and whether the window
-still answers the driver.
+both drivers are ended whether the app came up or not. Ending them does not
+always end the app, and WebKit's own processes outlive it for a while; all
+of them write to the output the test runner reads, which then cannot exit,
+so stopping also ends whatever still runs under the run's home. Once the app
+is up, the harness waits for the heartbeat its core writes in the run's
+home, and fails there if none comes. A browser tool call the app leaves
+unanswered says whether the core still writes that heartbeat and whether the
+window still answers the driver.
 
 On Linux the tier also drives the embedded browser. A tab's page is a
 native view the WebDriver session cannot see into, so where it sits and what

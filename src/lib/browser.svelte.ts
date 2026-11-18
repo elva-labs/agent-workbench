@@ -116,7 +116,17 @@ export function titleFor(tab: BrowserTab): string {
   }
 }
 
+/** The revision of the last snapshot applied. */
+let applied = 0;
+
+/** Shows the core's tabs as a snapshot reports them. Snapshots come as
+    events from whichever thread of the core saw a change and as answers to
+    the window's own calls, and can arrive out of the order they were taken
+    in: one older than the last applied is dropped, or it would put back a
+    title, an address or a greyed button the tab has since moved past. */
 export function applySnapshot(snapshot: BrowserSnapshot) {
+  if (snapshot.revision < applied) return;
+  applied = snapshot.revision;
   const activeChanged = browser.active !== snapshot.active;
   browser.tabs = snapshot.tabs;
   browser.owner = snapshot.owner;
@@ -356,6 +366,7 @@ export async function initBrowser() {
 
 /** Test seam. */
 export function resetBrowser() {
+  applied = 0;
   browser.tabs = [];
   browser.owner = null;
   browser.active = null;

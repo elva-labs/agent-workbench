@@ -4,6 +4,8 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -268,6 +270,48 @@ export async function end(child: ChildProcess) {
     const gone = new Promise<void>((done) => child.once("exit", () => done()));
     child.kill(signal);
     await Promise.race([gone, pause(5_000)]);
+  }
+}
+
+/** The processes running with `home` as their HOME, read from /proc: the
+    app, the web and network processes WebKit starts for it, and whatever
+    it runs. Every launch has a home of its own, so these are that
+    launch's and no one else's. */
+export function processesUnder(home: string): number[] {
+  const found: number[] = [];
+  for (const entry of readdirSync("/proc")) {
+    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
+    try {
+      const environment = readFileSync(`/proc/${entry}/environ`, "latin1");
+      if (environment.split("\0").includes(`HOME=${home}`))
+        found.push(Number(entry));
+    } catch {
+      // Gone already, or not ours to read.
+    }
+  }
+  return found;
+}
+
+/** Ends whatever still runs under `home` and waits until it has gone.
+    Ending the driver does not take the app with it: WebKit's processes
+    outlive the app for a while, and the app itself can outlive a driver
+    that was ended before it got to it. Each holds the output this test
+    file's worker was started with, and the run cannot exit while any of
+    them does. */
+export async function endUnder(home: string) {
+  for (const signal of ["SIGTERM", "SIGKILL"] as const) {
+    const left = processesUnder(home);
+    if (left.length === 0) return;
+    for (const pid of left) {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        // Gone in the meantime.
+      }
+    }
+    const until = Date.now() + 5_000;
+    while (Date.now() < until && processesUnder(home).length > 0)
+      await pause(100);
   }
 }
 
@@ -605,7 +649,8 @@ async function attach(home: string, bin: string): Promise<App> {
     starts it. So each launch gives both drivers ports of its own, and ends
     them whether the launch comes up or not: a driver left listening by an
     earlier file would otherwise start this file's app with that file's
-    home, where this file's tool calls never reach it. */
+    home, where this file's tool calls never reach it. Stopping also ends
+    whatever still runs under the launch's home, the app among it. */
 async function bridge(home: string, bin: string): Promise<App> {
   const env = environment(home, bin);
   const [port, nativePort] = await freePorts(2);
@@ -634,10 +679,12 @@ async function bridge(home: string, bin: string): Promise<App> {
       stop: async () => {
         await driver.quit().catch(() => {});
         await end(tauriDriver);
+        await endUnder(home);
       },
     };
   } catch (failure) {
     await end(tauriDriver);
+    await endUnder(home);
     throw failure;
   }
 }

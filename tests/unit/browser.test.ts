@@ -440,6 +440,56 @@ describe("snapshot events", () => {
     expect(browser.active).toBeNull();
   });
 
+  it("keep the newest when an older one arrives after it", async () => {
+    await initBrowser();
+    const page = "http://localhost/a.html";
+    const front = { front: true, canGoBack: true };
+
+    // Back to a page: its title lands, then a snapshot taken just before
+    // it, held up on its way, arrives last.
+    tabsHandler!({
+      revision: 5,
+      tabs: [tab(1, page, { ...front, title: "Page A" })],
+      owner: ME,
+      active: 1,
+    });
+    tabsHandler!({
+      revision: 4,
+      tabs: [tab(1, page, { ...front, title: "" })],
+      owner: ME,
+      active: 1,
+    });
+
+    expect(activeTab()?.title).toBe("Page A");
+    expect(activeTab()?.canGoBack).toBe(true);
+  });
+
+  it("keep an event newer than the answer of a call that was out", async () => {
+    await initBrowser();
+    browser.tabs = [tab(1, "https://a.example/"), tab(2, "https://b.example/")];
+    front(1);
+    nextSnapshot = {
+      revision: 2,
+      tabs: [tab(1, "https://a.example/"), tab(2, "https://b.example/", { front: true })],
+      owner: ME,
+      active: 2,
+    };
+
+    const activating = activate(2);
+    tabsHandler!({
+      revision: 3,
+      tabs: [
+        tab(1, "https://a.example/"),
+        tab(2, "https://b.example/", { front: true, title: "B" }),
+      ],
+      owner: ME,
+      active: 2,
+    });
+    await activating;
+
+    expect(activeTab()?.title).toBe("B");
+  });
+
   it("loads what is already open, once, when the store starts", async () => {
     tabsSnapshot = { tabs: [tab(9, "https://z.example/")], active: 9 };
     await initBrowser();
