@@ -348,7 +348,7 @@ test("the grip fades without motion where the system asks for less of it", async
 test("more contrast outlines the cards and draws a line in the dividers inside a pane", async ({ page }) => {
   await open(page);
   await page.getByTestId("file-tree").getByText("mod.rs").first().click();
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   const edge = () => page.locator(`${AGENT} > .body`).evaluate((card) => getComputedStyle(card, "::after").borderTopColor);
   const inner = page.getByRole("separator", { name: "Resize the file tree" }).locator(".rest");
   const rest = () => inner.evaluate((line) => getComputedStyle(line).backgroundColor);
@@ -431,7 +431,7 @@ test.describe("the focused card's mark", () => {
       if (contrast) await page.emulateMedia({ contrast: "more" });
       await open(page);
       await page.getByTestId("mode-editor").click();
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       await page.getByTestId("file-tree").getByText("README.md").dblclick();
       await page.locator(".cm-content").click();
       await page.keyboard.press(`${MOD}+f`);
@@ -460,7 +460,7 @@ test.describe("the focused card's mark", () => {
 test("the peeked sessions pane stands over the agent's card as a sheet, with a shadow", async ({ page }) => {
   await open(page);
   await page.getByTestId("file-tree").getByText("mod.rs").first().click();
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await page.keyboard.press(`${MOD}+1`);
   await expect(page.locator(".sessions-slot.peeking")).toHaveCount(1);
   const shadow = await page.locator(`.sessions-slot.peeking ${SESSIONS}`).evaluate((pane) => getComputedStyle(pane).boxShadow);

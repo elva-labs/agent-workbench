@@ -463,7 +463,7 @@ for (const look of ["modern", "terminal"] as const)
     await page.mouse.move(900, 400, { steps: 3 });
     await slidOut(page);
     await page.keyboard.press(`${CMD}+Shift+E`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await clear("compact, editing");
     await page.keyboard.press(`${CMD}+y`);
     await slidIn(page);
@@ -497,7 +497,7 @@ test("peeks over the focused card's mark while reviewing", async ({ page }) => {
   await expect(page.locator(AGENT)).toBeVisible();
   await page.getByTestId("new-session").click();
   await page.locator("[data-testid='file-tree']").getByText("mod.rs", { exact: true }).click();
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await page.keyboard.press(`${MOD}+2`);
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   // The columns ease into the reviewing shape: the card is read once it

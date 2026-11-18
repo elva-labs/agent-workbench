@@ -114,10 +114,12 @@ test.describe("the session on screen", () => {
       expect(await style(figure(page, kind), "color")).toBe(ink);
     }
     await expect(page.getByTestId("limits-age")).toHaveCount(0);
-    // In order: focus and mode, the model and effort, the account and its
-    // figures.
+    // In order: the focus, the model and effort, the account and its
+    // figures. The session's state is its header's to say, and the mode
+    // the corner's switch, so the bar says neither.
+    await expect(page.getByTestId("status-bar")).not.toContainText(/working|idle|reviewing|editing/);
     const xs = await Promise.all(
-      ["focus-readout", "mode-readout", "model-readout", "effort-readout", "account-readout", "limits-readout"].map(
+      ["focus-readout", "model-readout", "effort-readout", "account-readout", "limits-readout"].map(
         async (id) => (await page.getByTestId(id).boundingBox())!.x,
       ),
     );
@@ -371,12 +373,11 @@ test.describe("a terminal session", () => {
   });
 });
 
-test("with no session selected, says only the focus, the mode and what waits", async ({ page }) => {
+test("with no session selected, says only the focus and what waits", async ({ page }) => {
   await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
   await page.goto("/");
   await expect(page.getByTestId("focus-readout")).toBeVisible();
-  await expect(page.getByTestId("mode-readout")).toBeVisible();
-  for (const id of ["model-readout", "effort-readout", "account-readout", "account-group", "limit-figure"])
+  for (const id of ["mode-readout", "model-readout", "effort-readout", "account-readout", "account-group", "limit-figure"])
     await expect(page.getByTestId(id)).toHaveCount(0);
 });
 
@@ -388,7 +389,7 @@ test.describe("a narrow window", () => {
     ["reset", "limit-figure"],
   ];
 
-  test("lets the focus and mode go first, then the prefix, then folds the figures, then the reset time, and never cuts what waits", async ({
+  test("lets the focus go first, then the prefix, then folds the figures, then the reset time, and never cuts what waits", async ({
     page,
   }) => {
     await open(page, { accounts: WORK });
@@ -512,7 +513,7 @@ test.describe("a narrow window", () => {
     await open(page, { accounts: WORK });
     await report(page, THREE);
     await page.getByTestId("mode-editor").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await page.setViewportSize({ width: 460, height: 800 });
     await expect(bar(page)).toHaveAttribute("data-fit", /chrome/);
     await expect(page.getByTestId("model-readout")).toBeVisible();

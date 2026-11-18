@@ -184,10 +184,10 @@ test("a chord changed by an agent works at once", async ({ page }) => {
 
   await page.locator(AGENT).click();
   await page.keyboard.press(`${MOD}+g`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await page.keyboard.press("Escape");
   await page.keyboard.press(`${MOD}+d`);
-  await expect(page.getByTestId("mode-readout")).not.toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", "reviewing");
 });
 
 test("asks one change at a time", async ({ page }) => {

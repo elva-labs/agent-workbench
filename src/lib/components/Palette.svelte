@@ -19,6 +19,7 @@
     type PaletteItem,
   } from "$lib/palette.svelte";
   import { isLive } from "$lib/sessions.svelte";
+  import { conducting } from "$lib/orchestrator.svelte";
 
   /**
    * The palette, over the workbench like the sessions to resume: a field
@@ -283,7 +284,7 @@
                 <span
                   class="dot"
                   class:live={isLive(item.session)}
-                  class:working={isLive(item.session) && item.session.working}
+                  class:working={isLive(item.session) && conducting(item.session)}
                   class:dormant={item.session.status === "dormant"}
                   class:unread={item.session.unread}
                   class:permission={item.session.needs === "permission"}

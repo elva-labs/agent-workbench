@@ -37,9 +37,9 @@ async function settled(page: Page) {
 }
 
 async function flip(page: Page) {
-  const was = await page.getByTestId("mode-readout").textContent();
+  const was = await page.getByTestId("shell").getAttribute("data-mode");
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+  await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
   await settled(page);
 }
 
@@ -68,7 +68,7 @@ test.describe("the editing shape", () => {
     await open(page, 1728);
     const before = await box(page, AGENT);
     await flip(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
 
     const agent = await box(page, AGENT);
     const files = await box(page, FILES);
@@ -100,7 +100,7 @@ test.describe("the editing shape", () => {
 
     // Forced, not chosen: back in agent mode the pane is open again.
     await flip(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect.poll(async () => (await box(page, SESSIONS)).width).toBeGreaterThan((await foldedWidth(page)) + 1);
   });
 
@@ -159,7 +159,7 @@ async function switchStandsStill(page: Page) {
   expect(Math.abs(before.x + before.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
   await page.getByTestId("mode-editor").click();
   await settled(page);
-  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   const after = await box(page, `${AGENT} [data-testid='corner']`);
   expect(Math.abs(after.x + after.width - (before.x + before.width))).toBeLessThanOrEqual(1);
   expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
@@ -183,7 +183,7 @@ test.describe("the switch", () => {
 
     await page.getByTestId("mode-editor").click();
     await settled(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(page.getByTestId("mode-editor")).toHaveAttribute("aria-checked", "true");
     const after = await box(page, "[data-testid='corner']");
     expect(Math.abs(after.x + after.width - (before.x + before.width))).toBeLessThanOrEqual(1);
@@ -194,7 +194,7 @@ test.describe("the switch", () => {
 
     await page.getByTestId("mode-agent").click();
     await settled(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.locator(`${FILES} [data-testid='corner']`)).toBeVisible();
   });
 
@@ -203,7 +203,7 @@ test.describe("the switch", () => {
     await flip(page);
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     // Every file is listed, not only what changed.
     await expect(page.locator("[data-testid='file-tree']").getByText("README.md", { exact: true })).toBeVisible();
   });
@@ -214,7 +214,7 @@ test.describe("the switch", () => {
     await page.keyboard.type("editor mode");
     await page.keyboard.press("Enter");
     await settled(page);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   });
 });
 
@@ -371,7 +371,7 @@ test.describe("the right pane's default widths, as Linux", () => {
     const dragged = Math.round((await box(page, AGENT)).width);
     expect(dragged).toBeGreaterThanOrEqual(519);
     await page.reload();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     expect(Math.round((await box(page, AGENT)).width)).toBe(dragged);
     await splitter.dblclick();
     await settled(page);
@@ -388,7 +388,7 @@ for (const linux of [false, true]) {
       const corner = await box(page, `${FILES} [data-testid='corner']`);
       expect(corner.x + corner.width).toBeLessThanOrEqual((await cornerEdge(page, FILES)) + 1);
       await page.getByTestId("mode-editor").click();
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       expect(await controls(page)).toEqual([]);
     }
 
@@ -438,7 +438,7 @@ for (const linux of [false, true]) {
       await page.getByTestId("toggle-right").click();
       await page.setViewportSize({ width: 1728, height: 900 });
       await page.reload();
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       await settled(page);
       expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBe(chosen);
     });
@@ -459,7 +459,7 @@ for (const linux of [false, true]) {
         );
       });
       await open(page, 1728);
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       await page.getByTestId("start-agent").click();
       const cols = () =>
         page.evaluate(
@@ -485,7 +485,7 @@ for (const linux of [false, true]) {
         requestAnimationFrame(sample);
       });
       await page.reload();
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       await expect.poll(cols).toBeGreaterThan(0);
       await page.waitForTimeout(400);
       const resizes = await page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0);
@@ -526,7 +526,7 @@ test.describe("the flip back onto what was presented", () => {
           requestAnimationFrame(sample);
         }),
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(1);
   });
 });
@@ -544,9 +544,9 @@ for (const linux of [false, true]) {
       // As Linux on a Mac the chord is Ctrl's, so the switch is clicked.
       const turn = async () => {
         if (!linux) return flip(page);
-        const was = await page.getByTestId("mode-readout").textContent();
+        const was = await page.getByTestId("shell").getAttribute("data-mode");
         await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
-        await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+        await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
         await settled(page);
       };
       await page.getByTestId("start-agent").click();
@@ -657,7 +657,7 @@ test.describe("the editor and its tabs", () => {
     await page.locator("[data-testid='session-row']").filter({ hasText: "session 1" }).click();
     await expect(tab(page, "README.md")).toBeVisible();
     await expect(tab(page, "Cargo.toml")).toHaveCount(0);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   });
 
   test("puts the keyboard in the editor and the tree on the focus chord and Escape", async ({ page }) => {
@@ -708,9 +708,9 @@ test.describe("from agent mode to the editor", () => {
         cwd: "/home/ada/dev/demo",
       }),
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await page.getByTestId("viewer-edit").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(tab(page, "src/main.rs")).toBeVisible();
     await expect(page.getByTestId("editor-position")).toHaveText(/Ln 3, Col 1/);
     await expect(page.locator(".cm-content")).toBeFocused();
@@ -727,7 +727,7 @@ test.describe("from agent mode to the editor", () => {
     await page.keyboard.press("ControlOrMeta+Home");
     await page.keyboard.press("Shift+End");
     await page.keyboard.press(`${MOD}+d`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(page.locator(".cm-content")).toBeFocused();
   });
 });
@@ -751,7 +751,7 @@ test.describe("what a tool points at in editor mode", () => {
     await expect(tab(page, "src/main.rs")).toBeVisible();
     await expect(page.getByTestId("editor-note")).toHaveText("The entry point.");
     await expect(page.getByTestId("editor-position")).toHaveText(/Ln 3/);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   });
 
   test("opens a diff as the tab's Diff view", async ({ page }) => {
@@ -779,7 +779,7 @@ test.describe("what a tool points at in editor mode", () => {
     );
     await expect(page.getByTestId("media-caption")).toHaveText("The screenshot.");
     await expect(page.locator(".cm-content")).toHaveCount(0);
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await page.getByTestId("viewer").getByRole("button", { name: "Close the viewer" }).click();
     await expect.poll(() => editorText(page)).toContain("// README.md");
   });
@@ -1096,7 +1096,7 @@ test.describe("questions before anything unsaved goes", () => {
     await flip(page);
     await page.evaluate(() => (window as unknown as { __quit: () => void }).__quit());
     await expect(page.getByTestId("close-window")).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await page.getByTestId("close-window-confirm").click();
     await expect.poll(() => controls(page)).toEqual(["quit"]);
   });
@@ -1557,7 +1557,7 @@ test.describe("Cmd+W with no tab in editor mode", () => {
       );
       await open(page, 1728);
       await page.keyboard.press(`${platform.mod}+Shift+E`);
-      await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
       await page.keyboard.press(`${platform.mod}+3`);
       await page.keyboard.press(`${platform.mod}+w`);
       await expect.poll(() => controls(page)).toEqual(["close"]);
@@ -1717,7 +1717,7 @@ test.describe("the question's three buttons", () => {
       }
       await at.goto("/");
       await expect(at.locator(AGENT)).toBeVisible();
-      if ((await at.getByTestId("mode-readout").textContent()) !== "editing") await flip(at);
+      if ((await at.getByTestId("shell").getAttribute("data-mode")) !== "editing") await flip(at);
       await at.getByTestId("new-session").click();
       await expect(at.locator(AGENT)).toContainText("running");
       await treeRow(at, "README.md").dblclick();
@@ -1882,9 +1882,9 @@ for (const linux of [false, true]) {
       await openIntegrated(page, 1440);
       // As Linux on a Mac the chord is Ctrl's, so the switch is clicked.
       const turn = async () => {
-        const was = await page.getByTestId("mode-readout").textContent();
+        const was = await page.getByTestId("shell").getAttribute("data-mode");
         await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
-        await expect(page.getByTestId("mode-readout")).not.toHaveText(was ?? "");
+        await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
         await settled(page);
       };
       await integrated(
@@ -1993,7 +1993,7 @@ test.describe("an integrated session beside the editor", () => {
     await expect(tab(page, "README.md")).toHaveCount(0);
     await expect(page.getByTestId("composer-input")).toBeFocused();
     await page.keyboard.press(`${MOD}+Shift+E`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
   });
 
   test("hides and shows the agent, the draft and the thread kept", async ({ page }) => {
@@ -2184,7 +2184,7 @@ for (const linux of [false, true]) {
           await page.setViewportSize({ width: 1440, height: 900 });
           await settled(page);
           await page.getByTestId("mode-editor").click();
-          await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+          await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
           await settled(page);
           await check("editor mode at 1440");
         });

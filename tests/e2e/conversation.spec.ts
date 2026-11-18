@@ -267,6 +267,28 @@ test.describe("an integrated session", () => {
     await expect(meta).toHaveText("idle");
   });
 
+  test("says working in the header and on its row while a turn only waits on its sessions", async ({ page }) => {
+    await openIntegrated(page);
+    const meta = page.locator(`${AGENT} header .meta`);
+    const row = page.getByTestId("session-row");
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Wait for the review.");
+       f.startTurn("${H}");
+       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+    );
+    await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
+    await expect(meta).toHaveText("working");
+    await expect(row.locator(".dot")).toHaveClass(/\bworking\b/);
+    await expect(row.locator(".dot")).toHaveAttribute("title", "working");
+    // The status bar says nothing of the session's state.
+    await expect(page.getByTestId("status-bar")).not.toContainText(/working|idle/);
+    await agent(page, `f.endTurn("${H}");`);
+    await expect(meta).toHaveText("idle");
+    await expect(row.locator(".dot")).not.toHaveClass(/\bworking\b/);
+    await expect(row.locator(".dot")).toHaveAttribute("title", "idle");
+  });
+
   test("comes back after a restart, and resumes its conversation by its id", async ({ page }) => {
     await openIntegrated(page);
     await expect(page.getByTestId("conversation")).toBeVisible();
@@ -1914,7 +1936,7 @@ test.describe("in the sessions pane, an integrated session", () => {
     await openIntegrated(page);
     const own = page.getByTestId("session-row").filter({ hasText: "session 1" });
     await expect(own.locator(".dot")).toHaveClass(/live/);
-    await expect(own.locator(".state")).toHaveText("running");
+    await expect(own.locator(".state")).toHaveText("idle");
     await agent(page, `f.startTurn("${H}");`);
     await expect(own.locator(".dot")).toHaveClass(/working/);
     await expect(own.locator(".state")).toHaveText("working");
@@ -2629,7 +2651,8 @@ test.describe("after a reload, an orchestrated session", () => {
     await expect(own).toHaveCount(1);
     await expect(own.locator(".label")).toHaveText("session 1");
     await own.click();
-    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("idle");
+    // It is at rest itself, and the session it started is in its turn.
+    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("a session working");
     await expect(page.locator("[data-testid='conversation']:visible").getByTestId("thread-intro")).not.toContainText(
       "Earlier messages",
     );
@@ -2950,7 +2973,7 @@ test.describe("the conversation's width", () => {
        f.endTurn("${H}");`,
     );
     await page.keyboard.press("ControlOrMeta+Shift+E");
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     const at = await page.evaluate((agent) => {
       const pane = document.querySelector(agent)!.getBoundingClientRect();
       const thread = document.querySelector(`${agent} .thread`)!;

@@ -71,7 +71,7 @@ test.describe("the browser's tools", () => {
       session: "session-1",
     });
 
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect.poll(() => answerTo(page, "b-1")).not.toBeNull();
     const answer = (await answerTo(page, "b-1"))!;
@@ -95,7 +95,7 @@ test.describe("the browser's tools", () => {
       session: "session-2",
     });
     await expect.poll(() => answerTo(page, "b-h0")).not.toBeNull();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "1");
 
     await push(page, {
@@ -127,7 +127,7 @@ test.describe("the browser's tools", () => {
     // The sessions pane is folded while reviewing: stepped to by chord.
     await page.keyboard.press("ControlOrMeta+Shift+ArrowUp");
     await expect(page.locator(".session.on")).toContainText("session 1");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("browser-tab")).toHaveCount(1);
     await expect(page.locator("[data-testid='browser-tab'].active")).toHaveAttribute("data-tab-id", "2");
 
