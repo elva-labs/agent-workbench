@@ -116,6 +116,10 @@ struct SpawnParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    /// The user agreed to bring back what a conversation held at the point
+    /// it went back to left out.
+    #[serde(default)]
+    bring_back: bool,
     cols: u16,
     rows: u16,
 }
@@ -196,6 +200,17 @@ struct IntegratedSendParams {
 struct IntegratedWithdrawParams {
     id: String,
     message: String,
+}
+
+#[derive(Deserialize)]
+struct IntegratedRewindParams {
+    id: String,
+    message: String,
+    #[serde(default)]
+    conversation: bool,
+    /// The files the user was shown, to put back; none leaves them.
+    #[serde(default)]
+    files: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -490,6 +505,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.bring_back,
                 p.cols,
                 p.rows,
                 make_output,
@@ -579,6 +595,32 @@ pub fn dispatch(
                 &p.session,
                 p.config_dir.as_deref(),
             )?)
+        }
+        "integrated_rewind_points" => {
+            let p: IdParams = parse(params)?;
+            value(core.integrated_rewind_points(&p.id)?)
+        }
+        "integrated_rewind_preview" => {
+            let p: IntegratedWithdrawParams = parse(params)?;
+            value(core.integrated_rewind_preview(&p.id, &p.message)?)
+        }
+        "integrated_rewind" => {
+            let p: IntegratedRewindParams = parse(params)?;
+            value(core.integrated_rewind(&p.id, &p.message, p.conversation, p.files.as_deref())?)
+        }
+        "integrated_held" => {
+            let p: IntegratedHistoryParams = parse(params)?;
+            value(core.integrated_held(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                &p.session,
+                p.config_dir.as_deref(),
+            ))
+        }
+        "integrated_rewind_undo" => {
+            let p: IdParams = parse(params)?;
+            value(core.integrated_rewind_undo(&p.id)?)
         }
         "account_limits" => {
             let p: AccountLimitsParams = parse(params)?;
@@ -861,8 +903,8 @@ mod tests {
     }
 
     // The history of a Claude Code session goes out as the events a live
-    // one sends, each with its time; an agent with no reader here answers
-    // with none.
+    // one sends, each with its time; one with no transcript is an error; an
+    // agent with no reader here answers with none.
     #[test]
     fn a_conversations_history_comes_back_as_timed_events() {
         let dir = Scratch::absent("protocol-history");
@@ -903,6 +945,16 @@ mod tests {
         assert_eq!(items[1]["model"], "claude-sonnet-5-5");
         assert_eq!(items[2]["event"]["type"], "text");
         assert_eq!(items[3]["event"]["type"], "turnEnded");
+        // A session with no transcript there is an error, which says where
+        // it was looked for.
+        let mut missing = params("claude-code");
+        missing["session"] = json!("s2");
+        let error = dispatch(&core(), "integrated_history", missing, no_output).unwrap_err();
+        assert!(
+            error.starts_with("Claude Code has no transcript of it in ")
+                && error.ends_with(&*dir.file_name().unwrap().to_string_lossy()),
+            "{error}"
+        );
         // Codex's history is read through Codex, which a session id that
         // cannot be a thread's never reaches.
         let codex = dispatch(&core(), "integrated_history", params("codex"), no_output).unwrap();
@@ -1365,6 +1417,16 @@ mod tests {
             ),
             ("integrated_snapshot", json!({ "id": "int-none" })),
             ("integrated_stop", json!({ "id": "int-none" })),
+            ("integrated_rewind_points", json!({ "id": "int-none" })),
+            (
+                "integrated_rewind_preview",
+                json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111" }),
+            ),
+            (
+                "integrated_rewind",
+                json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111", "conversation": true }),
+            ),
+            ("integrated_rewind_undo", json!({ "id": "int-none" })),
         ] {
             let error = dispatch(&core, method, params, no_output).expect_err(method);
             assert!(error.contains("no such session"), "{method}: {error}");

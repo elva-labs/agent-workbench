@@ -55,7 +55,8 @@ it through, as [settings](settings.md#cards) describes.
 Every pane header is one height in a look, 40 pixels in the modern look and
 35 in the terminal look, the terminal list's top row included, and each
 title's line sits in its middle, so the titles stand on one line across the
-window whatever a header holds.
+window whatever a header holds. What a header holds beside its title, such
+as a session's project and branch, is centred on that line.
 
 Inside a pane, a list beside what is read sits a step from the surface
 toward the ground: the tree beside the viewer or the editor, and the
@@ -124,13 +125,21 @@ keyboard on it there.
 ## The status bar
 
 The status bar is the row along the window's foot. From the left it names
-the pane that has the keyboard and the window's mode, then what the session
-on screen runs on, its model and its effort, then the account the session
-runs under, once accounts are named, with that account's allowance. At the
-right end stand how many sessions wait for you and, just before it, a word
-in passing, such as a new zoom, so they keep their place whatever the
-figures do. With no session on screen only the focus, the mode and those
-two remain.
+the pane that has the keyboard, then what the session on screen runs on,
+its model and its effort, then the account the session runs under, once
+accounts are named, with that account's allowance. At the right end stand
+how many sessions wait for you and, just before it, a word in passing, such
+as a new zoom, so they keep their place whatever the figures do. With no
+session on screen only the focus and those two remain. What the session is
+doing is said once, in the agent pane's header beside its name and by the
+dot on its row, and the window's mode by the switch in [the
+corner](#the-corner), so the bar says neither.
+
+In the modern look the bar lies on the ground with no rule of its own, so
+its row is the whole band of ground from the cards' foot to the window's,
+and its words stand in the middle of that band. In the terminal look, and
+where the system asks for more contrast, the bar is a row of its own under
+its rule, and its words stand in the middle of that row.
 
 For an integrated session the model and the effort are what the agent last
 said it runs on. Each opens a small menu of the choices the agent offers,
@@ -174,8 +183,8 @@ it says how old each part is: `Some figures are from just now, the rest
 from 20 min ago`. How the bar's menus and the popover take the
 keyboard and give it back is in the [focus model](focus-model.md#the-status-bar).
 
-Short of room, the bar lets its parts go in this order: the focus and the
-mode, then the word `account:`, then every figure but the one nearest its
+Short of room, the bar lets its parts go in this order: the focus, then
+the word `account:`, then every figure but the one nearest its
 end, then that figure's reset time. It measures what fits rather than going
 by the window's width, and only after all four are the model and the
 account's name cut short. What waits for you is never cut. The word in
@@ -273,13 +282,25 @@ column, so a window too narrow for the changes pane beside the fold holds
 it in compact mode.
 
 The pane comes back over the panes rather than beside them. The pointer
-moving onto a strip a few pixels wide along the window's left edge and
-resting there a moment, or leaving the window by that edge, slides it in
-from the edge at
+coming onto the window's left edge, the few pixels nearest it at any
+height, or leaving the window by that edge, slides it in from the edge at
 its open width, as tall as the panes, on its own ground with a soft
 shadow and, in the modern look, rounded corners on its free side; it
-pushes nothing. A pointer that was already resting where the strip comes
-to stand, as compact mode comes on, brings nothing until it moves. Once
+pushes nothing. How fast the pointer comes makes no difference. A quick
+move is seen at only a few points, so which edge it went out by is told
+from the line between the last two, and when the last is short of the
+edge, heading for it fast, the app asks the window where the cursor came
+to rest, which may be against the screen's edge where the page hears no
+more of it. A pointer that comes onto the edge from inside the window
+brings the pane at once; one that moves along the edge, or comes into the
+window across it, rests there a moment first, so a pass along the edge
+brings nothing. Only a plain move brings it: none with a button held, as
+in a drag of a divider or a selection, and none while the settings, the
+palette or another dialog is up, or anything but the window's ground
+stands at the edge. A leave the page is told of well inside the window is
+not taken for one by the edge; the app asks the window where the cursor
+went instead. A pointer that was already resting there as compact mode
+comes on brings nothing until it moves. Once
 the pointer has been away from it for a little under
 half a second it slides back out, and so it does at once on a press
 anywhere outside it. While a menu of its own is open, the new-session
@@ -305,10 +326,7 @@ keyboard where it was. Going to a session or project from the palette
 leaves the pane where it is, out of sight.
 
 What the pane would tell is not lost while it is out of sight. The status
-bar counts the sessions waiting for you, as it always does, and while one
-other than the session on screen is unread or asks for a permission, a
-short bar in the accent stands on the window's left edge, where the pane
-comes from.
+bar counts the sessions waiting for you, as it always does.
 
 Compact mode is a state of its own. The fold the toggle chose and the
 pane's width are left as they were, and stand again when it is turned off,

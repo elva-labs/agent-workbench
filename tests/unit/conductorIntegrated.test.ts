@@ -472,6 +472,7 @@ describe("the orchestrator's tools with an integrated session", () => {
         text: "How is it going?",
         instructions: null,
         reports: 'Session kid-1 stopped working. Its last line: "the scan is done"',
+        filesBack: null,
       });
       // The row is named by the user's words, not the note.
       expect(byKey(key)!.title).toBe("How is it going?");
@@ -495,7 +496,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       const text = sentTexts().at(-1)!;
       const line = `Session ${BOUNDED} stopped working. It has left no line.`;
       expect(text).toBe(`${REPORTS_HEAD}\n${line}\n\nHow is it going?`);
-      expect(spoken(text, true)).toEqual({ text: "How is it going?", instructions: null, reports: line });
+      expect(spoken(text, true)).toEqual({ text: "How is it going?", instructions: null, reports: line, filesBack: null });
     });
 
     it("leaves what the note said untold when the message never reaches the agent", async () => {

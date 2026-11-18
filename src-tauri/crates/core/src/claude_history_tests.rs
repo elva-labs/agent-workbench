@@ -11,6 +11,8 @@ const CONVERSATION: &str = include_str!("../fixtures/claude-history/conversation
 const REWOUND: &str = include_str!("../fixtures/claude-history/rewound.jsonl");
 const SUBAGENT: &str = include_str!("../fixtures/claude-history/subagent.jsonl");
 const SUBAGENT_OWN: &str = include_str!("../fixtures/claude-history/subagent-agent.jsonl");
+const MID_TURN: &str = include_str!("../fixtures/claude-history/rewind-mid-turn.jsonl");
+const COMPACTED: &str = include_str!("../fixtures/claude-history/rewind-compacted.jsonl");
 
 /// A configuration directory holding one transcript of the session, filed
 /// under `folder`.
@@ -383,9 +385,7 @@ fn skips_an_entry_whose_time_cannot_be_read_and_reads_the_rest() {
 fn finds_nothing_for_a_project_with_no_path() {
     let (home, _) = transcript("no-project", PROJECT, REWOUND);
     assert_eq!(find(&home, Path::new(""), None, SESSION), None);
-    assert!(read_session(&home, Path::new(""), None, SESSION)
-        .items
-        .is_empty());
+    assert!(read_session(&home, Path::new(""), None, SESSION).is_none());
 }
 
 #[test]
@@ -454,8 +454,7 @@ fn finds_nothing_for_an_id_that_is_not_one() {
 #[test]
 fn has_no_history_without_a_transcript() {
     let home = Scratch::new("claude-history-none");
-    let history = read_session(&home, Path::new(PROJECT), None, SESSION);
-    assert!(history.items.is_empty() && !history.cut);
+    assert!(read_session(&home, Path::new(PROJECT), None, SESSION).is_none());
 }
 
 #[test]
@@ -582,4 +581,115 @@ fn reads_the_times_a_transcript_writes() {
     ] {
         assert_eq!(millis(bad), None, "{bad}");
     }
+}
+
+fn mark(message: &str, at: Option<&str>, resumable: bool, files: bool) -> Mark {
+    Mark {
+        message: message.into(),
+        at: at.map(str::to_string),
+        resumable,
+        files,
+    }
+}
+
+/// The ids of the messages of the user's a history holds.
+fn messages(history: &History) -> Vec<String> {
+    history
+        .items
+        .iter()
+        .filter_map(|said| match &said.event {
+            Event::Message { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Claude Code 2.1.326 files a message typed during a turn as an attachment
+/// that hangs off the turn's last tool result, and a start from that
+/// result gives the model the turn up to it with the new message beside
+/// the result: the turn is cut where the message was taken in. It keeps no
+/// files for such a message.
+#[test]
+fn a_message_typed_during_a_turn_goes_back_to_the_turn_s_result_before_it() {
+    let (_home, path) = transcript("marks-mid-turn", PROJECT, MID_TURN);
+    assert_eq!(
+        marks(&path, None).unwrap(),
+        [
+            mark("m-1", None, true, true),
+            mark("m-2", Some("a-2"), true, true),
+            mark("m-3", Some("r-2"), true, false),
+        ]
+    );
+    assert_eq!(leaf(&path).as_deref(), Some("a-4"));
+    // Read as far as that result, the turn ends with the call it finished,
+    // and neither the message nor what the agent said after it is there.
+    let history = read_until(&path, Some("r-2"));
+    assert_eq!(messages(&history), ["m-1", "m-2"]);
+    let said = said(&history);
+    assert!(
+        said.iter().any(|line| line.contains("toolu_2")),
+        "{said:#?}"
+    );
+    assert!(
+        !said.iter().any(|line| line.contains("hello mid")),
+        "{said:#?}"
+    );
+    assert_eq!(said.iter().filter(|line| line.contains("done")).count(), 1);
+}
+
+/// A start from an earlier entry loads the conversation from where it was
+/// last compacted, so Claude Code 2.1.326 does not find an entry before
+/// that, and refuses to start: such a message cannot be gone back to, but
+/// its files can, the agent finding what it kept of them across the
+/// compaction. The first message is gone back to by starting anew.
+#[test]
+fn a_message_before_the_last_compaction_cannot_be_gone_back_to() {
+    let (_home, path) = transcript("marks-compacted", PROJECT, COMPACTED);
+    assert_eq!(
+        marks(&path, None).unwrap(),
+        [
+            mark("m-1", None, true, true),
+            mark("m-2", Some("a-2"), false, true),
+            mark("m-3", Some("r-2"), false, false),
+            mark("m-4", Some("o-1"), true, true),
+            mark("m-5", Some("a-5"), true, false),
+        ]
+    );
+    assert_eq!(leaf(&path).as_deref(), Some("a-6"));
+}
+
+/// A conversation held at the point it went back to has as its messages
+/// those before that point, and reads as far as it.
+#[test]
+fn a_conversation_held_at_an_entry_ends_there() {
+    let (_home, path) = transcript("marks-held", PROJECT, COMPACTED);
+    let held = marks(&path, Some("a-5")).unwrap();
+    assert_eq!(
+        held.iter()
+            .map(|mark| mark.message.as_str())
+            .collect::<Vec<_>>(),
+        ["m-1", "m-2", "m-3", "m-4"]
+    );
+    let history = read_until(&path, Some("a-5"));
+    assert_eq!(messages(&history), ["m-1", "m-2", "m-3", "m-4"]);
+    assert!(!said(&history)
+        .iter()
+        .any(|line| line.contains("hello four")));
+    // An entry the transcript does not hold reads it to its newest.
+    assert_eq!(
+        messages(&read_until(&path, Some("nowhere"))),
+        messages(&read(&path))
+    );
+    assert_eq!(messages(&read(&path)), ["m-1", "m-2", "m-3", "m-4", "m-5"]);
+}
+
+#[test]
+fn a_transcript_whose_line_breaks_off_has_no_marks() {
+    let broken = MID_TURN.replace("\"parentUuid\": \"a-2\"", "\"parentUuid\": \"gone\"");
+    assert_ne!(broken, MID_TURN);
+    let (_home, path) = transcript("marks-broken", PROJECT, &broken);
+    assert_eq!(marks(&path, None), None);
+    let (_home, none) = transcript("marks-none", PROJECT, "");
+    assert_eq!(marks(&none, None), Some(vec![]));
+    assert_eq!(leaf(&none), None);
 }

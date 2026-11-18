@@ -78,9 +78,32 @@
       takeTitle: string;
       takeChord: string;
     };
+    /** The message the list over the composer marks to go back to before:
+        drawn as a draft under a line, and what would leave with it faded. */
+    marked?: string | null;
+    /** Opens the choices to go back to before a message of the user's
+        own, while the session can go back. */
+    onGoBack?: ((message: Message) => void) | null;
+    /** Undoes going back, from the line that marks it. */
+    onUndo?: () => void;
   }
 
-  let { conversation, root, intro, agent, models = true, onPutBack, sender, opener, room = 0, waiting }: Props = $props();
+  let {
+    conversation,
+    root,
+    intro,
+    agent,
+    models = true,
+    onPutBack,
+    sender,
+    opener,
+    room = 0,
+    waiting,
+    marked = null,
+    onGoBack = null,
+    onUndo,
+  }: Props = $props();
+
 
   /** A message's first words, to tell its buttons from another's. */
   function shortly(text: string): string {
@@ -486,6 +509,15 @@
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
   }
 
+  // The list over the composer brought a message into view; once it marks
+  // none, closed or picked from, the thread follows its foot again.
+  let wasMarked: string | null = null;
+  $effect(() => {
+    const now = marked;
+    if (wasMarked !== null && now === null) untrack(toFoot);
+    wasMarked = now;
+  });
+
   function message(id: string): Message | null {
     return conversation.messages[id] ?? null;
   }
@@ -550,6 +582,19 @@
   let drawn = $derived.by(() => {
     const { from, to } = range();
     return rows.slice(from, to);
+  });
+
+  /** The row of the marked message, and the rows after it, which would
+      leave with it. */
+  let markedKey = $derived(
+    marked === null
+      ? null
+      : (rows.find((entry) => entry.kind === "user" && entry.message === marked)?.key ?? null),
+  );
+  let leaving = $derived.by(() => {
+    if (markedKey === null) return new Set<string>();
+    const at = rows.findIndex((entry) => entry.key === markedKey);
+    return new Set(rows.slice(at + 1).map((entry) => entry.key));
   });
 
   let box = $state<HTMLDivElement | null>(null);
@@ -1104,7 +1149,9 @@
     {#if conversation.earlierCut}
       <p class="intro" data-testid="earlier-cut">The start of this conversation is too long to show here.</p>
     {/if}
-    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")}
+    <!-- Earlier messages that could not be read are said to be missing for
+         as long as the thread is drawn, above whatever comes after. -->
+    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && (conversation.earlier === "unread" || (conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")))}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? `Earlier messages of this session ${notRead(conversation.earlierWhy)}` : intro}
       </p>
@@ -1123,7 +1170,10 @@
     {#if rows.length > 0}
     <div class="rows" bind:this={box} data-testid="thread-rows">
     {#each drawn as entry (entry.key)}
-      <div class="row" data-row={entry.key}>
+      <div class="row" class:leaves={leaving.has(entry.key)} class:back={entry.key === markedKey} data-row={entry.key}>
+      {#if entry.key === markedKey}
+        <div class="divider here" data-testid="back-here"><span>Back to here</span></div>
+      {/if}
       {#if entry.kind === "user"}
         {@const said = message(entry.message)}
         {#if said !== null}
@@ -1158,6 +1208,13 @@
         <p class="note {entry.tone}" data-testid="note" data-find={entry.key}>
           <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} /><Plain text={entry.text} />
         </p>
+      {:else if entry.kind === "rewound"}
+        <div class="divider" data-testid="rewound">
+          <span>Rewound here, <time class="num">{clock(entry.at)}</time></span>
+          {#if entry.undo && onUndo !== undefined}
+            <button class="link undo" tabindex="-1" data-thread-item onclick={onUndo} data-testid="rewound-undo">Undo</button>
+          {/if}
+        </div>
       {:else if entry.kind === "compaction"}
         <div class="divider" data-testid="compaction">
           <span>
@@ -1209,7 +1266,7 @@
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
   {@const words = from?.workbench
-    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null }
+    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null, filesBack: null }
     : spoken(said.text, from === null)}
   {@const putBack = from?.workbench ? undefined : onPutBack}
   <article
@@ -1235,6 +1292,16 @@
           >{/if}
       {/if}
       {#if at !== null}<time class="num">{written.get(`m:${said.id}`) ?? clock(at)}</time>{/if}
+      {#if from === null && said.placed && onGoBack !== null}
+        <button
+          class="goback"
+          tabindex="-1"
+          data-thread-item
+          onclick={() => onGoBack?.(said)}
+          aria-label="Go back to before “{shortly(words.text)}”"
+          data-testid="go-back-here">Go back to here</button
+        >
+      {/if}
       {#if from !== null && words.text !== ""}
         <Copy label="Copy" name="Copy the message" text={() => unsent(words.text, mentionsOf(said.id)).draft} host="message" place="end" testid="copy-message" />
       {/if}
@@ -1261,6 +1328,20 @@
                 >{/if}{/if}{/each}</p
         >{/if}
     </div>
+    {#if words.filesBack !== null}
+      {@const shown = `${said.id}:files`}
+      <button
+        class="link instructions"
+        tabindex="-1"
+        data-thread-item
+        onclick={() => (unfolded[shown] = !unfolded[shown])}
+        aria-expanded={unfolded[shown] === true}
+        data-testid="workbench-files">Files put back, from the workbench</button
+      >
+      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-files-text"
+          ><Plain text={words.filesBack} /></p
+        >{/if}
+    {/if}
     {#if words.reports !== null}
       {@const shown = `${said.id}:reports`}
       <button
@@ -1696,6 +1777,66 @@
     flex: 1;
     height: 1px;
     background: var(--rule);
+  }
+
+  /* While the list over the composer marks a message, the thread shows
+     what going back to before it does: a line over it, the message drawn
+     as a draft, and everything after it faded. */
+  .divider.here {
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+
+  .divider.here::before,
+  .divider.here::after {
+    background: color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+
+  .row.back :global(.msg.you .bubble) {
+    outline: 1px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+    outline-offset: 2px;
+  }
+
+  .row.leaves {
+    opacity: 0.38;
+    transition: opacity var(--motion-fast, 120ms) ease;
+  }
+
+  .row.back ~ .row.leaves {
+    filter: saturate(0.6);
+  }
+
+  .divider .undo {
+    flex: none;
+  }
+
+  /* Go back to here: quiet, shown as Copy is, while the pointer is over
+     the message or the keyboard is on it. */
+  .goback {
+    flex: none;
+    height: 20px;
+    margin: -3px -4px -3px auto;
+    padding: 0 7px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    font-family: var(--chrome);
+    font-size: var(--conv-fine);
+    line-height: 1;
+    color: var(--ink-2);
+    white-space: nowrap;
+    cursor: pointer;
+    opacity: 0;
+  }
+
+  :global([data-copy-host="message"]:hover:not(:has([data-copy-host]:hover))) .goback,
+  .goback:focus-visible {
+    opacity: 1;
+  }
+
+  .goback:hover {
+    background: var(--surface-2);
+    color: var(--ink);
   }
 
   .latest {

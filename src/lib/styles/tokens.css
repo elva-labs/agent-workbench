@@ -1,5 +1,5 @@
 /*
- * Design tokens for Agent Workbench.
+ * Design tokens for Chord.
  *
  * Three layers, in order:
  *   1. semantic  — surfaces, ink, rules, accent. What the UI is built from.
@@ -191,6 +191,11 @@
   --status-rule: var(--rule);
   --status-bg: var(--surface-2);
   --status-size: 10.5px;
+  /* The bar's own height, its rule's, and how much of the frame's padding
+     over it is part of its row: none where the bar is a box of its own. */
+  --status-height: 26px;
+  --status-rule-width: 1px;
+  --status-reach: 0px;
 }
 
 /* The system asking for more contrast brings plain lines back: a box's

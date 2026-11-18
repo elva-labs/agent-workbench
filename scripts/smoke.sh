@@ -64,11 +64,11 @@ APP=$!
 PIDS+=("$APP")
 
 for _ in $(seq 1 30); do
-  xdotool search --name "Agent Workbench" >/dev/null 2>&1 && break
+  xdotool search --name "Chord" >/dev/null 2>&1 && break
   sleep 1
 done
 
-if ! xdotool search --name "Agent Workbench" >/dev/null 2>&1; then
+if ! xdotool search --name "Chord" >/dev/null 2>&1; then
   echo "the window never appeared"
   exit 1
 fi

@@ -43,9 +43,16 @@
     onpick: (index: number) => void;
     onpoint: (index: number) => void;
     testid: string;
+    /** A line over the rows, naming what the list is. */
+    head?: Snippet;
+    /** What stands under the rows, over the keys. */
+    foot?: Snippet;
+    /** The keys line, where the list takes other keys than Tab and Enter. */
+    keys?: Snippet;
   }
 
-  let { id, label, groups, active, key, row, empty, action, onpick, onpoint, testid }: Props = $props();
+  let { id, label, groups, active, key, row, empty, action, onpick, onpoint, testid, head, foot, keys }: Props =
+    $props();
 
   let menu = $state<HTMLDivElement | null>(null);
   let list = $state<HTMLDivElement | null>(null);
@@ -94,6 +101,7 @@
   onpointerdown={(e) => e.preventDefault()}
   data-testid={testid}
 >
+  {#if head !== undefined}<div class="top" data-testid="{testid}-head">{@render head()}</div>{/if}
   {#if count === 0}
     <p class="empty" data-testid="{testid}-empty">{@render empty?.()}</p>
   {:else}
@@ -122,10 +130,15 @@
         </div>
       {/each}
     </div>
+    {#if foot !== undefined}<div class="foot" data-testid="{testid}-foot">{@render foot()}</div>{/if}
     <p class="keys" aria-hidden="true">
-      <span><kbd>↑</kbd> <kbd>↓</kbd> choose</span>
-      <span><kbd>⇥</kbd> or <kbd>↵</kbd> {action}</span>
-      <span><kbd>esc</kbd> close</span>
+      {#if keys !== undefined}
+        {@render keys()}
+      {:else}
+        <span><kbd>↑</kbd> <kbd>↓</kbd> choose</span>
+        <span><kbd>⇥</kbd> or <kbd>↵</kbd> {action}</span>
+        <span><kbd>esc</kbd> close</span>
+      {/if}
     </p>
   {/if}
 </div>
@@ -195,6 +208,16 @@
     color: var(--ink);
   }
 
+  .top {
+    flex: none;
+    margin: 2px 8px 4px;
+  }
+
+  .foot {
+    flex: none;
+    margin: 4px 8px 2px;
+  }
+
   .keys {
     flex: none;
     display: flex;
@@ -215,6 +238,7 @@
   }
 
   kbd,
+  .keys :global(kbd),
   .empty :global(kbd) {
     font: inherit;
     font-size: calc(var(--meta-size) - 1px);

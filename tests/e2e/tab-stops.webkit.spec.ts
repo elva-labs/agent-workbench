@@ -231,7 +231,7 @@ for (const platform of PLATFORMS)
     await page.keyboard.press("Tab");
     // One stop: the arrows move the keyboard, and only Space or Enter picks.
     expect(await walk(page, "ArrowRight", 1)).toEqual(["mode-editor"]);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("mode-agent")).toHaveAttribute("tabindex", "-1");
     // Still one stop after the arrow: Shift+Tab leaves the switch at once.
     expect(await walk(page, "Shift+Tab", 1)).toEqual(["toggle-right"]);
@@ -242,7 +242,7 @@ for (const platform of PLATFORMS)
     expect(await walk(page, "Shift+Tab", 1)).toEqual(["mode-agent"]);
     await page.keyboard.press("ArrowRight");
     await page.keyboard.press("Space");
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     // The keyboard goes where the mode puts it: the tree, with nothing open.
     await expect(page.locator(TREE)).toBeFocused();
   });
@@ -419,7 +419,7 @@ for (const platform of PLATFORMS)
 test("walks editor mode: the tree, the tab row and the views as one stop each", async ({ page }) => {
   await open(page, 1728);
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   await tree(page, "README.md").dblclick();
   await tree(page, "Cargo.toml").dblclick();
   await expect(page.getByTestId("editor-tab")).toHaveCount(2);

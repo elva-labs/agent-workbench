@@ -104,7 +104,7 @@ test("offers the shipped workflows on a fresh install, Direct among them", async
   await expect(chip(page)).toHaveText("Direct");
   await expect.poll(async () => (await starts(page)).length).toBe(2);
   const told = (await starts(page)).at(-1)!.options as { instructions?: string; startOnly?: boolean };
-  expect(told.instructions).toContain('You are the orchestrator of the Agent Workbench workflow "Direct".');
+  expect(told.instructions).toContain('You are the orchestrator of the Chord workflow "Direct".');
   expect(told.instructions).toContain('For the step "Work", split the task into pieces and start a session for each, on any agent and model. Run at most 8 "Work" sessions at once');
   expect(told.startOnly).toBe(true);
 });

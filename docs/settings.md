@@ -514,7 +514,11 @@ path in the environment the agent is started with. An account names a
 directory of each, so a work login and a personal one can both be on the
 machine and a session run under either. The agents' own directories are
 the account every setup has, called Default where a name is shown, and a
-setup with no other account named is what it always was.
+setup with no other account named is what it always was. Default is
+theirs alone: no account can be called that, in any case, whether in the
+tab or written into the settings file, so a session that starts another
+can name the agents' own login by it (see
+[orchestrator](orchestrator.md#the-tools)).
 
 The tab lists the accounts, Default first, each with where it keeps each
 agent. Add an account… opens a form: a name, and under it the two
@@ -595,7 +599,13 @@ how the window looks, as the look is, and the agent may ask for it.
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
 Nothing changes unless they allow it, and the agent waits for the answer,
-which says which it was. A change the user allows can be undone, from a
+which says which it was. An agent gives up on a call after a while, Codex
+after a minute, so one the user has not answered within forty seconds is
+answered then that the change is still in front of them, or waits its turn
+behind another, and is made only if they allow it: the question stays, and
+the agent reads the settings to see whether it was made. The same change
+asked for again by the same session meanwhile is refused rather than put to
+the user twice. A change the user allows can be undone, from a
 word where the question was, for twenty seconds; undoing puts back only the
 settings that change moved. Changes asked at once are put one after
 another, each read against the settings as they are by the time it comes

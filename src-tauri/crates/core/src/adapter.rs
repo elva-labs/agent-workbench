@@ -144,6 +144,14 @@ pub const CODEX_APPROVE: &str = "approve";
 pub const CODEX_TOOLS: &str = "tools";
 pub const CODEX_TOOL_APPROVAL: &str = "approval_mode";
 
+/// The setting of a Codex server's entry that says how long a call of one
+/// of its tools may take before Codex gives up on it, a minute unless it is
+/// set, and how long the workbench's server is given: its longest wait and
+/// a minute more, so a wait, which sits for up to half an hour, is never cut
+/// short by Codex and its answer left unread.
+pub const CODEX_TOOL_TIMEOUT: &str = "tool_timeout_sec";
+pub const CODEX_TOOL_SECONDS: u64 = crate::mcp::WATCH_CAP.as_secs() + 60;
+
 /// The variable that names the session to the tools the agent starts: the
 /// token the workbench chose for it.
 pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
@@ -442,6 +450,9 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
             "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}]",
             text(SESSION_VAR),
             text(ROLE_VAR)
+        ));
+        settings.push(format!(
+            "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_TOOL_TIMEOUT}={CODEX_TOOL_SECONDS}"
         ));
         if ctx.server.is_some() {
             settings.extend(crate::mcp::RUN_UNASKED.iter().map(|tool| {
@@ -1163,6 +1174,8 @@ mod tests {
                 "-c".to_string(),
                 "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                     .to_string(),
+                "-c".to_string(),
+                "mcp_servers.agent_workbench.tool_timeout_sec=1860".to_string(),
             ],
             tool_approvals(),
             vec![
@@ -1615,6 +1628,8 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
                 .to_string(),
+            "-c".to_string(),
+            "mcp_servers.agent_workbench.tool_timeout_sec=1860".to_string(),
         ];
         assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
         // Named where no configuration names it, the tools that read, show

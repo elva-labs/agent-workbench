@@ -47,7 +47,7 @@ test("walks them at most three times with the name field among them, which stays
   page,
 }) => {
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   await row(page, "file734.ts").click();
   await page.getByTestId("tree-new-file").click();
   const field = page.getByTestId("name-field");

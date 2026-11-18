@@ -398,6 +398,16 @@ pub enum Event {
     Error { kind: ErrorKind, message: String },
     /// The process is gone. Nothing follows it.
     Ended { code: Option<i32>, clean: bool },
+    /// The session went back to before `message`, a message of the user's:
+    /// with `conversation`, the message and everything after it left the
+    /// conversation; `files` are those put back as they were before it,
+    /// none where only the conversation went back. Told on the session that
+    /// goes on, after its `ready` where it was started again.
+    Rewound {
+        message: String,
+        conversation: bool,
+        files: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -836,6 +846,9 @@ pub struct Launch<'a> {
     /// its conversation was first given, no instructions at all among
     /// them, so an agent that records what it was first told lets go of it.
     pub afresh: bool,
+    /// For a resumed conversation, the entry of the agent's record it goes
+    /// on from, leaving out everything after it; from its newest when None.
+    pub resume_at: Option<&'a str>,
 }
 
 /// How one agent is started and spoken to as an integrated session.
@@ -913,6 +926,20 @@ pub enum Control {
     SetModel(String),
     SetMode(String),
     SetEffort(String),
+    /// Puts the files the agent changed back as they were before a message
+    /// of the user's, in the running process, for an agent that keeps them.
+    /// With `dry_run` nothing changes, and the reply says what would, as a
+    /// [`Preview`].
+    RewindFiles {
+        message: String,
+        dry_run: bool,
+    },
+    /// Takes the conversation back to before a turn, in the running
+    /// process, for an agent that can: the turn and every later one leave
+    /// it.
+    Revert {
+        turn: String,
+    },
 }
 
 /// A process ready to start, and the files written for it, which go when
@@ -1157,6 +1184,77 @@ impl Said {
     }
 }
 
+/// Where a conversation can go back to: every message of the user's in it
+/// as the agent keeps it now, oldest first. `why` says why none can, such
+/// as a thread kept by an older Codex, and the list is then empty.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Points {
+    pub points: Vec<Point>,
+    pub why: Option<String>,
+}
+
+/// A message of the user's, and how far the session can go back to before
+/// it: `conversation` when the message and everything after it can leave
+/// the conversation, with `why` where they cannot; `files` when the agent
+/// kept the files as they were before it, which a preview says more of.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Point {
+    pub message: String,
+    pub conversation: bool,
+    pub files: bool,
+    pub why: Option<String>,
+}
+
+/// What putting the files back as they were before a message would change:
+/// the files, each deleted where the agent made it since and restored
+/// where it changed it, and the lines that would come back and go.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Preview {
+    pub files: Vec<String>,
+    pub insertions: u64,
+    pub deletions: u64,
+}
+
+/// How a conversation goes back to before a message, as its agent does it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Back {
+    /// It does not: only the files go back.
+    Files,
+    /// In the running process, to before a turn of the agent's own naming.
+    Turn(String),
+    /// By starting again on the conversation from an entry of the agent's
+    /// record, or with None as a new conversation.
+    Entry(Option<String>),
+}
+
+/// How a session is started again by [`rewind`] and [`undo`]: on the
+/// conversation given, a new one with None, from the entry given, on the
+/// settings given, and otherwise as it was started.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Again {
+    pub session: Option<String>,
+    pub at: Option<String>,
+    pub settings: Settings,
+}
+
+/// What going back, or undoing it, came to. `id` is the session that goes
+/// on, the same one or one started again, and `sessionId` its
+/// conversation's id; `files` the files put back. `fallback` says why a
+/// conversation that was to go back goes on whole instead, and `error` why
+/// no session could be started again, with `id` and `sessionId` null.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WentBack {
+    pub id: Option<String>,
+    pub session_id: Option<String>,
+    pub files: Vec<String>,
+    pub fallback: Option<String>,
+    pub error: Option<String>,
+}
+
 /// The state of a session as its events say it, and the bookkeeping that
 /// says it.
 ///
@@ -1215,6 +1313,8 @@ struct Tracker {
     state: Option<SessionState>,
     /// When this run began, for a conversation it resumed.
     resumed_at: Option<u64>,
+    /// A turn has started in this run.
+    turned: bool,
 }
 
 impl Tracker {
@@ -1270,6 +1370,48 @@ impl Tracker {
             Some("no turn runs, and the agent takes the message next")
         } else {
             None
+        }
+    }
+
+    /// Why the session is not at rest, or None when it is: ready, with no
+    /// turn running, nothing waiting for a turn or for the user, no
+    /// compaction and no subagent at work.
+    fn unrested(&self) -> Option<&'static str> {
+        if self.ready.is_none() {
+            Some("the agent is not ready yet")
+        } else if self.turn || self.reporting {
+            Some("a turn runs")
+        } else if self.compacting {
+            Some("the conversation is being compacted")
+        } else if !self.pending.is_empty() {
+            Some("a message waits for a turn")
+        } else if !self.asking.is_empty() {
+            Some("the agent waits for an answer")
+        } else if !self.subagents.is_empty() {
+            Some("a subagent is still at work")
+        } else {
+            None
+        }
+    }
+
+    /// The conversation's id, as the agent said it when it was ready.
+    fn conversation(&self) -> Option<String> {
+        match &self.ready {
+            Some(Event::Ready { session_id, .. }) => Some(session_id.clone()),
+            _ => None,
+        }
+    }
+
+    /// The settings a session started again runs on: those it runs on now,
+    /// its mode only where it is one the agent offers to switch to.
+    fn kept(&self) -> Settings {
+        let offered = |mode: &String| match &self.ready {
+            Some(Event::Ready { modes, .. }) => modes.iter().any(|known| known.value == *mode),
+            _ => false,
+        };
+        Settings {
+            mode: self.settings.mode.clone().filter(offered),
+            ..self.settings.clone()
         }
     }
 
@@ -1333,6 +1475,7 @@ impl Tracker {
                     return;
                 }
                 self.turn = true;
+                self.turned = true;
                 self.reporting = false;
                 self.pending.retain(|m| !messages.contains(m));
                 self.told.retain(|m, _| !messages.contains(m));
@@ -1683,6 +1826,11 @@ struct Machine {
     ready: Option<Sender<()>>,
     deadlines: Deadlines,
     ended: bool,
+    /// Why the process ended, where it ended badly by itself.
+    said: Option<String>,
+    /// The session is going back, from the moment it was found at rest to
+    /// the answer: no message or compaction is taken meanwhile.
+    going_back: bool,
 }
 
 impl Machine {
@@ -1707,6 +1855,8 @@ impl Machine {
             replies: HashMap::new(),
             ready,
             ended: false,
+            said: None,
+            going_back: false,
         }
     }
 }
@@ -1725,6 +1875,10 @@ struct Live {
     /// after saying why.
     stopping: AtomicBool,
     deadlines: Deadlines,
+    /// Set once the process is gone and the session's last event has gone
+    /// out.
+    over: Mutex<bool>,
+    gone: Condvar,
 }
 
 impl Live {
@@ -1743,7 +1897,23 @@ impl Live {
             writer: Mutex::new(Some(writer)),
             kill: Mutex::new(kill),
             stopping: AtomicBool::new(false),
+            over: Mutex::new(false),
+            gone: Condvar::new(),
         }
+    }
+
+    /// Waits until the process is gone and the session's last event has
+    /// gone out, or `by` passes. Whether it was.
+    fn wait_gone(&self, by: Instant) -> bool {
+        let mut over = self.over.lock().expect("over lock");
+        while !*over {
+            let left = by.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            over = self.gone.wait_timeout(over, left).expect("over lock").0;
+        }
+        true
     }
 
     fn emit(&self, events: &[Event]) {
@@ -2258,9 +2428,12 @@ pub fn start(
             let said = tail.lock().expect("stderr lock").trim().to_string();
             finish(&live, name, status, said);
             let id = live.id.clone();
+            let done = Arc::clone(&live);
             live.put(Out::Last(Box::new(move || {
                 remove();
                 on_end(&id);
+                *done.over.lock().expect("over lock") = true;
+                done.gone.notify_all();
             })));
         }
     });
@@ -2537,6 +2710,7 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
         } else {
             format!("{how}: {said}")
         };
+        machine.said = Some(message.clone());
         out.push(Event::Error {
             kind: ErrorKind::Process,
             message,
@@ -2563,6 +2737,9 @@ pub fn send(
     }
     let went = {
         let mut machine = live.machine.lock().expect("machine lock");
+        if machine.going_back {
+            return Err(GOING_BACK.into());
+        }
         let queued = machine.tracker.send(message)?;
         // An agent that takes no message mid-turn may have no conversation
         // to take one into before it is ready, so it is held till then too.
@@ -2750,6 +2927,9 @@ fn request(
     }
     let (went, waiting) = {
         let mut machine = live.machine.lock().expect("machine lock");
+        if machine.going_back && matches!(control, Control::Compact { .. }) {
+            return Err(GOING_BACK.into());
+        }
         let sending = match control {
             Control::SendNow => {
                 if let Some(why) = machine.tracker.not_now() {
@@ -2887,6 +3067,353 @@ pub fn configure(
     let live = sessions.get(id)?;
     let machine = live.machine.lock().expect("machine lock");
     Ok(machine.tracker.settings.clone())
+}
+
+/// Whether a session is at rest, which going back takes: ready, with no
+/// turn running, nothing waiting for a turn or for the user, no compaction
+/// and no subagent at work. Fails saying which is not so.
+pub fn rest(sessions: &Sessions, id: &str) -> Result<(), String> {
+    let live = sessions.get(id)?;
+    let machine = live.machine.lock().expect("machine lock");
+    match machine.tracker.unrested() {
+        Some(why) => Err(why.to_string()),
+        None => Ok(()),
+    }
+}
+
+/// The conversation a session is on, as the agent named it when it was
+/// ready.
+pub fn conversation(sessions: &Sessions, id: &str) -> Result<String, String> {
+    let live = sessions.get(id)?;
+    let machine = live.machine.lock().expect("machine lock");
+    machine
+        .tracker
+        .conversation()
+        .ok_or_else(|| "the agent is not ready yet".to_string())
+}
+
+/// What putting the files back as they were before `message` would change,
+/// as the agent's own dry run says, with nothing changed. Fails, in the
+/// agent's words where it gives them, where it cannot put them back to
+/// there.
+pub fn preview(sessions: &Sessions, id: &str, message: &str) -> Result<Preview, String> {
+    let reply = control(
+        sessions,
+        id,
+        &Control::RewindFiles {
+            message: message.to_string(),
+            dry_run: true,
+        },
+    )?;
+    Ok(Preview {
+        files: reply["files"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|file| file.as_str().map(str::to_string))
+            .collect(),
+        insertions: reply["insertions"].as_u64().unwrap_or(0),
+        deletions: reply["deletions"].as_u64().unwrap_or(0),
+    })
+}
+
+/// Takes a session at rest back to before `message`, a message of the
+/// user's, the way `back` says its agent takes a conversation back, with
+/// the files put back first where `files` asks: while the message is still
+/// part of the conversation, which is where the agent finds what it kept
+/// of them. `rewound` goes out on the session that goes on, once it has
+/// gone back, and before the answer.
+///
+/// A conversation that goes back in the running process goes on in the
+/// same session. One that goes back by starting again is stopped, which
+/// ends what it left running, and `restart` starts it again from the entry
+/// given, on the settings it runs on now; where that start does not come
+/// up, the conversation is started again whole, and the answer says why.
+///
+/// `files` are the files the user was shown, from a preview, to put back;
+/// None leaves the files as they are. A fresh dry run that names a file
+/// not among them refuses, since the real run would change what the user
+/// never saw. From the moment the session is found at rest to the answer,
+/// it takes no message and no compaction, which the restart would lose.
+///
+/// Fails, with nothing changed, where the session is not at rest, the
+/// files cannot go back or are not those shown, or the agent will not
+/// take the conversation back. Once a session was stopped, the answer
+/// says what came of starting it again.
+pub fn rewind(
+    sessions: &Arc<Sessions>,
+    id: &str,
+    message: &str,
+    back: Back,
+    files: Option<&[String]>,
+    restart: &dyn Fn(&Again) -> Result<Started, String>,
+) -> Result<WentBack, String> {
+    if back == Back::Files && files.is_none() {
+        return Err("neither the conversation nor the files were asked to go back".into());
+    }
+    let (_going, conversation, settings) = going_back(sessions, id)?;
+    let put_back = match files {
+        Some(shown) => {
+            let preview = preview(sessions, id, message)?;
+            if preview.files.iter().any(|file| !shown.contains(file)) {
+                return Err(UNSHOWN.into());
+            }
+            control(
+                sessions,
+                id,
+                &Control::RewindFiles {
+                    message: message.to_string(),
+                    dry_run: false,
+                },
+            )?;
+            preview.files
+        }
+        None => Vec::new(),
+    };
+    let rewound = |conversation: bool| Event::Rewound {
+        message: message.to_string(),
+        conversation,
+        files: put_back.clone(),
+    };
+    let here = |files: Vec<String>| WentBack {
+        id: Some(id.to_string()),
+        session_id: conversation.clone(),
+        files,
+        ..WentBack::default()
+    };
+    let at = match back {
+        Back::Files => {
+            tell(sessions, id, rewound(false));
+            return Ok(here(put_back));
+        }
+        Back::Turn(turn) => {
+            control(sessions, id, &Control::Revert { turn })?;
+            tell(sessions, id, rewound(true));
+            return Ok(here(put_back));
+        }
+        Back::Entry(at) => at,
+    };
+    let again = Again {
+        session: at.as_ref().and(conversation.clone()),
+        at,
+        settings: settings.clone(),
+    };
+    let failed = |error: String, fallback: Option<String>| WentBack {
+        files: put_back.clone(),
+        fallback,
+        error: Some(error),
+        ..WentBack::default()
+    };
+    let why = match start_again(sessions, id, &again, restart) {
+        Ok(Up::Ready(started, session)) => {
+            tell(sessions, &started, rewound(true));
+            return Ok(WentBack {
+                id: Some(started),
+                session_id: Some(session),
+                files: put_back,
+                ..WentBack::default()
+            });
+        }
+        Ok(Up::Fell(why) | Up::Failed(why)) => why,
+        Err(error) => return Ok(failed(error, None)),
+    };
+    // It did not come up from there: the conversation goes on whole.
+    let whole = Again {
+        session: conversation,
+        at: None,
+        settings,
+    };
+    Ok(match up(sessions, &whole, restart) {
+        Up::Ready(started, session) => {
+            if !put_back.is_empty() {
+                tell(sessions, &started, rewound(false));
+            }
+            WentBack {
+                id: Some(started),
+                session_id: Some(session),
+                files: put_back,
+                fallback: Some(why),
+                error: None,
+            }
+        }
+        Up::Fell(error) | Up::Failed(error) => failed(error, Some(why)),
+    })
+}
+
+/// Undoes going back: the session at rest is started again on `session`,
+/// the conversation as it was, naming no entry to go on from, so `restart`
+/// goes on from the one the conversation went on from before. Only while
+/// nothing has gone on in it since, no message sent and no turn run, which
+/// would have made the cut part of the conversation. Fails, with nothing
+/// changed, where it cannot.
+pub fn undo(
+    sessions: &Arc<Sessions>,
+    id: &str,
+    session: &str,
+    restart: &dyn Fn(&Again) -> Result<Started, String>,
+) -> Result<WentBack, String> {
+    {
+        let live = sessions.get(id)?;
+        let machine = live.machine.lock().expect("machine lock");
+        if machine.tracker.turned || !machine.tracker.used.is_empty() {
+            return Err("the conversation has gone on since it went back".into());
+        }
+    }
+    let (_going, _, settings) = going_back(sessions, id)?;
+    let again = Again {
+        session: Some(session.to_string()),
+        at: None,
+        settings,
+    };
+    Ok(match start_again(sessions, id, &again, restart) {
+        Ok(Up::Ready(started, session)) => WentBack {
+            id: Some(started),
+            session_id: Some(session),
+            ..WentBack::default()
+        },
+        Ok(Up::Fell(error) | Up::Failed(error)) | Err(error) => WentBack {
+            error: Some(error),
+            ..WentBack::default()
+        },
+    })
+}
+
+/// Why a message or a compaction is refused while the session goes back.
+pub const GOING_BACK: &str = "the session is going back";
+
+/// Why going back is refused where the files to put back are not those the
+/// user was shown.
+pub const UNSHOWN: &str =
+    "The files to put back changed since they were shown. Look at them again.";
+
+/// Marks a session at rest as going back, and answers its conversation and
+/// the settings it is started again on. The mark goes when what this
+/// answers is dropped. Fails, with nothing changed, where the session is
+/// not at rest or is going back already.
+fn going_back(sessions: &Sessions, id: &str) -> Result<(Going, Option<String>, Settings), String> {
+    let live = sessions.get(id)?;
+    let mut machine = live.machine.lock().expect("machine lock");
+    if machine.going_back {
+        return Err(GOING_BACK.into());
+    }
+    if let Some(why) = machine.tracker.unrested() {
+        return Err(why.to_string());
+    }
+    machine.going_back = true;
+    let found = (machine.tracker.conversation(), machine.tracker.kept());
+    drop(machine);
+    Ok((Going(live), found.0, found.1))
+}
+
+/// A session marked as going back, until this is dropped.
+struct Going(Arc<Live>);
+
+impl Drop for Going {
+    fn drop(&mut self) {
+        if let Ok(mut machine) = self.0.machine.lock() {
+            machine.going_back = false;
+        }
+    }
+}
+
+/// How a session started again came up.
+enum Up {
+    /// Ready, with its id and its conversation's.
+    Ready(String, String),
+    /// Started, and ended before it was ready, with why.
+    Fell(String),
+    /// Not started, with why.
+    Failed(String),
+}
+
+/// Stops a session, and once it is gone starts it again as `again` says.
+/// Fails where it will not end.
+fn start_again(
+    sessions: &Arc<Sessions>,
+    id: &str,
+    again: &Again,
+    restart: &dyn Fn(&Again) -> Result<Started, String>,
+) -> Result<Up, String> {
+    let live = sessions.get(id)?;
+    stop(sessions, id)?;
+    let d = live.deadlines;
+    let by = Instant::now()
+        + d.stop_grace
+        + d.term_grace
+        + d.group_grace
+        + DRAIN
+        + Duration::from_secs(1);
+    if !live.wait_gone(by) {
+        return Err("the session did not end in time".into());
+    }
+    Ok(up(sessions, again, restart))
+}
+
+/// Starts a session as `again` says, and waits for it to be ready.
+fn up(
+    sessions: &Sessions,
+    again: &Again,
+    restart: &dyn Fn(&Again) -> Result<Started, String>,
+) -> Up {
+    match restart(again) {
+        Ok(started) => match ready(sessions, &started.id) {
+            Ok(session) => Up::Ready(started.id, session),
+            Err(why) => Up::Fell(why),
+        },
+        Err(error) => Up::Failed(error),
+    }
+}
+
+/// Waits for a session just started to say it is ready, and answers the
+/// conversation it is on. Fails with why where it ended first, or did not
+/// say so in time.
+fn ready(sessions: &Sessions, id: &str) -> Result<String, String> {
+    let Ok(live) = sessions.get(id) else {
+        return Err("the agent ended as it started".into());
+    };
+    let by = Instant::now() + live.deadlines.ready + Duration::from_secs(1);
+    loop {
+        {
+            let machine = live.machine.lock().expect("machine lock");
+            if let Some(session) = machine.tracker.conversation() {
+                return Ok(session);
+            }
+            if machine.ended {
+                return Err(machine
+                    .said
+                    .clone()
+                    .unwrap_or_else(|| "the agent ended as it started".into()));
+            }
+        }
+        if Instant::now() >= by {
+            return Err("the agent did not say it was ready in time".into());
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Tells an event on a session, through its tracker, as the agent's own
+/// are told, and comes back once it has gone out, with every event before
+/// it, so that what answers after it answers after its events, as a change
+/// of settings does. A window too slow to take it in a request's time is
+/// not waited for longer.
+fn tell(sessions: &Sessions, id: &str, event: Event) {
+    let Ok(live) = sessions.get(id) else {
+        return;
+    };
+    let gone_out = {
+        let mut machine = live.machine.lock().expect("machine lock");
+        if machine.ended {
+            return;
+        }
+        let mut out = Vec::new();
+        machine.tracker.observe(event, &mut out);
+        live.emit(&out);
+        let (passed, gone_out) = mpsc::channel();
+        live.put(Out::Reply(passed, Ok(Value::Null)));
+        gone_out
+    };
+    let _ = gone_out.recv_timeout(live.deadlines.control);
 }
 
 /// Ends a session: its stdin closes, which the agent takes as the end of
@@ -3579,9 +4106,11 @@ mod tests {
                         line: "compact".into(),
                     })
                 }
-                Control::Interrupt | Control::SendNow | Control::Withdraw(_) => {
-                    return Err("not here".into())
-                }
+                Control::Interrupt
+                | Control::SendNow
+                | Control::Withdraw(_)
+                | Control::RewindFiles { .. }
+                | Control::Revert { .. } => return Err("not here".into()),
             };
             self.model = model.clone();
             Ok(Sending::Local {
@@ -4409,6 +4938,7 @@ mod tests {
             instructions: None,
             start_only: false,
             afresh: false,
+            resume_at: None,
         };
         let sessions = Arc::new(Sessions::default());
         for (session, said) in [(None, None), (Some("resumed"), Some("resumed".to_string()))] {

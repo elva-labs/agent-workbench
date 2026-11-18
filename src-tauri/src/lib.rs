@@ -1,4 +1,4 @@
-//! Agent Workbench, the desktop app.
+//! Chord, the desktop app.
 //!
 //! The core lives in its own crate with no window attached; this is the
 //! window. Every command is a thin wrapper that routes by the path or id it
@@ -116,6 +116,7 @@ async fn pty_spawn(
     instructions: Option<String>,
     start_only: Option<bool>,
     afresh: Option<bool>,
+    bring_back: Option<bool>,
     cols: u16,
     rows: u16,
     on_output: Channel,
@@ -143,6 +144,7 @@ async fn pty_spawn(
                 instructions.as_deref(),
                 start_only.unwrap_or(false),
                 afresh.unwrap_or(false),
+                bring_back.unwrap_or(false),
                 cols,
                 rows,
                 |_| to_channel(on_output),
@@ -153,7 +155,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "bringBack": bring_back.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
@@ -505,6 +507,155 @@ async fn integrated_history(
                 }),
             )?;
             Ok(remote::history_homeward(&host, history))
+        }
+    })
+    .await
+}
+
+/// Where an integrated session's conversation can go back to, read on the
+/// machine it runs on.
+#[tauri::command]
+async fn integrated_rewind_points(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_rewind_points",
+        |rest| json!({ "id": rest }),
+        |core, id| core.integrated_rewind_points(id),
+    )
+    .await
+}
+
+/// What putting the files back as they were before a message would change,
+/// with the host put back on their paths for a session elsewhere.
+#[tauri::command]
+async fn integrated_rewind_preview(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    message: String,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&id) {
+        Route::Local(id) => value(core.integrated_rewind_preview(&id, &message)?),
+        Route::Remote { host, rest } => {
+            let preview = remotes.connection(&host)?.call(
+                "integrated_rewind_preview",
+                json!({ "id": rest, "message": message }),
+            )?;
+            Ok(remote::files_homeward(&host, preview))
+        }
+    })
+    .await
+}
+
+/// Takes an integrated session back to before a message, on the machine it
+/// runs on, with the files the user was shown, which reach that machine
+/// without the host on their paths: a session started again there comes
+/// back with the host on its id, and the files put back with the host on
+/// their paths.
+#[tauri::command]
+async fn integrated_rewind(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    message: String,
+    conversation: bool,
+    files: Option<Vec<String>>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let files: Option<Vec<String>> = files.map(|files| {
+        files
+            .iter()
+            .map(|file| match route(file) {
+                Route::Remote { rest, .. } => rest,
+                Route::Local(file) => file,
+            })
+            .collect()
+    });
+    blocking(move || match route(&id) {
+        Route::Local(id) => value(core.integrated_rewind(
+            &id,
+            &message,
+            conversation,
+            files.as_deref(),
+        )?),
+        Route::Remote { host, rest } => {
+            let went = remotes.connection(&host)?.call(
+                "integrated_rewind",
+                json!({ "id": rest, "message": message, "conversation": conversation, "files": files }),
+            )?;
+            Ok(remote::went_back_homeward(&host, went))
+        }
+    })
+    .await
+}
+
+/// Whether a conversation is held at the point it went back to, on the
+/// machine its project is on, so that a terminal resuming it would go on
+/// with what was gone back on.
+#[tauri::command]
+async fn integrated_held(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.integrated_held(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            &session,
+            config_dir.as_deref(),
+        )),
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "integrated_held",
+            json!({
+                "agent": agent,
+                "project": rest,
+                "cwd": cwd,
+                "session": session,
+                "configDir": config_dir,
+            }),
+        ),
+    })
+    .await
+}
+
+/// Undoes the going back that started an integrated session, on the
+/// machine it runs on.
+#[tauri::command]
+async fn integrated_rewind_undo(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&id) {
+        Route::Local(id) => value(core.integrated_rewind_undo(&id)?),
+        Route::Remote { host, rest } => {
+            let went = remotes
+                .connection(&host)?
+                .call("integrated_rewind_undo", json!({ "id": rest }))?;
+            Ok(remote::went_back_homeward(&host, went))
         }
     })
     .await
@@ -1143,6 +1294,76 @@ async fn settings_answer(
 #[tauri::command]
 fn controls_centre(window: tauri::Window, centre: u32) {
     chrome::set_controls_centre(&window, centre);
+}
+
+/// Where the cursor is, in the window's points from the top left of what
+/// it draws: what the page cannot tell once the pointer has left the view,
+/// or stopped where the view hears no move of it, as against the screen's
+/// edge. None when the window cannot say.
+#[tauri::command]
+fn cursor_in_window(window: tauri::Window) -> Option<(f64, f64)> {
+    let cursor = window.cursor_position().ok()?;
+    let origin = window.inner_position().ok()?;
+    let scale = window.scale_factor().ok()?;
+    // macOS puts the cursor in pixels at the main screen's scale and the
+    // window's origin at the scale of the screen it is on; elsewhere both
+    // are the same pixels.
+    #[cfg(target_os = "macos")]
+    let cursor_scale = window.primary_monitor().ok()??.scale_factor();
+    #[cfg(not(target_os = "macos"))]
+    let cursor_scale = scale;
+    Some(point_in_window(
+        (cursor.x, cursor.y),
+        cursor_scale,
+        (f64::from(origin.x), f64::from(origin.y)),
+        scale,
+    ))
+}
+
+/// The cursor in points from the window's origin, from the cursor and the
+/// origin each in pixels at a scale of its own.
+fn point_in_window(
+    cursor: (f64, f64),
+    cursor_scale: f64,
+    origin: (f64, f64),
+    window_scale: f64,
+) -> (f64, f64) {
+    (
+        cursor.0 / cursor_scale - origin.0 / window_scale,
+        cursor.1 / cursor_scale - origin.1 / window_scale,
+    )
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::point_in_window;
+
+    #[test]
+    fn the_cursor_is_in_the_window_s_points_on_screens_of_any_scale() {
+        // One scale: 100 points in and 50 down from a window at (200, 80).
+        assert_eq!(
+            point_in_window((600.0, 260.0), 2.0, (400.0, 160.0), 2.0),
+            (100.0, 50.0)
+        );
+        // A plain main screen, the window on a Retina screen to its right,
+        // its origin at (1920, 0) in points: 100 points in.
+        assert_eq!(
+            point_in_window((2020.0, 40.0), 1.0, (3840.0, 0.0), 2.0),
+            (100.0, 40.0)
+        );
+        // A Retina main screen, the window on a plain screen to its right at
+        // (1440, 0): the cursor on its left edge.
+        assert_eq!(
+            point_in_window((2880.0, 600.0), 2.0, (1440.0, 0.0), 1.0),
+            (0.0, 300.0)
+        );
+        // The same, the cursor 30 points past the edge, on the screen
+        // beside it.
+        assert_eq!(
+            point_in_window((2820.0, 600.0), 2.0, (1440.0, 0.0), 1.0),
+            (-30.0, 300.0)
+        );
+    }
 }
 
 /// The `orchestrator` folder under the workbench's home on this machine,
@@ -1889,6 +2110,11 @@ pub fn run() {
             integrated_snapshot,
             integrated_history,
             account_limits,
+            integrated_rewind_points,
+            integrated_rewind_preview,
+            integrated_rewind,
+            integrated_rewind_undo,
+            integrated_held,
             integrated_stop,
             settings_get,
             settings_set,
@@ -1910,6 +2136,7 @@ pub fn run() {
             settings_answer,
             orchestrator_dir,
             controls_centre,
+            cursor_in_window,
             worktree_add,
             worktrees,
             worktree_remove,

@@ -44,7 +44,12 @@ environment to the servers it starts. Codex passes a server only the
 variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
-those two variables to pass on. Named for a workflow where no
+those two variables to pass on, with the time a call of its tools may take:
+the longest a wait sits, half an hour, and a minute more, where Codex's own
+is a minute and would cut a wait short and leave its answer unread. An
+integrated Codex session's thread gives the server the same time. A Codex
+session started outside the workbench keeps whatever its configuration
+says, a minute unless the user set `tool_timeout_sec`. Named for a workflow where no
 configuration names it, it is given the approvals the
 [hooks](hooks.md#the-agents-tools) write: the server's own tools that
 read, and those the window asks the user about every time, run without

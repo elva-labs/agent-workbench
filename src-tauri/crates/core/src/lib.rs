@@ -1,4 +1,4 @@
-//! Agent Workbench core.
+//! Chord core.
 //!
 //! Every pty, git query, filesystem watch, session index and hook lives here,
 //! with no window attached: the desktop app wraps it in Tauri commands, the
@@ -33,6 +33,7 @@ pub mod processes;
 pub mod project;
 pub mod protocol;
 pub mod pty;
+pub mod rewind;
 #[cfg(any(test, feature = "test-support"))]
 pub mod scratch;
 pub mod selection;

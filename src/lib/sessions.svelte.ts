@@ -1,5 +1,6 @@
 import {
   core,
+  isHeld,
   type AgentId,
   type SessionEnded,
   type SessionEvent,
@@ -199,6 +200,34 @@ const NAMES_KEY = "workbench.names";
 const TOKENS_KEY = "workbench.tokens";
 const PREFERRED_KEY = "workbench.agents";
 const WORKFLOWS_KEY = "workbench.workflows";
+const WAITING_KEY = "workbench.waiting";
+/** The record of the rows open at the last quit, whose flag says the
+    version that last wrote it kept what waits on the user too. */
+const OPEN_KEY = "workbench.open";
+
+/** What an unread row is brought back with after a restart or a reload,
+    by its session's id: that it waits on the user, the line under its
+    name, the line it last showed, when it last changed, a mark the user
+    made on it, and when the record last saw the row. A row that is read
+    has no record, and none of its lines is kept. */
+export interface KeptWaiting {
+  unread: boolean;
+  note: string | null;
+  notice: string | null;
+  at: number;
+  mark?: { restored: string | null; heard: boolean };
+  /** When a run last had the row. A record from before there was one
+      reads as seen now. */
+  seen?: number;
+}
+
+/** How many records are kept, the latest last. */
+const WAITING_KEPT = 200;
+
+/** How long a record waits for its row to come back: a project that does
+    not open again, or a session another started whose starter is not
+    resumed, takes its rows' records with it after this. */
+export const WAITING_FOR = 7 * 24 * 60 * 60 * 1000;
 
 /** What is kept of the workflow a session follows: the workflow as its
     last run started on it, as it was written, since it may no longer read,
@@ -610,6 +639,7 @@ export function loadRemembered() {
   } catch {
     // Nothing is named, then.
   }
+  loadWaiting();
   try {
     const raw = localStorage.getItem(TOKENS_KEY);
     if (raw !== null) {
@@ -1738,7 +1768,133 @@ function added(session: Session): Session {
   // mutations nothing sees.
   const live = sessions.all[sessions.all.length - 1];
   if (live.startIn !== null) void startedIn(live.key, live.startIn);
+  backAsItWas(live);
   return live;
+}
+
+/** What waited on the user in rows of the last run that have not come back
+    yet, by the session's id: a project still on its way, or a session
+    another started that its starter has not resumed. */
+const waitingBack = new Map<string, KeptWaiting>();
+
+/** Bumped when a mark changes, which the record follows. */
+const markEpoch = $state({ n: 0 });
+
+function marksChanged() {
+  markEpoch.n += 1;
+}
+
+function isKeptWaiting(value: unknown): value is KeptWaiting {
+  if (typeof value !== "object" || value === null) return false;
+  const { unread, note, notice, at, mark, seen } = value as Record<string, unknown>;
+  const line = (text: unknown) => text === null || typeof text === "string";
+  return (
+    typeof unread === "boolean" &&
+    (seen === undefined || typeof seen === "number") &&
+    line(note) &&
+    line(notice) &&
+    typeof at === "number" &&
+    (mark === undefined ||
+      (typeof mark === "object" &&
+        mark !== null &&
+        line((mark as Record<string, unknown>).restored) &&
+        typeof (mark as Record<string, unknown>).heard === "boolean"))
+  );
+}
+
+/** Reads what waited on the user at the last quit. The record of open
+    rows says whether the version that last wrote it kept this too: one
+    from a version before keeps only the rows, so what is here is older
+    than what that version did and is not taken. */
+function loadWaiting() {
+  waitingBack.clear();
+  try {
+    const open: unknown = JSON.parse(localStorage.getItem(OPEN_KEY) ?? "null");
+    if (typeof open !== "object" || open === null || (open as Record<string, unknown>).waiting !== true) return;
+    const stored: unknown = JSON.parse(localStorage.getItem(WAITING_KEY) ?? "null");
+    if (typeof stored !== "object" || stored === null) return;
+    const now = Date.now();
+    for (const [id, kept] of Object.entries(stored)) {
+      if (!isKeptWaiting(kept) || !kept.unread) continue;
+      const seen = kept.seen ?? now;
+      if (now - seen > WAITING_FOR) continue;
+      waitingBack.set(id, { ...kept, seen });
+    }
+  } catch {
+    // Nothing waits, then: the rows come back read.
+  }
+}
+
+/** A row of the last run comes back as it was: unread with the line under
+    its name, and a mark the user made with its rule. Nothing is said of
+    it: it is not news. */
+function backAsItWas(session: Session) {
+  if (session.id === null) return;
+  const kept = waitingBack.get(session.id);
+  if (kept === undefined) return;
+  waitingBack.delete(session.id);
+  session.unread = true;
+  session.note = kept.note;
+  session.notice = kept.notice;
+  session.changedAt = kept.at;
+  if (kept.mark !== undefined) {
+    marks.set(session.key, { ...kept.mark });
+    marksChanged();
+  }
+}
+
+/** Whether a row is one that comes back after a restart: one whose
+    process runs, or one left from the last quit. */
+function comesBack(session: Session): boolean {
+  return session.id !== null && (session.status === "dormant" || session.status === "starting" || session.status === "running");
+}
+
+/** What is kept now: each row that comes back and waits on the user, and
+    what is still waiting to come back. */
+export function waitingRecord(): Record<string, KeptWaiting> {
+  const record = new Map(waitingBack);
+  const now = Date.now();
+  for (const session of sessions.all) {
+    if (!comesBack(session)) continue;
+    const id = session.id!;
+    record.delete(id);
+    if (!session.unread) continue;
+    const mark = marks.get(session.key);
+    record.set(id, {
+      unread: true,
+      note: session.note,
+      notice: session.notice,
+      at: session.changedAt,
+      ...(mark === undefined ? {} : { mark: { restored: mark.restored, heard: mark.heard } }),
+      seen: now,
+    });
+  }
+  return Object.fromEntries([...record].slice(-WAITING_KEPT));
+}
+
+/** Keeps the record of what waits on the user current as rows change, so
+    it holds after a quit and after a crash alike. Returns a stop
+    function. */
+export function followWaiting(): () => void {
+  return $effect.root(() => {
+    $effect(() => {
+      void markEpoch.n;
+      const record = waitingRecord();
+      try {
+        localStorage.setItem(WAITING_KEY, JSON.stringify(record));
+      } catch {
+        // Non-fatal: the rows come back read after a restart.
+      }
+    });
+  });
+}
+
+/** The restore put this row on screen. Unread, it is not read by being
+    restored there: it waits as a mark made on screen does, until another
+    session is put on screen and it comes back, the user writes to it, or
+    marks it read. */
+export function restoredOnScreen(key: string) {
+  if (byKey(key)?.unread === true) markedOnScreen = key;
 }
 
 /**
@@ -1799,7 +1955,13 @@ export async function launch(
       .catch(() => {});
     return false;
   } catch (error) {
-    failed(key, String(error));
+    // A conversation held where it went back is not resumed in a terminal
+    // without the user's say: the row says so, and offers to open it as a
+    // conversation, which goes on from that point.
+    if (isHeld(error)) {
+      heldAtStart.add(key);
+      failed(key, String(error instanceof Error ? error.message : error).replace(/^held:\s*/, ""));
+    } else failed(key, String(error));
     return false;
   }
 }
@@ -1846,6 +2008,16 @@ export function failed(key: string, error: string) {
   session.status = "failed";
   session.error = String(error);
   changed(session);
+}
+
+/** The rows whose terminal start the core refused, their conversation
+    being held at the point it went back to. */
+const heldAtStart = new SvelteSet<string>();
+
+/** Whether a row's terminal start was refused for its conversation being
+    held at the point it went back to. */
+export function refusedAsHeld(key: string): boolean {
+  return heldAtStart.has(key);
 }
 
 /** The rows whose next terminal start brings back what their conversation
@@ -2083,6 +2255,7 @@ export function turnDormant(key: string, to: SessionKind): boolean {
 /** Turns a row whose run has ended, or that has none, the other way, to
     start again there on the same conversation. */
 function swap(row: Session, to: SessionKind, bySetting: boolean) {
+  heldAtStart.delete(row.key);
   if (!bySetting) row.ownWay = to !== kindFor(row.agent);
   // The conversation the stopped run had, which the other way lets go of:
   // the next run reads it back from the agent's own record.
@@ -2279,11 +2452,16 @@ export function statusLabel(session: Session | null): string {
       return "starting";
     case "running":
       if (session.needs === "permission") return "needs permission";
+      // At rest is idle where the app knows the turn ended: an integrated
+      // session's events say so, and so do the hooks of a terminal session
+      // they report the turns of. Where activity is guessed, it is running.
       return session.working
         ? "working"
         : session.unread
           ? "waiting for you"
-          : "running";
+          : session.kind === "integrated" || (session.exact && session.agent !== "codex")
+            ? "idle"
+            : "running";
     case "exited":
       return "ended";
     default:
@@ -2733,6 +2911,7 @@ function unseen(session: Session, asking = false, reminder = false) {
   if (mark !== undefined) {
     newsOverMark(session);
     mark.heard = true;
+    marksChanged();
   }
   session.unread = true;
   if (!news) return;
@@ -2762,10 +2941,11 @@ export function belled(key: string) {
 }
 
 /** The user looked: the session is on screen in a focused window. A
-    session the user marked unread while it was on screen stays so until
-    another is put on screen and it comes back. */
+    session the user marked unread while it was on screen, or that the
+    restore put on screen unread, stays so until another is put on screen
+    and it comes back. */
 export function viewed(key: string) {
-  if (markedOnScreen === key && marks.has(key)) return;
+  if (markedOnScreen === key) return;
   const session = byKey(key);
   if (session === null) return;
   read(session);
@@ -2778,8 +2958,13 @@ function read(session: Session) {
   if (session.unread) changed(session);
   session.unread = false;
   session.note = null;
-  marks.delete(session.key);
-  if (markedOnScreen === session.key) markedOnScreen = null;
+  if (marks.delete(session.key)) marksChanged();
+  letGo(session.key);
+}
+
+/** A row held on screen is no longer: it was read, or the user moved on. */
+function letGo(key: string) {
+  if (markedOnScreen === key) markedOnScreen = null;
 }
 
 /** A mark the user made: the line it put back under the name, while that
@@ -2796,10 +2981,10 @@ interface Mark {
     when the user comes back to the session, writes to it, or marks it
     read. */
 const marks = new Map<string, Mark>();
-/** The session the user marked unread while it was on screen, while that
-    mark lasts and until another session, or none, is put on screen.
-    Looking at it meanwhile is still the look it was marked during, and
-    reads nothing. */
+/** The session held on screen unread: one the user marked unread while it
+    was on screen, or one the restore put there unread. It is held while it
+    stays unread and until another session, or none, is put on screen.
+    Looking at it meanwhile reads nothing. */
 let markedOnScreen: string | null = null;
 
 /** Something new comes over a mark: the line the mark put back is the
@@ -2809,6 +2994,7 @@ function newsOverMark(session: Session) {
   if (mark === undefined || mark.restored === null) return;
   if (session.note === mark.restored) session.note = null;
   mark.restored = null;
+  marksChanged();
 }
 
 /** The agent is about to leave a line, or say it is done, over a mark:
@@ -2842,6 +3028,7 @@ export function markUnread(key: string) {
   const restored = session.note === null ? session.notice : null;
   if (restored !== null) session.note = restored;
   marks.set(key, { restored, heard: false });
+  marksChanged();
   if (sessions.active === key) markedOnScreen = key;
 }
 
@@ -2967,8 +3154,10 @@ export function exact(
       // it. One that comes from elsewhere, as a director's does, leaves a
       // mark the user made as it is.
       if (isViewed(session)) read(session);
-      else if (!marks.has(session.key)) session.unread = false;
-      else newsOverMark(session);
+      else if (!marks.has(session.key)) {
+        session.unread = false;
+        letGo(session.key);
+      } else newsOverMark(session);
       // A new turn: whatever line the last one left is stale.
       newTurnLine(session);
       tookLine(session.key);
@@ -3135,6 +3324,7 @@ export function reset() {
   pulses.clear();
   rested.clear();
   marks.clear();
+  waitingBack.clear();
   markedOnScreen = null;
   bulleted.clear();
   sessions.all = [];

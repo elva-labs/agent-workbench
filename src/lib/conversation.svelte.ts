@@ -201,7 +201,10 @@ export type Entry =
       tokensBefore: number | null;
       tokensAfter: number | null;
       at: number;
-    };
+    }
+  /** Where the conversation went back to before a message, which left
+      with everything after it; `undo` while going back can be undone. */
+  | { kind: "rewound"; key: string; at: number; undo: boolean };
 
 type Asked = Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>;
 type Ready = Extract<IntegratedEventBody, { type: "ready" }>;
@@ -294,6 +297,13 @@ export class Conversation {
   #loose = new Set<number>();
   #entryCount = 0;
   #revisions = 0;
+  /** What the thread held before it went back, while that can be undone. */
+  #before: {
+    entries: Entry[];
+    messages: Record<string, Message>;
+    order: string[];
+    turns: Record<number, Turn>;
+  } | null = null;
 
   constructor(clock: () => number = Date.now) {
     this.#clock = clock;
@@ -343,6 +353,7 @@ export class Conversation {
   /** The window is sending a message under an id it chose. */
   sending(id: string, text: string, images: IntegratedImage[] = []) {
     this.#changed();
+    this.#goneOn();
     if (this.messages[id] !== undefined) return;
     this.messages[id] = {
       id,
@@ -429,11 +440,75 @@ export class Conversation {
     this.errors = [];
     this.ended = null;
     this.nextModel = null;
+    this.#before = null;
     this.opened.clear();
     this.#blocks.clear();
     this.#calls.clear();
     this.#taskIndex.clear();
     this.#loose.clear();
+  }
+
+  /**
+   * The conversation went back to before `message`: its entry and every
+   * one after it leave the thread, with the messages and turns they held,
+   * and a line marks the place, at `at`. What left is kept until anything
+   * is said from there, for undoing it. Answers the ids of the messages
+   * that left, oldest first; none where the thread does not hold the
+   * message.
+   */
+  rewound(message: string, at: number): string[] {
+    const index = this.entries.findIndex((entry) => entry.kind === "user" && entry.message === message);
+    if (index < 0) return [];
+    this.#changed();
+    const left = this.entries.slice(index);
+    this.#before = {
+      entries: this.entries,
+      messages: { ...this.messages },
+      order: [...this.order],
+      turns: { ...this.turns },
+    };
+    const gone = left.flatMap((entry) => (entry.kind === "user" ? [entry.message] : []));
+    const ended = new Set(left.flatMap((entry) => (entry.kind === "agent" ? [entry.turn] : [])));
+    const messages = { ...this.messages };
+    for (const id of gone) delete messages[id];
+    const turns = { ...this.turns };
+    for (const id of ended) delete turns[id];
+    this.messages = messages;
+    this.turns = turns;
+    this.order = this.order.filter((id) => !gone.includes(id));
+    this.current = null;
+    this.entries = this.entries.slice(0, index);
+    this.#push({ kind: "rewound", key: "", at, undo: false });
+    return gone;
+  }
+
+  /** Going back can be undone from the line that marks it, or no longer. */
+  undoable(on: boolean) {
+    const line = this.entries.findLast((entry) => entry.kind === "rewound");
+    if (line === undefined || line.kind !== "rewound") return;
+    line.undo = on && this.#before !== null;
+  }
+
+  /** Going back is undone: what left the thread is back, and the line that
+      marked the place goes. False where there is nothing to undo. */
+  unrewound(): boolean {
+    const before = this.#before;
+    if (before === null) return false;
+    this.#changed();
+    this.#before = null;
+    this.entries = before.entries;
+    this.messages = before.messages;
+    this.order = before.order;
+    this.turns = before.turns;
+    return true;
+  }
+
+  /** Something is said from where the conversation went back to, which
+      makes that its place: going back is not undone any more. */
+  #goneOn() {
+    if (this.#before === null) return;
+    this.#before = null;
+    this.undoable(false);
   }
 
   /** The session starts again after it ended: what ended it is over, and
@@ -567,6 +642,7 @@ export class Conversation {
         this.#message(event, now);
         break;
       case "turnStarted":
+        this.#goneOn();
         this.#startTurn(event.messages, now);
         break;
       case "turnEnded":

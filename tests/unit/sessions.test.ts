@@ -540,6 +540,13 @@ describe("labels", () => {
     const other = live(A, "pty-2");
     ended({ id: "pty-2", code: 1, clean: false });
     expect(statusLabel(other)).toBe("stopped");
+
+    // An integrated session's events say when it is at rest.
+    const integrated = create(A, null, "claude-code", null, null, null, undefined, undefined, "integrated");
+    integrated.status = "running";
+    expect(statusLabel(integrated)).toBe("idle");
+    integrated.working = true;
+    expect(statusLabel(integrated)).toBe("working");
   });
 });
 
@@ -2222,6 +2229,21 @@ describe("a session read stays read", () => {
     return { front, behind };
   };
 
+  it("says idle at rest where hooks report the turns, and running where they are guessed", () => {
+    const { front, behind } = pair();
+    expect(statusLabel(behind)).toBe("running");
+    exact("session-pty-2", "prompt");
+    expect(statusLabel(behind)).toBe("working");
+    exact("session-pty-2", "stop", "ok");
+    look(behind);
+    expect(behind.exact).toBe(true);
+    expect(statusLabel(behind)).toBe("idle");
+    // Codex's turns are read from its log, not its hooks: still guessed.
+    behind.agent = "codex";
+    expect(statusLabel(behind)).toBe("running");
+    expect(statusLabel(front)).toBe("running");
+  });
+
   it("takes the idle notices after a stop, a recap and a compaction for nothing new, with hooks", () => {
     const told: string[] = [];
     onWaiting((session) => told.push(session.key));
@@ -2239,7 +2261,8 @@ describe("a session read stays read", () => {
       for (let notice = 0; notice < 3; notice++) exact("session-pty-2", "idle");
       expect(behind.unread).toBe(false);
       expect(behind.note).toBeNull();
-      expect(statusLabel(behind)).toBe("running");
+      // Its hooks said the turn ended, so at rest it is idle.
+      expect(statusLabel(behind)).toBe("idle");
       expect(told).toEqual([behind.key]);
     } finally {
       onWaiting(null);

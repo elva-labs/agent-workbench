@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400">
+  <!-- The disk image's window, 660 by 400 points: the app at (180, 170), Applications at (480, 170), an arrow between them. Finder draws the names in black, so the ground is light. -->
+  <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fbf8fa"/><stop offset="1" stop-color="#f1e8ed"/></linearGradient></defs>
+  <rect width="660" height="400" fill="url(#g)"/>
+  <g opacity="0.06"><path d="M723.61 400.25A130 130 0 1 1 547.05 241.27Z" fill="#27161f"/>
+  <path d="M561.82 235.73A130 130 0 0 1 727.58 384.98Z" fill="#27161f"/></g>
+  <path d="M262 170 H384" stroke="#d6407a" stroke-width="5" stroke-linecap="round" fill="none"/>
+  <path d="M370 156 L388 170 L370 184" stroke="#d6407a" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

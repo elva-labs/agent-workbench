@@ -1,4 +1,4 @@
-//! Agent Workbench on another machine.
+//! Chord on another machine.
 //!
 //! `agent-workbench-remote serve` is the core with no window, spoken to over
 //! stdin and stdout: one JSON object a line, requests in, answers and events
@@ -115,7 +115,7 @@ fn connect(args: impl Iterator<Item = String>) {
             let addresses = workbench_core::pair::Pairing::decode(&token)
                 .map(|pairing| pairing.addresses().join(", "))
                 .unwrap_or_default();
-            println!("Paste this into Agent Workbench, under Remote:");
+            println!("Paste this into Chord, under Remote:");
             println!();
             println!("{token}");
             println!();

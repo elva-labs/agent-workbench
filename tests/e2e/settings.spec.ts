@@ -264,10 +264,10 @@ test("records a chord of one's own", async ({ page }) => {
   await page.keyboard.press("Escape");
 
   await page.keyboard.press(`${MOD}+g`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await page.keyboard.press("Escape");
   await page.keyboard.press(`${MOD}+d`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
 });
 
 // A setup from before hooks were a choice is told once that they are worth

@@ -185,7 +185,7 @@ async function editingReport(driver: WebDriver) {
     const checked = document.querySelector("[data-testid='mode-files']")?.getAttribute("aria-checked");
     return [
       `window ${window.innerWidth}x${window.innerHeight}`,
-      `mode ${document.querySelector("[data-testid='mode-readout']")?.textContent}`,
+      `mode ${document.querySelector("[data-testid='shell']")?.getAttribute("data-mode")}`,
       `widths sessions ${width("section[data-pane='sessions']")}, changes ${width("section[data-pane='changes']")}, agent ${width("section[data-pane='agent']")}, tree column ${width("[data-testid='tree-column']")}`,
       `trees ${trees.length}, the first listing ${JSON.stringify(trees[0]?.innerText.slice(0, 200) ?? null)}`,
       `tree column ${JSON.stringify((document.querySelector<HTMLElement>("[data-testid='tree-column']")?.innerText ?? "").slice(0, 200))}`,
@@ -490,7 +490,8 @@ describe("the real app", () => {
   // for the tests that follow.
   it("edits and saves a file in editor mode through the core", async () => {
     const { driver } = app;
-    const mode = () => textOf(driver, "[data-testid='mode-readout']");
+    const mode = () =>
+      driver.executeScript(() => document.querySelector("[data-testid='shell']")?.getAttribute("data-mode") ?? "") as Promise<string>;
     try {
       await editInEditorMode(driver, mode);
     } catch (error) {

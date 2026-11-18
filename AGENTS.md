@@ -1,6 +1,6 @@
 # Working in this repository
 
-Agent Workbench is a desktop app for coding agents that run as terminal
+Chord is a desktop app for coding agents that run as terminal
 programs. The README says what it is; the docs under `docs/` say how it is
 built and why. Read the doc for the area you are changing before changing it.
 

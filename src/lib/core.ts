@@ -139,6 +139,12 @@ export interface SpawnOptions {
       or none, differs from what its conversation was first given, so an
       agent that records the first lets go of it. */
   afresh?: boolean;
+  /** For a Claude Code conversation resumed in a terminal while it is held
+      at the point it went back to (`integratedHeld`): the user agreed to
+      bring back what that point left out, which the terminal shows and
+      goes on with, and the point is let go. Without it such a start fails
+      with an error `isHeld` knows. */
+  bringBack?: boolean;
   cols: number;
   rows: number;
 }
@@ -215,6 +221,19 @@ export const INTEGRATED_UNTRUSTED = "untrusted";
 export function isUntrusted(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return message.startsWith(`${INTEGRATED_UNTRUSTED}:`);
+}
+
+/** What a terminal start of a Claude Code conversation held at the point
+    it went back to fails with, before the reason, unless the user agreed to
+    bring back what that left out: the window asks, and on a yes starts it
+    again with `bringBack`. */
+export const HELD = "held";
+
+/** Whether a failed `spawn` failed because the conversation is held at the
+    point it went back to. */
+export function isHeld(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.startsWith(`${HELD}:`);
 }
 
 /** An image attached to a message: base64 data and its media type, one of
@@ -583,7 +602,13 @@ export type IntegratedEventBody =
       message: string;
     }
   /** The process is gone; nothing follows. */
-  | { type: "ended"; code: number | null; clean: boolean };
+  | { type: "ended"; code: number | null; clean: boolean }
+  /** The session went back to before `message`, a message of the user's:
+      with `conversation`, the message and everything after it left the
+      conversation; `files` are those put back as they were before it, none
+      where only the conversation went back. Told on the session that goes
+      on, after its `ready` where it was started again. */
+  | { type: "rewound"; message: string; conversation: boolean; files: string[] };
 
 /** An event with the session it belongs to. */
 export type IntegratedEvent = IntegratedEventBody & { id: string };
@@ -629,6 +654,51 @@ export interface IntegratedSnapshot {
 export interface IntegratedHistory {
   items: { at: number; model?: string; event: IntegratedEventBody }[];
   cut: boolean;
+}
+
+/** A message of the user's, and how far its session can go back to before
+    it: `conversation` when the message and everything after it can leave
+    the conversation, with `why` in plain words where they cannot; `files`
+    when the agent kept the files as they were before it, which
+    `integratedRewindPreview` says more of. */
+export interface IntegratedPoint {
+  message: string;
+  conversation: boolean;
+  files: boolean;
+  why: string | null;
+}
+
+/** Where a session's conversation can go back to: every message of the
+    user's in it as the agent keeps it now, oldest first. `why` says why
+    none can, such as a thread kept by an older Codex, and the list is then
+    empty. */
+export interface IntegratedPoints {
+  points: IntegratedPoint[];
+  why: string | null;
+}
+
+/** What putting the files back as they were before a message would
+    change: the files, each deleted where the agent made it since and
+    restored where it changed it, with the host on their paths for a
+    session elsewhere, and the lines that would come back and go. */
+export interface IntegratedPreview {
+  files: string[];
+  insertions: number;
+  deletions: number;
+}
+
+/** What going back, or undoing it, came to. `id` is the session that goes
+    on, the same one or one started again, and `sessionId` its
+    conversation's id: a new one where Claude Code went back to before the
+    first message. `files` are the files put back. `fallback` says why a
+    conversation that was to go back goes on whole instead, and `error` why
+    no session could be started again, with `id` and `sessionId` null. */
+export interface IntegratedWentBack {
+  id: string | null;
+  sessionId: string | null;
+  files: string[];
+  fallback: string | null;
+  error: string | null;
 }
 
 /** Whose history `integratedHistory` reads: the session's conversation
@@ -1315,6 +1385,10 @@ export interface Core {
   /** Where the middle of the sessions pane's header is, in CSS pixels
       from the window's top, for the platform's own controls to sit on. */
   controlsCentre(centre: number): Promise<void>;
+  /** Where the cursor is, in CSS pixels from the window's top left, as the
+      window itself knows it, outside the page too; null when it cannot
+      say. */
+  cursorInWindow(): Promise<{ x: number; y: number } | null>;
   /** The window started into full screen, with true, or back out, with
       false. Only macOS says; its controls are away while it is in. */
   onFullScreen(handler: (fullScreen: boolean) => void): Promise<() => void>;
@@ -1404,6 +1478,50 @@ export interface Core {
   accountLimits(
     options: AccountLimitsOptions,
   ): Promise<Extract<IntegratedEventBody, { type: "limits" }> | null>;
+  /** Where the session's conversation can go back to, for a session at
+      rest: for each message of the user's, whether the conversation and
+      the files can go back to before it. Codex's are read through a Codex
+      of the core's own, which takes a second or two. */
+  integratedRewindPoints(id: string): Promise<IntegratedPoints>;
+  /** What putting the files back as they were before a message would
+      change, as the agent's own dry run says, with nothing changed.
+      Rejects in the agent's words where it cannot put them back to there,
+      and for Codex, which puts no files back. */
+  integratedRewindPreview(id: string, message: string): Promise<IntegratedPreview>;
+  /** Takes a session at rest back to before a message of the user's: with
+      `conversation`, the message and everything after it leave the
+      conversation; with `files`, the files a preview showed the user, the
+      files go back first, as they were before it. Claude Code is stopped
+      and started again under a new id, keeping the row's token and the
+      settings it runs on, and the session it went back from ends before
+      this resolves; Codex goes on in the same session. `rewound` has gone
+      out on the session that goes on before this resolves, where the
+      conversation or the files went back. Until this resolves the session refuses
+      messages and compaction, saying "the session is going back", whoever
+      sends them, and once a Claude Code session has ended for its restart,
+      "no such session": a window holds what it sends meanwhile, either way,
+      for the session the answer names. Rejects, with nothing changed, where it cannot go back
+      there, and where the agent would now put back a file the preview did
+      not show, saying the files changed since they were shown. */
+  integratedRewind(
+    id: string,
+    message: string,
+    what: { conversation: boolean; files: string[] | null },
+  ): Promise<IntegratedWentBack>;
+  /** Undoes the going back of Claude Code's conversation that started
+      this session, while nothing has gone on in it since and it put no
+      files back: the session is started again under a new id on the
+      conversation as it was, and the one undone ends before this
+      resolves. Rejects, with nothing changed, where it cannot. */
+  integratedRewindUndo(id: string): Promise<IntegratedWentBack>;
+  /** Whether a conversation is held at the point it went back to, which
+      its agent writes down only with the next message sent from there.
+      Until then a terminal that resumes it goes on with what was gone back
+      on, since Claude Code's terminal does not take the point, and a line
+      typed there makes that the conversation for good: a window says so
+      before it opens one, and offers to send a message first. Needs no
+      session running. */
+  integratedHeld(options: IntegratedHistoryOptions): Promise<boolean>;
   /** Ends the session. Resolves at once; `ended` follows. */
   integratedStop(id: string): Promise<void>;
   /** Every integrated session's news, each event naming its session. */
@@ -1840,6 +1958,10 @@ const tauriCore: Core = {
 
   openAppMenu: () => invoke("app_menu"),
   controlsCentre: (centre) => invoke("controls_centre", { centre }),
+  async cursorInWindow() {
+    const at = await invoke<[number, number] | null>("cursor_in_window");
+    return at === null ? null : { x: at[0], y: at[1] };
+  },
   async onFullScreen(handler) {
     return listen<boolean>("full_screen", (event) => handler(event.payload));
   },
@@ -1904,6 +2026,18 @@ const tauriCore: Core = {
     invoke<IntegratedHistory | null>("integrated_history", { ...options }),
   accountLimits: (options) =>
     invoke<Extract<IntegratedEventBody, { type: "limits" }> | null>("account_limits", { ...options }),
+  integratedRewindPoints: (id) => invoke<IntegratedPoints>("integrated_rewind_points", { id }),
+  integratedRewindPreview: (id, message) =>
+    invoke<IntegratedPreview>("integrated_rewind_preview", { id, message }),
+  integratedRewind: (id, message, what) =>
+    invoke<IntegratedWentBack>("integrated_rewind", {
+      id,
+      message,
+      conversation: what.conversation,
+      files: what.files,
+    }),
+  integratedRewindUndo: (id) => invoke<IntegratedWentBack>("integrated_rewind_undo", { id }),
+  integratedHeld: (options) => invoke<boolean>("integrated_held", { ...options }),
   integratedStop: (id) => invoke<void>("integrated_stop", { id }),
   async onIntegratedEvent(handler) {
     return listen<IntegratedEvent>("integrated_event", (event) =>
@@ -2212,6 +2346,9 @@ const detachedCore: Core = {
   async windowControl() {},
   async openAppMenu() {},
   async controlsCentre() {},
+  async cursorInWindow() {
+    return null;
+  },
   async onFullScreen() {
     return () => {};
   },
@@ -2261,6 +2398,21 @@ const detachedCore: Core = {
   },
   async accountLimits() {
     return null;
+  },
+  async integratedRewindPoints() {
+    return { points: [], why: null };
+  },
+  async integratedRewindPreview(): Promise<IntegratedPreview> {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedRewind(): Promise<IntegratedWentBack> {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedRewindUndo(): Promise<IntegratedWentBack> {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedHeld() {
+    return false;
   },
   async integratedStop() {},
   async onIntegratedEvent() {
