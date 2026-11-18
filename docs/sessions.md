@@ -199,6 +199,25 @@ left out, and a session another session started stays with its starter; see
 folder of an earlier version comes back too, and lists that folder again;
 see [orchestrator](orchestrator.md).
 
+A row that was unread when the app quit comes back unread, with the line
+it had under its name, whether it went unread by itself or was marked by
+hand; a row that was read comes back read, keeping the line it last showed
+for a mark. A mark made by hand comes back with its rule. This holds for a
+terminal and an integrated session, whether its agent is started again or
+the row is left as it was, and for a session another session started, which
+comes back unread when its starter brings it back. What waits is kept as
+it changes, not on the way out, so a crash keeps it as a quit does. It
+counts at once in the status bar, on the app's icon and for the chord to
+the next session that needs you, and coming back says nothing through the
+system: what was unread was news before the quit. What happens after it is
+news as it would have been before. The session the restore puts on screen
+is not read by being put there, nor by the window being looked at: unread,
+it waits as a mark made on screen does, until another session has been on
+screen and the user comes back to it, writes to it, or marks it read. A
+session that ended before the quit is not among the rows that come back,
+and its unread with it. A version that does not keep what waits, run in
+between, leaves the rows to come back read.
+
 The yellow is the terminal's, so a theme that sets its yellow sets this dot
 too. In the amber palette, whose accent is a yellow, it is a lemon instead,
 so it is never taken for an unread session.
@@ -219,7 +238,8 @@ that started others how many of them it has not yet heard from, as the
 laid out apart, so the model never narrows the name. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
-name and its time, the time its transcript was last written. Those rows come after the running
+name and its time, the time its transcript was last written, unless it
+came back unread with a line, as the next section says. Those rows come after the running
 ones, and once a project has more than three of them the first two stand
 and the rest fold into one row that counts them, such as `8 more from this
 week`, which opens in place. No row says which agent it runs.
@@ -333,8 +353,8 @@ and in the notification.
 Any row can be marked, a session another session started and a row left
 from the last quit among them. A past session, listed under its project
 or behind the fold, has no menu and cannot be marked: nothing of it is
-open to wait for the user, and opening it starts it again. A mark does
-not outlive a quit, as no unread row does.
+open to wait for the user, and opening it starts it again. A mark comes
+back after a restart, as [after a restart](#after-a-restart) describes.
 
 With the project's hooks on (Live updates, in the settings) the transitions
 are reported by the agent. Both agents' prompt, stop and permission hooks
