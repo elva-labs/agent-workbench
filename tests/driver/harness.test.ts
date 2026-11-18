@@ -5,7 +5,14 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { end, freePorts, waitForDriver, waitForHeartbeat } from "./harness";
+import {
+  end,
+  endUnder,
+  freePorts,
+  processesUnder,
+  waitForDriver,
+  waitForHeartbeat,
+} from "./harness";
 
 /**
  * The harness's own footing, with no app: how it waits for a driver to be
@@ -102,6 +109,48 @@ describe("the driver harness", () => {
       `the app wrote no heartbeat at ${join(home, ".agent-workbench", "answering")}`,
     );
   });
+
+  it.skipIf(process.platform !== "linux")(
+    "ends what still runs under a launch's home, and nothing else",
+    async () => {
+      const home = mkdtempSync(join(tmpdir(), "workbench-harness-"));
+      const elsewhere = mkdtempSync(join(tmpdir(), "workbench-harness-"));
+      homes.push(home, elsewhere);
+      // Stand-ins for what an app leaves behind: one that ignores a polite
+      // end, started apart from this process the way an orphan is.
+      const started = (at: string) =>
+        new Promise<ChildProcess>((done) => {
+          const child = spawn(
+            process.execPath,
+            [
+              "-e",
+              'process.on("SIGTERM", () => {}); console.log("up"); setInterval(() => {}, 1000)',
+            ],
+            {
+              env: { ...process.env, HOME: at },
+              detached: true,
+              stdio: ["ignore", "pipe", "ignore"],
+            },
+          );
+          child.stdout!.once("data", () => {
+            child.stdout!.destroy();
+            child.unref();
+            done(child);
+          });
+        });
+      const stubborn = await started(home);
+      const other = await started(elsewhere);
+      children.push(other);
+      expect(processesUnder(home)).toEqual([stubborn.pid]);
+
+      await endUnder(home);
+
+      expect(processesUnder(home)).toEqual([]);
+      expect(processesUnder(elsewhere)).toEqual([other.pid]);
+      process.kill(other.pid!, "SIGKILL");
+    },
+    20_000,
+  );
 
   it("hands out ports that differ", async () => {
     const ports = await freePorts(3);
