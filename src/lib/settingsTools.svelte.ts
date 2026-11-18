@@ -176,6 +176,7 @@ const USERS_OWN = new Set([
   "notifications",
   "chime",
   "askEveryStart",
+  "lastChosen",
   "workflowOverrides",
   "workflowOverride",
   "projectWorkflow",

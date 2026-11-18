@@ -9,6 +9,7 @@
   import { choose, heldModel, modeChoices, modeName, modelChoices, workflowChoices } from "$lib/settingChoices";
   import type { AgentId, Workflow } from "$lib/core";
   import { clock, modelName, tokens } from "$lib/thread";
+  import { modelLabel as knownModelLabel } from "$lib/models";
   import {
     allNamed,
     backCostOf,
@@ -974,7 +975,11 @@
 
   let models = $derived(conversation.ready?.models ?? []);
   let current = $derived(conversation.settings.model);
-  let name = $derived(modelName(conversation, current));
+  /** Before the agent has said what it offers, a model is named as the
+      workbench knows it. */
+  let name = $derived(
+    conversation.ready === null && current !== null ? knownModelLabel(agentId, current) : modelName(conversation, current),
+  );
   /** The model as the chip says it: which one a default is, once known. */
   let modelLabel = $derived(name === null ? "Default model" : defaultModel ? `Default · ${name}` : name);
   /** A model chosen during a turn, which the next turn runs on. */

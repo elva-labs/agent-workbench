@@ -71,6 +71,15 @@ export function nextNarrower(agent: AgentId, mode: string): string | null {
   return STARTED_IN[agent].find((each) => STANDING[agent][each] < at) ?? null;
 }
 
+/** Whether a new session begins in a mode the user last chose: one that
+    can edit and still asks somewhere. Plan cannot edit, and bypassing
+    permissions and Codex's full access ask nothing; a mode not on the
+    scale is not known well enough to begin in. */
+export function carriedOver(agent: AgentId, mode: string): boolean {
+  const at = standing(agent, mode);
+  return at !== null && at > 0 && at < 5;
+}
+
 /** The narrower of two modes of one agent; either where the other is
     null. */
 export function narrowerOf(agent: AgentId, one: string | null, other: string | null): string | null {

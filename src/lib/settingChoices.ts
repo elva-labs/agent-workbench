@@ -1,8 +1,9 @@
 import type { Conversation } from "$lib/conversation.svelte";
 import type { AgentId, Workflow } from "$lib/core";
-import { configure } from "$lib/integrated.svelte";
+import { configure, linkOf } from "$lib/integrated.svelte";
+import { choose as keepChoice } from "$lib/lastChosen.svelte";
 import { modelLabel } from "$lib/models";
-import { cannotDirect } from "$lib/sessions.svelte";
+import { byKey, cannotDirect } from "$lib/sessions.svelte";
 import { modelName, offeredModel } from "$lib/thread";
 import { workflowGist, workflows } from "$lib/workflows.svelte";
 
@@ -125,17 +126,27 @@ export function modelInUse(conversation: Conversation): string | null {
 }
 
 /** Switches the session to a model, an effort or a mode, unless it is on it
-    already. */
+    already. Once the agent has taken it, it is what the next new session
+    of the agent starts on; Claude Code's default model starts the next one
+    on its default again. */
 export function choose(
   key: string,
   conversation: Conversation,
   setting: "model" | "mode" | "effort",
   value: string,
 ) {
+  const agent = byKey(key)?.agent;
+  const keep = () => {
+    if (agent === undefined || linkOf(key)?.configureError != null) return;
+    if (setting !== "model" && conversation.settings[setting] !== value) return;
+    keepChoice(agent, setting, value);
+  };
   if (setting === "model") {
     if (value !== inUse(conversation) && value !== conversation.settings.model)
-      void configure(key, { model: value });
-  } else if (value !== conversation.settings[setting]) void configure(key, { [setting]: value });
+      void configure(key, { model: value }).then(keep);
+    else keep();
+  } else if (value !== conversation.settings[setting]) void configure(key, { [setting]: value }).then(keep);
+  else keep();
 }
 
 /** The workflows a new conversation can follow, after none: the agent

@@ -202,6 +202,65 @@ pub struct UnreadEntry {
     pub entry: Value,
 }
 
+/// What the user last chose for one agent's sessions, each left out where
+/// nothing was chosen.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Chosen {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+}
+
+/// How many agents the choices may name, and how long a name or a value
+/// may be.
+const MOST_CHOSEN: usize = 16;
+const LONGEST_CHOSEN: usize = 100;
+
+/// The choices a value holds, or why it will not do: a table by agent of
+/// a model, an effort and a mode, each a short line of text.
+fn last_chosen(value: &Value) -> Result<BTreeMap<String, Chosen>, String> {
+    const SHAPE: &str =
+        "lastChosen is a table by agent of the model, the effort and the mode last chosen";
+    let table = value.as_object().ok_or(SHAPE)?;
+    if table.len() > MOST_CHOSEN {
+        return Err(format!("lastChosen names {MOST_CHOSEN} agents at most"));
+    }
+    let line = |text: &Value| -> Result<Option<String>, String> {
+        match text {
+            Value::Null => Ok(None),
+            Value::String(text)
+                if !text.is_empty()
+                    && text.chars().count() <= LONGEST_CHOSEN
+                    && !text.chars().any(char::is_control) =>
+            {
+                Ok(Some(text.clone()))
+            }
+            _ => Err(SHAPE.into()),
+        }
+    };
+    let mut chosen = BTreeMap::new();
+    for (agent, entry) in table {
+        if agent.is_empty() || agent.chars().count() > LONGEST_CHOSEN {
+            return Err(SHAPE.into());
+        }
+        let entry = entry.as_object().ok_or(SHAPE)?;
+        let none = Value::Null;
+        let field = |name: &str| line(entry.get(name).unwrap_or(&none));
+        chosen.insert(
+            agent.clone(),
+            Chosen {
+                model: field("model")?,
+                effort: field("effort")?,
+                mode: field("mode")?,
+            },
+        );
+    }
+    Ok(chosen)
+}
+
 /// A login kept apart from the others: Claude Code's in a configuration
 /// directory of its own, Codex's in a home of its own. Either left out
 /// means that agent runs on its own directory under the home.
@@ -282,6 +341,11 @@ pub struct Settings {
     /// which reads as off.
     #[serde(default)]
     pub compact: bool,
+    /// The model, the effort and the permission mode the user last chose
+    /// for each agent's sessions, by the agent's id, which a new session of
+    /// that agent starts on. A file from before has none.
+    #[serde(default)]
+    pub last_chosen: BTreeMap<String, Chosen>,
     /// What the file holds that is not used. Not a setting: it is read from the file and written back to it.
     #[serde(default)]
     pub unread_entries: Vec<UnreadEntry>,
@@ -313,6 +377,7 @@ impl Default for Settings {
             chime: false,
             ask_every_start: false,
             compact: false,
+            last_chosen: BTreeMap::new(),
             unread_entries: Vec::new(),
         }
     }
@@ -1124,6 +1189,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             settings.ask_every_start = value.as_bool().ok_or("askEveryStart is true or false")?;
         }
         "compact" => settings.compact = value.as_bool().ok_or("compact is true or false")?,
+        "lastChosen" => settings.last_chosen = last_chosen(value)?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => {
@@ -3004,6 +3070,45 @@ mod tests {
         let odd = parse(r#"{ "compact": "yes" }"#).unwrap();
         assert!(!odd.compact);
         assert_eq!(odd.unread_entries[0].field, "compact");
+    }
+
+    #[test]
+    fn the_last_choices_are_kept_by_agent_and_a_file_from_before_has_none() {
+        let defaults = Settings::default();
+        assert!(defaults.last_chosen.is_empty());
+        let next = apply(
+            &defaults,
+            &json!({ "lastChosen": { "claude-code": { "model": "opus", "mode": "acceptEdits" } } }),
+        )
+        .unwrap();
+        let kept = &next.last_chosen["claude-code"];
+        assert_eq!(kept.model.as_deref(), Some("opus"));
+        assert_eq!(kept.effort, None);
+        assert_eq!(kept.mode.as_deref(), Some("acceptEdits"));
+        // Written as chosen, with nothing for what was not.
+        let written: Value = serde_json::from_str(&render(&next)).unwrap();
+        assert_eq!(
+            written["lastChosen"],
+            json!({ "claude-code": { "model": "opus", "mode": "acceptEdits" } })
+        );
+        assert!(apply(&next, &json!({ "lastChosen": { "codex": { "model": 5 } } })).is_err());
+        assert!(apply(&next, &json!({ "lastChosen": ["opus"] })).is_err());
+        assert!(apply(
+            &next,
+            &json!({ "lastChosen": { "codex": { "mode": "a\nb" } } })
+        )
+        .is_err());
+        // A file from before has none, and one that does not read is kept
+        // as written.
+        assert!(parse(r#"{ "chime": true }"#)
+            .unwrap()
+            .last_chosen
+            .is_empty());
+        let unread = parse(r#"{ "lastChosen": "opus" }"#).unwrap();
+        assert!(unread.last_chosen.is_empty());
+        assert_eq!(unread.unread_entries[0].field, "lastChosen");
+        let written: Value = serde_json::from_str(&render(&unread)).unwrap();
+        assert_eq!(written["lastChosen"], "opus");
     }
 
     #[test]

@@ -46,6 +46,7 @@ const DEFAULTS: Settings = {
   chime: false,
   askEveryStart: false,
   compact: false,
+  lastChosen: {},
 };
 
 vi.mock("$lib/core", () => ({
@@ -695,6 +696,7 @@ describe("adopt", () => {
       keys: { ...PRESETS.vim },
       hooks: { everywhere: false, overrides: { "/x": true } },
       compact: true,
+      lastChosen: { "claude-code": { model: "opus", mode: "acceptEdits" } },
     };
     adopt(settings);
     expect(currentSettings()).toEqual(settings);

@@ -1345,6 +1345,10 @@ export interface Settings {
       panes from the window's left edge. A file from before has none,
       which reads as off. */
   compact?: boolean;
+  /** The model, the effort and the permission mode the user last chose
+      for each agent's sessions, by the agent's id, which a new session
+      of that agent starts on. A file from before has none. */
+  lastChosen?: Record<string, { model?: string; effort?: string; mode?: string }>;
 }
 
 /** The user's own stylesheet: its text, or none and why the one on disk

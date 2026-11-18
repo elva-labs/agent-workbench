@@ -7,7 +7,10 @@ import { reservedName, shown } from "$lib/unseen";
 import { failureOf } from "$lib/turnFailure";
 import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.svelte";
 import { keepMode, modeOf } from "$lib/sessionModes";
-import { nextNarrower } from "$lib/modeFit";
+import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
+import { heardOffers } from "$lib/lastChosen.svelte";
+import { modelLabel } from "$lib/models";
+import { offeredModel } from "$lib/thread";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf, pathOn } from "$lib/remote.svelte";
 import {
@@ -27,6 +30,7 @@ import {
   adopt,
   beganTurn,
   byKey,
+  carriedFor,
   failed,
   followsAgain,
   givenName,
@@ -52,6 +56,7 @@ import {
   runUp,
   toldAtStart,
   toldFor,
+  type Carried,
   type Session,
   type Told,
 } from "$lib/sessions.svelte";
@@ -167,6 +172,8 @@ export class Link {
   unanswered = new Set<Change>();
   /** The user chose the mode the session runs in. */
   modeChosen = false;
+  /** The user chose the effort the session runs at. */
+  effortChosen = false;
   /** What the run behind the row was started on. */
   ranOn: Run | null = null;
   /** The agent the row was started on, once a workflow picked for it may
@@ -217,12 +224,18 @@ const EARLY_MOST = 5000;
 
 let clock: () => number = Date.now;
 
-/** The row's link, made the first time it is asked for. */
+/** The row's link, made the first time it is asked for. A new session
+    the user started shows what it starts on from the choices kept for its
+    agent at once, until its agent says what it runs on. */
 export function linkFor(key: string): Link {
   let link = links.get(key);
   if (link === undefined) {
     link = new Link(clock);
     links.set(key, link);
+    const session = byKey(key);
+    const carried = session === null || session.kind !== "integrated" ? null : carriedFor(session);
+    if (carried !== null && session !== null && session.status === "starting")
+      link.conversation.settings = { model: session.model, mode: carried.mode, effort: carried.effort };
   }
   return link;
 }
@@ -371,8 +384,14 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       // This run started on the workflow the row follows now.
       rememberWorkflow(session);
       keepRunMode(session, link);
+      heardOffers(
+        session.agent,
+        session.account,
+        body.models.map((model) => model.value),
+      );
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
+      else if (session.carried !== null) void fallBackCarried(key, link, session, session.carried);
       break;
     case "configured":
       session.model = body.model;
@@ -540,6 +559,12 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
   link.granted = [];
   const mode = startMode(starting, link);
   starting.modeNamed = mode ?? null;
+  const carried = carriedFor(starting);
+  const effort = startEffort(starting, link, carried);
+  starting.carried =
+    carried === null
+      ? null
+      : { model: carried.model, effort: effort ?? null, mode: mode === carried.mode ? carried.mode : null };
   const started = await core().integratedStart({
     agent: starting.agent,
     project: starting.project,
@@ -548,6 +573,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     token: starting.token,
     model: starting.model ?? undefined,
     mode,
+    effort,
     configDir: dirFor(starting.account, starting.agent),
     ...told,
   });
@@ -677,6 +703,7 @@ async function restart(key: string, session: Session, link: Link) {
   link.busy = true;
   link.restarting = true;
   const sameAgent = link.ranOn?.agent === session.agent;
+  if (!sameAgent) link.effortChosen = false;
   // The new run starts in the user's last choice of mode: one asked for
   // while a run started again, else one asked of the run being left and
   // not answered yet. A model or an effort asked of that run goes with
@@ -737,17 +764,85 @@ async function restart(key: string, session: Session, link: Link) {
     not offer is left to them again rather than replaced. */
 export function startMode(session: Session, link: Link): string | undefined {
   const given = session.resumedFrom === null ? (session.modeGiven ?? undefined) : undefined;
+  // A new one the user started begins in the mode last chosen for its
+  // agent.
+  const carried = carriedFor(session)?.mode ?? undefined;
   const mode = link.conversation.settings.mode;
   if (mode !== null) {
-    if (!offers(link, mode)) return given;
+    if (!offers(link, mode)) return given ?? carried;
     // A new conversation nothing has been said in starts again as a new
     // one would, unless the user chose its mode.
-    return unspoken(session) && !link.modeChosen ? given : mode;
+    return unspoken(session) && !link.modeChosen ? (given ?? carried) : mode;
   }
   if (session.resumedFrom !== null) return modeOf(session.resumedFrom) ?? undefined;
   // One reopened before anything was said in it starts in the mode kept
   // for the conversation it leaves.
-  return given ?? (session.id === null ? undefined : (modeOf(session.id) ?? undefined));
+  return given ?? (session.id === null ? undefined : (modeOf(session.id) ?? undefined)) ?? carried;
+}
+
+/** The effort a session starts at: for a new one the user started, the
+    one last chosen for its agent, unless the user chose another for it
+    already. Otherwise none is named, and the agent runs at its own. */
+function startEffort(session: Session, link: Link, carried: Carried | null): string | undefined {
+  if (carried === null) return undefined;
+  const effort = link.conversation.settings.effort;
+  if (link.effortChosen && effort !== null) return effort;
+  return carried.effort ?? undefined;
+}
+
+/**
+ * A new session that did not start on what was last chosen for its agent
+ * goes on the nearest it can take, and says so: the agent's default model
+ * where the account does not offer the one chosen, the nearest narrower
+ * mode where the agent did not take the one chosen, and the nearest lower
+ * effort where the model does not take the one chosen. The chips then
+ * show what it runs on. What is kept stays as it was.
+ */
+async function fallBackCarried(key: string, link: Link, session: Session, carried: Carried) {
+  const ready = link.conversation.ready;
+  if (ready === null) return;
+  const change: Change = {};
+  const said: string[] = [];
+  if (carried.model !== null && ready.models.length > 0 && offeredModel(link.conversation, carried.model) === null) {
+    const instead = ready.models.find((model) => model.value === "default") ?? ready.models[0];
+    change.model = instead.value;
+    const name = (instead.name ?? instead.value).replace(/\s*\(.*\)\s*$/, "").trim();
+    said.push(`${modelLabel(session.agent, carried.model)} is not offered here, so the session runs on ${name}.`);
+  }
+  if (carried.mode !== null && session.modeNamed === carried.mode && ready.mode !== carried.mode) {
+    let mode = nextNarrower(session.agent, carried.mode);
+    while (mode !== null && !offers(link, mode)) mode = nextNarrower(session.agent, mode);
+    if (mode !== null && mode !== ready.mode) {
+      change.mode = mode;
+      said.push(
+        `${nameOfMode(session.agent, carried.mode)} mode, last chosen, is not available here, so it runs in ${nameOfMode(session.agent, mode)} mode, the nearest below that it can take.`,
+      );
+    }
+  }
+  if (carried.effort !== null && change.model === undefined) {
+    const efforts = link.conversation.efforts;
+    if (efforts.length > 0 && !efforts.includes(carried.effort) && ready.effort !== carried.effort) {
+      const effort = lowerEffort(carried.effort, efforts);
+      if (effort !== null && effort !== ready.effort) change.effort = effort;
+    }
+  }
+  if (Object.keys(change).length === 0) return;
+  await configure(key, change, false);
+  for (const message of said) link.conversation.apply({ type: "notice", level: "info", message });
+}
+
+/** The efforts from the least to the most. */
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** The highest of `efforts` below `effort`, else the lowest of them; null
+    where `effort` is not on the scale. */
+function lowerEffort(effort: string, efforts: string[]): string | null {
+  const at = EFFORT_ORDER.indexOf(effort);
+  if (at < 0) return null;
+  const known = efforts.filter((one) => EFFORT_ORDER.includes(one));
+  const below = known.filter((one) => EFFORT_ORDER.indexOf(one) < at);
+  const sorted = (list: string[]) => [...list].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+  return sorted(below).at(-1) ?? sorted(known)[0] ?? null;
 }
 
 /**
@@ -1542,11 +1637,13 @@ export function reply(key: string, request: string, answers: string[][] | null) 
     .catch((error) => link.conversation.answering(request, false, message(error)));
 }
 
-/** Switches the model the session runs on. */
-export async function configure(key: string, change: Change) {
+/** Switches the model, the mode or the effort the session runs on: the
+    user's choice, unless `chosen` says it is the workbench's own. */
+export async function configure(key: string, change: Change, chosen = true) {
   const link = links.get(key);
   if (link === undefined) return;
-  if (change.mode !== undefined) link.modeChosen = true;
+  if (chosen && change.mode !== undefined) link.modeChosen = true;
+  if (chosen && change.effort !== undefined) link.effortChosen = true;
   // A run a reopen is stopping takes nothing more: a mode chosen meanwhile
   // is the one the next run starts in, the other way.
   if (reopeningRow(key)) {

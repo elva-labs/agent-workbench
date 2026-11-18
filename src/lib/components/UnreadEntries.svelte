@@ -15,6 +15,7 @@
     notifications: "notifications choice",
     chime: "chime choice",
     askEveryStart: "choice on asking before every start",
+    lastChosen: "choices new sessions start on",
     compact: "compact mode choice",
   };
 
