@@ -43,7 +43,7 @@ const KEPT = [
   [/\.agent-workbench|agent-workbench-pair|agent-workbench-\{what\}/, "the home folder, and scratch files named like it"],
   [/agent-workbench-remote|AgentWorkbenchRemote|AGENT_WORKBENCH_VERSION/, "the daemon, its formula and its install script's variable"],
   [/agent-workbench@beta|cask: \[?"agent-workbench|Casks\/agent-workbench|--cask agent-workbench|cask "agent-workbench|cask is still `agent-workbench`|"agent-workbench": "chord"/, "the old casks, which the new ones conflict with or replace"],
-  [/"(conflicts|replaces|provides|obsoletes)": \["agent-workbench"\]/, "the Linux package the app had under its earlier name, which Chord's replaces"],
+  [/"(conflicts|replaces|provides|obsoletes)": \["agent-workbench"\]|where it was `agent-workbench`|provides `agent-workbench`/, "the Linux package the app had under its earlier name, which Chord's replaces"],
   [/agent-workbench`? line|AAAA agent-workbench|"agent-workbench\\n"|restrict \{\} agent-workbench|^\s*"agent-workbench",$/, "the comment on the daemon's line in authorized_keys, which pairing finds its own line by", /pair\.rs$|remote\.md$|agent-workbench-remote\.rs$/],
   [/^name = "agent-workbench"|^\s*"name": "agent-workbench",$|agent_workbench_lib/, "crate and package names", /Cargo\.(toml|lock)$|package(-lock)?\.json$|src-tauri\/(src|tests)\//],
   [/target\/\w+\/agent-workbench|<string>agent-workbench<|agent-workbench-driver|"agent-workbench(\.exe)?"|"agent-workbench", "\."/, "the binary the app's crate builds, and a test's scratch folder named like it", /harness\.ts$|launch\.rs$|testing\.md$|driver\.sh$|smoke\.sh$|scripts\//],

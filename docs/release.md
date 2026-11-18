@@ -143,7 +143,9 @@ the installed cask to the new token, and `brew upgrade` takes `Agent
 Workbench.app` out and puts `Chord.app` in, leaving settings and state
 where they are.
 
-The first Chord pre-release does this for the beta channel. After it the tap
+The first Chord pre-release does this for the beta channel. Its version
+is newer than the last pre-release under the earlier name, 1.0.0-beta.4,
+so that `brew upgrade` takes the renamed cask forward. After it the tap
 holds:
 
 - `Casks/chord@beta.rb`, printed by `scripts/cask.sh <version> beta`;
@@ -176,5 +178,9 @@ release notes of the first Chord release say:
 - On Windows the setup installer runs the old install's uninstaller, which
   takes its shortcuts away and unpins them from the taskbar and Start, so
   Chord's shortcut is pinned again.
-- On Linux the desktop entry takes the new name, and GNOME's and KDE's
-  favourites name the entry, so a favourite of the app is added again.
+- On Linux the package is `chord` where it was `agent-workbench`: the
+  bundler names it after the product. Chord's package conflicts with,
+  replaces and provides `agent-workbench`, and its rpm obsoletes it, so
+  installing it takes the old package out. The desktop entry takes the
+  new name too, and GNOME's and KDE's favourites name the entry, so a
+  favourite of the app is added again.
