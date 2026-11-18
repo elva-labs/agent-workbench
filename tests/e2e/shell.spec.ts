@@ -222,7 +222,7 @@ test("opens with three panes and the agent focused", async ({ page }) => {
   await expect(page.locator(AGENT)).toBeVisible();
   await expect(page.locator(CHANGES)).toBeVisible();
   await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
-  await expect(page.getByTestId("mode-readout")).toHaveText("working");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
 });
 
 test("gives the agent pane the most room", async ({ page }) => {
@@ -439,7 +439,7 @@ test.describe("the file tree", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 
   test("walks with the keyboard and opens with Enter", async ({ page }) => {
@@ -448,7 +448,7 @@ test.describe("the file tree", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
 
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(
       page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@"),
     ).toBeVisible();
@@ -486,7 +486,7 @@ test.describe("the file viewer", () => {
         cwd: "/home/ada/dev/demo",
       }),
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer-note")).toHaveText(
       "The entry point.",
     );
@@ -524,7 +524,7 @@ test.describe("the file viewer", () => {
         expect.stringMatching(/^pty-/),
         "cd 'packages/web' && npm run dev",
       ]);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
   });
 
   // The agent's notify tool: its line sits under the session's name, and
@@ -566,7 +566,7 @@ test.describe("the file viewer", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     const hunk = page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@");
     await expect(hunk).toBeVisible();
 
@@ -575,7 +575,7 @@ test.describe("the file viewer", () => {
     await page.keyboard.press(`${MOD}+1`);
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(hunk).toHaveCount(0);
     await expect(page.locator(SESSIONS)).toBeVisible();
 
@@ -583,7 +583,7 @@ test.describe("the file viewer", () => {
     await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: agent");
   });
 
@@ -603,20 +603,20 @@ test.describe("the file viewer", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     const hunk = page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@");
     await expect(hunk).toBeVisible();
 
     await page.keyboard.press(`${MOD}+1`);
     await sessionRow(page, "session 2").click();
     await expect(page.locator(".session.on")).toContainText("session 2");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(hunk).toHaveCount(0);
 
     await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 
   // The same with what the agent presented, and with the chord that steps
@@ -639,19 +639,19 @@ test.describe("the file viewer", () => {
         }),
       PROJECT,
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     const caption = page.getByTestId("media-caption");
     await expect(caption).toHaveText("One shot.");
 
     await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
     await expect(page.locator(".session.on")).toContainText("session 2");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(caption).toHaveCount(0);
 
     await page.keyboard.press(`${MOD}+Shift+ArrowDown`);
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(caption).toHaveText("One shot.");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 
   // A session working in a worktree has a tree of its own: switching to one
@@ -672,21 +672,21 @@ test.describe("the file viewer", () => {
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("ArrowDown");
     await page.keyboard.press("Enter");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     const hunk = page.getByTestId("viewer").getByText("@@ -1,9 +1,12 @@");
     await expect(hunk).toBeVisible();
 
     await page.keyboard.press(`${MOD}+1`);
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.locator(CHANGES)).not.toContainText("worktree feature");
     await expect(hunk).toHaveCount(0);
 
     await sessionRow(page, "session 1").click();
     await expect(page.locator(".session.on")).toContainText("session 1");
     await expect(hunk).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 
   // Opening the sessions pane for real closes the viewer, but the document
@@ -704,13 +704,13 @@ test.describe("the file viewer", () => {
     await expect(hunk).toBeVisible();
 
     await page.keyboard.press(`${MOD}+b`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await page.getByTestId("new-session").click();
     await expect(page.locator("[data-testid='session-row']")).toHaveCount(2);
 
     await sessionRow(page, "session 1").click();
     await expect(hunk).toBeVisible();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 
   // What an agent asks to show is for its own session: a call from a
@@ -736,10 +736,10 @@ test.describe("the file viewer", () => {
         session: "session-1",
       }),
     );
-    await expect(page.getByTestId("mode-readout")).not.toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer-note")).toHaveCount(0);
     await sessionRow(page, "session 1").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer-note")).toHaveText(
       "The entry point.",
     );
@@ -878,7 +878,7 @@ test.describe("the file viewer", () => {
         cwd: "/home/ada/dev/demo",
       }),
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer")).toHaveAttribute(
       "data-view",
       "diff",
@@ -980,7 +980,7 @@ test.describe("the file viewer", () => {
         }),
       PROJECT,
     );
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer")).toHaveAttribute(
       "data-view",
       "media",
@@ -1013,7 +1013,7 @@ test.describe("the file viewer", () => {
 
     // Escape closes the viewer as it closes a file; the row opens it again.
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await page.getByTestId("media-item").click();
     await expect(page.getByTestId("media-file")).toHaveCount(3);
     await expect(section).toBeVisible();
@@ -1044,7 +1044,7 @@ test.describe("the file viewer", () => {
     await page.getByTestId("media-fold").click();
     await page.getByTestId("media-item").click();
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("file-tree")).toBeFocused();
     await expect(page.getByTestId("media-item")).toHaveClass(/cursor/);
     await page.keyboard.press("Enter");
@@ -1519,7 +1519,7 @@ test.describe("the file viewer", () => {
     await expect(inner.locator("#said")).toHaveText("checks: 2");
 
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("viewer")).toHaveCount(0);
   });
 
@@ -1537,7 +1537,7 @@ test.describe("the file viewer", () => {
     await expect(page.locator(TREE)).toHaveCount(0);
 
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.locator(TREE)).toHaveCount(1);
   });
 
@@ -1578,7 +1578,7 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("plugin-page")).toBeVisible();
 
     await pushView(page, { html: "" });
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("viewer")).toHaveCount(0);
     await expect(page.getByTestId("plugin-view-open")).toHaveCount(0);
   });
@@ -1811,7 +1811,7 @@ test.describe("the file viewer", () => {
     const before = await widthOf(page, CHANGES);
     await row(page, "mod.rs").click();
 
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer")).toBeVisible();
     expect(await widthOf(page, CHANGES)).toBeGreaterThan(before);
   });
@@ -1890,7 +1890,7 @@ test.describe("the file viewer", () => {
     await expect(page.getByTestId("viewer")).toBeVisible();
 
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("viewer")).toHaveCount(0);
     await expect(page.locator(TREE)).toBeFocused();
     // The arrows still walk the tree; nothing went to the agent.
@@ -2002,7 +2002,7 @@ test.describe("the file viewer", () => {
     await sessionsFolded(page);
 
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await sessionsFolded(page, false);
     await expect(page.locator(TREE)).toBeVisible();
     // Done with the file: nothing stays highlighted.
@@ -2013,12 +2013,12 @@ test.describe("the file viewer", () => {
     page,
   }) => {
     await row(page, "mod.rs").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
 
     const tree = await page.locator(TREE).boundingBox();
     if (!tree) throw new Error("no tree");
     await page.mouse.click(tree.x + tree.width / 2, tree.y + tree.height - 10);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.locator(`${TREE} [aria-selected='true']`)).toHaveCount(0);
 
     // Without the viewer open it just clears the highlight.
@@ -2029,9 +2029,9 @@ test.describe("the file viewer", () => {
 
   test("opens and closes on the keyboard too", async ({ page }) => {
     await page.keyboard.press(`${MOD}+d`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await page.keyboard.press(`${MOD}+d`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
   });
 
   test("hides the agent rather than squeezing it in a narrow window", async ({
@@ -2105,7 +2105,7 @@ test.describe("the search field", () => {
     );
 
     await page.getByTestId("search-hit").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer")).toHaveAttribute(
       "data-view",
       "content",
@@ -2148,9 +2148,9 @@ test.describe("the search field", () => {
 
   test("closes the viewer from its own bar", async ({ page }) => {
     await row(page, "mod.rs").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await page.locator("[data-testid='viewer'] .close").click();
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
   });
 });
 

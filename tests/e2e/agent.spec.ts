@@ -842,7 +842,7 @@ test.describe("one project", () => {
     await page.setViewportSize({ width: 720, height: 800 });
 
     await page.keyboard.press(`${MOD}+d`);
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.locator(AGENT)).toBeHidden();
 
     await page.keyboard.press(`${MOD}+d`);
@@ -1902,7 +1902,7 @@ test.describe("the palettes", () => {
 
     test("Escape opened over the viewer closes only the palette", async ({ page }) => {
       await page.keyboard.press(`${MOD}+d`);
-      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
       const inChanges = () =>
         page.evaluate(
           () => document.activeElement?.closest("section[data-pane='changes']") !== null,
@@ -1912,7 +1912,7 @@ test.describe("the palettes", () => {
       await expect(field(page)).toBeFocused();
       await page.keyboard.press("Escape");
       await expect(page.getByTestId(PALETTE)).toHaveCount(0);
-      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
       await expect(page.getByTestId("viewer")).toBeVisible();
       expect((await page.getByTestId("viewer").boundingBox())!.width).toBeGreaterThan(0);
       await expect.poll(inChanges).toBe(true);
@@ -2221,13 +2221,13 @@ test.describe("the palettes", () => {
 
     test("brings a project forward while reviewing, peeking the pane and keeping the viewer", async ({ page }) => {
       await page.keyboard.press(`${MOD}+d`);
-      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
       await page.keyboard.press(GOTO);
       await page.keyboard.type("two");
       await page.keyboard.press("Enter");
       await expect(page.getByTestId(PALETTE)).toHaveCount(0);
       await expect(page.locator(".project.on")).toContainText("two");
-      await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+      await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
       await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
       await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
       await expect.poll(() => inSessions(page)).toBe(true);

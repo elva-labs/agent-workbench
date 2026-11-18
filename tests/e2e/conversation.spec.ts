@@ -281,6 +281,8 @@ test.describe("an integrated session", () => {
     await expect(meta).toHaveText("working");
     await expect(row.locator(".dot")).toHaveClass(/\bworking\b/);
     await expect(row.locator(".dot")).toHaveAttribute("title", "working");
+    // The status bar says nothing of the session's state.
+    await expect(page.getByTestId("status-bar")).not.toContainText(/working|idle/);
     await agent(page, `f.endTurn("${H}");`);
     await expect(meta).toHaveText("idle");
     await expect(row.locator(".dot")).not.toHaveClass(/\bworking\b/);
@@ -2970,7 +2972,7 @@ test.describe("the conversation's width", () => {
        f.endTurn("${H}");`,
     );
     await page.keyboard.press("ControlOrMeta+Shift+E");
-    await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     const at = await page.evaluate((agent) => {
       const pane = document.querySelector(agent)!.getBoundingClientRect();
       const thread = document.querySelector(`${agent} .thread`)!;

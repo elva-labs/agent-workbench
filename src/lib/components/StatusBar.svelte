@@ -30,12 +30,14 @@
   import ChoiceMenu from "./ChoiceMenu.svelte";
 
   /**
-   * The window's foot. From the left: which pane has the keyboard and the
-   * window's mode; what the session on screen runs on, its model and its
+   * The window's foot. From the left: which pane has the keyboard; what
+   * the session on screen runs on, its model and its
    * effort; the account it runs under with that account's allowance, the
    * share used of each limit window the agent reported; and at the right
    * end how many sessions wait for you and a word in passing, which keep
-   * their place whatever the figures do.
+   * their place whatever the figures do. What the session is doing is its
+   * header's to say, and the window's mode the corner's switch, so the bar
+   * says neither.
    *
    * The model and the effort of an integrated session each open a menu of
    * what the agent offers, and the allowance opens a popover with every
@@ -47,8 +49,8 @@
    * agent owns any change there, and so is the model of a session that
    * follows a workflow, which the workflow sets.
    *
-   * Short of room, the bar lets its parts go in order: the focus and the
-   * mode, then the word "account:", then every figure but the one nearest
+   * Short of room, the bar lets its parts go in order: the focus, then the
+   * word "account:", then every figure but the one nearest
    * its end, then that figure's reset time. Only after that is the model or
    * the account's name cut short; what waits for you never is. A word in
    * passing takes no room: it stands in the space before what waits, and
@@ -299,7 +301,6 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <footer class="status no-select" bind:this={bar} use:fits={STEPS} onkeydown={onBarKey} data-testid="status-bar">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
-  <span class="mode" data-testid="mode-readout">{layout.mode}</span>
   {#if session !== null && (model !== null || effort !== null || account !== null || figures.length > 0)}
     <span class="div d1" aria-hidden="true"></span>
   {/if}
@@ -525,10 +526,6 @@
     color: var(--accent);
   }
 
-  .mode {
-    color: var(--status-quiet);
-  }
-
   .waiting,
   .flash {
     color: var(--accent);
@@ -713,7 +710,7 @@
 
   /* ---- what gives way ---- */
 
-  .status:global([data-fit~="chrome"]) :is(.focus, .mode, .d1) {
+  .status:global([data-fit~="chrome"]) :is(.focus, .d1) {
     display: none;
   }
 

@@ -124,13 +124,15 @@ keyboard on it there.
 ## The status bar
 
 The status bar is the row along the window's foot. From the left it names
-the pane that has the keyboard and the window's mode, then what the session
-on screen runs on, its model and its effort, then the account the session
-runs under, once accounts are named, with that account's allowance. At the
-right end stand how many sessions wait for you and, just before it, a word
-in passing, such as a new zoom, so they keep their place whatever the
-figures do. With no session on screen only the focus, the mode and those
-two remain.
+the pane that has the keyboard, then what the session on screen runs on,
+its model and its effort, then the account the session runs under, once
+accounts are named, with that account's allowance. At the right end stand
+how many sessions wait for you and, just before it, a word in passing, such
+as a new zoom, so they keep their place whatever the figures do. With no
+session on screen only the focus and those two remain. What the session is
+doing is said once, in the agent pane's header beside its name and by the
+dot on its row, and the window's mode by the switch in [the
+corner](#the-corner), so the bar says neither.
 
 For an integrated session the model and the effort are what the agent last
 said it runs on. Each opens a small menu of the choices the agent offers,
@@ -174,8 +176,8 @@ it says how old each part is: `Some figures are from just now, the rest
 from 20 min ago`. How the bar's menus and the popover take the
 keyboard and give it back is in the [focus model](focus-model.md#the-status-bar).
 
-Short of room, the bar lets its parts go in this order: the focus and the
-mode, then the word `account:`, then every figure but the one nearest its
+Short of room, the bar lets its parts go in this order: the focus, then
+the word `account:`, then every figure but the one nearest its
 end, then that figure's reset time. It measures what fits rather than going
 by the window's width, and only after all four are the model and the
 account's name cut short. What waits for you is never cut. The word in

@@ -179,11 +179,11 @@ test.describe("the sessions pane's motion", () => {
   // the viewer: Cmd+B still does, and the column peeks the pane instead.
   test("closes the viewer when it is opened with its chord while reviewing", async ({ page }) => {
     await page.keyboard.press("ControlOrMeta+d");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("unfold-sessions")).toBeVisible();
 
     await page.keyboard.press("ControlOrMeta+b");
-    await expect(page.getByTestId("mode-readout")).toHaveText("working");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
   });
 });
@@ -201,7 +201,7 @@ test.describe("the sessions pane peeked over the agent", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     FOLDED = await foldedWidth(page);
     await page.keyboard.press("ControlOrMeta+d");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("unfold-sessions")).toBeVisible();
     // The columns ease into the reviewing shape; the baseline is taken
     // once they have arrived.
@@ -220,7 +220,7 @@ test.describe("the sessions pane peeked over the agent", () => {
     await page.getByTestId("unfold-sessions").click({ position: { x: 20, y: 20 } });
     await expect(page.getByTestId("unfold-sessions")).toHaveCount(0);
     await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: sessions");
     expect(await page.locator(CHANGES).boundingBox()).toEqual(viewer);
     expect(await page.locator(AGENT).boundingBox()).toEqual(agent);
@@ -235,7 +235,7 @@ test.describe("the sessions pane peeked over the agent", () => {
     await page.mouse.move(viewer.x + viewer.width / 2, viewer.y + viewer.height / 2);
     await page.mouse.move(column.x + 20, column.y + column.height / 2);
     await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     // The pointer did not take the keyboard with it.
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
     expect(await page.locator(CHANGES).boundingBox()).toEqual(viewer);
@@ -254,13 +254,13 @@ test.describe("the sessions pane peeked over the agent", () => {
     await page.keyboard.press("ControlOrMeta+1");
     await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
 
     await page.keyboard.press("ControlOrMeta+1");
     await expect.poll(() => width(page, SESSIONS)).toBeGreaterThan(150);
     await page.keyboard.press("Escape");
     await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
-    await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+    await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 });

@@ -198,7 +198,7 @@ async function conversation(page: Page) {
 /** Editor mode with a file open, a selection and the search panel. */
 async function editor(page: Page) {
   await page.keyboard.press(`${MOD}+Shift+E`);
-  await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   await page.locator(TREE).getByText("README.md", { exact: true }).click();
   await expect.poll(() => page.locator(".cm-content").innerText()).toContain("// README.md");
   await page.locator(".cm-content").click();
@@ -235,7 +235,7 @@ for (const look of LOOKS)
       test("nothing solid in a card: the menus over the files and the palette", async ({ page }) => {
         await open(page, look, appearance);
         await page.keyboard.press(`${MOD}+Shift+E`);
-        await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+        await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
         await page.locator(TREE).getByText("Cargo.toml", { exact: true }).click({ button: "right" });
         await expect(page.getByTestId("row-menu")).toBeVisible();
         expect(await inCard(page, "row-menu")).toBe(true);
@@ -451,7 +451,7 @@ for (const look of LOOKS)
       test("in the editor", async ({ page }) => {
         await open(page, look, appearance, { backgrounds: { teal: STRONG } });
         await page.keyboard.press(`${MOD}+Shift+E`);
-        await expect(page.getByTestId("mode-readout")).toHaveText("editing");
+        await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
         await page.locator(TREE).getByText("README.md", { exact: true }).click();
         await expect.poll(() => page.locator(".cm-content").innerText()).toContain("// README.md");
         // The line numbers in the gutter are the quiet text.

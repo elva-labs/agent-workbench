@@ -88,7 +88,7 @@ test.beforeEach(async ({ page }) => {
 test("opens from the menu with the new-tab page and the address field focused", async ({ page }) => {
   await openBrowser(page);
 
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await expect(page.getByTestId("browser-body").getByText("New tab")).toBeVisible();
   await expect(page.getByTestId("browser-address")).toBeFocused();
 });
@@ -301,7 +301,7 @@ test("the fold stands under the tree with no tabs open, and says so", async ({ p
 test("the header's own action opens a new tab and shows it, counted in the fold", async ({ page }) => {
   await openFoldNewTab(page);
 
-  await expect(page.getByTestId("mode-readout")).toHaveText("reviewing");
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   await expect(page.getByTestId("browser-body").getByText("New tab")).toBeVisible();
   await expect(page.getByTestId("browser-fold")).toContainText("Browser (1)");
   await expect(page.getByTestId("browser-fold-row")).toHaveCount(1);
