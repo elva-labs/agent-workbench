@@ -391,6 +391,7 @@ export async function installFakeCore(
         // Per-tab back/forward stack: the urls visited, and where in them
         // the tab now stands.
         histories: new Map<number, { stack: string[]; index: number }>(),
+        revision: 0,
       };
 
       const activeBrowserTab = (): number | null =>
@@ -399,6 +400,7 @@ export async function installFakeCore(
           : (browserState.fronts.get(ownerKey(browserState.shown)) ?? null);
 
       const browserSnapshot = () => ({
+        revision: ++browserState.revision,
         tabs: browserState.tabs.map((tab) => ({
           ...tab,
           front: browserState.fronts.get(ownerKey(tab.owner)) === tab.id,
