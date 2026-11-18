@@ -442,11 +442,15 @@
     color: var(--title-color-on);
   }
 
+  /* What the head holds is centred on the title's line rather than set on
+     its baseline: a head that starts with an icon has the icon's foot for
+     a baseline, which would pull the title and the meta below the middle. */
   .head {
     flex: 1;
     min-width: 0;
     display: flex;
     align-items: center;
+    align-self: center;
     gap: 4px;
   }
 

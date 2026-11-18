@@ -490,9 +490,9 @@
     display: flex;
     align-items: center;
     gap: 14px;
-    height: 26px;
+    height: calc(var(--status-height) + var(--status-reach));
     padding: 0 12px;
-    border-top: 1px solid var(--status-rule);
+    border-top: var(--status-rule-width) solid var(--status-rule);
     background: var(--status-bg);
     font-family: var(--chrome);
     font-size: var(--status-size);

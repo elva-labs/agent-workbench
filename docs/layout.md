@@ -55,7 +55,8 @@ it through, as [settings](settings.md#cards) describes.
 Every pane header is one height in a look, 40 pixels in the modern look and
 35 in the terminal look, the terminal list's top row included, and each
 title's line sits in its middle, so the titles stand on one line across the
-window whatever a header holds.
+window whatever a header holds. What a header holds beside its title, such
+as a session's project and branch, is centred on that line.
 
 Inside a pane, a list beside what is read sits a step from the surface
 toward the ground: the tree beside the viewer or the editor, and the
@@ -133,6 +134,12 @@ session on screen only the focus and those two remain. What the session is
 doing is said once, in the agent pane's header beside its name and by the
 dot on its row, and the window's mode by the switch in [the
 corner](#the-corner), so the bar says neither.
+
+In the modern look the bar lies on the ground with no rule of its own, so
+its row is the whole band of ground from the cards' foot to the window's,
+and its words stand in the middle of that band. In the terminal look, and
+where the system asks for more contrast, the bar is a row of its own under
+its rule, and its words stand in the middle of that row.
 
 For an integrated session the model and the effort are what the agent last
 said it runs on. Each opens a small menu of the choices the agent offers,

@@ -103,6 +103,10 @@
   --status-rule: transparent;
   --status-bg: var(--ground);
   --status-size: 11.5px;
+  /* On the ground with no rule, the bar's row is the whole band from the
+     cards' foot to the window's, so its words stand in the middle of that. */
+  --status-rule-width: 0px;
+  --status-reach: var(--frame-pad);
 }
 
 /* More contrast brings the lines back: each card takes an outline in the
@@ -112,6 +116,8 @@
   :root[data-look="modern"] {
     --head-rule: var(--rule-strong);
     --status-rule: var(--rule-strong);
+    --status-rule-width: 1px;
+    --status-reach: 0px;
     --card-edge: var(--rule-strong);
   }
 }
