@@ -26,6 +26,7 @@
  */
 
 import { noteSent } from "$lib/persist";
+import { HOLD } from "$lib/hold";
 import {
   checkBackground,
   describeBackground,
@@ -76,6 +77,7 @@ import {
 } from "$lib/workflows.svelte";
 import { projectLabel } from "$lib/workspace.svelte";
 import { setUserStyles, styleProblem, userStyles } from "$lib/userStyles.svelte";
+import { compact, setCompact } from "$lib/compact.svelte";
 import {
   INTERFACE_FONTS,
   LOOKS,
@@ -108,6 +110,7 @@ export interface Change {
 interface Next {
   appearance?: ThemeChoice;
   look?: LookName;
+  compact?: boolean;
   palette?: string;
   /** The whole set of the user's own themes, when a theme is saved. */
   themes?: Record<string, CustomTheme>;
@@ -199,7 +202,20 @@ let pending: ((choice: Choice) => void) | null = null;
 let restore: (() => void) | null = null;
 let undoTimer: ReturnType<typeof setTimeout> | null = null;
 
-/** Answers one call, exactly once. */
+/** The changes answered that they wait on the user, until each is made
+    or not, by call: who asked, and what the same change asked again would
+    be. */
+const waiting = new Map<string, string>();
+
+/** What a change answers when it is still in front of the user, or waits
+    its turn behind another, as the agent is about to give up on it. */
+export const WAITS_ON_USER =
+  "The user has not answered yet: the change is in front of them, or waits its turn behind another, and is made only if they allow it. Do not ask for it again: the settings tool says whether it was made.";
+
+/** Answers one call, exactly once. A change still waiting on the user
+    when `HOLD` is up is answered that it does, and is made or not as the
+    user says all the same; the same change asked for again meanwhile is
+    not put to them twice. */
 export async function handle(request: SettingsRequest): Promise<void> {
   if (seen.has(request.id)) return;
   seen.add(request.id);
@@ -207,19 +223,34 @@ export async function handle(request: SettingsRequest): Promise<void> {
     const oldest = seen.values().next().value;
     if (oldest !== undefined) seen.delete(oldest);
   }
+  const same = `${request.session ?? request.cwd}\n${request.tool}\n${JSON.stringify(request.arguments ?? {})}`;
   let answered: Answered;
   try {
-    answered =
-      request.tool === "settings"
-        ? said(describeSettings())
-        : await change(
-            request,
-            request.tool === "theme_save"
-              ? planTheme
-              : request.tool === "styles_write"
-                ? planStyles
-                : plan,
-          );
+    if (request.tool === "settings") answered = said(describeSettings());
+    else if ([...waiting.values()].includes(same))
+      answered = refused(
+        "That change is in front of the user already, and was not asked again: the settings tool says whether it was made.",
+      );
+    else {
+      const work = change(
+        request,
+        request.tool === "theme_save" ? planTheme : request.tool === "styles_write" ? planStyles : plan,
+      ).catch((error: unknown) => refused(error instanceof Error ? error.message : String(error)));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const done = await Promise.race([
+        work,
+        new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), HOLD);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (done !== null) answered = done;
+      else {
+        waiting.set(request.id, same);
+        void work.finally(() => waiting.delete(request.id));
+        answered = said(WAITS_ON_USER);
+      }
+    }
   } catch (error) {
     answered = refused(error instanceof Error ? error.message : String(error));
   }
@@ -252,6 +283,7 @@ export function describeSettings(): string {
     "",
     `appearance: ${theme.choice} (one of ${names(APPEARANCES)})`,
     `look: ${theme.look} (one of ${names(LOOKS)})`,
+    `compact: ${compact.on} (true or false): compact mode, where the sessions pane leaves the layout and slides in over the other panes when the pointer reaches the window's left edge or its chord is pressed`,
     `palette: ${theme.palette} (one of ${names(palettes())})`,
     `background: ${backgroundOf(theme.palette)} (kept with the palette in use; settings_change's background argument sets it, null takes it away)`,
     describeCards(),
@@ -393,6 +425,10 @@ export function plan(args: Record<string, unknown>): {
         break;
       case "look":
         next.look = oneOf(field, value, LOOKS);
+        break;
+      case "compact":
+        if (typeof value !== "boolean") throw new Error("compact is true or false.");
+        next.compact = value;
         break;
       case "palette":
         next.palette = oneOf(field, value, palettes());
@@ -634,6 +670,10 @@ function changesOf(next: Next): Change[] {
         to: describeBackground(to),
       });
     }
+  }
+  if (next.compact !== undefined) {
+    const said = (on: boolean) => (on ? "On" : "Off");
+    line("compact", "Compact mode", said(compact.on), said(next.compact));
   }
   if (next.userStyles !== undefined) {
     const said = (on: boolean) => (on ? "On" : "Off");
@@ -886,6 +926,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
   const before = {
     appearance: theme.choice,
     look: theme.look,
+    compact: compact.on,
     palette: theme.palette,
     terminalFont: theme.mono,
     interfaceFont: theme.sans,
@@ -897,6 +938,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
   const answered = noteSent();
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
+  if (next.compact !== undefined) setCompact(next.compact);
   if (next.themes !== undefined) setThemes(next.themes, next.palette, next.backgrounds);
   else {
     if (next.palette !== undefined) setPalette(next.palette);
@@ -918,6 +960,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
     if (next.userStyles !== undefined && made("userStyles")) setUserStyles(before.userStyles);
     if (next.appearance !== undefined && made("appearance")) setTheme(before.appearance);
     if (next.look !== undefined && made("look")) setLook(before.look);
+    if (next.compact !== undefined && made("compact")) setCompact(before.compact);
     if (next.themes !== undefined) {
       if (made("themes")) setThemes(before.themes, before.palette, before.backgrounds);
     } else {
@@ -973,6 +1016,7 @@ export function dismissUndo() {
 /** Test seam. */
 export function resetSettingsTools() {
   seen.clear();
+  waiting.clear();
   line = Promise.resolve();
   pending = null;
   settingsAsk.asking = null;

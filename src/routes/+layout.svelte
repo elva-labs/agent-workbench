@@ -30,9 +30,10 @@
   import { followSettings } from "$lib/preferences.svelte";
   import { loadUserStyles } from "$lib/userStyles.svelte";
   import { loadLayout } from "$lib/layout.svelte";
+  import { loadCompact } from "$lib/compact.svelte";
   import { loadStarted, watchStops } from "$lib/conductor.svelte";
   import { followSetting } from "$lib/sessionMoves.svelte";
-  import { loadRemembered } from "$lib/sessions.svelte";
+  import { followWaiting, loadRemembered } from "$lib/sessions.svelte";
   import { loadUsed } from "$lib/projects.svelte";
   import { reopen, settleWhen } from "$lib/reopen.svelte";
   import { dirKnown } from "$lib/orchestratorFolder.svelte";
@@ -52,7 +53,11 @@
     loadHooks();
     loadUserStyles();
     loadLayout();
+    loadCompact();
     loadRemembered();
+    // What waits on the user is kept as it changes, so it comes back after
+    // a quit or a crash.
+    const stopWaiting = followWaiting();
     loadUsed();
     loadStarted();
     // Tab reaches every control in WebKit as it does elsewhere.
@@ -103,6 +108,7 @@
       stopReopen();
       stopIntegrated();
       stopTabStops();
+      stopWaiting();
     };
   });
 </script>

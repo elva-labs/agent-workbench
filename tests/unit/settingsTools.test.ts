@@ -43,6 +43,7 @@ import { resetPersist } from "$lib/persist";
 import { sessions } from "$lib/sessions.svelte";
 import {
   UNDO_FOR,
+  WAITS_ON_USER,
   allowChange,
   declineChange,
   describeSettings,
@@ -55,8 +56,10 @@ import {
   settingsAsk,
   undoChange,
 } from "$lib/settingsTools.svelte";
+import { HOLD } from "$lib/hold";
 import { setThemes, theme } from "$lib/theme.svelte";
 import { resetUserStyles, userStyles } from "$lib/userStyles.svelte";
+import { compact, resetCompact } from "$lib/compact.svelte";
 import {
   addWorkflow,
   adoptWorkflows,
@@ -348,6 +351,36 @@ describe("a change", () => {
     expect(theme.palette).toBe("mono");
   });
 
+  it("is answered before the agent gives up that it waits on the user, made once they allow it, and not put to them twice", async () => {
+    vi.useFakeTimers();
+    const first = request("settings_change", { palette: "amber" }, "t-9");
+    const done = handle(first);
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await done;
+    expect(answers).toEqual([expect.objectContaining({ id: first.id, content: WAITS_ON_USER, error: null })]);
+    expect(settingsAsk.asking).not.toBeNull();
+    expect(theme.palette).toBe("teal");
+    // Asked for again meanwhile, it is refused, and not asked twice.
+    await handle(request("settings_change", { palette: "amber" }, "t-9"));
+    expect(answers.at(-1)?.error).toBe(
+      "That change is in front of the user already, and was not asked again: the settings tool says whether it was made.",
+    );
+    // Another session's own ask is its own.
+    const other = handle(request("settings_change", { palette: "amber" }, "t-8"));
+    await vi.advanceTimersByTimeAsync(0);
+    // The user allows the first: it is made, and its answer is not written
+    // again.
+    allowChange();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(theme.palette).toBe("amber");
+    expect(answers.filter((answer) => answer.id === first.id)).toHaveLength(1);
+    // Made, it can be asked for again, which changes nothing.
+    declineChange();
+    await other;
+    await handle(request("settings_change", { palette: "amber" }, "t-9"));
+    expect(answers.at(-1)?.content).toMatch(/already so/);
+  });
+
   it("can be kept at once", async () => {
     const done = handle(request("settings_change", { palette: "mono" }));
     await settle();
@@ -581,6 +614,20 @@ describe("the user's stylesheet", () => {
     userStyles.css = "";
     userStyles.problem = "the stylesheet imports another";
     expect(describeSettings()).toContain("is not used: the stylesheet imports another");
+  });
+});
+
+describe("compact mode", () => {
+  afterEach(() => resetCompact());
+
+  it("is read out, and an agent may turn it on or off with the user's yes", () => {
+    expect(describeSettings()).toContain("compact: false (true or false)");
+    expect(plan({ compact: true }).changes).toEqual([
+      { field: "compact", label: "Compact mode", from: "Off", to: "On" },
+    ]);
+    compact.on = true;
+    expect(plan({ compact: true }).changes).toEqual([]);
+    expect(() => plan({ compact: "yes" })).toThrow(/true or false/);
   });
 });
 

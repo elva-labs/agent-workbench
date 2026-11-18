@@ -277,6 +277,11 @@ pub struct Settings {
     /// the starter's own project on its agent and account is not asked.
     #[serde(default)]
     pub ask_every_start: bool,
+    /// Whether the sessions pane leaves the layout and slides in over the
+    /// panes from the window's left edge. A file from before has none,
+    /// which reads as off.
+    #[serde(default)]
+    pub compact: bool,
     /// What the file holds that is not used. Not a setting: it is read from the file and written back to it.
     #[serde(default)]
     pub unread_entries: Vec<UnreadEntry>,
@@ -307,6 +312,7 @@ impl Default for Settings {
             notifications: true,
             chime: false,
             ask_every_start: false,
+            compact: false,
             unread_entries: Vec::new(),
         }
     }
@@ -543,13 +549,29 @@ fn accounts_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> Accounts {
     accounts
 }
 
-/// One account of the file: a name that will do, and directories that will.
-fn account(name: &str, value: &Value) -> Result<Account, String> {
+/// The name the agents' own directories go by, which the start tool takes
+/// for them: no account of the user's is called so, in any case.
+pub const OWN_ACCOUNT: &str = "Default";
+
+/// Why an account's name will not do: empty, too long, or the name the
+/// agents' own login goes by.
+fn account_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
         return Err(format!(
             "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
         ));
     }
+    if name.trim().eq_ignore_ascii_case(OWN_ACCOUNT) {
+        return Err(format!(
+            "{OWN_ACCOUNT} is the agents' own login, so no account can be called that"
+        ));
+    }
+    Ok(())
+}
+
+/// One account of the file: a name that will do, and directories that will.
+fn account(name: &str, value: &Value) -> Result<Account, String> {
+    account_name(name)?;
     let account: Account = serde_json::from_value(value.clone())
         .map_err(|_| format!("{name} is a directory for Claude Code and one for Codex"))?;
     for dir in [&account.claude, &account.codex].into_iter().flatten() {
@@ -636,11 +658,7 @@ fn accounts(value: &Value) -> Result<Accounts, String> {
         ));
     }
     for (name, account) in &accounts.list {
-        if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
-            return Err(format!(
-                "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
-            ));
-        }
+        account_name(name)?;
         for dir in [&account.claude, &account.codex].into_iter().flatten() {
             if !is_directory(dir) {
                 return Err(format!("a directory of {name} is a path, not {dir:?}"));
@@ -1105,6 +1123,7 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
         "askEveryStart" => {
             settings.ask_every_start = value.as_bool().ok_or("askEveryStart is true or false")?;
         }
+        "compact" => settings.compact = value.as_bool().ok_or("compact is true or false")?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
         "keys" => {
@@ -2066,6 +2085,19 @@ mod tests {
         )
         .is_err());
         assert!(apply(&settings, &json!({ "accounts": [] })).is_err());
+        // The name the agents' own login goes by is no account's, in any
+        // case.
+        for own in ["Default", "default", " DEFAULT "] {
+            let error = apply(
+                &settings,
+                &json!({ "accounts": { "list": { own: { "claude": "~/.claude-x" } } } }),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("Default is the agents' own login"),
+                "{error}"
+            );
+        }
 
         // Read leniently, a bad value leaves the default, which is no
         // accounts at all.
@@ -2956,6 +2988,22 @@ mod tests {
         let next = apply(&Settings::default(), &json!({ "userStyles": true })).unwrap();
         assert!(next.user_styles);
         assert!(apply(&next, &json!({ "userStyles": "yes" })).is_err());
+    }
+
+    #[test]
+    fn compact_mode_is_off_until_turned_on() {
+        let defaults = Settings::default();
+        assert!(!defaults.compact);
+        let next = apply(&defaults, &json!({ "compact": true })).unwrap();
+        assert!(next.compact);
+        assert!(apply(&next, &json!({ "compact": "yes" })).is_err());
+        assert!(parse(r#"{ "compact": true }"#).unwrap().compact);
+        // A file from before the setting reads as off, and a value that is
+        // not one is set aside and kept as written.
+        assert!(!parse(r#"{ "chime": true }"#).unwrap().compact);
+        let odd = parse(r#"{ "compact": "yes" }"#).unwrap();
+        assert!(!odd.compact);
+        assert_eq!(odd.unread_entries[0].field, "compact");
     }
 
     #[test]

@@ -7,6 +7,7 @@ import {
   activeSession,
   forProject,
   reopened,
+  restoredOnScreen,
   sessions,
   type Session,
 } from "$lib/sessions.svelte";
@@ -31,6 +32,10 @@ import {
  * through a reload, and a window that dropped its row would leave an agent
  * running that no row shows. It comes back under the session that started
  * it, which the caller's own record still says.
+ *
+ * A row comes back unread if it was unread at the quit, with the line under
+ * its name, as the sessions keep it by id; the one the restore puts on
+ * screen is not read by being put there.
  */
 
 const KEY = "workbench.open";
@@ -123,9 +128,13 @@ function read(): { open: Open[]; active: string | null } {
   }
 }
 
+/** Writes the record. Its flag says this version also keeps, under a key
+    of its own, what waits on the user in each row: a version before writes
+    the record without it, which tells the next start that what is kept of
+    the rows' waiting is older than the rows. */
 function write(open: Open[], active: string | null) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ open, active }));
+    localStorage.setItem(KEY, JSON.stringify({ open, active, waiting: true }));
   } catch {
     // Non-fatal: the sessions do not come back after a restart.
   }
@@ -211,6 +220,7 @@ export function reopen(
       (waits ? undefined : own.at(-1));
     if (wanted === undefined) return;
     sessions.active = wanted.key;
+    restoredOnScreen(wanted.key);
     restoredInFront();
   };
 

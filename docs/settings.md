@@ -5,7 +5,7 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 at once.
 
 The settings are in eight tabs down the left. Appearance carries the
-appearance, theme, font, colour, background and custom styles sections; live updates,
+appearance, theme, compact mode, font, colour, background and custom styles sections; live updates,
 sessions, workflows, accounts, plugins, keys and notifications each carry
 the section of that name. Opening the settings again lands on the tab last used, for as long as
 the window is open. The dialog follows the look the panes are drawn in. It
@@ -33,6 +33,14 @@ modern, the pane's own border under terminal. Both use the same colours, so
 the appearance and the palette hold across either. The system's
 increase-contrast setting brings plain lines back in both: an outline round
 each card and box, and a line in each divider inside a pane.
+
+## Compact mode
+
+On or off, off to begin with. On, the projects and sessions pane leaves
+the layout and slides in over the other panes from the window's left
+edge, when the pointer reaches it or the chord that goes to the pane is
+pressed; [layout](layout.md#compact-mode) describes it. The section names
+that chord as it is bound.
 
 ## Font
 
@@ -506,7 +514,11 @@ path in the environment the agent is started with. An account names a
 directory of each, so a work login and a personal one can both be on the
 machine and a session run under either. The agents' own directories are
 the account every setup has, called Default where a name is shown, and a
-setup with no other account named is what it always was.
+setup with no other account named is what it always was. Default is
+theirs alone: no account can be called that, in any case, whether in the
+tab or written into the settings file, so a session that starts another
+can name the agents' own login by it (see
+[orchestrator](orchestrator.md#the-tools)).
 
 The tab lists the accounts, Default first, each with where it keeps each
 agent. Add an account… opens a form: a name, and under it the two
@@ -581,12 +593,19 @@ agent is told why without the user being troubled. The agent hooks, the
 plugins, the accounts, which workflow a project follows, how long past
 sessions stay listed, how long a project stays active, whether every
 start of a session is asked about, the notifications and the chime are
-refused outright, as the user's to change.
+refused outright, as the user's to change. Compact mode is a matter of
+how the window looks, as the look is, and the agent may ask for it.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
 Nothing changes unless they allow it, and the agent waits for the answer,
-which says which it was. A change the user allows can be undone, from a
+which says which it was. An agent gives up on a call after a while, Codex
+after a minute, so one the user has not answered within forty seconds is
+answered then that the change is still in front of them, or waits its turn
+behind another, and is made only if they allow it: the question stays, and
+the agent reads the settings to see whether it was made. The same change
+asked for again by the same session meanwhile is refused rather than put to
+the user twice. A change the user allows can be undone, from a
 word where the question was, for twenty seconds; undoing puts back only the
 settings that change moved. Changes asked at once are put one after
 another, each read against the settings as they are by the time it comes
@@ -640,7 +659,7 @@ on, whichever machine the agent runs on.
 
 ## Where they are kept
 
-The appearance, the look, the palette, the fonts, the chords, the answer
+The appearance, the look, compact mode, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, the
 notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every

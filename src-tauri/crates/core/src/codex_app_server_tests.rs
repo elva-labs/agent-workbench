@@ -259,6 +259,9 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     let tool = &start["config"]["mcp_servers"]["agent_workbench"];
     assert_eq!(tool["command"], server.to_string_lossy().as_ref());
     assert_eq!(tool["args"], json!(["mcp"]));
+    // A call may take as long as the longest wait and a minute more, so
+    // Codex's own minute never cuts a wait short.
+    assert_eq!(tool["tool_timeout_sec"], 1860);
     // Only the listed tools run without asking, each by its own approval;
     // nothing is said for the whole server, so the rest ask.
     assert!(tool.get("default_tools_approval_mode").is_none(), "{tool}");
