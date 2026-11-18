@@ -301,6 +301,15 @@ which is the one the agent's own settings name as for a terminal session,
 in [integrated](integrated.md#the-mode-a-session-starts-in). It is the
 user's to change, and an agent's settings tools refuse it.
 
+What a new session starts on, for each agent: the model, the effort and
+the mode the user last chose for it, as
+[integrated](integrated.md#what-a-new-session-starts-on) describes, or the
+agent's own defaults where nothing is kept. Each agent's line says what
+it keeps, and Use defaults beside it lets go of all three. Choosing the
+agent's own default model on a chip lets go of the model alone. The
+choices are kept by the window as the user makes them, and an agent's
+settings tools refuse them.
+
 Whether you are asked before every session another session starts. Off to
 begin with: a session that starts one in its own project, on its own agent
 and account, goes ahead without a question, and the session begins in no
@@ -661,8 +670,8 @@ on, whichever machine the agent runs on.
 
 The appearance, the look, compact mode, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
-how long past sessions stay listed, how long a project stays active, the
-notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+how long past sessions stay listed, how long a project stays active, what
+new sessions start on, the notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
