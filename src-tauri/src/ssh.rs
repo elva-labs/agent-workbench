@@ -466,9 +466,10 @@ pub fn ensure_local_daemon(home: &Path, resources: Option<&Path>) -> Result<(), 
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
     let staged = destination.with_extension("new");
-    std::fs::copy(&source, &staged)
+    // Copied by a process of its own, so no session this app starts
+    // meanwhile can hold the daemon open for writing as a hook starts it.
+    workbench_core::executable::copy(&source, &staged)
         .map_err(|e| format!("could not copy the daemon to {}: {e}", staged.display()))?;
-    restrict(&staged, 0o755);
     std::fs::rename(&staged, &destination)
         .map_err(|e| format!("could not put the daemon at {}: {e}", destination.display()))?;
     Ok(())

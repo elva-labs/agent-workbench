@@ -125,11 +125,9 @@ fn start(name: &str, scenario: &str) -> Harness {
 }
 
 fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> Harness {
-    use std::os::unix::fs::PermissionsExt;
     let dir = Arc::new(Scratch::new(&format!("codex-{name}")));
     let codex = dir.join("codex");
-    std::fs::write(&codex, STAND_IN).unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&codex, STAND_IN).unwrap();
     std::fs::write(dir.join("scenario"), scenario).unwrap();
     let vars = HashMap::from([
         (
@@ -1765,7 +1763,6 @@ done
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
-    use std::os::unix::fs::PermissionsExt;
     let port = model::serve();
     let base = Arc::new(Scratch::new("real-codex"));
     let home = base.join("home");
@@ -1780,8 +1777,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     )
     .unwrap();
     let server = base.join("echo-server");
-    std::fs::write(&server, ECHO_SERVER).unwrap();
-    std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&server, ECHO_SERVER).unwrap();
 
     let environment = crate::env::environment();
     let sessions = Arc::new(Sessions::default());
@@ -2267,11 +2263,9 @@ fn history_within(
     scenario: &str,
     wait: Duration,
 ) -> (Result<crate::integrated::History, String>, Arc<Scratch>) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = Arc::new(Scratch::new(&format!("codex-history-{name}")));
     let codex = dir.join("codex");
-    std::fs::write(&codex, STAND_IN).unwrap();
-    std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&codex, STAND_IN).unwrap();
     std::fs::write(dir.join("scenario"), scenario).unwrap();
     let vars = HashMap::from([
         (
@@ -2472,7 +2466,6 @@ fn a_codex_that_does_not_answer_or_ends_is_an_error_in_time() {
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
-    use std::os::unix::fs::PermissionsExt;
     let port = model::serve();
     let base = Arc::new(Scratch::new("real-codex-history"));
     let home = base.join("home");
@@ -2484,8 +2477,7 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
     );
     std::fs::write(home.join("config.toml"), &config).unwrap();
     let server = base.join("echo-server");
-    std::fs::write(&server, ECHO_SERVER).unwrap();
-    std::fs::set_permissions(&server, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&server, ECHO_SERVER).unwrap();
     let environment = crate::env::environment();
     let sessions = Arc::new(Sessions::default());
     let recorder = Arc::new(Recorder::default());

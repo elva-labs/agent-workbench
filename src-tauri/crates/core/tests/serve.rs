@@ -227,10 +227,9 @@ mod client {
     #[cfg(unix)]
     #[test]
     fn an_integrated_session_runs_through_the_daemon() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = workbench_core::scratch::Scratch::new("serve-integrated");
         let claude = dir.join("claude");
-        std::fs::write(
+        workbench_core::executable::write(
             &claude,
             r#"#!/bin/sh
 for request in initialize get_settings get_usage; do
@@ -250,7 +249,6 @@ while read -r line; do :; done
 "#,
         )
         .unwrap();
-        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         let events = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
         // No login shell to ask, so the daemon's own PATH, with the

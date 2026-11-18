@@ -244,11 +244,9 @@ fn stand_in(
     script: &str,
     answer: Option<&Value>,
 ) -> (Scratch, HashMap<String, String>) {
-    use std::os::unix::fs::PermissionsExt;
     let dir = Scratch::new(&format!("limits-{name}"));
     let binary = dir.join(name);
-    std::fs::write(&binary, script).unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&binary, script).unwrap();
     if let Some(answer) = answer {
         std::fs::write(dir.join("answer"), answer.to_string()).unwrap();
     }

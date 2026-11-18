@@ -154,11 +154,9 @@ fn start_in(
     sessions: Arc<Sessions>,
     adjust: impl FnOnce(&mut Launch),
 ) -> Harness {
-    use std::os::unix::fs::PermissionsExt;
     let dir = Scratch::new(&format!("integrated-{name}"));
     let claude = dir.join("claude");
-    std::fs::write(&claude, STAND_IN).unwrap();
-    std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::executable::write(&claude, STAND_IN).unwrap();
     std::fs::write(dir.join("scenario"), scenario).unwrap();
 
     let vars = HashMap::from([

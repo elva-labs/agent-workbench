@@ -2837,11 +2837,10 @@ mod tests {
     /// An environment whose PATH holds a Claude Code that says this version.
     #[cfg(unix)]
     fn claude_saying(dir: &Path, version: &str) -> HashMap<String, String> {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::create_dir_all(dir).unwrap();
         let bin = dir.join("claude");
-        std::fs::write(&bin, format!("#!/bin/sh\necho '{version} (Claude Code)'\n")).unwrap();
-        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::executable::write(&bin, format!("#!/bin/sh\necho '{version} (Claude Code)'\n"))
+            .unwrap();
         HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())])
     }
 

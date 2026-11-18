@@ -19,6 +19,7 @@ pub mod codex_history;
 pub mod cwd;
 pub mod env;
 pub mod events;
+pub mod executable;
 pub mod files;
 pub mod git;
 pub mod hook;
