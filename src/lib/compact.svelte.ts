@@ -25,14 +25,15 @@ export const compact = $state({
   held: false,
 });
 
-/** How long the pointer rests on the edge before the pane slides in, so a
-    pointer passing along the edge does not bring it. */
+/** How long the pointer rests on the edge before the pane slides in when
+    it came along the edge, or into the window across it, rather than onto
+    it from inside the window: a pass along the edge does not bring it. */
 export const EDGE_AFTER = 60;
 
 /** How long the pointer is away from the slid-in pane before it goes. */
 export const AWAY_AFTER = 400;
 
-/** How wide the strip along the window's left edge is that brings the pane. */
+/** How far in from the window's left edge the pointer is on the edge. */
 export const EDGE_WIDTH = 6;
 
 /** This part of the settings. */

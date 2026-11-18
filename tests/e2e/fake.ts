@@ -672,6 +672,10 @@ export async function installFakeCore(
             window as unknown as { __controlsCentre?: number }
           ).__controlsCentre = centre;
         },
+        // Where the window says the cursor is: what a test sets as
+        // `__cursor`, where the page hears no move, or nothing.
+        cursorInWindow: async () =>
+          (window as unknown as { __cursor?: { x: number; y: number } }).__cursor ?? null,
         // The way a test takes the window into full screen and back: calling
         // the handler `onFullScreen` stored here.
         onFullScreen: async (handler: (fullScreen: boolean) => void) => {
