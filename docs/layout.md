@@ -326,10 +326,7 @@ keyboard where it was. Going to a session or project from the palette
 leaves the pane where it is, out of sight.
 
 What the pane would tell is not lost while it is out of sight. The status
-bar counts the sessions waiting for you, as it always does, and while one
-other than the session on screen is unread or asks for a permission, a
-short bar in the accent stands on the window's left edge, where the pane
-comes from.
+bar counts the sessions waiting for you, as it always does.
 
 Compact mode is a state of its own. The fold the toggle chose and the
 pane's width are left as they were, and stand again when it is turned off,
