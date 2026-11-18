@@ -968,7 +968,11 @@ has to do itself:
   message sent meanwhile waits in the window until the answer, since the
   session refuses one while it goes back, and goes only where it went
   back. What the window marked as told in a message gone back on, such as
-  a report of a session it started, counts as not told again.
+  a report of a session it started, counts as not told again. Files put
+  back while the conversation stayed as it was, with only the files or
+  where the answer says the conversation went on whole, leave the agent
+  believing what it changed in them stands, so the window tells it ahead
+  of the user's next message.
 - **The conversation's id.** The session's row, and resuming it, need the
   conversation's id. For an agent that makes its own ids the start
   answers with none, and the id is known only from ready.

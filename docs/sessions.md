@@ -966,20 +966,29 @@ leave with it, and the list says what leaves, or why the conversation
 cannot go back there. Enter turns the list into the choices for the marked
 message: the conversation alone, and, where the agent puts files back and
 a dry run named some, the conversation and the files, and only the files,
-naming the files and counting what changes. A digit or Enter takes one,
-Esc goes back to the list and closes it from there, and typing closes it
-and types. A turn the agent begins by itself closes it, and the composer
+naming the files and counting what changes. Past three files a choice
+names two and counts the rest, and names them all once marked by a key or
+clicked, so none goes back unnamed. Enter takes the marked choice. A digit
+takes one that can be undone, and only marks one that cannot, which says
+so, for Enter to take. Esc goes back to the list and closes it from
+there, and typing closes it and types. A turn the agent begins by itself closes it, and the composer
 says why.
 
 Going back with the conversation cuts the thread at the message at once,
 marks the place with `Rewound here` and the time, and puts the message's
-words in the composer, ahead of anything written there, to be edited and
-sent again. Claude Code starts again for it, which the choices say, with
+words in the composer, a blank line above anything written there, to be
+edited and sent again. Claude Code starts again for it, which the choices say, with
 the commands it left running that stop with it, and while it starts the
 composer says what is sent waits for it. Gone back with the conversation
 alone, it can be undone from the mark until a message is sent or a turn
-runs. Files put back are named under the composer, with a reminder that
-what commands changed stays. Codex goes back in place, puts no files back
+runs. Files put back are named under the composer, with when they are
+from and a reminder that what commands changed stays. Where they went back
+and the conversation did not, as with only the files, or where Claude Code
+went on with the whole conversation or did not start again, the composer
+says so too, and the agent is told ahead of the user's next message, which
+the thread shows folded under it as `Files put back, from the workbench`;
+a message that never reaches the agent, or that the conversation goes back
+on, has it told again with the next. Codex goes back in place, puts no files back
 and cannot undo it, which the choices say. A report of a session it
 started that reached it in a message gone back on counts as not told, so
 it comes again. Where going back fails, the composer says why, the thread
