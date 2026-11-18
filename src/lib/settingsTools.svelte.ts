@@ -76,6 +76,7 @@ import {
 } from "$lib/workflows.svelte";
 import { projectLabel } from "$lib/workspace.svelte";
 import { setUserStyles, styleProblem, userStyles } from "$lib/userStyles.svelte";
+import { compact, setCompact } from "$lib/compact.svelte";
 import {
   INTERFACE_FONTS,
   LOOKS,
@@ -108,6 +109,7 @@ export interface Change {
 interface Next {
   appearance?: ThemeChoice;
   look?: LookName;
+  compact?: boolean;
   palette?: string;
   /** The whole set of the user's own themes, when a theme is saved. */
   themes?: Record<string, CustomTheme>;
@@ -252,6 +254,7 @@ export function describeSettings(): string {
     "",
     `appearance: ${theme.choice} (one of ${names(APPEARANCES)})`,
     `look: ${theme.look} (one of ${names(LOOKS)})`,
+    `compact: ${compact.on} (true or false): compact mode, where the sessions pane leaves the layout and slides in over the other panes when the pointer reaches the window's left edge or its chord is pressed`,
     `palette: ${theme.palette} (one of ${names(palettes())})`,
     `background: ${backgroundOf(theme.palette)} (kept with the palette in use; settings_change's background argument sets it, null takes it away)`,
     describeCards(),
@@ -393,6 +396,10 @@ export function plan(args: Record<string, unknown>): {
         break;
       case "look":
         next.look = oneOf(field, value, LOOKS);
+        break;
+      case "compact":
+        if (typeof value !== "boolean") throw new Error("compact is true or false.");
+        next.compact = value;
         break;
       case "palette":
         next.palette = oneOf(field, value, palettes());
@@ -634,6 +641,10 @@ function changesOf(next: Next): Change[] {
         to: describeBackground(to),
       });
     }
+  }
+  if (next.compact !== undefined) {
+    const said = (on: boolean) => (on ? "On" : "Off");
+    line("compact", "Compact mode", said(compact.on), said(next.compact));
   }
   if (next.userStyles !== undefined) {
     const said = (on: boolean) => (on ? "On" : "Off");
@@ -886,6 +897,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
   const before = {
     appearance: theme.choice,
     look: theme.look,
+    compact: compact.on,
     palette: theme.palette,
     terminalFont: theme.mono,
     interfaceFont: theme.sans,
@@ -897,6 +909,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
   const answered = noteSent();
   if (next.appearance !== undefined) setTheme(next.appearance);
   if (next.look !== undefined) setLook(next.look);
+  if (next.compact !== undefined) setCompact(next.compact);
   if (next.themes !== undefined) setThemes(next.themes, next.palette, next.backgrounds);
   else {
     if (next.palette !== undefined) setPalette(next.palette);
@@ -918,6 +931,7 @@ async function take(next: Next): Promise<{ undo: () => void; notSaved: Map<strin
     if (next.userStyles !== undefined && made("userStyles")) setUserStyles(before.userStyles);
     if (next.appearance !== undefined && made("appearance")) setTheme(before.appearance);
     if (next.look !== undefined && made("look")) setLook(before.look);
+    if (next.compact !== undefined && made("compact")) setCompact(before.compact);
     if (next.themes !== undefined) {
       if (made("themes")) setThemes(before.themes, before.palette, before.backgrounds);
     } else {

@@ -5,7 +5,7 @@ Settings open from the native menu, or with <kbd>Cmd</kbd><kbd>,</kbd>
 at once.
 
 The settings are in eight tabs down the left. Appearance carries the
-appearance, theme, font, colour, background and custom styles sections; live updates,
+appearance, theme, compact mode, font, colour, background and custom styles sections; live updates,
 sessions, workflows, accounts, plugins, keys and notifications each carry
 the section of that name. Opening the settings again lands on the tab last used, for as long as
 the window is open. The dialog follows the look the panes are drawn in. It
@@ -33,6 +33,14 @@ modern, the pane's own border under terminal. Both use the same colours, so
 the appearance and the palette hold across either. The system's
 increase-contrast setting brings plain lines back in both: an outline round
 each card and box, and a line in each divider inside a pane.
+
+## Compact mode
+
+On or off, off to begin with. On, the projects and sessions pane leaves
+the layout and slides in over the other panes from the window's left
+edge, when the pointer reaches it or the chord that goes to the pane is
+pressed; [layout](layout.md#compact-mode) describes it. The section names
+that chord as it is bound.
 
 ## Font
 
@@ -581,7 +589,8 @@ agent is told why without the user being troubled. The agent hooks, the
 plugins, the accounts, which workflow a project follows, how long past
 sessions stay listed, how long a project stays active, whether every
 start of a session is asked about, the notifications and the chime are
-refused outright, as the user's to change.
+refused outright, as the user's to change. Compact mode is a matter of
+how the window looks, as the look is, and the agent may ask for it.
 
 A change that will do is put to the user over the agent pane: who is
 asking, the reason, and each setting from what it is to what it would be.
@@ -640,7 +649,7 @@ on, whichever machine the agent runs on.
 
 ## Where they are kept
 
-The appearance, the look, the palette, the fonts, the chords, the answer
+The appearance, the look, compact mode, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, the
 notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every

@@ -15,6 +15,7 @@
     notifications: "notifications choice",
     chime: "chime choice",
     askEveryStart: "choice on asking before every start",
+    compact: "compact mode choice",
   };
 
   /** What an entry is called to the user. */

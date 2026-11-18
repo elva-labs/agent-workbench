@@ -20,6 +20,7 @@ import { adoptInactiveAfter, inactiveAfterSettings } from "$lib/projects.svelte"
 import { adoptKeys, keysSettings } from "$lib/keys.svelte";
 import { adoptNotify, notifySettings } from "$lib/notify.svelte";
 import { adoptStartAsk, startAskSettings } from "$lib/startAsk.svelte";
+import { adoptCompact, compactSettings } from "$lib/compact.svelte";
 import { flush, holdUntil, onRefused, onSettled, sending } from "$lib/persist";
 import { showRefusal } from "$lib/refusal.svelte";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
@@ -41,6 +42,7 @@ export function currentSettings(): Settings {
     userStyles: userStyles.on,
     ...notifySettings(),
     ...startAskSettings(),
+    ...compactSettings(),
   };
 }
 
@@ -59,6 +61,7 @@ export function adopt(settings: Settings) {
   adoptUserStylesSetting(settings.userStyles);
   adoptNotify(settings);
   adoptStartAsk(settings.askEveryStart);
+  adoptCompact(settings.compact);
   adoptPastSessions(settings.pastSessions);
   adoptSessionKinds(settings.integrated);
   adoptInactiveAfter(settings.inactiveAfter);

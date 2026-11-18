@@ -47,6 +47,7 @@ import { startsIn } from "$lib/orchestratorFolder.svelte";
 import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
 import { canGoBack, openBack } from "$lib/rewind.svelte";
+import { compact } from "$lib/compact.svelte";
 
 /**
  * The palette: one field over the workbench in two lists. Go to narrows the
@@ -660,9 +661,10 @@ export function stepBack() {
     opened first, or while reviewing peeked over the agent so the viewer
     stays. A window too narrow for the pane leaves it folded, as the user
     set it, and the keyboard goes to the agent pane, which has no session to
-    give it to and takes it itself. */
+    give it to and takes it itself. So does compact mode, where going to a
+    project leaves the pane where it is, out of sight. */
 function keyboardToSessions() {
-  if (!sessionsShown()) {
+  if (!sessionsShown() && !compact.on) {
     if (layout.mode === "reviewing") peekSessions(true);
     else if (!layout.sessionsForced) unfoldSessions();
   }

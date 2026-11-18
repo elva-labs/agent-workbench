@@ -225,7 +225,14 @@
       // now would change the size this has just been told of.
       if (windowed) requestAnimationFrame(look);
       if (!pinned || (windowed && !atFoot())) {
-        if (windowed) keep();
+        // The place is kept, and what stands at the top of the view then is
+        // the line read from here on: the block kept can have moved wholly
+        // above the view, and a change that comes before the thread looks
+        // again keeps the line that is read now.
+        if (windowed) {
+          keep();
+          mark();
+        }
         return;
       }
       // A fold the user opened in the thread grows it; the space shrinking
@@ -678,24 +685,15 @@
     // frame after it, and rows can move in between: a type size, a font or
     // a width coming in.
     if (!atFoot()) keep();
-    const view = scroller.getBoundingClientRect();
-    const nodes = rowNodes();
-    anchor = null;
-    for (const node of nodes) {
+    for (const node of mark()) {
       const drawnAt = node.getBoundingClientRect();
-      const key = node.dataset.row!;
-      if (drawnAt.height > 0) heights.set(key, drawnAt.height);
-      if (anchor === null && drawnAt.bottom > view.top) {
-        const block = blockAt(node, view.top);
-        anchor = { key, offset: drawnAt.top - view.top, block, blockOffset: block.getBoundingClientRect().top - view.top };
-      }
+      if (drawnAt.height > 0) heights.set(node.dataset.row!, drawnAt.height);
     }
     if (guess === null && heights.size > 0) {
       let total = 0;
       for (const height of heights.values()) total += height;
       guess = total / heights.size;
     }
-    lookedTop = scroller.scrollTop;
     const count = rows.length;
     if (count === 0) {
       win = null;
@@ -719,7 +717,7 @@
     } else {
       // The view, a screen above and below it, measured from the top of
       // the box the rows are in.
-      const seen = view.top - box.getBoundingClientRect().top;
+      const seen = scroller.getBoundingClientRect().top - box.getBoundingClientRect().top;
       const start = seen - spare;
       const end = seen + scroller.clientHeight + spare;
       // From the first row drawn, back or on to the first row that reaches
@@ -776,6 +774,31 @@
     const at = focused === undefined ? undefined : rowAt.get(focused);
     if (at !== undefined && (at < from || at >= to)) scroller.focus({ preventScroll: true });
     win = next;
+  }
+
+  /** Takes what stands at the top of the view now as the line read: the
+      first row reaching into the view, the innermost block of it that
+      does, and where the view is scrolled to. Answers the rows drawn. */
+  function mark(): HTMLElement[] {
+    const nodes = rowNodes();
+    if (scroller === null) return nodes;
+    const view = scroller.getBoundingClientRect();
+    anchor = null;
+    for (const node of nodes) {
+      const drawnAt = node.getBoundingClientRect();
+      if (drawnAt.bottom > view.top) {
+        const block = blockAt(node, view.top);
+        anchor = {
+          key: node.dataset.row!,
+          offset: drawnAt.top - view.top,
+          block,
+          blockOffset: block.getBoundingClientRect().top - view.top,
+        };
+        break;
+      }
+    }
+    lookedTop = scroller.scrollTop;
+    return nodes;
   }
 
   /** Puts what stood at the top of the view back where it stood when the
