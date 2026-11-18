@@ -148,7 +148,10 @@ holds:
 
 - `Casks/chord@beta.rb`, printed by `scripts/cask.sh <version> beta`;
 - `Casks/agent-workbench.rb`, the last stable release under the old name,
-  unchanged;
+  printed again by `scripts/cask.sh <its version> earlier`: the same cask,
+  naming `chord` and `chord@beta` as conflicts as well, since Homebrew
+  checks a conflict only from the cask being installed, and without it
+  the old app would install beside Chord;
 - no `Casks/agent-workbench@beta.rb`;
 - `cask_renames.json` with `{ "agent-workbench@beta": "chord@beta" }`;
 - `Formula/agent-workbench-remote.rb` and
@@ -162,8 +165,16 @@ adds `Casks/chord.rb`, removes `Casks/agent-workbench.rb`, and adds
 no longer available; `brew install --cask chord@beta`, or `chord`, after
 `brew uninstall --cask` of the old one, does it by hand.
 
-The app's tile in the Dock points at the app it was pinned from, so after
-the move it is pinned again. A Mac that has the app from a disk image
-keeps the copy under the earlier name beside the new one; quit it and delete it
-before opening Chord, since the two are the same app to macOS and the
-first one open is the one both open into.
+Each platform loses what pointed at the app by its earlier name, which the
+release notes of the first Chord release say:
+
+- On macOS the app's tile in the Dock points at the app it was pinned
+  from, so after the move it is pinned again. A Mac that has the app from
+  a disk image keeps the copy under the earlier name beside the new one;
+  quit it and delete it before opening Chord, since the two are the same
+  app to macOS and the first one open is the one both open into.
+- On Windows the setup installer runs the old install's uninstaller, which
+  takes its shortcuts away and unpins them from the taskbar and Start, so
+  Chord's shortcut is pinned again.
+- On Linux the desktop entry takes the new name, and GNOME's and KDE's
+  favourites name the entry, so a favourite of the app is added again.

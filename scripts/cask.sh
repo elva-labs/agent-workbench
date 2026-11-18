@@ -7,10 +7,18 @@
 # the app had under its earlier name, agent-workbench and
 # agent-workbench@beta, which install it under the same bundle identifier.
 # The beta channel takes any version, a stable one too; the stable channel
-# refuses a pre-release. docs/release.md says what else the tap holds.
+# refuses a pre-release.
+#
+# The channel earlier prints Casks/agent-workbench.rb, the last stable
+# release under the app's earlier name, for the tap to keep until Chord has
+# a stable release of its own: the same cask as it was published, naming
+# the Chord casks as conflicts as well, since Homebrew checks a conflict
+# only from the cask being installed. docs/release.md says what else the
+# tap holds.
 #
 #   scripts/cask.sh 1.0.0 > ../homebrew-elva/Casks/chord.rb
-#   scripts/cask.sh 1.0.0-beta.4 beta > ../homebrew-elva/Casks/chord@beta.rb
+#   scripts/cask.sh 1.0.0-beta.5 beta > ../homebrew-elva/Casks/chord@beta.rb
+#   scripts/cask.sh 0.9.0 earlier > ../homebrew-elva/Casks/agent-workbench.rb
 set -eu
 
 version="${1:?a version, as 0.1.0}"
@@ -25,7 +33,7 @@ case "$channel" in
         ;;
     esac
     token="chord"
-    other="chord@beta"
+    conflicts='"chord@beta", "agent-workbench", "agent-workbench@beta"'
     livecheck=$(cat <<'RUBY'
   livecheck do
     url :url
@@ -36,7 +44,7 @@ RUBY
     ;;
   beta)
     token="chord@beta"
-    other="chord"
+    conflicts='"chord", "agent-workbench", "agent-workbench@beta"'
     # Pre-releases count here, which the latest release never is.
     livecheck=$(cat <<'RUBY'
   livecheck do
@@ -56,20 +64,36 @@ RUBY
 RUBY
 )
     ;;
+  earlier)
+    case "$version" in
+      *-*)
+        echo "$version is a pre-release; the cask under the earlier name holds the last stable release under it" >&2
+        exit 1
+        ;;
+    esac
+    token="agent-workbench"
+    conflicts='"agent-workbench@beta", "chord", "chord@beta"'
+    product="Agent Workbench" # the app's earlier name
+    asset="Agent.Workbench" # the app's earlier name, in its release's assets
+    # It stays at the version it holds: the latest release is Chord's.
+    livecheck=""
+    ;;
   *)
-    echo "a channel is stable or beta, not $channel" >&2
+    echo "a channel is stable, beta or earlier, not $channel" >&2
     exit 1
     ;;
 esac
 
+product="${product:-Chord}"
+asset="${asset:-Chord}"
 base="https://github.com/elva-labs/agent-workbench/releases/download/v$version"
 
 sum() {
   curl -fsSL "$base/$1" | shasum -a 256 | cut -d' ' -f1
 }
 
-arm=$(sum "Chord_${version}_aarch64.dmg")
-intel=$(sum "Chord_${version}_x64.dmg")
+arm=$(sum "${asset}_${version}_aarch64.dmg")
+intel=$(sum "${asset}_${version}_x64.dmg")
 
 cat <<CASK
 cask "$token" do
@@ -78,25 +102,25 @@ cask "$token" do
   on_arm do
     sha256 "$arm"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Chord_#{version}_aarch64.dmg"
+    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/${asset}_#{version}_aarch64.dmg"
   end
   on_intel do
     sha256 "$intel"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/Chord_#{version}_x64.dmg"
+    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/${asset}_#{version}_x64.dmg"
   end
 
-  name "Chord"
+  name "$product"
   desc "Desktop for terminal coding agents: sessions, live changes, remote projects"
   homepage "https://github.com/elva-labs/agent-workbench"
-
+${livecheck:+
 $livecheck
-
-  conflicts_with cask: ["$other", "agent-workbench", "agent-workbench@beta"]
+}
+  conflicts_with cask: [$conflicts]
   depends_on macos: :ventura
 
-  app "Chord.app"
-  binary "#{appdir}/Chord.app/Contents/Resources/bin/awb"
+  app "$product.app"
+  binary "#{appdir}/$product.app/Contents/Resources/bin/awb"
 
   zap trash: [
     "~/Library/Application Support/com.elva-labs.agent-workbench",
