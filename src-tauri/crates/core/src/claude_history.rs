@@ -45,16 +45,15 @@ const DEPTH: usize = 3;
 const META_KEEP: u64 = 64 * 1024;
 
 /// What the session with this id said and did, from its transcript under
-/// the account's configuration directory. Empty when there is none.
+/// the account's configuration directory. None when there is no transcript
+/// of it there.
 pub fn read_session(
     claude_dir: &Path,
     project: &Path,
     cwd: Option<&Path>,
     session: &str,
-) -> History {
-    find(claude_dir, project, cwd, session)
-        .map(|path| read(&path))
-        .unwrap_or_default()
+) -> Option<History> {
+    find(claude_dir, project, cwd, session).map(|path| read(&path))
 }
 
 /// The transcript of a session. Claude Code files a session under the

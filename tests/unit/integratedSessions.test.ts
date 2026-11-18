@@ -56,7 +56,8 @@ import { create as createShell, forOwner, reset as resetShells } from "$lib/term
 import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
-import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
+import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows, unknowWorkflows } from "$lib/workflows.svelte";
+import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
@@ -192,6 +193,7 @@ beforeEach(async () => {
   // The window has the workflows, so a resumed row finds out what it
   // follows as it starts.
   resetWorkflows();
+  resetAccounts();
   pty.spawned = [];
   pty.written = [];
   pty.killed = [];
@@ -883,6 +885,64 @@ describe("what a resumed session said before", () => {
     expect(fake.calls.find((call) => call.method === "history")).toMatchObject({
       options: { agent: "codex", session: "codex-thread" },
     });
+  });
+
+  it("is read under the session's account once the settings say where it keeps it, as it is started", async () => {
+    fake.transcript("old-conversation", written(1_000_000, "Count the files", "There are 12."), "claude-code", "~/.claude-work");
+    // The window does not have the settings yet.
+    unknowWorkflows();
+    const row = reopened(PROJECT, "old-conversation", "claude-code", "/home/ada/dev/demo/.claude/worktrees/fix", null, "Work", "integrated");
+    wake(row.key);
+    const launching = launch(row.key);
+    await settled();
+    expect(fake.calls.filter((call) => call.method === "history" || call.method === "start")).toEqual([]);
+    const conversation = conversationOf(row.key);
+    expect(conversation.earlier).toBe("loading");
+    expect(conversation.began).toMatchObject({ after: null });
+    adoptAccounts({ list: { Work: { claude: "~/.claude-work", codex: null } }, everywhere: null, overrides: {} });
+    adoptWorkflows({ list: [defaultWorkflow()], default: null, overrides: {} });
+    await launching;
+    await vi.waitFor(() => expect(conversation.earlier).toBe("read"));
+    const read = { agent: "claude-code", project: PROJECT, cwd: "/home/ada/dev/demo/.claude/worktrees/fix", session: "old-conversation", configDir: "~/.claude-work" };
+    expect(fake.calls.find((call) => call.method === "history")).toEqual({ method: "history", options: read });
+    expect(fake.calls.find((call) => call.method === "start")).toMatchObject({
+      options: { session: "old-conversation", cwd: read.cwd, configDir: read.configDir },
+    });
+    expect(agentTexts(conversation)).toEqual(["There are 12."]);
+  });
+
+  it("says its earlier messages were not read, and why, when the agent kept no record of a session it resumes", async () => {
+    const { session, handle } = await started({ resumedFrom: "never-written" });
+    const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
+    expect(conversation.earlierWhy).toBe("Claude Code has no transcript of it in ~/.claude");
+    // The session goes on, written to as ever.
+    send(session.key, "Where are we?");
+    fake.turn(handle, "Here.");
+    expect(agentTexts(conversation)).toEqual(["Here."]);
+    expect(conversation.earlier).toBe("unread");
+  });
+
+  it("does not take an empty record of a session it resumes for one with nothing before", async () => {
+    fake.transcript("emptied", []);
+    const { session } = await started({ resumedFrom: "emptied" });
+    const conversation = conversationOf(session.key);
+    await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
+    expect(conversation.earlierWhy).toBe("Claude Code's record of it holds no messages");
+  });
+
+  it("is not read for a session nothing was said in, which ended and is resumed", async () => {
+    const { session, handle } = await started();
+    fake.end(handle, false);
+    await resume(session.key);
+    const conversation = conversationOf(session.key);
+    expect(fake.calls.filter((call) => call.method === "history")).toEqual([]);
+    expect(conversation.earlier).toBeNull();
+    // Nor when it ends again before anything is said.
+    fake.end(handleOf(session.key)!, false);
+    await resume(session.key);
+    expect(fake.calls.filter((call) => call.method === "history")).toEqual([]);
+    expect(conversation.earlier).toBeNull();
   });
 
   it("says why when Codex cannot read the thread, and leaves the session as it is", async () => {

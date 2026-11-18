@@ -857,7 +857,11 @@ folders of the directories inside the project, a worktree among them, since
 the agent files a session by the folder it ran in. A session resumed in
 another folder is written there again under the same id, and the copy
 written last is read. Only a plain file is opened, and a request that names
-no project names no transcript.
+no project names no transcript. A session with no transcript there is an
+error that names the directory looked in. The account's directory is the
+settings' word, so a session the window starts before it has the settings,
+as one brought back at a start can be, is read once it has them, as its
+agent is started.
 
 The transcript comes back as the events a live session would have sent, in
 order, each with the time its entry was written: each message of the user's
