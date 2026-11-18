@@ -85,13 +85,27 @@ test.describe("the accounts tab", () => {
   test("refuses a name that will not do, and says why", async ({ page }) => {
     await page.getByTestId("account-add-open").click();
     await expect(page.getByTestId("account-add")).toBeDisabled();
+    // Default, in any case, is the agents' own login's.
     await page.getByTestId("account-name").fill("default");
     await page.getByTestId("account-add").click();
-    await expect(page.getByTestId("account-problem")).toContainText("already");
+    await expect(page.getByTestId("account-problem")).toHaveText(
+      "Default is the agents' own login, so no account can be called that.",
+    );
     await expect(page.getByTestId("account-form")).toBeVisible();
     await page.getByTestId("account-cancel").click();
     await expect(page.getByTestId("account-form")).toHaveCount(0);
     expect((await file(page))?.accounts?.list ?? {}).toEqual({});
+    // A name another account has, in any case, is taken.
+    await page.getByTestId("account-add-open").click();
+    await page.getByTestId("account-name").fill("Work");
+    await page.getByTestId("account-add").click();
+    await expect.poll(async () => Object.keys((await file(page))?.accounts?.list ?? {})).toEqual(["Work"]);
+    await page.getByTestId("account-add-open").click();
+    await page.getByTestId("account-name").fill("work");
+    await page.getByTestId("account-add").click();
+    await expect(page.getByTestId("account-problem")).toHaveText("There is an account called work already.");
+    await page.getByTestId("account-cancel").click();
+    expect(Object.keys((await file(page))?.accounts?.list ?? {})).toEqual(["Work"]);
   });
 
   test("gives a project an account of its own", async ({ page }) => {
