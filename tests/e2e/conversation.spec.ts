@@ -2651,7 +2651,8 @@ test.describe("after a reload, an orchestrated session", () => {
     await expect(own).toHaveCount(1);
     await expect(own.locator(".label")).toHaveText("session 1");
     await own.click();
-    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("idle");
+    // It is at rest itself, and the session it started is in its turn.
+    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("a session working");
     await expect(page.locator("[data-testid='conversation']:visible").getByTestId("thread-intro")).not.toContainText(
       "Earlier messages",
     );
