@@ -273,13 +273,25 @@ column, so a window too narrow for the changes pane beside the fold holds
 it in compact mode.
 
 The pane comes back over the panes rather than beside them. The pointer
-moving onto a strip a few pixels wide along the window's left edge and
-resting there a moment, or leaving the window by that edge, slides it in
-from the edge at
+coming onto the window's left edge, the few pixels nearest it at any
+height, or leaving the window by that edge, slides it in from the edge at
 its open width, as tall as the panes, on its own ground with a soft
 shadow and, in the modern look, rounded corners on its free side; it
-pushes nothing. A pointer that was already resting where the strip comes
-to stand, as compact mode comes on, brings nothing until it moves. Once
+pushes nothing. How fast the pointer comes makes no difference. A quick
+move is seen at only a few points, so which edge it went out by is told
+from the line between the last two, and when the last is short of the
+edge, heading for it fast, the app asks the window where the cursor came
+to rest, which may be against the screen's edge where the page hears no
+more of it. A pointer that comes onto the edge from inside the window
+brings the pane at once; one that moves along the edge, or comes into the
+window across it, rests there a moment first, so a pass along the edge
+brings nothing. Only a plain move brings it: none with a button held, as
+in a drag of a divider or a selection, and none while the settings, the
+palette or another dialog is up, or anything but the window's ground
+stands at the edge. A leave the page is told of well inside the window is
+not taken for one by the edge; the app asks the window where the cursor
+went instead. A pointer that was already resting there as compact mode
+comes on brings nothing until it moves. Once
 the pointer has been away from it for a little under
 half a second it slides back out, and so it does at once on a press
 anywhere outside it. While a menu of its own is open, the new-session

@@ -1382,6 +1382,10 @@ export interface Core {
   /** Where the middle of the sessions pane's header is, in CSS pixels
       from the window's top, for the platform's own controls to sit on. */
   controlsCentre(centre: number): Promise<void>;
+  /** Where the cursor is, in CSS pixels from the window's top left, as the
+      window itself knows it, outside the page too; null when it cannot
+      say. */
+  cursorInWindow(): Promise<{ x: number; y: number } | null>;
   /** The window started into full screen, with true, or back out, with
       false. Only macOS says; its controls are away while it is in. */
   onFullScreen(handler: (fullScreen: boolean) => void): Promise<() => void>;
@@ -1951,6 +1955,10 @@ const tauriCore: Core = {
 
   openAppMenu: () => invoke("app_menu"),
   controlsCentre: (centre) => invoke("controls_centre", { centre }),
+  async cursorInWindow() {
+    const at = await invoke<[number, number] | null>("cursor_in_window");
+    return at === null ? null : { x: at[0], y: at[1] };
+  },
   async onFullScreen(handler) {
     return listen<boolean>("full_screen", (event) => handler(event.payload));
   },
@@ -2335,6 +2343,9 @@ const detachedCore: Core = {
   async windowControl() {},
   async openAppMenu() {},
   async controlsCentre() {},
+  async cursorInWindow() {
+    return null;
+  },
   async onFullScreen() {
     return () => {};
   },
