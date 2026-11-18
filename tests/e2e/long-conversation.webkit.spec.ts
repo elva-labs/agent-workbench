@@ -96,14 +96,18 @@ test.describe("a long conversation", () => {
   const TURNS = 300;
 
   /** A past conversation of `TURNS` turns, each a question, two commands
-      and a reply with a link; every seventh reply runs long, so the turns
-      are of uneven height. */
+      and a reply with a link; every fifth question and every seventh reply
+      run long, so the turns are of uneven height. */
   const long = (start: number) => {
     const items: unknown[] = [];
     let at = start;
     for (let turn = 1; turn <= TURNS; turn++) {
       const message = `m-${turn}`;
-      items.push({ at, event: { type: "message", message, state: "sent", error: null, text: `Question ${turn}`, images: [] } });
+      // Every fifth question but the first runs over a few short lines,
+      // each of which fits on one in either look, so a change of type size
+      // changes its height by whole lines whatever the fonts.
+      const lines = turn % 5 === 0 ? "\nin a few short lines,\neach on its own,\nso the type size\nchanges its height." : "";
+      items.push({ at, event: { type: "message", message, state: "sent", error: null, text: `Question ${turn}${lines}`, images: [] } });
       items.push({ at, event: { type: "turnStarted", messages: [message] } });
       for (const step of [1, 2]) {
         const call = `c-${turn}-${step}`;
@@ -343,6 +347,211 @@ test.describe("a long conversation", () => {
     const held = await markTop(page);
     await switchLook(page, "modern", -200);
     await expect(rows).toHaveCSS("font-size", "13.5px");
+    await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(2);
+  });
+
+  test("reads the block at the top of the view once the block it kept has shrunk above it", async ({ page }) => {
+    await openLong(page);
+    await wheel(page, -600, 6);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(3000);
+    const rows = page.getByTestId("thread-rows");
+    const thread = page.getByTestId("thread");
+    // A question's bubble with the view's top inside its foot, by less than
+    // the smaller type takes it up past the view's top. How far that is
+    // depends on the machine's fonts and on the block the thread keeps, so
+    // it is measured: a dry run of the change the test makes below, the
+    // type smaller and the bubble's foot read once the thread has kept its
+    // place.
+    const settled = () =>
+      thread.evaluate(
+        () =>
+          new Promise((done) => {
+            void document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(done)));
+          }),
+      );
+    /** Puts the view's top `by` inside the foot of the bubble marked, and
+        answers how far inside it stands, and how much of the bubble's foot
+        is its own, below what it holds: the view's top there makes the
+        bubble itself the block at the top, which the thread keeps. */
+    const place = (by: number) =>
+      thread.evaluate(async (node, by) => {
+        const frames = () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+        const bubble = node.querySelector("[data-bubble]")!;
+        const foot = () => bubble.getBoundingClientRect().bottom - node.getBoundingClientRect().top;
+        await frames();
+        node.scrollTop += foot() - by;
+        await frames();
+        const box = bubble.getBoundingClientRect();
+        const feet = [...bubble.children].map((child) => child.getBoundingClientRect().bottom);
+        return { inside: foot(), own: box.bottom - Math.max(box.top, ...feet) };
+      }, by);
+    /** The type smaller, and where the bubble's foot then stands against
+        the view's top, read as the body below reads it; then the type
+        back. */
+    const footAfter = async () => {
+      const after = await thread.evaluate(
+        (node, key) =>
+          new Promise<number>((answer) => {
+            // Told of the rows' change of size right after the thread is,
+            // by an observer made after the thread's: the thread has kept
+            // its place by then and has not yet looked again.
+            let first = true;
+            const watcher = new ResizeObserver(() => {
+              if (first) {
+                first = false;
+                requestAnimationFrame(smaller);
+                return;
+              }
+              watcher.disconnect();
+              answer(node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom - node.getBoundingClientRect().top);
+            });
+            watcher.observe(node.querySelector("[data-testid='thread-rows']")!);
+            function smaller() {
+              const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look: "terminal" };
+              localStorage.setItem(key, JSON.stringify(next));
+              (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
+                appearance: "system",
+                look: "modern",
+                palette: "teal",
+                terminalFont: "system",
+                interfaceFont: "system",
+                keys: {},
+                hooks: { everywhere: true, overrides: {} },
+                themes: {},
+                ...next,
+              });
+            }
+          }),
+        SETTINGS_FILE,
+      );
+      await expect(rows).toHaveCSS("font-size", "12.5px");
+      await settled();
+      await switchLook(page, "modern");
+      await expect(rows).toHaveCSS("font-size", "13.5px");
+      await settled();
+      return after;
+    };
+    // The question near the top of the view whose bubble the smaller type
+    // shrinks the most, measured at both sizes: one of the questions that
+    // runs over several lines, which shrinks by a whole line's worth on
+    // each, more than any rounding of the scroll position can hide.
+    const shrinks = async () =>
+      thread.evaluate((node) => {
+        const top = node.getBoundingClientRect().top;
+        return [...node.querySelectorAll("[data-testid='user-message'] .bubble")]
+          .filter((one) => one.getBoundingClientRect().bottom > top + 40)
+          .slice(0, 8)
+          .map((one) => one.getBoundingClientRect().height);
+      });
+    await settled();
+    const large = await shrinks();
+    await switchLook(page, "terminal");
+    await expect(rows).toHaveCSS("font-size", "12.5px");
+    await settled();
+    const small = await shrinks();
+    await switchLook(page, "modern");
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    await settled();
+    const by = large.map((height, at) => height - (small[at] ?? height));
+    const most = by.indexOf(Math.max(...by));
+    await thread.evaluate((node, most) => {
+      const top = node.getBoundingClientRect().top;
+      [...node.querySelectorAll("[data-testid='user-message'] .bubble")]
+        .filter((one) => one.getBoundingClientRect().bottom > top + 40)
+        [most].setAttribute("data-bubble", "");
+    }, most);
+    // With the view's top in the bubble's own foot, below what it holds,
+    // the bubble is the block at the top and the one the thread keeps.
+    const { own } = await place(1);
+    const start = await place(own / 2);
+    // How far the smaller type takes the foot up past the view's top in
+    // the frame the test acts in, with the machine's fonts. A scroll
+    // position may be held to whole pixels, and the thread's own
+    // correction with it, so the rise must clear a pixel or two.
+    const rise = start.inside - (await footAfter());
+    const tried: string[] = [
+      `shrinking ${by.map((one) => one.toFixed(2)).join(", ")}px, ${own.toFixed(2)}px of its own foot, rising ${rise.toFixed(2)}px`,
+    ];
+    if (rise < 3) throw new Error(`no question near the top shrinks past a scroll step: ${tried.join("; ")}`);
+    // The view's top inside the foot by the least the scroll steps allow,
+    // and by two pixels less than the rise at most, so the bubble goes
+    // wholly above the view with room for the rounding to spare.
+    const room = Math.min(rise - 2, own);
+    let chosen = false;
+    for (const step of [0.1, 0.25, 0.5, 0.75, 1, 1.5].filter((one) => one < room)) {
+      const { inside } = await place(step);
+      tried.push(`${inside.toFixed(2)}px inside`);
+      if (inside > 0 && inside < room) {
+        chosen = true;
+        break;
+      }
+    }
+    if (!chosen)
+      throw new Error(`no place in the bubble's foot the smaller type takes wholly above the view: ${tried.join("; ")}`);
+    await markTop(page);
+    await expect(thread.locator("[data-bubble]")).toHaveAttribute("data-mark", "");
+    // The type smaller, and once the thread has kept its place and before
+    // it looks again, the view moving and the type back: the thread keeps
+    // the block at the top of the view by then, not the bubble it kept
+    // before.
+    const { left, held } = await thread.evaluate(
+      (node, key) =>
+        new Promise<{ left: boolean; held: number }>((answer) => {
+          const look = (to: string) => {
+            const next = { ...JSON.parse(localStorage.getItem(key) ?? "{}"), look: to };
+            localStorage.setItem(key, JSON.stringify(next));
+            (window as unknown as { __settingsChanged: (settings: unknown) => void }).__settingsChanged({
+              appearance: "system",
+              look: "modern",
+              palette: "teal",
+              terminalFont: "system",
+              interfaceFont: "system",
+              keys: {},
+              hooks: { everywhere: true, overrides: {} },
+              themes: {},
+              ...next,
+            });
+          };
+          // Told of the rows' change of size right after the thread is, by
+          // an observer made after the thread's: the thread has kept its
+          // place by then, and looks again only a frame later.
+          let first = true;
+          const watcher = new ResizeObserver(() => {
+            if (first) {
+              first = false;
+              requestAnimationFrame(() => look("terminal"));
+              return;
+            }
+            watcher.disconnect();
+            {
+              const top = node.getBoundingClientRect().top;
+              const left = node.querySelector("[data-bubble]")!.getBoundingClientRect().bottom <= top;
+              node.querySelector("[data-mark]")?.removeAttribute("data-mark");
+              let at: Element = node.querySelector("[data-testid='thread-rows']")!;
+              for (;;) {
+                const next = [...at.children].find((child) => {
+                  const box = child.getBoundingClientRect();
+                  return box.height > 0 && box.bottom > top;
+                });
+                if (next === undefined) break;
+                at = next;
+              }
+              at.setAttribute("data-mark", "");
+              const held = at.getBoundingClientRect().top - top;
+              node.scrollTop -= 200;
+              look("modern");
+              answer({ left, held });
+            }
+          });
+          watcher.observe(node.querySelector("[data-testid='thread-rows']")!);
+        }),
+      SETTINGS_FILE,
+    );
+    expect(left).toBe(true);
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    // Within a pixel or two: where a scroll position is held to whole
+    // pixels, the thread's own correction is rounded to one. The block the
+    // bubble's growth would move goes by the whole of it, some 8px.
     await expect.poll(async () => Math.abs((await markedAt(page)) - held - 200)).toBeLessThan(2);
   });
 });
