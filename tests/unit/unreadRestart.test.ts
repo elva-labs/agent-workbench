@@ -24,6 +24,7 @@ import {
   unreadCount,
   viewed,
   waitingRecord,
+  WAITING_FOR,
   wake,
   type Session,
 } from "$lib/sessions.svelte";
@@ -131,17 +132,19 @@ describe("a row unread at the quit", () => {
     expect(JSON.parse(localStorage.getItem("workbench.waiting")!).one.unread).toBe(true);
   });
 
-  it("comes back read once it was read, keeping its line for a mark", () => {
+  it("comes back read once it was read, and keeps none of its lines", () => {
     const one = live(A, "one");
     live(A, "two");
     noted(one.key, "Done.");
     viewed(one.key);
+    flushSync();
+    expect(JSON.parse(localStorage.getItem("workbench.waiting")!)).toEqual({});
 
     restart();
     expect(row("one").unread).toBe(false);
     expect(row("one").note).toBeNull();
     markUnread(row("one").key);
-    expect(row("one").note).toBe("Done.");
+    expect(row("one").note).toBeNull();
   });
 
   it("comes back for an integrated session", () => {
@@ -177,6 +180,24 @@ describe("a row unread at the quit", () => {
     restart();
     const resumed = create(B, "child");
     expect(resumed.unread).toBe(true);
+  });
+
+  it("lets go of a row that has not come back for a week", () => {
+    const caller = live(A, "caller");
+    const child = live(B, "child");
+    conductor.startedBy[child.key] = "caller";
+    select(caller.key);
+    exact("child", "permission");
+    restart();
+    expect(waitingRecord().child).toBeDefined();
+
+    quit();
+    const kept = JSON.parse(localStorage.getItem("workbench.waiting")!);
+    kept.child.seen = Date.now() - WAITING_FOR - 1;
+    localStorage.setItem("workbench.waiting", JSON.stringify(kept));
+    open();
+    expect(waitingRecord().child).toBeUndefined();
+    expect(create(B, "child").unread).toBe(false);
   });
 
   it("announces news after the restart as it would have before", () => {

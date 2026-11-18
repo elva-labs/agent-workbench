@@ -204,20 +204,29 @@ const WAITING_KEY = "workbench.waiting";
     version that last wrote it kept what waits on the user too. */
 const OPEN_KEY = "workbench.open";
 
-/** What a row is brought back with after a restart or a reload, by its
-    session's id: whether it waited on the user, the line under its name,
-    the line it last showed, when it last changed, and a mark the user made
-    on it. A row that is read and keeps no line has no record. */
+/** What an unread row is brought back with after a restart or a reload,
+    by its session's id: that it waits on the user, the line under its
+    name, the line it last showed, when it last changed, a mark the user
+    made on it, and when the record last saw the row. A row that is read
+    has no record, and none of its lines is kept. */
 export interface KeptWaiting {
   unread: boolean;
   note: string | null;
   notice: string | null;
   at: number;
   mark?: { restored: string | null; heard: boolean };
+  /** When a run last had the row. A record from before there was one
+      reads as seen now. */
+  seen?: number;
 }
 
 /** How many records are kept, the latest last. */
 const WAITING_KEPT = 200;
+
+/** How long a record waits for its row to come back: a project that does
+    not open again, or a session another started whose starter is not
+    resumed, takes its rows' records with it after this. */
+export const WAITING_FOR = 7 * 24 * 60 * 60 * 1000;
 
 /** What is kept of the workflow a session follows: the workflow as its
     last run started on it, as it was written, since it may no longer read,
@@ -1776,10 +1785,11 @@ function marksChanged() {
 
 function isKeptWaiting(value: unknown): value is KeptWaiting {
   if (typeof value !== "object" || value === null) return false;
-  const { unread, note, notice, at, mark } = value as Record<string, unknown>;
+  const { unread, note, notice, at, mark, seen } = value as Record<string, unknown>;
   const line = (text: unknown) => text === null || typeof text === "string";
   return (
     typeof unread === "boolean" &&
+    (seen === undefined || typeof seen === "number") &&
     line(note) &&
     line(notice) &&
     typeof at === "number" &&
@@ -1802,25 +1812,31 @@ function loadWaiting() {
     if (typeof open !== "object" || open === null || (open as Record<string, unknown>).waiting !== true) return;
     const stored: unknown = JSON.parse(localStorage.getItem(WAITING_KEY) ?? "null");
     if (typeof stored !== "object" || stored === null) return;
-    for (const [id, kept] of Object.entries(stored)) if (isKeptWaiting(kept)) waitingBack.set(id, kept);
+    const now = Date.now();
+    for (const [id, kept] of Object.entries(stored)) {
+      if (!isKeptWaiting(kept) || !kept.unread) continue;
+      const seen = kept.seen ?? now;
+      if (now - seen > WAITING_FOR) continue;
+      waitingBack.set(id, { ...kept, seen });
+    }
   } catch {
     // Nothing waits, then: the rows come back read.
   }
 }
 
 /** A row of the last run comes back as it was: unread with the line under
-    its name, or read with the line it last showed kept, and a mark the
-    user made with its rule. Nothing is said of it: it is not news. */
+    its name, and a mark the user made with its rule. Nothing is said of
+    it: it is not news. */
 function backAsItWas(session: Session) {
   if (session.id === null) return;
   const kept = waitingBack.get(session.id);
   if (kept === undefined) return;
   waitingBack.delete(session.id);
-  session.unread = kept.unread;
-  session.note = kept.unread ? kept.note : null;
+  session.unread = true;
+  session.note = kept.note;
   session.notice = kept.notice;
   session.changedAt = kept.at;
-  if (kept.unread && kept.mark !== undefined) {
+  if (kept.mark !== undefined) {
     marks.set(session.key, { ...kept.mark });
     marksChanged();
   }
@@ -1832,22 +1848,24 @@ function comesBack(session: Session): boolean {
   return session.id !== null && (session.status === "dormant" || session.status === "starting" || session.status === "running");
 }
 
-/** What is kept now: each row that comes back and waits on the user or
-    keeps a line, and what is still waiting to come back. */
+/** What is kept now: each row that comes back and waits on the user, and
+    what is still waiting to come back. */
 export function waitingRecord(): Record<string, KeptWaiting> {
   const record = new Map(waitingBack);
+  const now = Date.now();
   for (const session of sessions.all) {
     if (!comesBack(session)) continue;
     const id = session.id!;
     record.delete(id);
-    if (!session.unread && session.notice === null) continue;
-    const mark = session.unread ? marks.get(session.key) : undefined;
+    if (!session.unread) continue;
+    const mark = marks.get(session.key);
     record.set(id, {
-      unread: session.unread,
-      note: session.unread ? session.note : null,
+      unread: true,
+      note: session.note,
       notice: session.notice,
       at: session.changedAt,
       ...(mark === undefined ? {} : { mark: { restored: mark.restored, heard: mark.heard } }),
+      seen: now,
     });
   }
   return Object.fromEntries([...record].slice(-WAITING_KEPT));
