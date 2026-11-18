@@ -23,6 +23,9 @@ import {
   WAKE_TAKEN,
   WAKES_MAX,
   HOLD,
+  CALLER_GONE,
+  DROPPED_ASKING,
+  DROPPED_UNDER_WAY,
   accountWords,
   allow,
   allowedProjects,
@@ -358,6 +361,7 @@ beforeEach(() => {
   localStorage.removeItem("workbench.runs");
   localStorage.removeItem("workbench.tokens");
   localStorage.removeItem("workbench.carried");
+  localStorage.removeItem("workbench.later");
   workspace.open.push(repo(A), repo(B));
 });
 
@@ -6352,27 +6356,138 @@ describe("a call that waits on the user", () => {
     expect(answerTo(waiting)?.content).toContain(`Your start of "Fix the flake" in ${B} went ahead: Started session sid-1`);
   });
 
-  it("starts nothing for a caller that stopped before the user answered, and puts none of its questions up", async () => {
+  it("takes a stopped caller's question down, starts nothing for it, and puts none of its questions up", async () => {
     const first = caller();
-    await heldPast(elsewhere());
+    const held = await heldPast(elsewhere());
     // Another caller's start waits behind it.
     const other = caller("caller-2", "pty-2");
-    void handle(elsewhere("caller-2", "Fix the docs"));
+    const second = elsewhere("caller-2", "Fix the docs");
+    void handle(second);
     await settle();
+    expect(conductor.asking?.caller).toBe(label(first));
+    // The first caller stops: its question goes, and the next comes up.
     close(first.key);
-    once();
+    flushSync();
     await settle();
-    expect(forProject(B)).toHaveLength(0);
-    // The second is up now; its caller stops too, and the next question
-    // would be one of its: none goes up.
     expect(conductor.asking?.caller).toBe(label(other));
-    void handle(call("start", { project: B, prompt: "Fix the tests" }, { session: "caller-2" }));
+    expect(conductor.asking?.prompt).toBe("Fix the docs");
+    expect(forProject(B)).toHaveLength(0);
+    expect(answerTo(held)?.content).toBe(WAITS);
+    // A question of a caller that stopped while it waited behind another
+    // is passed over.
+    const third = caller("caller-3", "pty-3");
+    void handle(elsewhere("caller-3", "Fix the tests"));
     await settle();
-    close(other.key);
+    close(third.key);
+    flushSync();
     refuse();
     await settle();
     expect(conductor.asking).toBeNull();
     expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("answers a call held on a question its caller stopped that nothing was done", async () => {
+    const first = caller();
+    const request = elsewhere();
+    const answering = handle(request);
+    await settle();
+    close(first.key);
+    flushSync();
+    await answering;
+    expect(answerTo(request)?.error).toBe(CALLER_GONE);
+    expect(conductor.asking).toBeNull();
+    expect(forProject(B)).toHaveLength(0);
+  });
+
+  it("refuses only the same start again, not one on another agent or model, under another login or by another name", async () => {
+    accounts.list = { Work: { claude: "~/.claude-work", codex: "~/.codex-work" } };
+    const row = create(A, null, "claude-code", null, null, null, "Work");
+    started(row.key, "pty-0", "caller-1");
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    await heldPast(elsewhere());
+    const refusedAtOnce = async (args: Record<string, unknown>) => {
+      const again = call("start", { project: B, prompt: "Fix the flake", ...args }, { session: "caller-1" });
+      void handle(again);
+      await settle();
+      return answerTo(again)?.error?.includes("is on its way already") === true;
+    };
+    // The same start, its login named as the one it resolves to, is the same.
+    expect(await refusedAtOnce({})).toBe(true);
+    expect(await refusedAtOnce({ account: "Work" })).toBe(true);
+    // The same work on the agents' own login, once Work is at its limit,
+    // is another start; so is one on another agent or model, or by another
+    // name. Each is put to the user in its turn.
+    expect(await refusedAtOnce({ account: "Default" })).toBe(false);
+    expect(await refusedAtOnce({ agent: "codex" })).toBe(false);
+    expect(await refusedAtOnce({ agent: "claude-code", model: "opus" })).toBe(false);
+    expect(await refusedAtOnce({ name: "Flake, second look" })).toBe(false);
+  });
+
+  it("leaves the caller's row as it was while a start it gave up on, or was answered early about, is not done", async () => {
+    const lead = create(A, null, "claude-code", null, null, null, null, defaultWorkflow());
+    started(lead.key, "pty-0", "caller-1");
+    flushSync();
+    // A refusal the row shows from before.
+    await handle(call("start", { project: B, prompt: "Fix it", step: "Nowhere" }, { session: "caller-1" }));
+    const before = conductor.refusals[lead.key];
+    expect(before).toContain("Nowhere");
+    // Given up on by the agent, the start is not refused.
+    const given = call("start", { project: B, prompt: "Fix it", step: "Work" }, { session: "caller-1" });
+    const answering = handle(given);
+    await settle();
+    cancelled(given.id);
+    await vi.advanceTimersByTimeAsync(HOLD);
+    await answering;
+    expect(answerTo(given)).toBeUndefined();
+    expect(conductor.refusals[lead.key]).toBe(before);
+    // Answered early, it clears nothing either, until it is done.
+    refuse();
+    await settle();
+    await heldPast(call("start", { project: B, prompt: "Fix it again", step: "Work" }, { session: "caller-1" }));
+    expect(conductor.refusals[lead.key]).toBe(before);
+    once();
+    await comesUp("pty-1", "sid-1");
+    expect(conductor.refusals[lead.key]).toBeUndefined();
+  });
+
+  it("forgets what a caller had to hear once its row goes", async () => {
+    const row = caller();
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    expect(Object.keys(conductor.later)).toEqual([row.token]);
+    close(row.key);
+    flushSync();
+    expect(conductor.later).toEqual({});
+    expect(JSON.parse(localStorage.getItem("workbench.later")!)).toEqual({});
+  });
+
+  it("says after the window came back that a start in front of the user was not done, and one under way may not have been", async () => {
+    caller();
+    await heldPast(elsewhere());
+    // The window goes with the question up, and comes back.
+    resetConductor();
+    loadStarted();
+    const waiting = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(waiting);
+    expect(answerTo(waiting)?.content).toBe(`Your start of "Fix the flake" in ${B} did not go ahead: ${DROPPED_ASKING}`);
+    // One the user allowed, whose session was still coming up.
+    await heldPast(elsewhere("caller-1", "Fix the docs"));
+    once();
+    await settle();
+    resetConductor();
+    loadStarted();
+    const again = call("wait", { seconds: 5 }, { session: "caller-1" });
+    await handle(again);
+    expect(answerTo(again)?.content).toBe(
+      `Your start of "Fix the docs" in ${B} may or may not have gone ahead: ${DROPPED_UNDER_WAY}`,
+    );
+    // Told once.
+    resetConductor();
+    loadStarted();
+    expect(conductor.later).toEqual({});
   });
 
   it("lists a start that waits on the user, and how it went, which counts as telling", async () => {

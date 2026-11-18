@@ -748,9 +748,20 @@ tell.
 One call is done once, however it is heard of, so it starts one session
 at most. The same start, resume or line asked for again by the caller
 while one it was told of waits is refused, saying that one is on its way,
-and nothing is asked twice; calls made together are each their own. A
-caller that has stopped by the time the user answers has nothing done for
-it, and a question of its still waiting behind another is not put up.
+and nothing is asked twice; calls made together are each their own. The
+same start is the same work in the same project and step, on the same
+agent and model, under the same login and by the same name: the same work
+on the agents' own login once the account it first ran under has reached
+its limit is another start, and is put to the user in its turn. A caller
+that stops has nothing done for it: its question on screen is taken down
+and the next put up, one of its still waiting behind another is never put
+up, and what it had still to hear of its calls goes with its row.
+
+How each call went, and which still wait, are kept with the window's own
+state, so a window closed or reloaded meanwhile still tells the caller.
+A call whose question was still in front of the user went with the window,
+and is told as not done; one the user had allowed that was still under way
+is told as perhaps done, with the `sessions` listing to see what runs.
 
 ![The question over the agent pane: which session wants to start one, in which project, the prompt it would give, and Allow this session, Once or No.](orchestrator-ask.png)
 
