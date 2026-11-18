@@ -601,6 +601,100 @@ test.describe("a quick move to the edge", () => {
     await expect(page.locator(SESSIONS)).toBeHidden();
   });
 
+  test("leaves the pane out for a drag of a divider to the edge, during and after", async ({ page }) => {
+    await still(page);
+    const divider = await boxOf(page, "[role='separator'][aria-label='Resize changes']");
+    await page.mouse.move(divider.x + divider.width / 2, 400);
+    await page.mouse.down();
+    await page.mouse.move(2, 400, { steps: 1 });
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    await page.mouse.up();
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+  });
+
+  test("leaves the pane out for a selection dragged to the edge", async ({ page }) => {
+    await still(page);
+    // Pressed on words, so the drag selects them.
+    const words = await boxOf(page, `${CHANGES} header .title`);
+    await page.mouse.move(words.x + words.width - 2, words.y + words.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(2, 400, { steps: 1 });
+    await page.clock.runFor(200);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    // A drag goes on being heard past the window's edge.
+    await page.mouse.move(-40, 400, { steps: 1 });
+    await page.clock.runFor(200);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    await page.mouse.up();
+  });
+
+  for (const [over, open] of [
+    ["the settings", (page: Page) => page.keyboard.press(`${MOD}+,`)],
+    ["the palette", (page: Page) => page.keyboard.press(`${MOD}+p`)],
+  ] as const)
+    test(`leaves the pane out while ${over} are up`, async ({ page }) => {
+      await still(page);
+      await open(page);
+      await expect(page.locator("[aria-modal='true']")).toHaveCount(1);
+      await page.mouse.move(900, 400);
+      await page.mouse.move(2, 400, { steps: 1 });
+      await page.mouse.move(-40, 400, { steps: 1 });
+      await page.clock.runFor(1000);
+      await expect(page.locator(SESSIONS)).toBeHidden();
+    });
+
+  test("takes a leave told well inside the window for no leave by the edge", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(1200, 400);
+    await page.mouse.move(880, 400, { steps: 1 });
+    // A view laid over the window, as the browser's page is, takes the
+    // pointer with nothing in the page to say where it went.
+    await page.evaluate(() =>
+      document.body.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, clientX: 880, clientY: 400, relatedTarget: null })),
+    );
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+  });
+
+  test("asks the window where the pointer went when a leave is told well inside it", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(900, 400);
+    await page.mouse.move(400, 400, { steps: 1 });
+    // The page is told the pointer left from the last point it saw, as a
+    // webview may be; the window says it is past the left edge.
+    await page.evaluate(() => {
+      (window as unknown as { __cursor: unknown }).__cursor = { x: -30, y: 400 };
+      document.body.dispatchEvent(new PointerEvent("pointerout", { bubbles: true, clientX: 400, clientY: 400, relatedTarget: null }));
+    });
+    await page.clock.runFor(200);
+    await slidIn(page);
+  });
+
+  test("takes no reading far past the window for the edge", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(900, 400);
+    await page.evaluate(() => ((window as unknown as { __cursor: unknown }).__cursor = { x: -5000, y: 400 }));
+    await page.mouse.move(60, 400, { steps: 1 });
+    await page.clock.runFor(1000);
+    await expect(page.locator(SESSIONS)).toBeHidden();
+  });
+
+  test("brings nothing for a pass along the edge, however long, until the pointer rests on it", async ({ page }) => {
+    await still(page);
+    await page.mouse.move(250, 100);
+    await page.mouse.move(250, -60, { steps: 1 });
+    await page.mouse.move(2, 100, { steps: 1 });
+    for (let y = 140; y <= 500; y += 40) {
+      await page.mouse.move(2, y, { steps: 1 });
+      await page.clock.runFor(40);
+    }
+    await expect(page.locator(SESSIONS)).toBeHidden();
+    await page.clock.runFor(100);
+    await slidIn(page);
+  });
+
   test("rests a moment before a move along the edge brings it, and a pointer coming in across it brings nothing", async ({ page }) => {
     await still(page);
     // Into the window across the edge and on: nothing.

@@ -285,7 +285,12 @@ to rest, which may be against the screen's edge where the page hears no
 more of it. A pointer that comes onto the edge from inside the window
 brings the pane at once; one that moves along the edge, or comes into the
 window across it, rests there a moment first, so a pass along the edge
-brings nothing. A pointer that was already resting there as compact mode
+brings nothing. Only a plain move brings it: none with a button held, as
+in a drag of a divider or a selection, and none while the settings, the
+palette or another dialog is up, or anything but the window's ground
+stands at the edge. A leave the page is told of well inside the window is
+not taken for one by the edge; the app asks the window where the cursor
+went instead. A pointer that was already resting there as compact mode
 comes on brings nothing until it moves. Once
 the pointer has been away from it for a little under
 half a second it slides back out, and so it does at once on a press

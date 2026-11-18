@@ -60,9 +60,39 @@
       const y = from.y + ((exit.y - from.y) * from.x) / (from.x - exit.x);
       return y >= 0 && y <= window.innerHeight;
     }
+    // A leave told at a point inside the window away from the edge is not
+    // the window left at all, as when the pointer crosses onto the browser's
+    // page, which lies over the window as a view of its own.
+    const beyond = exit.y < 0 || exit.y >= window.innerHeight || exit.x >= window.innerWidth;
+    if (exit.x > LEFT_FROM && !beyond) return false;
     const start = exit.x !== from.x || exit.y !== from.y ? from : prior;
     return start !== null && leftward(start, exit);
   }
+
+  /** How near the left edge a leave told inside the window must be to be
+      the window left by it: a browser may tell the last point it saw
+      rather than where the pointer went out. */
+  const LEFT_FROM = 24;
+
+  /** What lies under the pointer where it meets the left edge when nothing
+      is laid over the window there: its ground, the panes' frame and the
+      status bar. */
+  const GROUND = "html, body, .frame, .stack, [data-testid='shell']";
+
+  /** Whether the edge is open to the pointer: no dialog, the palette or the
+      settings is up, and what lies at the edge at that height is the
+      window's own ground rather than a menu, its backdrop or anything else
+      laid over it. */
+  function edgeOpen(y: number): boolean {
+    if (document.querySelector('[aria-modal="true"]') !== null) return false;
+    const there = document.elementFromPoint(0, Math.min(Math.max(y, 0), window.innerHeight - 1));
+    if (there === null || there.matches(GROUND)) return true;
+    return there.closest("[data-testid='status-bar']") !== null && there.closest("[data-card]") === null;
+  }
+
+  /** Whether the last move was a plain one, with no button held: a drag, a
+      selection or a scroll bar pulled toward the edge brings nothing. */
+  let plain = true;
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   function later(what: () => void, after: number) {
@@ -119,20 +149,24 @@
     if (at === null || before === null) return;
     if (before.x === at.x && before.y === at.y) return;
     if (onEdge(at.x, at.y)) {
-      if (before.x > EDGE_WIDTH) slideIn();
-      else if (timer === null) later(slideIn, EDGE_AFTER);
+      if (!edgeOpen(at.y)) cancel();
+      else if (before.x > EDGE_WIDTH) slideIn();
+      // Each move along the edge starts the rest again: only a pointer
+      // that stays on the edge brings the pane.
+      else later(slideIn, EDGE_AFTER);
       return;
     }
     cancel();
     const speed = (before.x - at.x) / Math.max(1, at.t - before.t);
-    if (speed > SPEEDY && at.x / speed < SOON && leftward(before, at)) ask();
+    if (at.x <= NEAR && speed > SPEEDY && at.x / speed < SOON && leftward(before, at)) ask();
   }
 
   /** How fast, in pixels a millisecond, and how soon, in milliseconds, a
       move heading left counts as one that reaches the edge between what the
-      page sees of it. */
+      page sees of it, and how near the edge it must be seen last. */
   const SPEEDY = 0.5;
   const SOON = 120;
+  const NEAR = 120;
 
   /** The window is asked where the cursor is, a little after a quick move
       toward the edge: by then it has arrived, against the screen's edge or
@@ -149,8 +183,15 @@
           .cursorInWindow()
           .catch(() => null);
         if (cursor === null || asked !== asking || at !== seen || layout.sessionsPeek) return;
-        const onLeft = cursor.y >= 0 && cursor.y < window.innerHeight && cursor.x <= EDGE_WIDTH;
-        if (onLeft) {
+        // On the edge, or past it to the left by no more than the window's
+        // own width: a reading further out is no place the cursor came to
+        // from here.
+        const onLeft =
+          cursor.y >= 0 &&
+          cursor.y < window.innerHeight &&
+          cursor.x <= EDGE_WIDTH &&
+          cursor.x >= -window.innerWidth;
+        if (onLeft && plain && edgeOpen(cursor.y)) {
           outLeft = cursor.x < 0;
           slideIn();
         }
@@ -165,9 +206,11 @@
     const move = (e: PointerEvent) => {
       before = at;
       at = { x: e.clientX, y: e.clientY, t: e.timeStamp };
+      plain = e.buttons === 0;
       outLeft = false;
       if (!layout.sessionsPeek) {
-        arrive();
+        if (plain) arrive();
+        else cancel();
         return;
       }
       inside = over(e.clientX, e.clientY, e.target);
@@ -175,7 +218,19 @@
     };
     const out = (e: PointerEvent) => {
       if (e.relatedTarget !== null) return;
-      outLeft = at !== null && leftByEdge(at, { x: e.clientX, y: e.clientY }, before);
+      const exit = { x: e.clientX, y: e.clientY };
+      outLeft = plain && at !== null && leftByEdge(at, exit, before) && edgeOpen(exit.y);
+      // Told it left from a point well inside the window, the page cannot
+      // say whether the pointer left by the edge or crossed onto a view laid
+      // over the window: the window is asked where the cursor went.
+      const inWindow = exit.x > LEFT_FROM && exit.x < window.innerWidth && exit.y >= 0 && exit.y < window.innerHeight;
+      if (!outLeft && plain && inWindow && !layout.sessionsPeek) {
+        at = null;
+        before = null;
+        ask();
+        cancel();
+        return;
+      }
       // Back in the window, the pointer is seen afresh: where it was before
       // it left says nothing of how it came back.
       at = null;
