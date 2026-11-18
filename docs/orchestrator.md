@@ -197,9 +197,14 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
-A start can name an account, by the name it has in the settings, for work
-the user asked to have done under a particular login; one that names an
-account there is not is refused with the names there are. A start that
+A start can name an account, by the name it has in the settings, or
+Default, in any case, for the agents' own login, for work the user asked
+to have done under a particular login, or for work a session under a
+named account moves to the other login once that account has reached its
+limit. One that names an account there is not is refused with the names
+there are, Default among them. A start under another account than its
+starter's is asked about as any start under another login is (see [what
+the user is asked](#what-the-user-is-asked)). A start that
 names none runs under the account of the session that started it when that
 account was chosen for the starter itself, which is when it is not the
 account of the starter's project; the agents' own, chosen that way, is

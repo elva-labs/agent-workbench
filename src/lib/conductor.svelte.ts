@@ -47,6 +47,7 @@ import {
   dirsOf,
   hasAccounts,
   names,
+  namesOwn,
   OWN_LABEL,
 } from "$lib/accounts.svelte";
 import { agentLabel } from "$lib/agent.svelte";
@@ -1982,14 +1983,8 @@ async function startSession(request: Placed): Promise<Answered> {
     );
   if (!isStartable(project))
     return refused(`No project at ${project} is open in the workbench.`);
-  // An account is one the user named in the settings.
-  const wanted = text(request, "account");
-  if (wanted !== null && !(wanted in accounts.list))
-    return refused(
-      names().length === 0
-        ? "There are no accounts in the workbench's settings; leave the account out."
-        : `There is no account called ${wanted}. The accounts are ${names().join(", ")}.`,
-    );
+  const wanted = wantedAccount(request);
+  if ("refusal" in wanted) return refused(wanted.refusal);
   const caller = callerOf(request);
   const room = roomFor(request);
   if (room !== null) return room;
@@ -2007,12 +2002,30 @@ async function startSession(request: Placed): Promise<Answered> {
   if (fit !== null && "refusal" in fit) return refused(fit.refusal);
   let started = false;
   try {
-    const answer = await startFitted(request, project, prompt, name, wanted, caller, fit);
+    const answer = await startFitted(request, project, prompt, name, wanted.named, caller, fit);
     started = answer.error === null;
     return answer;
   } finally {
     fit?.release(started);
   }
+}
+
+/** The account a start names: one the user named in the settings, by its
+    name, or the agents' own, by the name they go by, which no account of
+    the user's can have. `named` is null where the start names none, and
+    holds null for the agents' own. */
+function wantedAccount(request: Placed): { named: { account: string | null } | null } | { refusal: string } {
+  const wanted = text(request, "account");
+  if (wanted === null) return { named: null };
+  if (namesOwn(wanted)) return { named: { account: null } };
+  if (wanted in accounts.list) return { named: { account: wanted } };
+  const own = `${OWN_LABEL} for the agents' own login`;
+  return {
+    refusal:
+      names().length === 0
+        ? `There are no accounts in the workbench's settings, only ${own}: leave the account out.`
+        : `There is no account called ${wanted}. The accounts are ${names().join(", ")}, and ${own}.`,
+  };
 }
 
 /** How many characters a name a caller gives a session keeps: as many as
@@ -2033,7 +2046,7 @@ async function startFitted(
   project: string,
   prompt: string,
   name: string | null,
-  wanted: string | null,
+  wanted: { account: string | null } | null,
   caller: string,
   fit: Fit | null,
 ): Promise<Answered> {
@@ -2176,7 +2189,8 @@ async function startFitted(
  * The account a start runs under, and whether the question and the answer
  * name it.
  *
- * An account the start names is the one. Otherwise the caller's own is
+ * An account the start names is the one, the agents' own by the name
+ * they go by among them. Otherwise the caller's own is
  * handed on when it was chosen for the caller's session, which is when it
  * is not the account of the caller's project; a caller that runs under its
  * project's, the one for every project included, hands nothing on, and the
@@ -2196,14 +2210,14 @@ function underFor(
   request: Placed,
   project: string,
   agent: AgentId,
-  wanted: string | null,
+  wanted: { account: string | null } | null,
 ): { account: string | null; say: boolean } {
   const own = accountOf(project);
   const under = (account: string | null, anyway: boolean) => ({
     account,
     say: hasAccounts() && (anyway || account !== own),
   });
-  if (wanted !== null) return under(wanted, false);
+  if (wanted !== null) return under(wanted.account, false);
   const calling = callingSession(request);
   if (calling === null) return under(own, true);
   const theirs = calling.account;

@@ -1098,7 +1098,7 @@ describe("the account a started session runs under", () => {
       expect(conductor.asking).toBeNull();
       expect(last().content).toBeNull();
       expect(last().error).toBe(
-        "There is no account called Play. The accounts are Home, Work.",
+        "There is no account called Play. The accounts are Home, Work, and Default for the agents' own login.",
       );
       expect(forProject(A)).toHaveLength(1);
     });
@@ -1109,8 +1109,28 @@ describe("the account a started session runs under", () => {
         call("start", { project: A, prompt: "Fix it", account: "Work" }),
       );
       expect(last().error).toBe(
-        "There are no accounts in the workbench's settings; leave the account out.",
+        "There are no accounts in the workbench's settings, only Default for the agents' own login: leave the account out.",
       );
+    });
+
+    it("takes Default, in any case, for the agents' own login, which a start under a named account is asked about", async () => {
+      caller(A, "Work");
+      // From a caller under Work, in a project of the agents' own: the
+      // other login, asked about, and said.
+      for (const word of ["Default", "default", " DEFAULT "]) {
+        void handle(call("start", { project: A, prompt: "Fix it", account: word }, { session: "caller-1" }));
+        expect(conductor.asking).not.toBeNull();
+        expect(conductor.asking!.login).toEqual({ account: null, bare: null });
+        refuse();
+        await settle();
+      }
+      const row = await start({ account: "Default" });
+      expect(row.account).toBeNull();
+      expect(conductor.started[tok("caller-1")].at(-1)!.account).toBeNull();
+      // Into a project with an account of its own, the question and the
+      // answer say it.
+      accounts.overrides[B] = "Home";
+      expect(await question({ project: B, account: "default" })).toBe("Under the Default account, not the project's own.");
     });
   });
 
@@ -4804,7 +4824,7 @@ describe("starting in a workflow's shape", () => {
     // One it does not have is refused with the ones there are, and none
     // is chosen for a step that names none.
     expect(await refusedWith({ step: "Work", account: "Home" })).toBe(
-      "There is no account called Home. The accounts are Work.",
+      "There is no account called Home. The accounts are Work, and Default for the agents' own login.",
     );
     ended({ id: "pty-w1b", code: 0, clean: true });
     flushSync();

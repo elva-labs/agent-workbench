@@ -543,13 +543,29 @@ fn accounts_lenient(value: &Value, unread: &mut Vec<UnreadEntry>) -> Accounts {
     accounts
 }
 
-/// One account of the file: a name that will do, and directories that will.
-fn account(name: &str, value: &Value) -> Result<Account, String> {
+/// The name the agents' own directories go by, which the start tool takes
+/// for them: no account of the user's is called so, in any case.
+pub const OWN_ACCOUNT: &str = "Default";
+
+/// Why an account's name will not do: empty, too long, or the name the
+/// agents' own login goes by.
+fn account_name(name: &str) -> Result<(), String> {
     if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
         return Err(format!(
             "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
         ));
     }
+    if name.trim().eq_ignore_ascii_case(OWN_ACCOUNT) {
+        return Err(format!(
+            "{OWN_ACCOUNT} is the agents' own login, so no account can be called that"
+        ));
+    }
+    Ok(())
+}
+
+/// One account of the file: a name that will do, and directories that will.
+fn account(name: &str, value: &Value) -> Result<Account, String> {
+    account_name(name)?;
     let account: Account = serde_json::from_value(value.clone())
         .map_err(|_| format!("{name} is a directory for Claude Code and one for Codex"))?;
     for dir in [&account.claude, &account.codex].into_iter().flatten() {
@@ -636,11 +652,7 @@ fn accounts(value: &Value) -> Result<Accounts, String> {
         ));
     }
     for (name, account) in &accounts.list {
-        if name.trim().is_empty() || name.chars().count() > LONGEST_ACCOUNT {
-            return Err(format!(
-                "an account's name is a few words, {LONGEST_ACCOUNT} characters at most"
-            ));
-        }
+        account_name(name)?;
         for dir in [&account.claude, &account.codex].into_iter().flatten() {
             if !is_directory(dir) {
                 return Err(format!("a directory of {name} is a path, not {dir:?}"));
@@ -2066,6 +2078,19 @@ mod tests {
         )
         .is_err());
         assert!(apply(&settings, &json!({ "accounts": [] })).is_err());
+        // The name the agents' own login goes by is no account's, in any
+        // case.
+        for own in ["Default", "default", " DEFAULT "] {
+            let error = apply(
+                &settings,
+                &json!({ "accounts": { "list": { own: { "claude": "~/.claude-x" } } } }),
+            )
+            .unwrap_err();
+            assert!(
+                error.contains("Default is the agents' own login"),
+                "{error}"
+            );
+        }
 
         // Read leniently, a bad value leaves the default, which is no
         // accounts at all.

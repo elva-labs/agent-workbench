@@ -506,7 +506,11 @@ path in the environment the agent is started with. An account names a
 directory of each, so a work login and a personal one can both be on the
 machine and a session run under either. The agents' own directories are
 the account every setup has, called Default where a name is shown, and a
-setup with no other account named is what it always was.
+setup with no other account named is what it always was. Default is
+theirs alone: no account can be called that, in any case, whether in the
+tab or written into the settings file, so a session that starts another
+can name the agents' own login by it (see
+[orchestrator](orchestrator.md#the-tools)).
 
 The tab lists the accounts, Default first, each with where it keeps each
 agent. Add an account… opens a form: a name, and under it the two
