@@ -343,15 +343,18 @@ export function backSaidOf(key: string, agent: string): string {
   return !codex && !row.files ? `${leaves} Files cannot go back to here.` : leaves;
 }
 
-/** What taking a choice costs, under the choices: Claude Code starting
-    again and the commands it left running that stop with it, or for Codex
-    that files stay and it cannot be undone. */
+/** What taking the marked choice costs, under the choices: Claude Code
+    starting again and the commands it left running that stop with it, or
+    for Codex that files stay and it cannot be undone. Putting only the
+    files back starts nothing again, so it costs nothing said here. */
 export function backCostOf(key: string): string {
   const session = byKey(key);
   const link = linkOf(key);
   if (session === null || link === null) return "";
   if (session.agent === "codex")
     return "Codex cannot put files back: they stay as they are now. Going back cannot be undone.";
+  const back = backOf(key);
+  if (back.phase === "choices" && choicesOf(key)[back.choice]?.way === "files") return "";
   const running = link.conversation.tasks
     .filter((task) => task.kind === "shell" && task.background && task.status === "running")
     .map((task) => task.description ?? "a command")

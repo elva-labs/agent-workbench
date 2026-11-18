@@ -340,6 +340,11 @@ describe("going back from the window", () => {
       "Also puts a.ts and b.ts back as they were, +3\u00a0−1. What commands changed stays. It cannot be undone.",
     );
     expect(backCostOf(key)).toBe("Claude Code starts again for this.");
+    // Only the files: nothing starts again, so no cost is said.
+    moveBack(key, 2);
+    expect(backCostOf(key)).toBe("");
+    moveBack(key, -2);
+    expect(backCostOf(key)).toBe("Claude Code starts again for this.");
     closeBack(key);
     expect(markedOf(key)).toBeNull();
     expect(first).not.toBe(second);

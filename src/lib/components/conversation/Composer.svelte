@@ -1110,7 +1110,7 @@
         >
       {/snippet}
       {#snippet foot()}
-        {#if backChoices.some((choice) => choice.way !== "files")}
+        {#if backCostOf(sessionKey) !== ""}
           <p class="back-said" class:warn={agentId !== "codex"} data-testid="back-cost"><Plain text={backCostOf(sessionKey)} /></p>
         {/if}
       {/snippet}
