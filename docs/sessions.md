@@ -201,11 +201,14 @@ see [orchestrator](orchestrator.md).
 
 A row that was unread when the app quit comes back unread, with the line
 it had under its name, whether it went unread by itself or was marked by
-hand; a row that was read comes back read, keeping the line it last showed
-for a mark. A mark made by hand comes back with its rule. This holds for a
+hand; a row that was read comes back read, and none of its lines is kept,
+so marking it unread then puts no line back. A mark made by hand comes
+back with its rule. This holds for a
 terminal and an integrated session, whether its agent is started again or
 the row is left as it was, and for a session another session started, which
-comes back unread when its starter brings it back. What waits is kept as
+comes back unread when its starter brings it back. A row that has not come
+back within a week, as when its project does not open again or its starter
+is not resumed, is let go, and comes back read if it ever does. What waits is kept as
 it changes, not on the way out, so a crash keeps it as a quit does. It
 counts at once in the status bar, on the app's icon and for the chord to
 the next session that needs you, and coming back says nothing through the
@@ -239,7 +242,8 @@ laid out apart, so the model never narrows the name. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
 name and its time, the time its transcript was last written, unless it
-came back unread with a line, as the next section says. Those rows come after the running
+came back unread with a line, as [after a restart](#after-a-restart)
+says. Those rows come after the running
 ones, and once a project has more than three of them the first two stand
 and the rest fold into one row that counts them, such as `8 more from this
 week`, which opens in place. No row says which agent it runs.
