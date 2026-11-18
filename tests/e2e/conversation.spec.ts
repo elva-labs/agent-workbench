@@ -231,6 +231,18 @@ test.describe("an integrated session", () => {
     expect(starts.at(-1)).toMatchObject({ options: { session: "integrated-session-1" } });
   });
 
+  test("resumes a session nothing was said in with no word of earlier messages", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(page, `f.end("${H}", false);`);
+    await page.getByTestId("resume-session").click();
+    await expect(page.getByTestId("session-ended")).toHaveCount(0);
+    await expect.poll(async () => (await calls(page)).filter((call) => call.method === "start").length).toBe(2);
+    await expect(page.getByTestId("thread-intro")).toHaveCount(0);
+    await expect(page.getByTestId("earlier-none")).toHaveCount(0);
+    await expect(page.getByTestId("earlier-reading")).toHaveCount(0);
+    expect((await calls(page)).filter((call) => call.method === "history")).toEqual([]);
+  });
+
   test("asks before a folder that is not trusted, and starts once trusted", async ({ page }) => {
     await openIntegrated(page, { untrusted: true });
     const gate = page.getByTestId("trust-gate");

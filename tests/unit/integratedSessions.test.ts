@@ -58,7 +58,6 @@ import { attention, resetAttention } from "$lib/attention.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows, unknowWorkflows } from "$lib/workflows.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
-import { NOTHING_KEPT } from "$lib/earlier";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
@@ -929,7 +928,21 @@ describe("what a resumed session said before", () => {
     const { session } = await started({ resumedFrom: "emptied" });
     const conversation = conversationOf(session.key);
     await vi.waitFor(() => expect(conversation.earlier).toBe("unread"));
-    expect(conversation.earlierWhy).toBe(NOTHING_KEPT);
+    expect(conversation.earlierWhy).toBe("Claude Code's record of it holds no messages");
+  });
+
+  it("is not read for a session nothing was said in, which ended and is resumed", async () => {
+    const { session, handle } = await started();
+    fake.end(handle, false);
+    await resume(session.key);
+    const conversation = conversationOf(session.key);
+    expect(fake.calls.filter((call) => call.method === "history")).toEqual([]);
+    expect(conversation.earlier).toBeNull();
+    // Nor when it ends again before anything is said.
+    fake.end(handleOf(session.key)!, false);
+    await resume(session.key);
+    expect(fake.calls.filter((call) => call.method === "history")).toEqual([]);
+    expect(conversation.earlier).toBeNull();
   });
 
   it("says why when Codex cannot read the thread, and leaves the session as it is", async () => {

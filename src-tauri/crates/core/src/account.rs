@@ -42,12 +42,30 @@ pub fn expand(home: &Path, text: &str) -> PathBuf {
 }
 
 /// A path as the user would write it: under the home, with `~` standing
-/// for the home.
+/// for the home. Windows names a folder in any case, so there the home is
+/// matched whatever the case it is written in.
 pub fn shown(home: &Path, path: &Path) -> String {
-    match path.strip_prefix(home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
-        Err(_) => path.display().to_string(),
+    let mut rest = path.components();
+    for part in home.components() {
+        match rest.next() {
+            Some(own) if same_name(part.as_os_str(), own.as_os_str()) => {}
+            _ => return path.display().to_string(),
+        }
+    }
+    let rest = rest.as_path();
+    if rest.as_os_str().is_empty() {
+        "~".to_string()
+    } else {
+        format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+    }
+}
+
+fn same_name(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> bool {
+    if cfg!(windows) {
+        a.to_string_lossy()
+            .eq_ignore_ascii_case(&b.to_string_lossy())
+    } else {
+        a == b
     }
 }
 

@@ -1058,6 +1058,8 @@ and why, such as that Codex does not have the conversation, or that
 Claude Code has no transcript of it in the account's directory. A record
 that holds no message of a session that was spoken to is said to be so in
 the same way. The line stays above whatever the session says after it.
+A session nothing was said in, resumed after it ended, has nothing to
+read, and says nothing of earlier messages.
 [Integrated sessions](integrated.md#history) has what is read and how.
 
 The line reads `Resumed here, today 09:40`, naming the day when it is

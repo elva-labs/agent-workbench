@@ -146,6 +146,10 @@ export class Link {
       false. A turn already running when the window took the session up
       sets it, what came before being unknown. */
   worked = false;
+  /** The run being started resumes a conversation nothing was said in,
+      by this run or a run it resumed, so its agent has kept nothing of it
+      to read. */
+  unspoken = false;
   /** Events heard while a snapshot is on its way. */
   held: IntegratedEventBody[] | null = null;
   /** An attach on its way, for a start to wait on. */
@@ -512,7 +516,7 @@ export async function launch(key: string): Promise<void> {
   link.busy = true;
   link.untrusted = false;
   // What a resumed session said before goes above what this run says.
-  earlierAtStart(session, link.conversation);
+  earlierAtStart(session, link.conversation, !link.unspoken);
   try {
     // A resumed row finds out here what it follows, and a lost workflow
     // fails it with the question for the user.
@@ -812,6 +816,9 @@ export async function resume(key: string): Promise<void> {
   const link = linkFor(key);
   if (link.handle !== null || link.busy) return;
   if (session.id !== null) {
+    const conversation = link.conversation;
+    const said = conversation.order.length > 0 || Object.keys(conversation.turns).length > 0;
+    link.unspoken = !said && (session.resumedFrom === null || link.unspoken);
     session.resumedFrom = session.id;
     followsAgain(key);
   }

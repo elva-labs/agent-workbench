@@ -1,5 +1,6 @@
 import { dirFor } from "$lib/accounts.svelte";
-import { core, type IntegratedHistory, type IntegratedSnapshot } from "$lib/core";
+import { agentLabel } from "$lib/agent.svelte";
+import { core, type AgentId, type IntegratedHistory, type IntegratedSnapshot } from "$lib/core";
 import type { Conversation, Run } from "$lib/conversation.svelte";
 import type { Session } from "$lib/sessions.svelte";
 import { workflowsKnown } from "$lib/workflows.svelte";
@@ -23,7 +24,9 @@ export const EARLIER_WAIT = 5000;
 
 /** Why the earlier messages of a session that was spoken to are not
     drawn, when its agent's record of it holds none. */
-export const NOTHING_KEPT = "its agent's record of it holds no message";
+export function nothingKept(agent: AgentId): string {
+  return `${agentLabel(agent)}'s record of it holds no messages`;
+}
 
 /**
  * Reads what the session said before and lays it in its conversation once
@@ -67,7 +70,7 @@ export function layEarlier(
     const began = await Promise.resolve(run).catch(() => null);
     if (!spoken) conversation.lay(history ?? { items: [], cut: false }, began);
     else if (history === null) conversation.unread(why);
-    else if (history.items.length === 0) conversation.unread(NOTHING_KEPT);
+    else if (history.items.length === 0) conversation.unread(nothingKept(session.agent));
     else conversation.lay(history, began);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -79,17 +82,17 @@ export function layEarlier(
 
 /**
  * What a start of the session's agent does with what it said before: a
- * resumed session whose thread holds nothing of it yet, at most notes the
- * window made, draws the line where this run begins and reads it, without
- * waiting for it; one whose earlier messages are still being read, as
- * after a restart, draws the line for them to go above; and one whose
- * thread goes on from a run drawn here marks where this run begins under
- * it.
+ * resumed session that was `spoken` to and whose thread holds nothing of
+ * it yet, at most notes the window made, draws the line where this run
+ * begins and reads it, without waiting for it; one whose earlier messages
+ * are still being read, as after a restart, draws the line for them to go
+ * above; and one whose thread goes on from a run drawn here, or that
+ * nothing was said in, marks where this run begins under it.
  */
-export function earlierAtStart(session: Session, conversation: Conversation) {
+export function earlierAtStart(session: Session, conversation: Conversation, spoken = true) {
   const now = Date.now();
   if (session.resumedFrom === null) return;
-  if (conversation.earlier === null && conversation.entries.every((entry) => entry.kind === "note")) {
+  if (spoken && conversation.earlier === null && conversation.entries.every((entry) => entry.kind === "note")) {
     conversation.beganAbove(now);
     void layEarlier(session, conversation, { at: now, since: null });
   } else if (conversation.earlier === "loading") conversation.beganAbove(now);
