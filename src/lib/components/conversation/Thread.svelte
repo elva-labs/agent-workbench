@@ -509,6 +509,15 @@
     scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
   }
 
+  // The list over the composer brought a message into view; once it marks
+  // none, closed or picked from, the thread follows its foot again.
+  let wasMarked: string | null = null;
+  $effect(() => {
+    const now = marked;
+    if (wasMarked !== null && now === null) untrack(toFoot);
+    wasMarked = now;
+  });
+
   function message(id: string): Message | null {
     return conversation.messages[id] ?? null;
   }
