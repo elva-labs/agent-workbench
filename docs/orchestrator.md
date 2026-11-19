@@ -17,23 +17,24 @@ follows a workflow is its orchestrator, and is told to direct work rather
 than do it, to start a session per piece in the project it belongs to, on a
 worktree of its own when pieces touch the same files, to wait on them
 rather than ask after them in a loop, to put the user's whole task in the
-prompt it starts a session with and none of its own housekeeping, and to
-leave a line on its own row when it stops, whether to relay a question or
-to report, as well as the workflow's own steps. A fresh install has a
+prompt it starts a session with and none of its own housekeeping, to start
+a new session for each new task rather than resume or send to one that did
+other work, to read a session's report rather than ask it to say more, and
+to leave a line on its own row when it stops, whether to relay a question
+or to report, as well as the workflow's own steps. A fresh install has a
 workflow for exactly that, Direct: one step of work, on any model, with as
 many sessions at once as a session may run (see
 [settings](settings.md#workflows)). Its steps add what any workflow's do:
 edit no files, hand out work only through `start` and never through its
-own subagents, name the step in each start, and stop a piece's session
-once its work is taken up and nothing more is wanted from it. A session
+own subagents, and name the step in each start. A session
 that follows no workflow is told none of this. Every session, an
 orchestrator included, is told that once it has started sessions it keeps
 calling `wait` until all of them are done, and does not hand its turn back
 while any is running unless it needs the user, that a message from the
 workbench, not the user, is what those sessions did while it was idle,
-and that it stops a session it started once that session's work is taken
-up, merged, reviewed or answered, and nothing more is wanted from it,
-keeping one it may ask again soon.
+and that the workbench puts away a session it started once that session's
+work is over, as [when the work is over](#when-the-work-is-over) describes,
+so it stops one only when its work is not wanted.
 
 Earlier versions of the workbench ran such sessions in a project of their
 own, the folder `orchestrator` under the workbench's home. While
@@ -69,8 +70,9 @@ doing is working, waiting, asking for permission, at its usage limit until
 the time the agent named, stopped on an error, waiting with its turn
 interrupted by the user, or waiting on work in the background, as under
 `wait` below. A session that is not running says why: it ended, the user
-closed its row, or it has not run since the workbench was restarted, each
-with the way back, a start naming it. A session
+closed its row, the workbench put it away once its work was over, or it
+has not run since the workbench was restarted, each with the way back: a
+line sent to it for the last two, a start naming it for the others. A session
 that has stopped, ended or asked for permission without the caller having
 been told says so beside what it is doing, and listing it counts as
 telling. `start` starts a session in a project with a first prompt, on a
@@ -97,8 +99,9 @@ screen went quiet: an agent running a long command, or thinking, draws
 nothing but its spinner's clock for minutes on end, and is still at work
 (see [sessions](sessions.md)). How the turn ended is said for what it is.
 A turn the agent ended is "stopped working", and the answer adds a line
-saying to stop the session once its work is taken up and nothing more is
-wanted from it; one a usage limit ended is "is
+saying the workbench puts the session away once it has rested five
+minutes with nothing open, and that a line sent to it after that resumes
+it; one a usage limit ended is "is
 at its usage limit until 4pm", with the time the agent named where it is a
 time or a date as Claude Code writes one, or "stopped at a usage limit"
 otherwise; one another error from the model's service ended, such as a
@@ -156,13 +159,18 @@ session sends another shows in that session's thread under the sender's
 name, never as the user's. `stop`
 stops a session and files it with the earlier sessions to resume, behind
 their row, rather than leaving a row of it under the project, and its
-answer says the session is off the caller's list. A stop
+answer says the session is off the caller's list. A finished session needs
+no stop (see [when the work is over](#when-the-work-is-over)); `stop` is
+for work that is not wanted. A stop
 naming a session the caller started that is not running says why it was
 not, and takes it off the caller's list all the same, since a stop says
-the caller is done with it. `send` and `read` naming such a session say
-why it is not running and how to bring it back, a wait closed by the row
-going says whether the user closed it, and a session the workbench never
-had, or that is not the caller's, is refused as before.
+the caller is done with it. `read` naming such a session says
+why it is not running and how to bring it back, and so does `send` naming
+one the user closed or that ended; `send` naming one the workbench put
+away, or one not run since a restart, resumes it with the line as what it
+goes on with, as a start naming it would, and says so. A wait closed by the
+row going says whether the user closed it, and a session the workbench
+never had, or that is not the caller's, is refused as before.
 A tool that names a session takes its id whole, or its first eight
 characters or more, as many as a row with no title of its own shows of
 it. Those are matched against the sessions the caller started and no
@@ -218,6 +226,47 @@ login may not be, and when the account is no longer in the settings. An
 account handed on that keeps no directory for the agent being started runs
 that agent on its own directory, as a blank directory does anywhere. A
 session resumed comes back under the account it ran under.
+
+## When the work is over
+
+A session another session started is put away by the workbench once its
+work is over, so finished rows do not pile up under the starter and no
+agent has to tidy them. Its work is over when all of these hold: it is
+running; it ended its turn itself, with nothing left running in the
+background and no error or usage limit; its starter has been told so, by a
+wait, a listing, a note or a wake; it asks nothing; no message of the
+user's or the starter's waits for it and no line is being typed into it;
+no call of the starter's that is not done names it, such as a wait on it
+alone, a read or a line on its way; it is not the session on screen; the
+user has read it; and the user has no words in its terminal or its
+composer. Once that has held for at least five minutes without a break,
+its row closes and the session goes among the earlier sessions to resume,
+as a stopped one does. Anything that breaks it, the session at work again,
+the user selecting it or marking it unread, starts the five minutes over,
+and so does the end of a call that names it. The window keeps the time,
+so a reload starts it over too. A start that would pass the cap, or a work
+step's room, puts away at once the caller's sessions whose work is over,
+never one the user has not read.
+
+A line its starter sends brings it back under the account it ran under and
+in the permission mode it ran in, whatever mode the starter runs in by
+then. Lines that arrive while it comes back wait for it, and then go to it
+as to any running session.
+
+A session put away stays on its starter's list. `sessions` lists it as put
+away by the workbench once its work was over, and a line its starter sends
+it resumes it where it ran, with its conversation and the line as what it
+goes on with. A wait over all of the starter's sessions passes over one
+put away while it waits, and once every session it watched has been put
+away it answers that none is running.
+
+After a restart, a row of a session another session started that the core
+no longer runs is put away the same way, without being started, unless it
+was the session on screen at the quit. One that comes back unread, or that
+the user writes in before the core has answered, stays until the user has
+seen it, and goes five minutes after. A row whose core could not be asked,
+which may still run it, is kept. Its starter's list says it has not run
+since the workbench was restarted, and a line sent to it resumes it.
 
 ## Who is calling
 
@@ -555,15 +604,17 @@ ids, resumed from the pane by hand, hangs under it all the same. When the
 app itself was closed, the orchestrator comes back with the other sessions
 that were open, and the sessions it started do not. `sessions` then lists
 them as not running since the workbench was restarted, after the running
-ones; one whose row the user closed is listed as closed by the user, and
-one whose row had ended as ended, before a restart and after it, until a
+ones; one whose row the user closed is listed as closed by the user, one
+whose row had ended as ended, and one the workbench put away as put away,
+before a restart and after it, until a
 row of it is up again, however it came back: by `start`, by hand from the
 pane, or in place of its row, as a session whose workflow was lost is. A
 wait held for a session resumed in place of its row goes on with the new
 row. `start`
 with one of those ids
 in place of a project and prompt brings it back where it ran, in its
-worktree with its conversation. A prompt given with it is what the session
+worktree with its conversation, and so does a line sent to one the
+workbench put away or one not run since the restart. A prompt given with it is what the session
 goes on with; without one it comes up waiting for a line. The cap and the
 one-level rule apply, and a session whose worktree has since been cleaned
 up, or whose project is no longer open, is refused with the reason. A
@@ -588,7 +639,12 @@ two rows never share a token.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
-all say how it went.
+all say how it went, and to end with a short report that someone with none
+of its context could go on from: what it did and where, what state the
+files and the branch are in, and what is left or open. The tools' own words
+say that a new task is a new session, and that resuming a session or
+sending it a line is for the task it already has, since either carries its
+whole conversation into the work.
 
 The tools act on the sessions the caller started and on no others. A
 session you started yourself is yours, on a subject of your own: another

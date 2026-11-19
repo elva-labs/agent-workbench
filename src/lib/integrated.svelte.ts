@@ -930,16 +930,28 @@ function again(session: Session) {
   session.changedAt = Date.now();
 }
 
+/** How taking up a session from before a reload went: it is the row's
+    again, the core runs no such session, or the core could not be asked
+    for a passing reason and may still run it. */
+export type Reattached = "up" | "gone" | "failed";
+
+/** What the core answers, in part, for a handle it runs no session under. */
+const NO_SUCH_SESSION = "no such session";
+/** Why a row does not take up the session under its handle when that
+    session is another conversation than the row's. */
+const ANOTHER_SESSION = "another session";
+
 /**
  * Takes up a session the core may still be running from before the window
  * was reloaded. The snapshot says what no event will say again; the events
- * heard while it was asked for come before it. True when the session was
- * there and is the row's.
+ * heard while it was asked for come before it. "up" when the session was
+ * there and is the row's; "gone" when the core runs nothing under the
+ * handle, or runs another session under it, or the agent ended.
  */
-export function reattach(key: string, handle: string, spoken = true): Promise<boolean> {
+export function reattach(key: string, handle: string, spoken = true): Promise<Reattached> {
   const link = linkFor(key);
-  const attempt = (async () => {
-    if (link.handle !== null) return true;
+  const attempt = (async (): Promise<Reattached> => {
+    if (link.handle !== null) return "up";
     link.busy = true;
     byHandle.set(handle, key);
     link.held = claim(handle);
@@ -962,7 +974,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
         // process of it holds.
         (snapshot.ready === null && session.id !== null && session.token === session.id)
       )
-        throw new Error("another session");
+        throw new Error(ANOTHER_SESSION);
       await earlier;
       const held = link.held ?? [];
       link.held = null;
@@ -982,18 +994,20 @@ export function reattach(key: string, handle: string, spoken = true): Promise<bo
       if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
       settle(session, snapshot.state, before, link);
       void rejoined(key);
-      return true;
-    } catch {
+      return "up";
+    } catch (error) {
       link.held = null;
       if (byHandle.get(handle) === key) byHandle.delete(handle);
-      return false;
+      const said = message(error);
+      return said === ANOTHER_SESSION || said.includes(NO_SUCH_SESSION) || said === "the agent ended" ? "gone" : "failed";
     } finally {
       link.busy = false;
     }
   })();
-  link.attaching = attempt;
-  void attempt.finally(() => {
-    if (link.attaching === attempt) link.attaching = null;
+  const attaching = attempt.then((how) => how === "up");
+  link.attaching = attaching;
+  void attaching.finally(() => {
+    if (link.attaching === attaching) link.attaching = null;
   });
   return attempt;
 }

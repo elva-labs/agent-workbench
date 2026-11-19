@@ -194,8 +194,9 @@ starts when it is selected. Bringing a project forward selects its most
 recent session, so that one starts too; asking for a new session in it does
 not, as the project's header describes above. A session closed by hand
 before the quit stays closed, a session whose project did not open again is
-left out, and a session another session started stays with its starter; see
-[orchestrator](orchestrator.md). A session left open in the `orchestrator`
+left out, and a session another session started stays with its starter,
+which brings it back when it is wanted, rather than coming back as a row;
+see [orchestrator](orchestrator.md#when-the-work-is-over). A session left open in the `orchestrator`
 folder of an earlier version comes back too, and lists that folder again;
 see [orchestrator](orchestrator.md).
 
@@ -632,7 +633,7 @@ known by, and as a session where none is kept. Its id is for the agent
 alone. A message is known as
 another session's by the id it was sent under, never by its words, so the
 user's own message reads as theirs whatever another session sent; the sentence the
-workbench adds to a started session's prompt, asking it to call notify, is
+workbench adds to a started session's prompt, asking it to call notify and end with a report, is
 never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
 not known, with the time, down a quiet line at the side. Codex's app-server

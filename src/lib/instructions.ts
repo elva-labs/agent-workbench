@@ -1,8 +1,15 @@
 /** The sentence every started session gets after the caller's own line, so
-    what became of it comes back on its row instead of being watched for.
-    It is the workbench's, never part of anyone's message as shown. */
+    what became of it comes back on its row instead of being watched for,
+    and its last message is a report another session could go on from. It
+    is the workbench's, never part of anyone's message as shown. */
 export const OUTCOME_ASK =
-  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
+  "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.";
+
+/** The sentences an earlier version gave a started session in its place,
+    which a conversation it began still holds. */
+const OUTCOME_ASKED_BEFORE = [
+  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.",
+];
 
 /** The first line of the note a session that started others is given ahead
     of the user's words, on what those sessions did since it last looked.
@@ -83,9 +90,11 @@ export function spoken(
       words = note.rest;
     }
   }
-  if (words === OUTCOME_ASK) return { text: "", instructions: OUTCOME_ASK, reports, filesBack };
-  if (words.endsWith(` ${OUTCOME_ASK}`))
-    return { text: words.slice(0, -(OUTCOME_ASK.length + 1)), instructions: OUTCOME_ASK, reports, filesBack };
+  for (const ask of [OUTCOME_ASK, ...OUTCOME_ASKED_BEFORE]) {
+    if (words === ask) return { text: "", instructions: ask, reports, filesBack };
+    if (words.endsWith(` ${ask}`))
+      return { text: words.slice(0, -(ask.length + 1)), instructions: ask, reports, filesBack };
+  }
   return { text: words, instructions: null, reports, filesBack };
 }
 
