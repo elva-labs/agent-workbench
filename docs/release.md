@@ -191,3 +191,22 @@ release notes of the first Chord release say:
   installing it takes the old package out. The desktop entry takes the
   new name too, and GNOME's and KDE's favourites name the entry, so a
   favourite of the app is added again.
+
+## The repository's earlier address
+
+The repository is `elva-labs/chord`, which it moved to with the app's name.
+The earlier address, `elva-labs/agent-workbench`, still works: GitHub sends
+every request for it to the new one, the pages, `git` over either
+transport, the API, release downloads and raw files. Copies already
+installed rely on that. The casks and formulas published before the move
+download their bundles and daemons from it, an install script of
+1.0.0-beta.4 or older fetches the daemon from it, and the line in the docs
+of those versions that pipes the install script into a shell names it too.
+
+The redirect lasts only while no repository takes that name. Never give
+the earlier address, `agent-workbench`, to a new repository in the
+organisation, nor rename another repository to it, not even for a moment:
+GitHub then serves that repository there, and every copy above breaks, or
+fetches from whatever the new repository holds. The plugins repository,
+`elva-labs/agent-workbench-plugins`, is a repository of its own and keeps
+its name.

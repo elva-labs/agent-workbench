@@ -76,7 +76,7 @@ others. [Platforms](docs/platforms.md) has what differs.
 
 ## Installing it
 
-Every [release](https://github.com/elva-labs/agent-workbench/releases) carries
+Every [release](https://github.com/elva-labs/chord/releases) carries
 installers: `.dmg` for macOS on either chip, `.AppImage`, `.deb` and `.rpm`
 for Linux, `.msi` and a setup `.exe` for Windows. The macOS builds are signed
 and notarized. On macOS there is also a tap:

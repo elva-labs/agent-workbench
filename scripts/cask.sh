@@ -90,7 +90,7 @@ esac
 
 product="${product:-Chord}"
 asset="${asset:-Chord}"
-base="https://github.com/elva-labs/agent-workbench/releases/download/v$version"
+base="https://github.com/elva-labs/chord/releases/download/v$version"
 
 sum() {
   curl -fsSL "$base/$1" | shasum -a 256 | cut -d' ' -f1
@@ -106,17 +106,17 @@ cask "$token" do
   on_arm do
     sha256 "$arm"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/${asset}_#{version}_aarch64.dmg"
+    url "https://github.com/elva-labs/chord/releases/download/v#{version}/${asset}_#{version}_aarch64.dmg"
   end
   on_intel do
     sha256 "$intel"
 
-    url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/${asset}_#{version}_x64.dmg"
+    url "https://github.com/elva-labs/chord/releases/download/v#{version}/${asset}_#{version}_x64.dmg"
   end
 
   name "$product"
   desc "Desktop for terminal coding agents: sessions, live changes, remote projects"
-  homepage "https://github.com/elva-labs/agent-workbench"
+  homepage "https://github.com/elva-labs/chord"
 ${livecheck:+
 $livecheck
 }

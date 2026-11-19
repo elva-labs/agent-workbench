@@ -21,14 +21,22 @@ import { fileURLToPath } from "node:url";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..");
 
-/** The shown name and the release assets named after it, in order. */
+/** The shown name, the release assets named after it, and the
+    repository's address, in order. */
 const WORDS = [
   [/Agent\.Workbench_/g, "Chord_"],
   [/Agent Workbench/g, "Chord"],
+  [/elva-labs\/agent-workbench(?!-plugins)/g, "elva-labs/chord"],
 ];
 
 /** A line that says what the app was called before keeps the old name. */
-const HISTORY = /formerly|was called|earlier name/i;
+const HISTORY = /formerly|was called|earlier name|earlier address/i;
+
+/** The repository's address before it moved to elva-labs/chord. GitHub
+    redirects it, but nothing in the tree should lean on that: a line
+    naming it fails the check whatever else it names, unless it says what
+    the address was. The plugins repository keeps its own name. */
+const OLD_REPOSITORY = /elva-labs\/agent-workbench(?!-plugins)/i;
 
 /** Files that name the old app on purpose throughout. */
 const SKIP = new Set(["scripts/chord-words.mjs", "src-tauri/windows/hooks.nsh"]);
@@ -39,7 +47,7 @@ const SKIP = new Set(["scripts/chord-words.mjs", "src-tauri/windows/hooks.nsh"])
 const SERVER = "the tool server's name, which agents' tool names and saved rules hold";
 const KEPT = [
   [/com\.elva-labs\.agent-workbench/, "the bundle identifier, which the window's storage, notifications and grants are kept under"],
-  [/elva-labs\/agent-workbench/, "the repository's name"],
+  [/elva-labs\/agent-workbench-plugins/, "the plugins repository, which keeps its name"],
   [/\.agent-workbench|agent-workbench-pair|agent-workbench-\{what\}/, "the home folder, and scratch files named like it"],
   [/agent-workbench-remote|AgentWorkbenchRemote|AGENT_WORKBENCH_VERSION/, "the daemon, its formula and its install script's variable"],
   [/agent-workbench@beta|cask: \[?"agent-workbench|Casks\/agent-workbench|--cask agent-workbench|cask "agent-workbench|cask is still `agent-workbench`|"agent-workbench": "chord"|`chord` and `agent-workbench`|chord@beta\s*$|^# names agent-workbench\./, "the old casks, which the new ones conflict with or replace"],
@@ -85,6 +93,10 @@ for (const file of files) {
   (check ? lines : after).forEach((line, index) => {
     if (!OLD.test(line)) return;
     const where = `${file}:${index + 1}`;
+    if (OLD_REPOSITORY.test(line) && !HISTORY.test(line)) {
+      unexplained.push(`${where}: ${line.trim()} (the repository is elva-labs/chord)`);
+      return;
+    }
     const reason = KEPT.find(([pattern, , path]) => pattern.test(line) && (path === undefined || path.test(file)))?.[1];
     if (reason === undefined) unexplained.push(`${where}: ${line.trim()}`);
     else kept.set(reason, [...(kept.get(reason) ?? []), where]);

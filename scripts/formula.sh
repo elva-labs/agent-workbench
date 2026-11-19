@@ -37,7 +37,7 @@ case "$channel" in
     ;;
 esac
 
-base="https://github.com/elva-labs/agent-workbench/releases/download/v$version"
+base="https://github.com/elva-labs/chord/releases/download/v$version"
 
 sum() {
   curl -fsSL "$base/agent-workbench-remote-$1" | shasum -a 256 | cut -d' ' -f1
@@ -54,28 +54,28 @@ cat <<FORMULA
 
 class $class < Formula
   desc "Chord on another machine: the daemon a desktop reaches over ssh"
-  homepage "https://github.com/elva-labs/agent-workbench"
+  homepage "https://github.com/elva-labs/chord"
   version "$version"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/agent-workbench-remote-darwin-aarch64"
+      url "https://github.com/elva-labs/chord/releases/download/v#{version}/agent-workbench-remote-darwin-aarch64"
       sha256 "$darwin_arm"
     end
     on_intel do
-      url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/agent-workbench-remote-darwin-x86_64"
+      url "https://github.com/elva-labs/chord/releases/download/v#{version}/agent-workbench-remote-darwin-x86_64"
       sha256 "$darwin_intel"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/agent-workbench-remote-linux-aarch64"
+      url "https://github.com/elva-labs/chord/releases/download/v#{version}/agent-workbench-remote-linux-aarch64"
       sha256 "$linux_arm"
     end
     on_intel do
-      url "https://github.com/elva-labs/agent-workbench/releases/download/v#{version}/agent-workbench-remote-linux-x86_64"
+      url "https://github.com/elva-labs/chord/releases/download/v#{version}/agent-workbench-remote-linux-x86_64"
       sha256 "$linux_intel"
     end
   end
