@@ -157,9 +157,9 @@ pub(crate) fn codex_config_path(project: &Path) -> PathBuf {
 }
 
 /// The files the hooks write in a folder, as paths inside it.
-const CLAUDE_LOCAL: &str = ".claude/settings.local.json";
-const CODEX_HOOKS: &str = ".codex/hooks.json";
-const CODEX_CONFIG: &str = ".codex/config.toml";
+pub(crate) const CLAUDE_LOCAL: &str = ".claude/settings.local.json";
+pub(crate) const CODEX_HOOKS: &str = ".codex/hooks.json";
+pub(crate) const CODEX_CONFIG: &str = ".codex/config.toml";
 const FILES: [&str; 3] = [CLAUDE_LOCAL, CODEX_HOOKS, CODEX_CONFIG];
 
 /// Where a session that needs the workbench's tools finds the tool server.
@@ -1030,6 +1030,12 @@ fn state_key(folder: &Path) -> String {
 /// Those are the checkout's own, and writing into one would show as a
 /// change to it.
 fn tracked(folder: &Path) -> Vec<&'static str> {
+    tracked_of(folder, &FILES)
+}
+
+/// Which of `files`, as paths inside a folder, the checkout the folder is
+/// in tracks.
+pub(crate) fn tracked_of<'a>(folder: &Path, files: &[&'a str]) -> Vec<&'a str> {
     let Ok(repo) = git2::Repository::discover(folder) else {
         return Vec::new();
     };
@@ -1041,8 +1047,9 @@ fn tracked(folder: &Path) -> Vec<&'static str> {
     let Ok(inside) = folder.strip_prefix(&workdir) else {
         return Vec::new();
     };
-    FILES
-        .into_iter()
+    files
+        .iter()
+        .copied()
         .filter(|file| index.get_path(&inside.join(file), 0).is_some())
         .collect()
 }

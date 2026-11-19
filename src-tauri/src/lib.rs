@@ -2120,25 +2120,40 @@ async fn remote_dirs(
 }
 
 /// Moves an install made under the app's earlier name over before anything
-/// reads its folder. A move that fails leaves the app on the old folder for
-/// this run, and is tried again on the next.
-fn migrate() {
-    let Some(home) = chord_core::api::home_directory() else {
-        return;
-    };
-    if !chord_core::migrate::needed(&home) {
-        return;
+/// reads its folder, and says how it went when one was moved. A move that
+/// fails leaves the app on the folder that holds its files, and is tried
+/// again on the next start.
+fn migrate() -> Option<Result<(), String>> {
+    let home = chord_core::api::home_directory()?;
+    if !chord_core::migrate::on_start() || !chord_core::migrate::needed(&home) {
+        return None;
     }
     let env = &chord_core::env::environment().vars;
-    let daemon = chord_core::hook::daemon_path(&home);
-    if let Err(error) = chord_core::migrate::run(&home, &daemon, env) {
+    let moved = chord_core::migrate::run(&home, None, env).map(|_| ());
+    if let Err(error) = &moved {
         eprintln!("moving the earlier install over: {error}");
     }
+    Some(moved)
+}
+
+/// Says a move of the earlier install that did not go through, in a
+/// dialog, once the window is there.
+fn tell_move_failed(app: &tauri::AppHandle, error: &str) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    let mut message = error.to_string();
+    if let Some(first) = message.get(..1) {
+        message.replace_range(..1, &first.to_uppercase());
+    }
+    app.dialog()
+        .message(format!("{message}."))
+        .title("Moving to Chord's names")
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    migrate();
+    let moved = migrate();
     let builder = tauri::Builder::default();
     // The single instance plugin has to be the first one registered. A
     // debug build goes without: it has the installed app's identifier, and
@@ -2161,7 +2176,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(|app| {
+        .setup(move |app| {
             let core = Arc::new(Core::new(Arc::new(TauriSink(app.handle().clone()))));
             if let Err(error) = core.start() {
                 eprintln!("session log: {error}");
@@ -2169,9 +2184,24 @@ pub fn run() {
             if let Err(error) = core.watch_settings() {
                 eprintln!("settings: {error}");
             }
+            let local_daemon = Arc::new(ssh::LocalDaemon::default());
+            if let Some(moved) = &moved {
+                // The entries the move renamed run the daemon under its new
+                // name, which is put in place now rather than with the
+                // first project's status.
+                let (handle, core, daemon) = (
+                    app.handle().clone(),
+                    Arc::clone(&core),
+                    Arc::clone(&local_daemon),
+                );
+                std::thread::spawn(move || ensure_daemon_here(&handle, &core, &daemon));
+                if let Err(error) = moved {
+                    tell_move_failed(app.handle(), error);
+                }
+            }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
-            app.manage(Arc::new(ssh::LocalDaemon::default()));
+            app.manage(local_daemon);
             app.manage(Arc::new(browser::Browser::default()));
             app.manage(Arc::new(browser_keys::Keys::default()));
             app.manage(Arc::new(leaving::Leaving::default()));

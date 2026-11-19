@@ -428,12 +428,14 @@ fn an_upgrade_from_beta_6_keeps_everything_under_the_new_names() {
     assert_eq!(snapshot(&fixture.home), after);
 }
 
+/// A run cut off between moving the folder and leaving the link, the
+/// marker it wrote first moved with the folder.
 #[test]
 fn a_move_cut_off_after_the_folder_is_finished_by_the_next_run() {
     let fixture = beta_6_home();
     let before = snapshot(&fixture.home);
+    write(&fixture.old_dir().join(chord_core::migrate::MOVING), "");
     std::fs::rename(fixture.old_dir(), fixture.new_dir()).unwrap();
-    std::os::unix::fs::symlink(".chord", fixture.old_dir()).unwrap();
     let run = migrate(&fixture.home);
     assert!(
         run.status.success(),
@@ -452,6 +454,7 @@ fn a_move_that_fails_changes_nothing_and_the_next_run_makes_it() {
     std::fs::set_permissions(&fixture.home, locked).unwrap();
     let failed = migrate(&fixture.home);
     std::fs::set_permissions(&fixture.home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!failed.status.success());
     assert!(String::from_utf8_lossy(&failed.stderr).contains("could not move"));
     assert_eq!(snapshot(&fixture.home), before);
 
@@ -464,13 +467,17 @@ fn a_move_that_fails_changes_nothing_and_the_next_run_makes_it() {
     assert_moved_over(&fixture, &before);
 }
 
+/// What the install over ssh does before the daemon runs, and what a
+/// process that wrote into `.chord` before the move leaves: the old
+/// folder's files are the user's and win, and `.chord`'s go aside.
 #[test]
 fn an_install_that_made_the_new_folder_first_is_merged_into() {
     let fixture = beta_6_home();
     let before = snapshot(&fixture.home);
-    // What the install over ssh does before the daemon runs.
     write(&fixture.new_dir().join("bin/chord-remote"), "new daemon\n");
-    write(&fixture.new_dir().join("user.css"), "a newer style\n");
+    write(&fixture.new_dir().join("user.css"), "a stand-in\n");
+    write(&fixture.new_dir().join("notes/notes.db"), "a stand-in\n");
+    std::fs::create_dir_all(fixture.new_dir().join("answers")).unwrap();
     let run = migrate(&fixture.home);
     assert!(
         run.status.success(),
@@ -481,14 +488,48 @@ fn an_install_that_made_the_new_folder_first_is_merged_into() {
         read(&fixture.new_dir().join("bin/chord-remote")),
         "new daemon\n"
     );
-    assert_eq!(read(&fixture.new_dir().join("user.css")), "a newer style\n");
-    assert_eq!(
-        read(&fixture.new_dir().join("kept-from-before/user.css")),
-        "body { color: red; }\n"
+    assert!(fixture.new_dir().join("answers").is_dir());
+    for stand_in in ["user.css", "notes/notes.db"] {
+        assert_eq!(
+            read(&fixture.new_dir().join("kept-from-before").join(stand_in)),
+            "a stand-in\n"
+        );
+    }
+    assert_moved_over(&fixture, &before);
+    assert!(read(&fixture.new_dir().join("migration.md")).contains("`notes/notes.db`"));
+}
+
+/// A file outside a project that cannot be written fails the run, which
+/// says so and leaves the move under way, and the next run finishes it.
+#[test]
+fn a_file_that_cannot_be_changed_is_tried_again_at_the_next_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = beta_6_home();
+    let before = snapshot(&fixture.home);
+    let account = fixture.home.join(".claude-work");
+    std::fs::set_permissions(&account, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let failed = migrate(&fixture.home);
+    std::fs::set_permissions(&account, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("migration.md"));
+    let note = read(&fixture.new_dir().join("migration.md"));
+    assert!(
+        note.contains(&format!(
+            "### Not changed\n\nEach is tried again at the next start, or, in a project, when the project is next opened.\n\n- `{}`",
+            account.join(".claude.json").display()
+        )),
+        "{note}"
     );
-    let mut expected = before;
-    expected.insert(fixture.old_dir().join("user.css"), "a newer style\n".into());
-    assert_moved_over(&fixture, &expected);
+    assert!(fixture.new_dir().join(chord_core::migrate::MOVING).exists());
+
+    let run = migrate(&fixture.home);
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_moved_over(&fixture, &before);
+    assert!(!fixture.new_dir().join(chord_core::migrate::MOVING).exists());
 }
 
 #[test]

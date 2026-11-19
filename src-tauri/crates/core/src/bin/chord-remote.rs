@@ -130,25 +130,34 @@ fn connect(args: impl Iterator<Item = String>) {
 
 /// Moves an install made under the app's earlier name over, when there is
 /// one: the daemon's folder, the pairings and the agents' settings. Says so
-/// when asked to, on stdout, which `serve` keeps for the protocol.
-fn migrate(say: bool) {
+/// when asked to, on stdout, which `serve` keeps for the protocol, and
+/// says whether it went through; why not goes to stderr.
+fn migrate(say: bool) -> bool {
     let Some(home) = chord_core::api::home_directory() else {
-        return;
+        return true;
     };
     if !chord_core::migrate::needed(&home) {
         if say {
             println!("nothing to move");
         }
-        return;
+        return true;
     }
     let env = &chord_core::env::environment().vars;
-    match chord_core::migrate::run(&home, &chord_core::pair::own_path(), env) {
-        Ok(Some(note)) if say => println!(
-            "moved the earlier install over; {} says what changed",
-            note.display()
-        ),
-        Ok(_) => {}
-        Err(error) => eprintln!("{error}"),
+    match chord_core::migrate::run(&home, Some(&chord_core::pair::own_path()), env) {
+        Ok(Some(note)) => {
+            if say {
+                println!(
+                    "moved the earlier install over; {} says what changed",
+                    note.display()
+                );
+            }
+            true
+        }
+        Ok(None) => true,
+        Err(error) => {
+            eprintln!("moving the earlier install over: {error}");
+            false
+        }
     }
 }
 
@@ -156,14 +165,22 @@ fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
         Some("serve") => {
-            migrate(false);
+            if chord_core::migrate::on_start() {
+                migrate(false);
+            }
             serve()
         }
         Some("connect") => {
-            migrate(true);
+            if chord_core::migrate::on_start() {
+                migrate(true);
+            }
             connect(args)
         }
-        Some("migrate") => migrate(true),
+        Some("migrate") => {
+            if !migrate(true) {
+                std::process::exit(1);
+            }
+        }
         Some("mcp") => match chord_core::api::home_directory() {
             Some(home) => chord_core::mcp::serve(&home),
             None => {
