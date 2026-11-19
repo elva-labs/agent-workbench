@@ -98,11 +98,11 @@
      heading has after a block inside one part: the part's own first margin
      is zero, so the room comes from here, short of the gap between parts. */
   .text + .text {
-    margin-top: calc(0.7em - 8px);
+    margin-top: max(0px, calc(0.7em - 8px));
   }
 
   .text + .text:has(> :global(.md) > :global(:is(h1, h2, h3, h4):first-child)) {
-    margin-top: calc(1em - 8px);
+    margin-top: max(0px, calc(1em - 8px));
   }
 
   .gap {
