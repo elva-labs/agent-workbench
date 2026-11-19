@@ -673,7 +673,7 @@ on, whichever machine the agent runs on.
 The appearance, the look, compact mode, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, what
-new sessions start on, the notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+new sessions start on, the notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.chord`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
@@ -771,3 +771,11 @@ without the file, that copy is what the file is first written from.
 The plugins keep their own record, described in [plugins](plugins.md). A
 window on a remote machine's project still follows the settings of the
 machine the window runs on.
+
+## An install from before Chord
+
+Chord was called Agent Workbench before 1.0, and kept its files in `~/.agent-workbench`. The first time Chord starts on a machine that has that folder, before anything reads it, it moves it to `~/.chord` and leaves a link at the old path, so a path to it written into a file Chord does not own still leads there. A folder that is itself a link, to dotfiles for instance, moves as a link. Where `~/.chord` is there already, what it lacks is moved into it, and what both had is kept as the old folder had it in `~/.chord/kept-from-before`. A move that cannot be made, a file held open on Windows for instance, leaves everything where it was: Chord uses the old folder for that run and tries again on the next.
+
+The orchestrator folder moves with it, and agents know a folder by its path, so its identity is carried to the new path: Claude Code's transcript folders for it, under `projects` in each account's configuration folder, so its past sessions are listed and resume; its entry in each account's `.claude.json`, trust with it; and its trust in each account's Codex `config.toml`. The tool server, which was called `agent-workbench`, is `chord`, so its tools are `mcp__chord__…`. The entries Chord wrote under the old name, in each `.claude.json`, each Codex config, and each project's hooks, `.mcp.json` and Codex config, are renamed and point at the renamed daemon, with nothing doubled. Permission rules saved for the old server, in Claude Code's settings files of each account and project, and Codex's approvals of its tools, name the new one and stay as they were, allow, ask or deny. The window's own stored state moves to its new keys, and paths in it into the old folder say the new one, so open projects, names, themes and each session's notes are kept.
+
+Every file changed is listed in `~/.chord/migration.md`. Writing it ends the move; a move cut off before then is finished on the next start, and a second one changes nothing. A project opened later that still has the old names, one no agent's state named, is brought over when it is opened and added to the list.

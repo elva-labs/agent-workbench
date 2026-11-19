@@ -13,7 +13,7 @@ search and hooks as one here; the work happens on the machine the path names.
 [architecture](architecture.md) describes. The desktop app wraps one core in
 Tauri commands; the daemon wraps the same core in lines on stdio.
 
-**The daemon**, `agent-workbench-remote serve`, speaks one JSON object a
+**The daemon**, `chord-remote serve`, speaks one JSON object a
 line: requests in, answers and events out, with a pty's bytes as base64 in an
 event of their own. Method names and parameters are the desktop app's own
 command names and arguments, so the app forwards what its window asked for
@@ -37,7 +37,7 @@ watching, is asked of every open connection.
 Two doors.
 
 **A token from the machine.** Install the daemon there and run
-`agent-workbench-remote connect`. It makes a key pair, authorises the public
+`chord-remote connect`. It makes a key pair, authorises the public
 half in the user's `authorized_keys` restricted to running the daemon and
 nothing else, no shell, no forwarding, and prints a token holding the
 private half, the machine's name and address, the user, and the machine's
@@ -52,7 +52,7 @@ from the sofa and over the VPN from elsewhere with the same token.
 `connect --host <address>` puts an address of your own first; `--port`
 likewise. The token is a credential: whoever
 has it can run the daemon on that machine as that user. To take it back,
-remove the `agent-workbench` line from `authorized_keys` there.
+remove the `chord` line from `authorized_keys` there.
 
 **A host the user's own ssh reaches.** Named as it would be on the command
 line, `name` or `user@name`. The app runs the user's ssh client with the
@@ -82,13 +82,15 @@ different machines with the same name get a suffix on the second.
 curl -fsSL https://raw.githubusercontent.com/elva-labs/chord/main/scripts/install-remote.sh | sh
 ```
 
-puts the build for the machine under `~/.agent-workbench/bin`. With Homebrew
-on the machine, `brew install elva-labs/elva/agent-workbench-remote` does the
+puts the build for the machine under `~/.chord/bin`. With Homebrew
+on the machine, `brew install elva-labs/elva/chord-remote` does the
 same into its own bin, and `brew upgrade` keeps it current; the token from
 `connect` names whichever daemon printed it. Each release carries the
 builds as assets, for Linux x86_64 and aarch64 and both macOS
 architectures. The desktop refuses a daemon at another version than its
 own and says so, since the two speak the same protocol only when they match.
+
+The daemon was called `agent-workbench-remote` before Chord, and kept its files in `~/.agent-workbench`. On a machine with that folder, the daemon moves it over the way the desktop does its own, as [settings](settings.md#an-install-from-before-chord) describes, and rewrites a pairing's line in `authorized_keys` to run it under its new name. It does so when the desktop puts it there over ssh, when the install script puts it there, when it is asked with `chord-remote migrate`, and whenever it is run with `connect` or `serve`. A machine that gets it through Homebrew, and that was paired before, is moved over by running `chord-remote migrate` once there.
 
 ## When nothing answers
 
@@ -112,8 +114,8 @@ ssh can be told, named in the second field of the Remote dialog.
 
 ## Trying it without a second machine
 
-`WORKBENCH_REMOTE_COMMAND` names the process to run instead of ssh, `{host}`
+`CHORD_REMOTE_COMMAND` names the process to run instead of ssh, `{host}`
 replaced. The driver tier sets it to the daemon itself and opens the test
 repository as `ssh://test/…`, so the whole road except ssh runs in CI. A
 further test runs the real road, key, daemon install and all, against `sshd`
-on the machine running the tests, when `WORKBENCH_SSH_LOCALHOST=1` is set.
+on the machine running the tests, when `CHORD_SSH_LOCALHOST=1` is set.

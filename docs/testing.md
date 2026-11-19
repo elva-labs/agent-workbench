@@ -75,7 +75,7 @@ take. Its comment lists the settings it can be run with to take one cost
 away at a time.
 
 ```
-BG_DRAG=1 WORKBENCH_DEV_PORT=14537 npx playwright test tests/e2e/background-drag.webkit.spec.ts --project webkit --workers 1
+BG_DRAG=1 CHORD_DEV_PORT=14537 npx playwright test tests/e2e/background-drag.webkit.spec.ts --project webkit --workers 1
 ```
 
 ## Measuring the panes' motions
@@ -91,16 +91,16 @@ observers took, and how many frames went by without one. Its comment lists
 the settings it can be run with to take one cost away at a time.
 
 ```
-PANE_MOTION=1 WORKBENCH_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
+PANE_MOTION=1 CHORD_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
 ```
 
 ## Running from a second checkout
 
 The browser tier starts the dev server on port 1420 and, outside CI, reuses
 a server that already answers there. With two checkouts on one machine, a
-run in one would drive the other's server. Setting `WORKBENCH_DEV_PORT`
+run in one would drive the other's server. Setting `CHORD_DEV_PORT`
 moves the dev server, and its HMR port beside it, to another port, for
-example `WORKBENCH_DEV_PORT=14420 npm run test:e2e`. When it is set the
+example `CHORD_DEV_PORT=14420 npm run test:e2e`. When it is set the
 tests never reuse a server and fail if the port is taken. The Tauri dev
 flow stays on 1420; the variable is only for running the browser tests.
 
@@ -173,10 +173,10 @@ the page answered beside the frames the system really holds for every web
 view in the window, whether or not the window's own page agrees they are
 there. See [browser](browser.md) for what a tab's placement follows.
 
-Two environment variables drive it. `WORKBENCH_PROBE_STEPS` names a file of
+Two environment variables drive it. `CHORD_PROBE_STEPS` names a file of
 steps to run, one per line: `resize:<width>x<height>` resizes the window,
 `evalin:<label>:<script>` runs `script` in the child webview `label` names,
-and anything else runs as a script in the main webview. `WORKBENCH_PROBE_REPORT`
+and anything else runs as a script in the main webview. `CHORD_PROBE_REPORT`
 names where the report goes, defaulting to a file in the system's temp
 directory; it is written as JSON, a step's own result beside the frames
 found after it, and echoed to stderr too.
@@ -215,12 +215,12 @@ TAURI_CONFIG='{"build":{"devUrl":"http://localhost:14431"},"app":{"windows":[{"t
   cargo build --manifest-path src-tauri/Cargo.toml
 
 mkdir -p "$SCRATCH/Probe.app/Contents/MacOS" "$SCRATCH/home" "$SCRATCH/tmp"
-cp src-tauri/target/debug/agent-workbench "$SCRATCH/Probe.app/Contents/MacOS/"
+cp src-tauri/target/debug/chord "$SCRATCH/Probe.app/Contents/MacOS/"
 cat > "$SCRATCH/Probe.app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>agent-workbench</string>
+<key>CFBundleExecutable</key><string>chord</string>
 <key>CFBundleIdentifier</key><string>local.scratch.workbench-probe</string>
 <key>CFBundleName</key><string>Workbench Probe</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -232,8 +232,8 @@ npx vite preview --port 14431 --strictPort &
 open -g -n \
   --env HOME="$SCRATCH/home" --env CFFIXED_USER_HOME="$SCRATCH/home" \
   --env TMPDIR="$SCRATCH/tmp/" \
-  --env WORKBENCH_PROBE_STEPS="$SCRATCH/run.steps" \
-  --env WORKBENCH_PROBE_REPORT="$SCRATCH/report.json" \
+  --env CHORD_PROBE_STEPS="$SCRATCH/run.steps" \
+  --env CHORD_PROBE_REPORT="$SCRATCH/report.json" \
   "$SCRATCH/Probe.app"
 # once the report is written
 kill %1

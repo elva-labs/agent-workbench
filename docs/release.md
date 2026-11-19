@@ -36,10 +36,10 @@ machine kind it can put one on.
 5. Put the release in the organisation's Homebrew tap. `scripts/cask.sh`
    with the version prints the cask for the app, and `scripts/formula.sh`
    the formula for the daemon, checksums included; they go in the tap as
-   `Casks/chord.rb` and `Formula/agent-workbench-remote.rb`. Users
+   `Casks/chord.rb` and `Formula/chord-remote.rb`. Users
    then get the app with `brew tap elva-labs/elva` and
    `brew install --cask chord`, a remote machine gets the daemon
-   with `brew install elva-labs/elva/agent-workbench-remote`, and both
+   with `brew install elva-labs/elva/chord-remote`, and both
    update with `brew upgrade`.
 
 Running the workflow by hand from the Actions tab builds the same bundles
@@ -64,11 +64,11 @@ signed as any release is, and differs in three ways:
   is a downgrade to it and has to be asked for as one.
 
 The tap has a beta channel beside the stable one: the cask
-`chord@beta` and the formula `agent-workbench-remote-beta`, a
+`chord@beta` and the formula `chord-remote-beta`, a
 formula's name having no room for `@beta`. The scripts print them when
 given the channel, `scripts/cask.sh 1.0.0-beta.1 beta` for
 `Casks/chord@beta.rb` and `scripts/formula.sh 1.0.0-beta.1 beta`
-for `Formula/agent-workbench-remote-beta.rb`. A pre-release goes on the
+for `Formula/chord-remote-beta.rb`. A pre-release goes on the
 beta channel only, and the scripts refuse to print it for the stable one.
 A stable release goes on both, so nobody on the beta channel is left on a
 pre-release of a version that has since been released.
@@ -86,7 +86,7 @@ desktop refuses a daemon at `1.0.0` when it is at `1.0.0-beta.1`. The app
 carries its own daemons, so this only matters on a machine where the
 daemon was installed by hand, which follows the beta through the beta
 formula or through the install script with
-`AGENT_WORKBENCH_VERSION=v1.0.0-beta.1`.
+`CHORD_VERSION=v1.0.0-beta.1`.
 
 A pre-release runs on the settings and state of the stable version and
 hands them back to it, so a change to either follows three rules. Settings
@@ -130,7 +130,7 @@ missing, as workflow artifacts, for trying the workflow out.
 - **Windows**: a code-signing certificate through the Tauri bundle
   configuration or Azure Trusted Signing. Not wired yet.
 
-## The casks under the app's earlier name
+## The casks and formulas under the app's earlier name
 
 The app was called Agent Workbench, and its casks were `agent-workbench`
 and `agent-workbench@beta`. Chord keeps the bundle identifier, so either of
@@ -163,13 +163,40 @@ holds:
   the old app would install beside Chord;
 - no `Casks/agent-workbench@beta.rb`;
 - `cask_renames.json` with `{ "agent-workbench@beta": "chord@beta" }`;
-- `Formula/agent-workbench-remote.rb` and
-  `Formula/agent-workbench-remote-beta.rb` under their names, since the
-  daemon keeps its name.
+- `Formula/agent-workbench-remote.rb` under its name, the daemon of that
+  last stable release.
 
-The first stable Chord release does the same for the stable channel: it
-adds `Casks/chord.rb`, removes `Casks/agent-workbench.rb`, and adds
-`"agent-workbench": "chord"` to `cask_renames.json`. A Homebrew older than
+The daemon was called `agent-workbench-remote`, and its formulas were
+`agent-workbench-remote` and `agent-workbench-remote-beta`. They move the
+same way, through `formula_renames.json` at the top of the tap, which
+Homebrew reads as it reads the casks' map: `brew update` sees the old
+formula's file gone, the new one added and the map naming one for the
+other, and moves the installed formula onto the new name, Cellar, links
+and all. The daemon's binary is then `chord-remote`. A machine that was
+paired runs the old binary through its line in `authorized_keys`, so
+`chord-remote migrate` is run there once, which the formula's caveats
+say. The release assets are named `chord-remote-<os>-<arch>`, and an
+install script or formula from before fetches the old name, which only
+releases from before carry.
+
+The beta channel's move is one commit and one push, so that `brew update`
+sees the rename and the removal together:
+
+- add `Casks/chord@beta.rb`, printed by `scripts/cask.sh <version> beta`,
+  when it is not there yet;
+- add `Formula/chord-remote-beta.rb`, printed by
+  `scripts/formula.sh <version> beta`;
+- delete `Formula/agent-workbench-remote-beta.rb`;
+- add `formula_renames.json` at the top of the tap:
+  `{ "agent-workbench-remote-beta": "chord-remote-beta" }`;
+- leave `Formula/agent-workbench-remote.rb` and the casks' map as they are.
+
+The first stable Chord release does the same for the stable channel, in
+one commit: it adds `Casks/chord.rb` and `Formula/chord-remote.rb`,
+removes `Casks/agent-workbench.rb` and `Formula/agent-workbench-remote.rb`,
+and adds `"agent-workbench": "chord"` to `cask_renames.json` and
+`"agent-workbench-remote": "chord-remote"` to `formula_renames.json`. It
+prints `chord@beta` and `chord-remote-beta` at the stable version too. A Homebrew older than
 4.1 does not read the renames, and its `brew upgrade` says the old cask is
 no longer available; `brew install --cask chord@beta`, or `chord`, after
 `brew uninstall --cask` of the old one, does it by hand.
