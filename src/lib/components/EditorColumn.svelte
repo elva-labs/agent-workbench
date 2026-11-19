@@ -251,6 +251,8 @@
     font-size: 12.5px;
     color: var(--ink-3);
     text-align: center;
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   .empty b {

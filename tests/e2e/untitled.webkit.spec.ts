@@ -114,6 +114,24 @@ test.describe("starting an untitled file", () => {
     expect(await writes(page)).toEqual([]);
   });
 
+  test("a double-click on the words in the empty pane opens one and selects nothing", async ({ page }) => {
+    await page.getByTestId("editor-empty").locator("b").dblclick();
+    await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("editor-tab")).toHaveCount(1);
+    expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("opens none on a double-click in the middle pane with a file open", async ({ page }) => {
+    await treeRow(page, "README.md").dblclick();
+    await expect(tab(page, "README.md")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("editor-empty")).toHaveCount(0);
+    const column = (await page.getByTestId("editor-column").boundingBox())!;
+    await page.mouse.dblclick(column.x + column.width / 2, column.y + column.height - 20);
+    await expect(page.getByTestId("editor-tab")).toHaveCount(1);
+    await expect(tab(page, "Untitled")).toHaveCount(0);
+  });
+
   test("opens none on a double-click on the last tab's close button", async ({ page }) => {
     await treeRow(page, "README.md").dblclick();
     await expect(tab(page, "README.md")).toHaveAttribute("aria-selected", "true");
