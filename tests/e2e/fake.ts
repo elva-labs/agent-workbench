@@ -1193,6 +1193,7 @@ export async function installFakeCore(
             goesOn: false,
             briefing: null,
           },
+        usageLog: async () => {},
         notesForget: async (project: string, tokens: string[]) => {
           const w = window as unknown as { __notesForgotten?: { project: string; tokens: string[] }[] };
           (w.__notesForgotten ??= []).push({ project, tokens });

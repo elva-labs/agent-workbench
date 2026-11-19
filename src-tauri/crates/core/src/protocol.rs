@@ -116,6 +116,8 @@ struct SpawnParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    #[serde(default)]
+    compact_at: Option<u64>,
     /// The user agreed to bring back what a conversation held at the point
     /// it went back to left out.
     #[serde(default)]
@@ -149,6 +151,8 @@ struct IntegratedStartParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    #[serde(default)]
+    compact_at: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -186,6 +190,26 @@ struct GoingOnParams {
     #[serde(default)]
     config_dir: Option<String>,
     token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageLogParams {
+    token: String,
+    entry: serde_json::Map<String, Value>,
+    #[serde(default)]
+    transcript: Option<UsageTranscriptParams>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageTranscriptParams {
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    session: String,
+    #[serde(default)]
+    config_dir: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -531,6 +555,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.compact_at,
                 p.bring_back,
                 p.cols,
                 p.rows,
@@ -552,6 +577,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.compact_at,
             )?)
         }
         "integrated_trust" => {
@@ -848,6 +874,17 @@ pub fn dispatch(
         "notes_forget" => {
             let p: NotesForgetParams = parse(params)?;
             core.notes_forget(&p.tokens)?;
+            Ok(Value::Null)
+        }
+        "usage_log" => {
+            let p: UsageLogParams = parse(params)?;
+            let transcript = p.transcript.as_ref().map(|of| crate::api::UsageTranscript {
+                project: &of.project,
+                cwd: of.cwd.as_deref(),
+                session: &of.session,
+                config_dir: of.config_dir.as_deref(),
+            });
+            core.usage_log(&p.token, p.entry, transcript)?;
             Ok(Value::Null)
         }
         "read_media" => {
@@ -1394,6 +1431,25 @@ mod tests {
             Some("The user declined the change.")
         );
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn the_context_to_compact_at_is_optional_in_a_start() {
+        let spawn: SpawnParams = parse(
+            json!({ "agent": "claude-code", "project": "/p", "cols": 80, "rows": 24, "compactAt": 150000 }),
+        )
+        .unwrap();
+        assert_eq!(spawn.compact_at, Some(150_000));
+        let spawn: SpawnParams =
+            parse(json!({ "agent": "claude-code", "project": "/p", "cols": 80, "rows": 24 }))
+                .unwrap();
+        assert_eq!(spawn.compact_at, None);
+        let start: IntegratedStartParams =
+            parse(json!({ "agent": "claude-code", "project": "/p", "compactAt": 150000 })).unwrap();
+        assert_eq!(start.compact_at, Some(150_000));
+        let start: IntegratedStartParams =
+            parse(json!({ "agent": "claude-code", "project": "/p" })).unwrap();
+        assert_eq!(start.compact_at, None);
     }
 
     #[test]

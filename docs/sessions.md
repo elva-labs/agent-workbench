@@ -1303,6 +1303,38 @@ which happens when its transcript is deleted, by the user or by the
 agent's own clean-up. Closing a row, or the workbench putting a finished
 one away, keeps them.
 
+## Usage log
+
+The workbench keeps a log of what each session spends, for tuning the
+points at which it saves tokens: when a conversation counts as cold and
+large, how long a starter's wake is held, and where a started session's
+context is capped. Nothing in the app shows it, and nothing in it is a
+warning. It is kept where the session's project is, in the usage folder
+of the workbench's directory in the user's home, one file per session
+named by the session's token, readable by the user alone, with one JSON
+object per line. A file that reaches two megabytes is moved aside to one
+older file, which it replaces. A file not written for thirty days is
+removed when the next session's log begins.
+
+Each line has its time, the kind of event, the conversation's id, the
+agent, whether the session runs in a terminal or as a conversation, its
+model where known, and the account's five-hour figure as last reported,
+with when it last moved, so the figure before and after any event can be
+read off the lines around it. The events are:
+
+- **turn**: a turn ended, by the agent or by an error. For a
+  conversation, the tokens the agent reported for it, how it ended and the
+  context's size. For Claude Code in a terminal, the core reads the turn
+  from its transcript: the fresh input, the cache reads, the cache writes
+  by their lifetime, the output, the number of requests, and the context
+  the last one left. A compaction within the turn counts as part of it.
+- **resume**: a conversation was taken up again, whole or from its notes,
+  with its context and how long it had rested where its transcript says.
+- **wake**: the workbench woke a starter, with how many reports went in
+  the message and how many sessions were still at work.
+- **start**: a session another session started came up, with its
+  starter's token and whether it runs one model below its starter's.
+
 ## Past sessions
 
 Under the live sessions sit the ones the agent has already had in this
