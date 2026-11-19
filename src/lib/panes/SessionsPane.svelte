@@ -39,7 +39,6 @@
     modelLabel,
     moreLabel,
     outsideFor,
-    activeSession,
     sessions,
     since,
     disown,
@@ -654,12 +653,6 @@
     await tick();
     if (outcome.type === "close") outcome.then();
   }
-
-  /** The account the session on screen runs under, for the foot, which
-      is there only once there are accounts to tell apart. */
-  let footAccount = $derived(
-    hasAccounts() && activeSession() !== null ? accountLabel(activeSession()?.account ?? null) : null,
-  );
 
   /** The sessions whose started sessions are folded into dots on their
       own row rather than hanging under it. Open is how a parent starts,
@@ -1499,26 +1492,6 @@
       the column holds the window's buttons. */
   let wide = $derived(foldedWidth() > FOLDED);
 
-  /** The list scrolls under the foot: only then does a rule part them. */
-  let tree = $state<HTMLDivElement | null>(null);
-  let under = $state(false);
-  function measureUnder() {
-    if (tree === null) return;
-    under = tree.scrollTop + tree.clientHeight < tree.scrollHeight - 1;
-  }
-  $effect(() => {
-    if (tree === null) return;
-    const observer = new ResizeObserver(measureUnder);
-    observer.observe(tree);
-    for (const child of tree.children) observer.observe(child);
-    const mutations = new MutationObserver(measureUnder);
-    mutations.observe(tree, { childList: true, subtree: true });
-    measureUnder();
-    return () => {
-      observer.disconnect();
-      mutations.disconnect();
-    };
-  });
   /** Reviewing folds the pane, and so does editing in a window that keeps
       the editor's room, and the column peeks it over the pane beside it;
       a window too narrow for it otherwise has nothing to open it into. */
@@ -2448,7 +2421,7 @@
       data-testid="new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
     >
   </div>
-  <div class="tree" bind:this={tree} onscroll={measureUnder}>
+  <div class="tree">
     {#if workspace.open.length === 0}
       <div class="empty" data-testid="no-project">
         <p>Open a folder to work in. A session starts there, and the changes pane watches it.</p>
@@ -2533,27 +2506,6 @@
         </div>
       {/if}
   </div>
-  <!-- Whose login the session on screen runs under, once there are
-       accounts to tell apart, and the way to the settings beside it. -->
-  {#if footAccount !== null}
-    <div class="foot" class:under>
-      <span class="avatar" aria-hidden="true">{footAccount.slice(0, 1).toUpperCase()}</span>
-      <span class="who" data-testid="pane-account">{footAccount}</span>
-      <button
-        class="gear"
-        tabindex="-1"
-        onclick={() => openSettings()}
-        aria-label="Settings"
-        title="Settings ({describe(chordFor('settings'))})"
-        data-testid="pane-settings"
-        ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
-          ><circle cx="8" cy="8" r="2.2" /><path
-            d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"
-          /></svg
-        ></button
-      >
-    </div>
-  {/if}
   </div>
   <!-- Subagents as they start, said once each, outside the rows, which
        are inert while the pane is folded. -->
@@ -2642,7 +2594,6 @@
   .nav.folded .flag,
   .nav.folded .fold,
   .nav.folded .add-here,
-  .nav.folded .foot,
   .nav.folded .empty,
   .nav.folded .inactive,
   .nav.folded .choice,
@@ -3046,63 +2997,6 @@
   .add-here:disabled {
     opacity: 0.5;
     cursor: default;
-  }
-
-  /* The foot: the account the session on screen runs under, and the
-     settings. */
-  .foot {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 37px;
-    padding: 6px 14px;
-    border-top: 1px solid transparent;
-    font-family: var(--chrome);
-    font-size: var(--label-size);
-    color: var(--ink-2);
-  }
-
-  .foot.under {
-    border-top-color: var(--head-rule);
-  }
-
-  .avatar {
-    flex: none;
-    width: 20px;
-    height: 20px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .who {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .gear {
-    flex: none;
-    margin-left: auto;
-    padding: 4px;
-    display: grid;
-    place-items: center;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--ink-3);
-    cursor: pointer;
-  }
-
-  .gear:hover {
-    background: var(--surface-2);
-    color: var(--ink);
   }
 
   /* The cursor is a bar at the pane's left edge, clear of any text: every

@@ -18,6 +18,7 @@ import {
   sendLine,
   startedDetail,
   startedDot,
+  sessionState,
   stateWord,
   startedName,
   startedRows,
@@ -31,6 +32,7 @@ import {
   type LeftTree,
 } from "$lib/orchestrator.svelte";
 import { conductor, resetConductor, treesMadeBy } from "$lib/conductor.svelte";
+import { linkFor } from "$lib/integrated.svelte";
 import {
   create,
   exact,
@@ -256,6 +258,23 @@ describe("what an orchestrator has out", () => {
 
     child.working = false;
     expect(stateWord(one)).toBe("running");
+  });
+
+  it("says in the status bar what an integrated session waits on before it runs", () => {
+    const one = live(LEAD, "pty-1", "sid-1");
+    expect(sessionState(one)).toBe("running");
+    expect(sessionState(null)).toBe("no session");
+    // Signed out and an untrusted folder are said only of a conversation.
+    linkFor(one.key).untrusted = true;
+    expect(sessionState(one)).toBe("running");
+    one.kind = "integrated";
+    expect(sessionState(one)).toBe("asks to trust the folder");
+    linkFor(one.key).untrusted = false;
+    linkFor(one.key).conversation.notLoggedIn = true;
+    expect(sessionState(one)).toBe("not signed in");
+    linkFor(one.key).conversation.notLoggedIn = false;
+    one.working = true;
+    expect(sessionState(one)).toBe("working");
   });
 
   it("lets its own call for attention hold the dot over a working child", () => {
