@@ -515,9 +515,9 @@ and is held to that step before the user is asked anything. A start that
 names no step, or one the workflow does not have, is refused with the
 steps there are. A start that names an agent or a model the step does not
 allow is refused with the ones it does; one that names neither runs on the
-step's first model, and one that names only the agent on the first of that
-agent's. A session started for a step stays on the model it was given:
-`send` gives it no command but `/compact`, since commands such as `/model`
+step's default model, and one that names only the agent on that
+agent's default. A session started for a step stays on the model it was
+given: `send` gives it no command but `/compact`, since commands such as `/model`
 and `/fast` change the model and either agent completes a command from the
 start of its name, and a start or a resume for a step does not begin with
 one either. It begins in its orchestrator's mode, as every started session

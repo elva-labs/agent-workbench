@@ -303,7 +303,7 @@ test.describe("the settings of a step", () => {
     await expect(page.getByTestId("step-name")).toHaveValue("Build");
   });
 
-  test("choose the models a step may use: any, or a set whose first is used", async ({ page }) => {
+  test("choose the models a step may use: any, or a set with a default", async ({ page }) => {
     await open(page, undefined, ["claude-code", "codex"]);
     await expect(page.getByTestId("step-model-any")).not.toBeChecked();
     const model = (name: string) => page.locator(`[data-testid="step-model"][data-model="${name}"]`);
@@ -945,11 +945,30 @@ test.describe("the keyboard", () => {
     await expect(menu).toHaveCount(0);
   });
 
-  test("names a model's checkbox by the model alone, apart from its use first button", async ({ page }) => {
+  test("shows make default on hover of its row and on focus, and always on a touch screen", async ({ page }) => {
+    await open(page);
+    const row = page.locator('[data-testid="step-model"][data-model="opus"]').locator("xpath=ancestor::div[1]");
+    await row.getByRole("checkbox").check();
+    const button = page.getByTestId("step-model-use-first");
+    await expect(button).toHaveText("make default");
+    await page.mouse.move(0, 0);
+    await row.getByRole("checkbox").blur();
+    await expect(button).toHaveCSS("opacity", "0");
+    await row.hover();
+    await expect(button).toHaveCSS("opacity", "1");
+    await page.mouse.move(0, 0);
+    await expect(button).toHaveCSS("opacity", "0");
+    await row.getByRole("checkbox").focus();
+    await page.keyboard.press("Tab");
+    await expect(button).toBeFocused();
+    await expect(button).toHaveCSS("opacity", "1");
+  });
+
+  test("names a model's checkbox by the model alone, apart from its make default button", async ({ page }) => {
     await open(page);
     await page.locator('[data-testid="step-model"][data-model="opus"]').check();
     await expect(page.getByRole("checkbox", { name: "Opus", exact: true })).toBeChecked();
-    await expect(page.getByRole("button", { name: "Use Opus first" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Make Opus the default" })).toBeVisible();
   });
 });
 

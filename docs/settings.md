@@ -352,9 +352,9 @@ runs by default. Only the agents found on the machine are offered, with any
 a workflow already names so that its choice can still be shown.
 
 A step has a name, a kind and the models it may use. The models are any, or
-a chosen set across the agents, and the first one chosen is the one used
-unless the orchestrator has a reason to pick another. A step that does work
-says how many sessions may run at once, from one to eight. A step that
+a chosen set across the agents, and the first one chosen is the default, the one
+used unless the orchestrator has a reason to pick another. A step that does
+work says how many sessions may run at once, from one to eight. A step that
 reviews says when the work passes: the reviewer approves, the orchestrator
 agrees, or both, so at least one is on. Otherwise the work goes back to a
 named earlier work step, never to another review, at most so many times,
@@ -461,10 +461,12 @@ room for a workflow of four steps and the settings together, and under it
 where it has not, whatever the number of steps; there they take two columns
 where they have the width. They scroll on their own and the diagram does
 not move. The settings read from top to bottom: the step's name, whether it
-does work or reviews it, the models it may use with the first chosen marked,
+does work or reviews it, the models it may use with the default marked,
 and the settings of its kind, a review's ending in one sentence such as go
-back to Work at most 3 times, then ask me. A model other than the first can
-be made the one used first. Any model stays ticked until a model is chosen.
+back to Work at most 3 times, then ask me. A model other than the default can
+be made the default with a button that shows when the pointer is over its row
+or the row has focus, and always where there is no hover. Any model stays
+ticked until a model is chosen.
 Removing a step, at the foot of its settings, asks first and says which
 reviews would go back elsewhere. Renaming a step carries the reviews that go
 back to it, and removing or moving one points a review that went back to it
