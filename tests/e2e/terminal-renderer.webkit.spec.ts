@@ -88,3 +88,29 @@ test("swaps the terminals' renderer as the share is kept, not while it is picked
   await slide(page, "12", true);
   await expect.poll(() => renderers(page)).toEqual({ gpu: 0, dom: 3 });
 });
+
+test("draws with the DOM renderer when the GPU one cannot start", async ({ page }) => {
+  // No WebGL context for anyone: the probe finds no renderer to rule out,
+  // so the terminal asks for the GPU renderer, which then cannot start.
+  await page.addInitScript(() => {
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    const w = window as unknown as { __webgl2Asks: number };
+    w.__webgl2Asks = 0;
+    HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+      if (kind === "webgl2") w.__webgl2Asks++;
+      if (kind === "webgl2" || kind === "webgl") return null;
+      return (getContext as (...args: unknown[]) => unknown).call(this, kind, ...rest);
+    } as typeof getContext;
+  });
+  await installFakeCore(page, { open: [PROJECT] });
+  await page.goto("/");
+  await page.getByTestId("new-session").click();
+  await expect.poll(() => renderers(page)).toEqual({ gpu: 0, dom: 1 });
+  // The probe asked once, and the GPU renderer once more as it started.
+  expect(await page.evaluate(() => (window as unknown as { __webgl2Asks: number }).__webgl2Asks)).toBeGreaterThanOrEqual(2);
+  await page.evaluate(() =>
+    (window as unknown as { __say: (id: string, text: string) => void }).__say("pty-1", "drawn without a GPU\r\n"),
+  );
+  await expect(page.locator("[data-testid='terminal'] .xterm-rows")).toContainText("drawn without a GPU");
+  await expect(page.locator("[data-testid='terminal'] canvas")).toHaveCount(0);
+});
