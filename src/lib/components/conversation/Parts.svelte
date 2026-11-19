@@ -94,6 +94,17 @@
     min-width: 0;
   }
 
+  /* Words that follow words of another part keep the room a paragraph or a
+     heading has after a block inside one part: the part's own first margin
+     is zero, so the room comes from here, short of the gap between parts. */
+  .text + .text {
+    margin-top: max(0px, calc(0.7em - 8px));
+  }
+
+  .text + .text:has(> :global(.md) > :global(:is(h1, h2, h3, h4):first-child)) {
+    margin-top: max(0px, calc(1em - 8px));
+  }
+
   .gap {
     margin: 4px 0 0;
     font-size: var(--conv-fine);
@@ -101,6 +112,7 @@
   }
 
   .plan {
+    max-width: var(--conv-measure);
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) + 3px);
     padding: 8px 12px 9px;
@@ -177,11 +189,12 @@
     padding: 6px 10px;
     border-radius: var(--radius);
     background: var(--surface-2);
-    font-size: var(--conv-small);
+    max-width: var(--conv-measure);
   }
 
   .asked p {
     margin: 0;
+    font-size: var(--conv-small);
   }
 
   .label {

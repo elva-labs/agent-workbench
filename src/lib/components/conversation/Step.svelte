@@ -214,8 +214,14 @@
     box-sizing: border-box;
     border-radius: var(--radius-sm);
     color: var(--ink-2);
-    font-size: var(--conv-small);
+    /* Ends where the prose does: the list of steps is indented 19px and the
+       row reaches 6px past its step. */
+    max-width: calc(var(--conv-measure) - 13px);
     min-width: 0;
+  }
+
+  .head > * {
+    font-size: var(--conv-small);
   }
 
   .head:hover {

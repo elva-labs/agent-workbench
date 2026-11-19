@@ -138,14 +138,6 @@
     cursor: text;
   }
 
-  .md > :global(:first-child) {
-    margin-top: 0;
-  }
-
-  .md > :global(:last-child) {
-    margin-bottom: 0;
-  }
-
   .md :global(p),
   .md :global(ul),
   .md :global(ol),
@@ -218,6 +210,40 @@
     background: none;
     font-size: var(--conv-meta);
     white-space: pre;
+  }
+
+  /* A block of prose wraps at the block's width, which stops at the measure
+     of the prose around it, at word boundaries; each
+     line hangs its continuation under its own indent and list marker. */
+  .md :global(.code[data-wrap]) {
+    max-width: var(--conv-measure);
+  }
+
+  .md :global(.code[data-wrap] pre) {
+    overflow-x: hidden;
+    tab-size: 8;
+  }
+
+  .md :global(.code[data-wrap] pre code) {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  .md :global(.code[data-wrap] .line) {
+    display: block;
+    padding-left: var(--hang);
+    text-indent: calc(-1 * var(--hang));
+  }
+
+  /* Declared after every block's own margins, so a message starts and ends
+     flush: a rule that comes first loses to the margin of a block, a
+     heading or a table. */
+  .md > :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .md > :global(:last-child) {
+    margin-bottom: 0;
   }
 
   .md :global(blockquote) {
