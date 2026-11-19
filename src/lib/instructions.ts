@@ -24,14 +24,16 @@ export const GOING_ON_WAIT =
   "Take in the above, say in one line that you have it, and wait for the user.";
 
 /** The briefing at the start of `words` and the words after it; null
-    where it is not there whole. */
+    where it is not there whole. It ends at its first line that is exactly
+    the end line: every line of a record in it is quoted, so none can be. */
 function briefingAt(words: string): { briefing: string; rest: string } | null {
   if (!words.startsWith(`${GOING_ON_HEAD}\n`)) return null;
-  const end = words.indexOf(`\n${GOING_ON_END}`);
+  const lines = words.split("\n");
+  const end = lines.indexOf(GOING_ON_END);
   if (end === -1) return null;
   return {
-    briefing: words.slice(GOING_ON_HEAD.length + 1, end).trim(),
-    rest: words.slice(end + GOING_ON_END.length + 1).replace(/^\n+/, ""),
+    briefing: lines.slice(1, end).join("\n").trim(),
+    rest: lines.slice(end + 1).join("\n").replace(/^\n+/, ""),
   };
 }
 

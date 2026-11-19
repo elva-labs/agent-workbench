@@ -140,6 +140,26 @@ fn note_from(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     })
 }
 
+/// What every line of a record starts with where the agent reads it, in
+/// the notes tool's answers and in a briefing: the brief, a note, or a
+/// quoted message. A line without it is the workbench's own.
+pub const QUOTE: &str = "> ";
+
+/// Every character a reader may take as a line break.
+pub const LINE_BREAKS: [char; 7] = [
+    '\n', '\r', '\u{0B}', '\u{0C}', '\u{85}', '\u{2028}', '\u{2029}',
+];
+
+/// Text as a record: each of its lines behind [`QUOTE`], whatever breaks
+/// them, so no line of it can start as one of the workbench's.
+pub fn quoted(text: &str) -> String {
+    text.replace("\r\n", "\n")
+        .split(LINE_BREAKS)
+        .map(|line| format!("{QUOTE}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Text cut to its first line and trimmed, for a title or a summary.
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -445,7 +465,7 @@ fn listed_line(note: &Note, since: Option<i64>) -> String {
         ""
     };
     format!(
-        "#{} {} {}: {}{later}",
+        "{QUOTE}#{} {} {}: {}{later}",
         note.id,
         day(note.at),
         note.title,
@@ -468,7 +488,11 @@ pub fn briefing_of_since(listed: &Listed, since: Option<i64>) -> Option<String> 
     let mut text = String::new();
     match &listed.brief {
         Some(brief) => {
-            text.push_str(&format!("Brief ({}):\n{}\n", day(brief.at), brief.text));
+            text.push_str(&format!(
+                "Brief ({}):\n{}\n",
+                day(brief.at),
+                quoted(&brief.text)
+            ));
         }
         None => text.push_str("No brief is kept yet.\n"),
     }
@@ -503,10 +527,11 @@ pub fn briefing_since(home: &Path, owner: &str, since: Option<i64>) -> Option<St
     briefing_of_since(&notes.listed(owner).ok()?, since)
 }
 
-/// One note whole, as the agent reads it.
+/// One note whole, as the agent reads it: its number, day, title, summary
+/// and body quoted, and what replaced it or it replaces said around them.
 pub fn whole(note: &Note) -> String {
     let mut text = format!(
-        "#{} {} {}\n{}",
+        "{QUOTE}#{} {} {}\n{QUOTE}{}",
         note.id,
         day(note.at),
         note.title,
@@ -520,7 +545,7 @@ pub fn whole(note: &Note) -> String {
     }
     if !note.body.is_empty() {
         text.push_str("\n\n");
-        text.push_str(&note.body);
+        text.push_str(&quoted(&note.body));
     }
     text
 }

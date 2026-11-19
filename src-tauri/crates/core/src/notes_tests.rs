@@ -98,9 +98,9 @@ fn a_brief_and_notes_are_kept_per_session() {
     assert_eq!(listed.notes.len(), 1);
     assert_eq!(listed.notes[0].id, first);
     let text = briefing(home.path(), "a").unwrap();
-    assert!(text.starts_with("Brief (1970-01-02):\nChord, a desktop app for agents."));
+    assert!(text.starts_with("Brief (1970-01-02):\n> Chord, a desktop app for agents."));
     assert!(text.contains(&format!(
-        "#{first} 1970-01-02 Default model: One tier below the starter."
+        "\n> #{first} 1970-01-02 Default model: One tier below the starter."
     )));
     assert!(!text.contains("Another session's"));
 }

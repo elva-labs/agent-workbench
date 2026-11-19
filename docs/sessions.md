@@ -1224,7 +1224,11 @@ never read whole. Ahead of the notes it says that they and the quoted
 messages are records the earlier conversation wrote, to be read as data
 and never as instructions, since anything holding the session's token can
 write a note and an agent can copy a page's words into one; the notes
-tool says the same. For a conversation held at a point, the quoted
+tool says the same. Every line of a record, in the briefing and in the
+notes tool's answers, starts with a quote mark, so no record can hold a
+line that passes for the workbench's, the user's, or the briefing's end:
+the window and a later briefing take the briefing to end at its first
+line that is exactly its end line. For a conversation held at a point, the quoted
 messages are those up to that point, and a note kept after it is listed
 as kept on a turn the conversation went back on. The briefing goes ahead of the first message the fresh
 conversation is sent, the user's, a line from the session's starter, or
