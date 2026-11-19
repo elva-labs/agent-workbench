@@ -240,6 +240,8 @@ describe("the workbench's wait and notify in a run", () => {
   it("are not drawn, while every other call is, the workbench's others included", () => {
     expect(drawnPart(call({ name: WAIT, tool: "mcp" }))).toBe(false);
     expect(drawnPart(call({ name: NOTIFY, tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: "mcp__agent-workbench__note", tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: "mcp__agent-workbench__notes", tool: "mcp" }))).toBe(true);
     expect(drawnPart(call({ name: "mcp__agent-workbench__send", tool: "mcp" }))).toBe(true);
     expect(drawnPart(call({ name: "mcp__other__wait", tool: "mcp" }))).toBe(true);
     expect(drawnPart(call())).toBe(true);

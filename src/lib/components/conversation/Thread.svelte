@@ -1254,7 +1254,10 @@
 {#snippet runBegan()}
   {#if conversation.began !== null}
     <div class="divider" data-testid="run-began">
-      <span>Resumed here, <time class="num">{written.get("began") ?? clock(conversation.began.at)}</time></span>
+      <span
+        >{conversation.wentOn ? "Went on from its notes here" : "Resumed here"},
+        <time class="num">{written.get("began") ?? clock(conversation.began.at)}</time></span
+      >
     </div>
   {/if}
 {/snippet}
@@ -1266,7 +1269,13 @@
   {@const from = sender?.(said) ?? null}
   {@const at = said.at ?? timeOf(said.id)}
   {@const words = from?.workbench
-    ? { text: wakeShown(said.text, sessionName) ?? said.text, instructions: null, reports: null, filesBack: null }
+    ? {
+        text: wakeShown(spoken(said.text).text, sessionName) ?? spoken(said.text).text,
+        instructions: null,
+        reports: null,
+        filesBack: null,
+        briefing: spoken(said.text).briefing,
+      }
     : spoken(said.text, from === null)}
   {@const putBack = from?.workbench ? undefined : onPutBack}
   <article
@@ -1340,6 +1349,20 @@
       >
       {#if unfolded[shown]}<p class="state reports" data-testid="workbench-files-text"
           ><Plain text={words.filesBack} /></p
+        >{/if}
+    {/if}
+    {#if words.briefing !== undefined}
+      {@const shown = `${said.id}:briefing`}
+      <button
+        class="link instructions"
+        tabindex="-1"
+        data-thread-item
+        onclick={() => (unfolded[shown] = !unfolded[shown])}
+        aria-expanded={unfolded[shown] === true}
+        data-testid="workbench-briefing">Briefing</button
+      >
+      {#if unfolded[shown]}<p class="state briefing" data-testid="workbench-briefing-text"
+          ><Plain text={words.briefing} /></p
         >{/if}
     {/if}
     {#if words.reports !== null}
@@ -1654,6 +1677,14 @@
   }
 
   .state.reports {
+    white-space: pre-line;
+  }
+
+  /* A briefing runs to a few thousand words: read as a block from the
+     left, across the thread's width. */
+  .state.briefing {
+    align-self: stretch;
+    text-align: left;
     white-space: pre-line;
   }
 

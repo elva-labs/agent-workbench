@@ -97,7 +97,7 @@ half a megabyte; nothing in it is needed after the window has seen it.
 
 ## The agent's tools
 
-With the hooks go six tools for the agent, offered over MCP by the daemon,
+With the hooks go eight tools for the agent, offered over MCP by the daemon,
 which the app puts on the machine alongside. The first, `show`, is the pattern
 for the rest. Called with a file, a range of lines and a note, it opens the
 file in the changes pane's viewer, scrolled to the lines with them highlighted
@@ -118,6 +118,7 @@ The entry lets some of the server's own tools run without asking, each by
 a line of its own, `tools.notify.approval_mode = "approve"`:
 
 - `notify`, which puts one line of text on the session's row;
+- `note` and `notes`, which keep and read the session's own notes;
 - `selection`, which says what the user has open in the viewer and which
   lines are highlighted;
 - `sessions`, `read` and `wait`, which list, read and wait on the
@@ -303,6 +304,13 @@ turn that ends without the call leaves a line all the same: the stop hook
 brings the agent's last message, and the row takes its first line.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
+
+`note` keeps a note of the conversation, or its brief, and `notes` reads
+them back: the brief and the list, one note whole, or those found by their
+words. The agent is told to keep a note whenever something settles, in the
+same step as another call, and to read the matching ones before asking the
+user about something it has no context for. [Notes](sessions.md#notes)
+says what they are for and where they are kept.
 
 Ten more read and drive a tab of the embedded browser, within the session's
 own tabs: opening, closing, listing and navigating one, reading it back as a

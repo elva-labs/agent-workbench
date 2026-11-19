@@ -34,8 +34,9 @@ state at a glance, and projects on other machines over ssh.
 - **Tools for the agent.** With hooks on, the agent can point at a place in
   a file or at a file's changes, put images, PDFs, documents, pages and
   diagrams in front of you, ask what you are looking at, type a command
-  into a terminal for you to run, and leave a line on its session's row.
-  See [hooks](docs/hooks.md).
+  into a terminal for you to run, leave a line on its session's row, and
+  keep short notes of the conversation that the app holds for it. See
+  [hooks](docs/hooks.md) and [notes](docs/sessions.md#notes).
 - **Orchestrator.** Any session can start and steer other sessions: it
   opens one per piece of work, in any open project and on a worktree of its
   own, waits on them and answers for them, and is woken when one of them

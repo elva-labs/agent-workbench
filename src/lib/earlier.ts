@@ -4,6 +4,7 @@ import { core, type AgentId, type IntegratedHistory, type IntegratedSnapshot } f
 import type { Conversation, Run } from "$lib/conversation.svelte";
 import type { Session } from "$lib/sessions.svelte";
 import { workflowsKnown } from "$lib/workflows.svelte";
+import { lineageOf } from "$lib/goingOn.svelte";
 
 /**
  * What an integrated session said before this window took it up, read
@@ -55,14 +56,27 @@ export function layEarlier(
       // them too; read before then, the agent's own directory would stand
       // in for the account's, and the session is not kept there.
       await workflowsKnown();
-      if (id !== null)
-        history = await core().integratedHistory({
+      const read = (one: string) =>
+        core().integratedHistory({
           agent: session.agent,
           project: session.project,
           cwd: session.startIn ?? undefined,
-          session: id,
+          session: one,
           configDir: dirFor(session.account, session.agent),
         });
+      if (id !== null) {
+        // A conversation that went on from notes draws the ones it went on
+        // from above its own, each read on its own; one that cannot be
+        // read is passed over.
+        const before = lineageOf(id).slice(0, -1);
+        const earlier = await Promise.all(before.map((one) => read(one).catch(() => null)));
+        const own = await read(id);
+        const items = earlier.flatMap((one) => one?.items ?? []);
+        history =
+          own === null || items.length === 0
+            ? own
+            : { ...own, items: [...items, ...own.items], cut: earlier[0]?.cut ?? own.cut };
+      }
     } catch (error) {
       history = null;
       why = typeof error === "string" ? error : error instanceof Error ? error.message : null;

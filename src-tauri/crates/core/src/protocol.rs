@@ -177,6 +177,19 @@ struct IntegratedHistoryParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GoingOnParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    session: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegratedTrustParams {
     agent: String,
     project: PathBuf,
@@ -253,6 +266,19 @@ struct ShellParams {
     project: PathBuf,
     cols: u16,
     rows: u16,
+}
+
+/// A session's notes, by its token.
+#[derive(Deserialize)]
+struct NotesParams {
+    token: String,
+    #[serde(default)]
+    page: bool,
+}
+
+#[derive(Deserialize)]
+struct NotesForgetParams {
+    tokens: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -586,6 +612,17 @@ pub fn dispatch(
             let p: IdParams = parse(params)?;
             value(core.integrated_snapshot(&p.id)?)
         }
+        "going_on" => {
+            let p: GoingOnParams = parse(params)?;
+            value(core.taken_up(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                &p.session,
+                p.config_dir.as_deref(),
+                &p.token,
+            )?)
+        }
         "integrated_history" => {
             let p: IntegratedHistoryParams = parse(params)?;
             value(core.integrated_history(
@@ -799,6 +836,19 @@ pub fn dispatch(
         "list_dirs" => {
             let p: DirsParams = parse(params)?;
             value(core.list_dirs(&p.path)?)
+        }
+        "notes_kept" => {
+            let p: NotesParams = parse(params)?;
+            value(core.notes_kept(&p.token, p.page)?)
+        }
+        "notes_briefing" => {
+            let p: NotesParams = parse(params)?;
+            value(core.notes_briefing(&p.token)?)
+        }
+        "notes_forget" => {
+            let p: NotesForgetParams = parse(params)?;
+            core.notes_forget(&p.tokens)?;
+            Ok(Value::Null)
         }
         "read_media" => {
             let p: PathParams = parse(params)?;

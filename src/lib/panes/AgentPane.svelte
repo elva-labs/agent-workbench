@@ -41,7 +41,7 @@
   import { referenced } from "$lib/show.svelte";
   import type { SessionKind } from "$lib/sessionKind.svelte";
   import type { Session } from "$lib/sessions.svelte";
-  import { handleOf, launch as launchIntegrated, linkOf, unspoken } from "$lib/integrated.svelte";
+  import { goOnIfCold, handleOf, launch as launchIntegrated, linkOf, unspoken } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
   import { workspace } from "$lib/workspace.svelte";
@@ -97,6 +97,25 @@
   // to be there or not.
   $effect(() => {
     if (current?.status === "dormant" && linkOf(current.key)?.busy !== true) wake(current.key);
+  });
+
+  // A conversation that went cold and large while its row ran at rest goes
+  // on from its notes once the user comes back to it: the row on screen,
+  // or the window brought forward or shown again. The composer looks too
+  // as the user sends after a rest.
+  $effect(() => {
+    const key = current?.status === "running" && current.kind === "integrated" ? current.key : null;
+    if (key === null) return;
+    void goOnIfCold(key);
+    const back = () => {
+      if (document.visibilityState === "visible") void goOnIfCold(key);
+    };
+    window.addEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
   });
 
   // An integrated session starts as soon as its row is starting, as a
