@@ -23,6 +23,11 @@ and on what the user sees, bounding boxes, computed styles, visibility,
 rather than on state. A test that could pass while the window looked wrong
 belongs in the unit tier.
 
+The browser tier's dev server answers before it has compiled the app, which
+it does for the first page that asks. Before any test runs, the tier loads
+the app once and waits for its panes, so no test's first wait includes that
+compile.
+
 One unit test reads the window configuration and checks the window cannot be
 made narrower than the panes need, since that constraint lives in two files.
 
