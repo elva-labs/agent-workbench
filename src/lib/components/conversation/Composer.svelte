@@ -6,7 +6,17 @@
   import { register, unregister } from "$lib/drops.svelte";
   import { compact, follow, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
-  import { choose, heldModel, modeChoices, modeName, modelChoices, workflowChoices } from "$lib/settingChoices";
+  import {
+    choose,
+    effortChoices,
+    effortInUse,
+    effortName,
+    heldModel,
+    modeChoices,
+    modeName,
+    modelChoices,
+    workflowChoices,
+  } from "$lib/settingChoices";
   import type { AgentId, Workflow } from "$lib/core";
   import { clock, modelName, tokens } from "$lib/thread";
   import { modelLabel as knownModelLabel } from "$lib/models";
@@ -54,8 +64,9 @@
 
   /**
    * Where the user writes to the agent. It takes several lines, files and
-   * images dropped, pasted or picked, shows the model the session runs on
-   * and lets it be changed, and turns Send into Stop while the agent works.
+   * images dropped, pasted or picked, shows the model the session runs on,
+   * the effort it thinks at where the model takes one, and the mode, and
+   * lets each be changed, and turns Send into Stop while the agent works.
    * A message sent meanwhile waits for the turn, and the thread says so.
    *
    * Enter sends and Shift+Enter breaks the line. Escape stops a running
@@ -296,7 +307,7 @@
   let field = $state<HTMLTextAreaElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
-  let menu = $state<"model" | "mode" | "workflow" | null>(null);
+  let menu = $state<"model" | "effort" | "mode" | "workflow" | null>(null);
   /** It was opened with the pointer rather than a key. */
   let byPointer = $state(false);
   let reading = $state(0);
@@ -971,7 +982,7 @@
     });
   });
 
-  // ---- the model and the mode ----
+  // ---- the model, the effort and the mode ----
 
   let models = $derived(conversation.ready?.models ?? []);
   let current = $derived(conversation.settings.model);
@@ -985,11 +996,15 @@
   /** A model chosen during a turn, which the next turn runs on. */
   let after = $derived(conversation.modelAfterTurn);
 
+  /** The effort as the status bar has it too: none for a model that takes
+      none. */
+  let effort = $derived(effortInUse(conversation));
+
   let modes = $derived(conversation.ready?.modes ?? []);
   let mode = $derived(conversation.settings.mode);
   let modeLabel = $derived(mode === null ? "Mode" : modeName(conversation, mode));
 
-  function pick(setting: "model" | "mode", value: string) {
+  function pick(setting: "model" | "effort" | "mode", value: string) {
     menu = null;
     choose(sessionKey, conversation, setting, value);
     field?.focus();
@@ -1019,7 +1034,7 @@
       void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
   }
 
-  function openMenu(which: "model" | "mode" | "workflow", e: MouseEvent) {
+  function openMenu(which: "model" | "effort" | "mode" | "workflow", e: MouseEvent) {
     byPointer = e.detail > 0;
     menu = menu === which ? null : which;
   }
@@ -1389,6 +1404,34 @@
     </div>
     {#if after !== null}
       <span class="after" data-testid="model-after-turn"><Plain text={modelName(conversation, after) ?? after} /> from the next turn</span>
+    {/if}
+    {#if effort !== null}
+      <div class="picker">
+        <!-- In a narrow pane the word goes, and the level stays. -->
+        <button
+          class="chip"
+          tabindex="0"
+          onclick={(e) => openMenu("effort", e)}
+          disabled={conversation.efforts.length === 0 || !ready}
+          aria-haspopup="menu"
+          aria-expanded={menu === "effort"}
+          aria-label="Effort: {effortName(effort)}"
+          title="How hard the model thinks before it answers"
+          data-testid="effort-chip"
+          ><span><Plain text={effortName(effort)} /><span class="word">{" "}effort</span></span><Icon name="down" size={12} /></button
+        >
+        {#if menu === "effort"}
+          <ChoiceMenu
+            label="Effort"
+            choices={effortChoices(conversation)}
+            onpick={(value) => pick("effort", value)}
+            onclose={closeMenu}
+            pointer={byPointer}
+            testid="effort-menu"
+            optionTestid="effort-option"
+          />
+        {/if}
+      </div>
     {/if}
     {#if mode !== null}
       <div class="picker">
@@ -1926,6 +1969,10 @@
   .chip[aria-disabled="true"] {
     opacity: 0.6;
     cursor: default;
+  }
+
+  :global(.conv.tight) .chip .word {
+    display: none;
   }
 
   .chip.bare {
