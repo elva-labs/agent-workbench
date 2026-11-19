@@ -289,7 +289,9 @@ export function sessionsShown() {
 export const shaping = $state({ sessions: false });
 
 /** Whether the sessions pane is drawn open: `sessionsShown`, or while a
-    change of shape waits to move, what its column is still set to. */
+    change of shape waits to move, what its column is still set to. It is
+    for drawing only: focus and the palette follow `sessionsShown`, which
+    differs from it for those two frames. */
 export function sessionsDrawnOpen() {
   if (shaping.sessions) return sessionsOpen.target === 1 || layout.sessionsPeek;
   return sessionsShown();
