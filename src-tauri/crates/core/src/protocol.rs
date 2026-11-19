@@ -255,6 +255,19 @@ struct ShellParams {
     rows: u16,
 }
 
+/// A session's notes, by its token.
+#[derive(Deserialize)]
+struct NotesParams {
+    token: String,
+    #[serde(default)]
+    page: bool,
+}
+
+#[derive(Deserialize)]
+struct NotesForgetParams {
+    tokens: Vec<String>,
+}
+
 #[derive(Deserialize)]
 struct PathParams {
     path: PathBuf,
@@ -799,6 +812,19 @@ pub fn dispatch(
         "list_dirs" => {
             let p: DirsParams = parse(params)?;
             value(core.list_dirs(&p.path)?)
+        }
+        "notes_kept" => {
+            let p: NotesParams = parse(params)?;
+            value(core.notes_kept(&p.token, p.page)?)
+        }
+        "notes_briefing" => {
+            let p: NotesParams = parse(params)?;
+            value(core.notes_briefing(&p.token)?)
+        }
+        "notes_forget" => {
+            let p: NotesForgetParams = parse(params)?;
+            core.notes_forget(&p.tokens)?;
+            Ok(Value::Null)
         }
         "read_media" => {
             let p: PathParams = parse(params)?;

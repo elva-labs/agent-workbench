@@ -1160,6 +1160,49 @@ the terminal under a drag shows an accent inset while it lasts. Dropped on
 an integrated session, an image goes with the next message and any other
 file is its path in the text.
 
+## Notes
+
+Every session keeps notes of its own conversation, so that it can go on
+later from them rather than from the whole conversation read again. A
+session has one brief, what is being built, kept current, and notes, each
+with a title, a one-line summary, a few lines of body and the day it was
+kept. A later note can replace an earlier one, which then no longer
+stands, so a changed decision does not stand beside the old one.
+
+The agent keeps and reads them with the workbench's own tools, as
+[hooks](hooks.md#the-agents-tools) describes. It is told as it connects to
+keep a note whenever something settles: a decision and why, a finding,
+what the user asked for or prefers, what is left open. The call goes
+alongside another one, the notify at a turn's end most of all, so it adds
+no step of its own, and the conversation does not draw it. When the user
+refers to something the agent has no context for, it is told to read the
+matching notes before asking or guessing.
+
+The core keeps them in a small database in its home on the machine the
+session runs on, under the session's token, so they follow the session
+across its runs and across restarts of the app. Nothing of them is
+written into the project. A call carrying a session's token keeps notes as
+that session, as [who is calling](orchestrator.md#who-is-calling)
+describes for the other tools.
+
+The list the notes tool gives names the brief and at most thirty notes: the
+twenty newest, then the most read of the rest, newest first, each by its
+number, day, title and summary, and a count of the others, which it finds
+by their words. A note is read whole by its number.
+
+A row's menu has Show notes when its session keeps any. It writes them
+out as a document and opens it in the viewer: the brief, the standing
+notes newest first, then those a later note replaced. There is nothing to
+manage.
+
+The notes go once the session cannot come back. For a session another
+session started, that is when its starter stops it, or when the starter
+is itself gone from its project's history. For a session of the user's
+own, it is when its conversation is gone from the project's history,
+which happens when its transcript is deleted, by the user or by the
+agent's own clean-up. Closing a row, or the workbench putting a finished
+one away, keeps them.
+
 ## Past sessions
 
 Under the live sessions sit the ones the agent has already had in this

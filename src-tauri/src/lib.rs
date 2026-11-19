@@ -1134,6 +1134,74 @@ async fn read_media(
     .await
 }
 
+/// How much a session keeps in its notes, read where its project is, and
+/// with `page`, the path of their readable copy as the window names it.
+#[tauri::command]
+async fn notes_kept(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    token: String,
+    page: bool,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(_) => core.notes_kept(&token, page).and_then(value),
+        Route::Remote { host, .. } => {
+            let mut kept = remotes
+                .connection(&host)?
+                .call("notes_kept", json!({ "token": token, "page": page }))?;
+            if let Some(path) = kept.get("page").and_then(Value::as_str) {
+                kept["page"] = Value::String(with_host(&host, path));
+            }
+            Ok(kept)
+        }
+    })
+    .await
+}
+
+/// The brief and list of notes a fresh start of a session is given, read
+/// where its project is.
+#[tauri::command]
+async fn notes_briefing(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    token: String,
+) -> Result<Value, String> {
+    let sent = token.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "notes_briefing",
+        move |_| json!({ "token": sent }),
+        move |core, _| core.notes_briefing(&token),
+    )
+    .await
+}
+
+/// Lets go of the notes of sessions of a project, where it is.
+#[tauri::command]
+async fn notes_forget(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    tokens: Vec<String>,
+) -> Result<Value, String> {
+    let sent = tokens.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "notes_forget",
+        move |_| json!({ "tokens": sent }),
+        move |core, _| core.notes_forget(&tokens),
+    )
+    .await
+}
+
 /// What a file a presented page names beside it is, or why the page may
 /// not load it, read where the page is.
 #[tauri::command]
@@ -2065,6 +2133,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
+            notes_kept,
+            notes_briefing,
+            notes_forget,
             file_info,
             check_page_file,
             page_files::page_files_base,

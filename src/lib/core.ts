@@ -1354,6 +1354,15 @@ export interface Settings {
   lastChosen?: Record<string, { model?: string; effort?: string; mode?: string }>;
 }
 
+/** What a session keeps in its notes: how many notes stand, whether it
+    has a brief, and the path of their readable copy when one was asked
+    for and there is anything to read. */
+export interface NotesKept {
+  standing: number;
+  brief: boolean;
+  page: string | null;
+}
+
 /** The user's own stylesheet: its text, or none and why the one on disk
     is not handed over. */
 export interface UserStyles {
@@ -1593,6 +1602,14 @@ export interface Core {
   onPresentRequest(
     handler: (request: PresentRequest) => void,
   ): Promise<() => void>;
+  /** How much a session keeps in its notes, read where its project is,
+      and with `page`, their readable copy written for the viewer. */
+  notesKept(project: string, token: string, page: boolean): Promise<NotesKept>;
+  /** The brief and list of notes a fresh start of a session is given, or
+      null when it keeps none. */
+  notesBriefing(project: string, token: string): Promise<string | null>;
+  /** Lets go of the notes of these sessions of a project. */
+  notesForget(project: string, tokens: string[]): Promise<void>;
   /** Reads an image or a PDF for the window, wherever the path is. */
   readMedia(path: string): Promise<Media>;
   /** How big a file is, and whether it is a folder, read where it is. */
@@ -2121,6 +2138,9 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  notesKept: (project, token, page) => invoke<NotesKept>("notes_kept", { project, token, page }),
+  notesBriefing: (project, token) => invoke<string | null>("notes_briefing", { project, token }),
+  notesForget: (project, tokens) => invoke<void>("notes_forget", { project, tokens }),
   readMedia: (path) => invoke<Media>("read_media", { path }),
   fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
   pageFilesBase: (page) => invoke<string>("page_files_base", { page }),
@@ -2488,6 +2508,13 @@ const detachedCore: Core = {
   async onPresentRequest() {
     return () => {};
   },
+  async notesKept() {
+    return { standing: 0, brief: false, page: null };
+  },
+  async notesBriefing() {
+    return null;
+  },
+  async notesForget() {},
   async readMedia() {
     throw new Error("no core");
   },

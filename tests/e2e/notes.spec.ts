@@ -1,0 +1,47 @@
+import { expect, test, type Page } from "@playwright/test";
+import { PROJECT, installFakeCore } from "./fake";
+
+/**
+ * The notes a session keeps of its conversation are read from its row's
+ * menu, and only there: the item is offered for a session that keeps any,
+ * and opens them in the viewer as a document.
+ */
+
+const ROW = "[data-testid='session-row']";
+
+const row = (page: Page, name: string) => page.locator(ROW).filter({ hasText: name });
+
+test("opens a session's notes in the viewer from its menu, offered only when it keeps some", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT] });
+  await page.goto("/");
+  await page.getByTestId("new-session").click();
+  await expect(row(page, "session 1")).toContainText("running");
+  await page.getByTestId("new-session").click();
+  await expect(page.locator(ROW)).toHaveCount(2);
+
+  // None kept: the menu is as it was.
+  await row(page, "session 1").click({ button: "right" });
+  const menu = page.getByTestId("session-menu");
+  await expect(menu.getByRole("menuitem").first()).toBeVisible();
+  await expect(page.getByTestId("session-menu-notes")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+
+  await page.evaluate(() => {
+    const fake = window as unknown as { __notes: unknown; __markdown: string };
+    fake.__notes = { "session-1": { standing: 2, brief: true } };
+    fake.__markdown = "# Notes\n\n## Brief\n\nA desktop app for agents.\n\n## Notes\n\n### Default model\n\nOne tier below the starter.\n";
+  });
+  await row(page, "session 1").click({ button: "right" });
+  const item = page.getByTestId("session-menu-notes");
+  await expect(item).toHaveText("Show notes");
+  // Quiet: it sits above the stop, never first.
+  await expect(menu.getByRole("menuitem").first()).not.toHaveText("Show notes");
+  await expect(menu.getByRole("menuitem").last()).not.toHaveText("Show notes");
+  await item.click();
+  await expect(menu).toHaveCount(0);
+  await expect(page.getByTestId("media-caption")).toHaveText("Notes");
+  const viewer = page.getByTestId("media-file");
+  await expect(viewer.getByRole("heading", { name: "Default model" })).toBeVisible();
+  await expect(viewer.getByRole("heading", { name: "Notes.md" })).toBeVisible();
+});

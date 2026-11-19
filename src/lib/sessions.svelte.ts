@@ -853,15 +853,16 @@ function pruneKept(project: string) {
   for (const id of tokens) delete sessions.tokens[id];
   if (workflows.length > 0) saveKept();
   if (tokens.length > 0) saveTokens();
-  forgotten(callers);
+  forgotten(callers, project);
 }
 
-let forgotten: (tokens: string[]) => void = () => {};
+let forgotten: (tokens: string[], project: string) => void = () => {};
 
 /** Hears the tokens of sessions gone from their project's history, whose
     kept workflow or token went with them, and their ids, under which a
-    session from before there were tokens kept what it ran. */
-export function onForgotten(handler: ((tokens: string[]) => void) | null) {
+    session from before there were tokens kept what it ran, with the
+    project they ran in. */
+export function onForgotten(handler: ((tokens: string[], project: string) => void) | null) {
   forgotten = handler ?? (() => {});
 }
 

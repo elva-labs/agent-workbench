@@ -89,6 +89,7 @@ import {
 import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib/core";
 import { CODEX_DEFAULT } from "$lib/models";
 import { hostOf } from "$lib/remote.svelte";
+import { forgetNotes } from "$lib/notes";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
 import {
@@ -272,6 +273,8 @@ export function stopStarted(key: string): void {
   // What the caller's reports said of it keeps its name.
   keepName(session);
   close(key);
+  // Stopped for good, it does not go on from its notes.
+  forgetNotes([{ project, token: session.token }]);
   if (id === null) return;
   disown(project, id);
   if (owner !== null) forget(owner, id);
@@ -3502,6 +3505,7 @@ function stopSession(request: Placed): Answered {
     const entry = remembered(callerOf(request), id);
     if (entry === null) return refused(`The workbench has no session ${id}.`);
     forget(callerOf(request), id);
+    forgetNotes([{ project: entry.project, token: sessions.tokens[entry.id]?.token ?? "" }]);
     return said(
       `Session ${idText(id)} was not running: ${goneWhy(entry)}. It is off your list now, and not offered to resume.`,
     );
@@ -4039,8 +4043,14 @@ onClosed((session) => {
 // The prompt a session is started with is its starter's.
 startersFrom(startedFor);
 
-// A session gone from its project goes from what its workflow ran too.
-onForgotten((tokens) => {
+// A session gone from its project goes from what its workflow ran too,
+// and its notes go, with those of the sessions it started.
+onForgotten((tokens, project) => {
+  const notes = tokens.map((token) => ({ project, token }));
+  for (const token of tokens)
+    for (const entry of conductor.started[token] ?? [])
+      notes.push({ project: entry.project, token: sessions.tokens[entry.id]?.token ?? "" });
+  forgetNotes(notes);
   for (const token of tokens) delete conductor.runs[token];
   saveRuns();
 });

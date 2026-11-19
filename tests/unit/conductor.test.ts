@@ -122,6 +122,8 @@ const answers: {
 }[] = [];
 const written: [string, string][] = [];
 const killed: string[] = [];
+/** The notes let go of, by project, as the core was asked. */
+const notesForgotten: { project: string; tokens: string[] }[] = [];
 const worktrees: [string, string][] = [];
 let worktreeFails: string | null = null;
 /** An answer the core will not leave, as for a prompt hook that stopped
@@ -165,6 +167,9 @@ vi.mock("$lib/core", () => ({
     },
     async kill(id: string) {
       killed.push(id);
+    },
+    async notesForget(project: string, tokens: string[]) {
+      notesForgotten.push({ project, tokens });
     },
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
@@ -353,6 +358,7 @@ beforeEach(() => {
   answers.length = 0;
   written.length = 0;
   killed.length = 0;
+  notesForgotten.length = 0;
   worktrees.length = 0;
   worktreeFails = null;
   answerRefused = null;
@@ -1824,6 +1830,8 @@ describe("a session named by the start of its id", () => {
     await handle(call("stop", { session: "5f3c9a12" }));
     expect(last().content).toBe(`Stopped session ${ONE}. It is off your list now, and not offered to resume.`);
     expect(byKey(row.key)).toBeNull();
+    // Stopped for good, its notes go with it.
+    expect(notesForgotten).toEqual([{ project: A, tokens: [row.token] }]);
   });
 
   it("resumes one of the caller's own by the start of its id", async () => {
@@ -5610,9 +5618,16 @@ describe("sessions told apart by their tokens", () => {
       places: { "kid-1": { step: "Work", kind: "work", piece: "kid-1", round: null, work: null } },
       rounds: {},
     };
+    conductor.started[token] = [{ id: "kid-1", project: B, worktree: null, agent: "claude-code", name: null }];
+    sessions.tokens["kid-1"] = { token: "kid-token", project: B };
     close(orch.key);
     past[A] = [{ id: "someone-else", title: "Another", modified: 1, size: 100, cwd: null }];
     await loadHistory(A);
+    // Its notes go, and those of the sessions it started, each where it ran.
+    expect(notesForgotten).toEqual([
+      { project: A, tokens: [token, "orch-id"] },
+      { project: B, tokens: ["kid-token"] },
+    ]);
     expect(conductor.runs[tok(token)]).toBeUndefined();
     expect(JSON.parse(localStorage.getItem("workbench.runs") ?? "{}")).not.toHaveProperty(token);
     expect(sessions.tokens["orch-id"]).toBeUndefined();

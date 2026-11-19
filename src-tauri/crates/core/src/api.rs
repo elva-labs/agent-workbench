@@ -1604,6 +1604,30 @@ impl Core {
         crate::selection::write(home, selection.as_ref())
     }
 
+    /// The core's home, where the notes are kept.
+    fn notes_home(&self) -> Result<&Path, String> {
+        self.home
+            .as_deref()
+            .ok_or_else(|| "this core keeps no notes: it has no home".to_string())
+    }
+
+    /// How much a session keeps in its notes, and with `page`, where their
+    /// readable copy was written for the viewer.
+    pub fn notes_kept(&self, token: &str, page: bool) -> Result<crate::notes::Kept, String> {
+        crate::notes::kept(self.notes_home()?, token, page)
+    }
+
+    /// The brief and the list of notes a fresh start of the session is
+    /// given, or none when nothing is kept.
+    pub fn notes_briefing(&self, token: &str) -> Result<Option<String>, String> {
+        Ok(crate::notes::briefing(self.notes_home()?, token))
+    }
+
+    /// Lets go of the notes of these sessions.
+    pub fn notes_forget(&self, tokens: &[String]) -> Result<(), String> {
+        crate::notes::forget(self.notes_home()?, tokens)
+    }
+
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
         crate::show::read_media(path)
     }

@@ -1150,6 +1150,22 @@ export async function installFakeCore(
           if (path.endsWith("/")) return { size: 0, dir: true };
           return { size: sizes[path] ?? 2048, dir: false };
         },
+        // The notes a test gives a session's token, written out as a
+        // page under the fake home when asked for; the tokens let go of
+        // are kept for the test to read.
+        notesKept: async (_project: string, token: string, page: boolean) => {
+          // A test names the session by its agent's id, as the tools' calls do.
+          const id = Object.keys(tokens).find((key) => tokens[key] === token) ?? token;
+          const kept = (window as unknown as { __notes?: Record<string, { standing: number; brief: boolean }> }).__notes?.[id];
+          if (kept === undefined) return { standing: 0, brief: false, page: null };
+          return { ...kept, page: page ? `/home/.workbench/notes/${token}/Notes.md` : null };
+        },
+        notesBriefing: async (_project: string, token: string) =>
+          (window as unknown as { __briefings?: Record<string, string> }).__briefings?.[token] ?? null,
+        notesForget: async (project: string, tokens: string[]) => {
+          const w = window as unknown as { __notesForgotten?: { project: string; tokens: string[] }[] };
+          (w.__notesForgotten ??= []).push({ project, tokens });
+        },
         // One pixel of PNG for any image asked for; a PDF as itself; a
         // path with "missing" in it is not there.
         readMedia: async (path: string) => {

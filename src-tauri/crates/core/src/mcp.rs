@@ -59,7 +59,7 @@ macro_rules! turn_in_a_conversation {
 /// settings and the sessions it started.
 macro_rules! instructions_tail {
     () => {
-        "The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
+        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
     };
 }
 
@@ -159,6 +159,8 @@ pub fn tools() -> Vec<Value> {
         selection_tool(),
         terminal_tool(),
         notify_tool(),
+        note_tool(),
+        notes_tool(),
     ];
     listed.extend(browser_tools());
     listed.extend(settings_tools());
@@ -175,6 +177,9 @@ pub fn tools() -> Vec<Value> {
 pub const RUN_UNASKED: &[&str] = &[
     // Puts one line of text on the caller's row in the sessions list.
     "notify",
+    // Keep and read the caller's own notes, in the workbench's store.
+    "note",
+    "notes",
     // Says what the user has open in the viewer and which lines are
     // highlighted.
     "selection",
@@ -387,6 +392,39 @@ pub fn notify_tool() -> Value {
                 "text": { "type": "string", "description": "A few words, under 60 characters; the row shows about forty." }
             },
             "required": ["text"]
+        }
+    })
+}
+
+/// The note tool as the agent sees it.
+pub fn note_tool() -> Value {
+    json!({
+        "name": "note",
+        "description": "Keeps a note of this conversation in the workbench, so it can go on later, fresh, from its notes instead of the whole conversation read again. A note is something settled: a decision and why, a finding, what the user asked for or prefers, what is left open, where things stand. Give it a title, a one-line summary and, when the summary is not enough, a body of a few lines. Keep each short: the titles and summaries are read again at every fresh start. A note that changes an earlier one names it with replaces, so the old one no longer stands. The brief, what is being built here, is given with brief and replaces the one before. Add notes as things settle, never the whole set again, and make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": { "type": "string", "description": "A few words naming the note." },
+                "summary": { "type": "string", "description": "One line saying what was settled." },
+                "body": { "type": "string", "description": "A few lines more, when the summary is not enough: the reasons, the details someone going on would need." },
+                "replaces": { "type": "integer", "description": "The number of an earlier note this one changes, which then no longer stands." },
+                "brief": { "type": "string", "description": "What is being built here, in a few lines, kept in place of the brief before. It can be given with a note or alone." }
+            }
+        }
+    })
+}
+
+/// The notes tool as the agent sees it.
+pub fn notes_tool() -> Value {
+    json!({
+        "name": "notes",
+        "description": "Reads the notes kept of this conversation: with nothing named, the brief and the list of notes by number, day, title and summary; with id, that note whole; with find, the notes holding every one of the words, the best few whole. When the user refers to something you have no context for, or you go on from notes, read the ones that match before asking the user or guessing.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": { "type": "integer", "description": "A note's number, to read it whole." },
+                "find": { "type": "string", "description": "Words to find notes by." }
+            }
         }
     })
 }
@@ -1021,6 +1059,8 @@ fn call(
         "selection" => selection_call(home, cwd),
         "terminal" => terminal_call(home, cwd, session, &arguments),
         "notify" => notify_call(home, cwd, session, &arguments),
+        "note" => note_call(home, session, &arguments),
+        "notes" => notes_call(home, session, &arguments),
         _ if CONDUCT_TOOLS.contains(&name) => {
             conduct_call(home, cwd, session, name, &arguments, waits, cancelled)
         }
@@ -1585,6 +1625,109 @@ fn notify_call(
     Ok(json!({ "content": [{ "type": "text", "text": "Left on the session's row." }] }))
 }
 
+/// The session the notes are kept for: the token the workbench started
+/// it with. An agent the workbench did not start keeps none.
+fn notes_owner(session: Option<&str>) -> Result<&str, String> {
+    session.ok_or_else(|| {
+        "Notes are kept for the sessions the workbench started, and this one was not started by it.".to_string()
+    })
+}
+
+fn said(text: impl Into<String>) -> Value {
+    json!({ "content": [{ "type": "text", "text": text.into() }] })
+}
+
+/// Keeps a note, the brief, or both, in the workbench's own store.
+fn note_call(home: &Path, session: Option<&str>, arguments: &Value) -> Result<Value, String> {
+    let owner = notes_owner(session)?;
+    let text = |key: &str| {
+        arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let brief = text("brief");
+    let (title, summary, body) = (text("title"), text("summary"), text("body"));
+    let replaces = arguments.get("replaces").and_then(Value::as_i64);
+    let noted = title.is_some() || summary.is_some() || body.is_some() || replaces.is_some();
+    if brief.is_none() && !noted {
+        return Err("A note needs a title and a summary, or a brief.".to_string());
+    }
+    let notes = crate::notes::Notes::open(home)?;
+    let now = crate::notes::now();
+    let mut answer = Vec::new();
+    if let Some(brief) = brief {
+        notes.set_brief(owner, brief, now)?;
+        answer.push("Brief kept.".to_string());
+    }
+    if noted {
+        let id = notes.add(
+            owner,
+            &crate::notes::NewNote {
+                title: title.unwrap_or(""),
+                summary: summary.unwrap_or(""),
+                body: body.unwrap_or(""),
+                replaces,
+            },
+            now,
+        )?;
+        answer.push(match replaces {
+            Some(old) => format!("Kept as note #{id}, in place of #{old}."),
+            None => format!("Kept as note #{id}."),
+        });
+    }
+    Ok(said(answer.join(" ")))
+}
+
+/// Reads the notes: the brief and list, one note whole, or those found by
+/// their words.
+fn notes_call(home: &Path, session: Option<&str>, arguments: &Value) -> Result<Value, String> {
+    let owner = notes_owner(session)?;
+    let none = "No notes are kept of this conversation yet.";
+    let Some(notes) = crate::notes::Notes::existing(home)? else {
+        return Ok(said(none));
+    };
+    if let Some(id) = arguments.get("id").and_then(Value::as_i64) {
+        return match notes.read(owner, id)? {
+            Some(note) => Ok(said(crate::notes::whole(&note))),
+            None => Err(format!("There is no note #{id} of this conversation.")),
+        };
+    }
+    let words = arguments
+        .get("find")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|words| !words.is_empty());
+    let Some(words) = words else {
+        let listed = notes.listed(owner)?;
+        return Ok(said(
+            crate::notes::briefing_of(&listed).unwrap_or_else(|| none.to_string()),
+        ));
+    };
+    let found = notes.find(owner, words)?;
+    if found.is_empty() {
+        return Ok(said(format!("No note holds all of: {words}.")));
+    }
+    let (whole, named) = found.split_at(found.len().min(crate::notes::FOUND_WHOLE));
+    let read: Vec<i64> = whole.iter().map(|note| note.id).collect();
+    for id in &read {
+        notes.read(owner, *id)?;
+    }
+    let mut text = whole
+        .iter()
+        .map(crate::notes::whole)
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    if !named.is_empty() {
+        text.push_str("\n\nAlso found, read by number:\n");
+        for note in named {
+            text.push_str(&format!("#{} {}: {}\n", note.id, note.title, note.summary));
+        }
+    }
+    Ok(said(text.trim_end().to_string()))
+}
+
 /// What the user is looking at, in words, when it is in this project.
 fn selection_call(home: &Path, cwd: &Path) -> Result<Value, String> {
     let text = describe_selection(crate::selection::read(home).as_ref(), cwd);
@@ -1986,7 +2129,7 @@ mod tests {
             .unwrap();
             listed["result"]["tools"].as_array().unwrap().clone()
         };
-        assert_eq!(ask(&home).len(), 27);
+        assert_eq!(ask(&home).len(), 29);
         publish_a_tool(&home);
         let listed = ask(&home);
         let names: Vec<&str> = listed
@@ -2002,6 +2145,8 @@ mod tests {
                 "selection",
                 "terminal",
                 "notify",
+                "note",
+                "notes",
                 "browser_open",
                 "browser_tabs",
                 "browser_navigate",
@@ -2026,9 +2171,9 @@ mod tests {
                 "github_pr"
             ]
         );
-        assert_eq!(listed[27]["description"], "The branch's pull request.");
+        assert_eq!(listed[29]["description"], "The branch's pull request.");
         assert_eq!(
-            listed[27]["inputSchema"]["properties"]["state"]["type"],
+            listed[29]["inputSchema"]["properties"]["state"]["type"],
             "string"
         );
     }
@@ -2138,6 +2283,8 @@ mod tests {
                 "selection",
                 "terminal",
                 "notify",
+                "note",
+                "notes",
                 "browser_open",
                 "browser_tabs",
                 "browser_navigate",
@@ -2223,7 +2370,7 @@ mod tests {
         )
         .unwrap();
         let listed = listed["result"]["tools"].as_array().unwrap().clone();
-        assert_eq!(listed.len(), 27);
+        assert_eq!(listed.len(), 29);
         let named = |name: &str| {
             listed
                 .iter()
@@ -2499,6 +2646,67 @@ mod tests {
         assert_eq!(request.session.as_deref(), Some("s-9"));
         let empty = handle(&home, &cwd, None, r#"{"jsonrpc":"2.0","id":11,"method":"tools/call","params":{"name":"notify","arguments":{"text":"  "}}}"#).unwrap();
         assert_eq!(empty["result"]["isError"], true);
+    }
+
+    #[test]
+    fn a_session_keeps_and_reads_its_own_notes() {
+        let home = home("workbench-mcp-notes");
+        let cwd = home.join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let call = |session: Option<&str>, name: &str, arguments: Value| {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": name, "arguments": arguments }
+            });
+            let answer = handle(&home, &cwd, session, &line.to_string()).unwrap();
+            let text = answer["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            (answer["result"]["isError"] == true, text)
+        };
+        assert_eq!(
+            call(Some("t-1"), "notes", json!({})),
+            (
+                false,
+                "No notes are kept of this conversation yet.".to_string()
+            )
+        );
+        assert!(call(None, "note", json!({ "brief": "x" })).0);
+        assert!(call(Some("t-1"), "note", json!({})).0);
+        assert_eq!(
+            call(
+                Some("t-1"),
+                "note",
+                json!({ "brief": "Chord.", "title": "Cap", "summary": "150k for started sessions." })
+            ),
+            (false, "Brief kept. Kept as note #1.".to_string())
+        );
+        assert_eq!(
+            call(
+                Some("t-1"),
+                "note",
+                json!({ "title": "Cap", "summary": "120k.", "body": "Measured.", "replaces": 1 })
+            ),
+            (false, "Kept as note #2, in place of #1.".to_string())
+        );
+        let (_, listed) = call(Some("t-1"), "notes", json!({}));
+        assert!(listed.contains("Chord."), "{listed}");
+        assert!(listed.contains(": 120k."), "{listed}");
+        assert!(!listed.contains("150k"), "{listed}");
+        let (_, read) = call(Some("t-1"), "notes", json!({ "id": 2 }));
+        assert!(read.ends_with("In place of #1.\n\nMeasured."), "{read}");
+        let (_, found) = call(Some("t-1"), "notes", json!({ "find": "cap" }));
+        assert!(
+            found.contains("#2 ") && found.contains("Replaced by #2."),
+            "{found}"
+        );
+        // Another session's notes are its own.
+        assert!(call(Some("t-2"), "notes", json!({ "id": 2 })).0);
+        assert_eq!(
+            call(Some("t-2"), "notes", json!({})).1,
+            "No notes are kept of this conversation yet."
+        );
     }
 
     #[test]
