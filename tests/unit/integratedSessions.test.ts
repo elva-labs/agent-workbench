@@ -52,6 +52,8 @@ import {
   wake,
 } from "$lib/sessions.svelte";
 import { modeOf, resetModes } from "$lib/sessionModes";
+import { adoptLastChosen, anyChosen, chosenFor, lastChosen, resetLastChosen } from "$lib/lastChosen.svelte";
+import { choose } from "$lib/settingChoices";
 import { create as createShell, forOwner, reset as resetShells } from "$lib/terminals.svelte";
 import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
 import { attention, resetAttention } from "$lib/attention.svelte";
@@ -1974,5 +1976,149 @@ describe("a new conversation put under a workflow", () => {
     await vi.waitFor(() => expect(byKey(key)!.status).toBe("failed"));
     expect(byKey(key)!.error).toBe("no tool server to give the orchestrator its start tool");
     expect(linkFor(key).restarting).toBe(false);
+  });
+});
+
+describe("what a new session starts on from the user's last choices", () => {
+  const lastStart = () =>
+    (fake.calls.filter((call) => call.method === "start").at(-1) as {
+      options: { model?: string; mode?: string; effort?: string };
+    }).options;
+  const configures = () => fake.calls.filter((call) => call.method === "configure");
+
+  beforeEach(() => resetLastChosen());
+
+  it("starts a new one on what was last chosen on the chips, and shows it before the agent says", async () => {
+    const first = await started();
+    const conversation = conversationOf(first.key);
+    choose(first.key, conversation, "model", "sonnet");
+    choose(first.key, conversation, "effort", "high");
+    choose(first.key, conversation, "mode", "acceptEdits");
+    await vi.waitFor(() => expect(chosenFor("claude-code")).toEqual({ model: "sonnet", effort: "high", mode: "acceptEdits" }));
+    fake.holdReady = true;
+    const next = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    expect(next.model).toBe("sonnet");
+    // The chips have it from the first frame.
+    expect(conversationOf(next.key).settings).toEqual({ model: "sonnet", mode: "acceptEdits", effort: "high" });
+    void launch(next.key);
+    await vi.waitFor(() => expect(lastStart()).toMatchObject({ model: "sonnet", mode: "acceptEdits", effort: "high" }));
+    fake.holdReady = false;
+  });
+
+  it("keeps no default the agent started on, nor a mode a run fell back to, and none of Plan", async () => {
+    stopListening();
+    await install({ ownMode: "default" });
+    const first = await started();
+    expect(anyChosen("claude-code")).toBe(false);
+    const conversation = conversationOf(first.key);
+    choose(first.key, conversation, "mode", "auto");
+    await vi.waitFor(() => expect(chosenFor("claude-code").mode).toBe("auto"));
+    choose(first.key, conversation, "mode", "plan");
+    await settled();
+    expect(chosenFor("claude-code").mode).toBe("auto");
+    // Where auto is not taken, the next runs in the nearest below, says so,
+    // and what is kept stays.
+    const next = await started();
+    expect(lastStart().mode).toBe("auto");
+    await vi.waitFor(() => expect(conversationOf(next.key).settings.mode).toBe("acceptEdits"));
+    expect(configures().at(-1)).toMatchObject({ settings: { mode: "acceptEdits" } });
+    await vi.waitFor(() =>
+      expect(conversationOf(next.key).entries.at(-1)).toMatchObject({
+        kind: "note",
+        text: "Auto mode, last chosen, is not available here, so it runs in Accept edits mode, the nearest below that it can take.",
+      }),
+    );
+    expect(chosenFor("claude-code").mode).toBe("auto");
+  });
+
+  it("starts on the agent's default where the model last chosen is not offered, keeping the choice", async () => {
+    adoptLastChosen({ "claude-code": { model: "opus" } });
+    const next = await started();
+    expect(lastStart().model).toBe("opus");
+    await vi.waitFor(() => expect(configures().at(-1)).toMatchObject({ settings: { model: "default" } }));
+    await vi.waitFor(() =>
+      expect(conversationOf(next.key).entries.at(-1)).toMatchObject({
+        kind: "note",
+        text: "Opus is not offered here, so the session runs on Default.",
+      }),
+    );
+    expect(chosenFor("claude-code").model).toBe("opus");
+    // The account was heard, so its next session starts on the default.
+    const after = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
+    expect(after.model).toBeNull();
+  });
+
+  it("starts nothing in a stored Plan, bypassing permissions or full access, integrated or in a terminal", async () => {
+    // Written to the store past every check, as a later version or a hand
+    // might write the file.
+    for (const [agent, mode] of [
+      ["claude-code", "bypassPermissions"],
+      ["claude-code", "plan"],
+      ["codex", "full-access"],
+    ] as const) {
+      lastChosen.byAgent = { [agent]: { mode } };
+      const row = create(PROJECT, null, agent, null, null, null, null, undefined, "integrated");
+      expect(conversationOf(row.key).settings.mode).toBeNull();
+      await launch(row.key);
+      expect(lastStart().mode).toBeUndefined();
+      const term = create(PROJECT, null, agent, null, null, null, null, undefined, "terminal");
+      await launchTerminal(term.key, 80, 24, () => {});
+      expect(pty.spawned.at(-1)!.mode).toBeUndefined();
+    }
+  });
+
+  it("keeps no model pick the agent did not switch to", async () => {
+    const first = await started();
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const configureNow = seam.integratedConfigure;
+    // The agent answers, still on the model it ran on.
+    seam.integratedConfigure = async () => conversationOf(first.key).settings;
+    choose(first.key, conversationOf(first.key), "model", "haiku");
+    await settled();
+    await settled();
+    expect(chosenFor("claude-code").model).toBeUndefined();
+    seam.integratedConfigure = configureNow;
+    choose(first.key, conversationOf(first.key), "model", "haiku");
+    await vi.waitFor(() => expect(chosenFor("claude-code").model).toBe("haiku"));
+  });
+
+  it("gives nothing kept to a session another started, a resumed one, or a workflow's model", async () => {
+    adoptLastChosen({ "claude-code": { model: "sonnet", effort: "low", mode: "acceptEdits" } });
+    const given = create(PROJECT, null, "claude-code", null, "Fix it", "haiku", null, undefined, "integrated");
+    given.modeGiven = "default";
+    await launch(given.key);
+    expect(lastStart()).toMatchObject({ model: "haiku", mode: "default" });
+    expect(lastStart().effort).toBeUndefined();
+    await started({ resumedFrom: "old-1" });
+    expect(lastStart().model).toBeUndefined();
+    expect(lastStart().mode).toBeUndefined();
+    expect(lastStart().effort).toBeUndefined();
+    // A pick on a chip of a session another started is still the user's.
+    choose(given.key, conversationOf(given.key), "mode", "dontAsk");
+    await vi.waitFor(() => expect(chosenFor("claude-code").mode).toBe("dontAsk"));
+  });
+
+  it("launches a terminal on the kept model and mode, and keeps a mode its hooks say it switched to", async () => {
+    adoptLastChosen({ "claude-code": { model: "sonnet", effort: "high", mode: "acceptEdits" } });
+    const row = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "terminal");
+    await launchTerminal(row.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ model: "sonnet", mode: "acceptEdits" });
+    startedTerminal(row.key, "pty-1", "conversation-t");
+    // The mode it says it began in is not a choice. A switch after it is
+    // kept only where it narrows what is kept, since any process can
+    // write what the hooks report.
+    exact("conversation-t", "prompt", null, false, { mode: "auto" });
+    expect(chosenFor("claude-code").mode).toBe("acceptEdits");
+    exact("conversation-t", "stop", null, false, { mode: "default" });
+    expect(chosenFor("claude-code").mode).toBe("default");
+    exact("conversation-t", "prompt", null, false, { mode: "auto" });
+    exact("conversation-t", "stop", null, false, { mode: "plan" });
+    expect(chosenFor("claude-code").mode).toBe("default");
+    // One resumed goes on as its conversation did.
+    const back = create(PROJECT, "old-2", "claude-code", null, null, null, null, undefined, "terminal");
+    await launchTerminal(back.key, 80, 24, () => {});
+    expect(pty.spawned.at(-1)).toMatchObject({ session: "old-2" });
+    expect((pty.spawned.at(-1) as { model?: string }).model).toBeUndefined();
+    expect(pty.spawned.at(-1)!.mode).toBeUndefined();
   });
 });

@@ -32,6 +32,9 @@ import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { isInstalled } from "$lib/hook.svelte";
 import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
+import { chosenFor, modelToStart, narrowTo } from "$lib/lastChosen.svelte";
+import { carriedOver } from "$lib/modeFit";
+import { starterOf } from "$lib/senders.svelte";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
@@ -182,6 +185,10 @@ export interface Session {
       in. Null until they say, and for an agent whose hooks do not, as
       Codex's do not. */
   modeSeen: string | null;
+  /** What this run was started on from the choices the user last made
+      for its agent, each null where it named none of them. Null for a run
+      that took none: one resumed, or one another session started. */
+  carried: Carried | null;
   /** How many turns the agent has begun in this run, as its hooks or its
       events say, or, without them, as its output does. */
   turns: number;
@@ -193,6 +200,32 @@ export interface Session {
   error: string | null;
   /** Set once the terminal has been created, so it is only built once. */
   mounted: boolean;
+}
+
+/** What a run takes from the choices the user last made for its agent. */
+export interface Carried {
+  model: string | null;
+  effort: string | null;
+  mode: string | null;
+}
+
+/**
+ * What a new session the user started takes from the choices kept for its
+ * agent: the mode and the effort, and the model where the row was made on
+ * the kept one. A resumed session goes on as its conversation did, and a
+ * session another started begins as its starter says; neither takes any.
+ */
+export function carriedFor(session: Session): Carried | null {
+  if (session.resumedFrom !== null || session.prompt !== null || session.modeGiven !== null) return null;
+  if (starterOf(session.key) !== null) return null;
+  const kept = chosenFor(session.agent);
+  return {
+    model: session.workflow === null && session.model !== null && session.model === kept.model ? session.model : null,
+    effort: kept.effort ?? null,
+    // Checked again here: a mode a new session is not begun in starts
+    // nothing, wherever it came from.
+    mode: kept.mode !== undefined && carriedOver(session.agent, kept.mode) ? kept.mode : null,
+  };
 }
 
 const MINE_KEY = "workbench.mine";
@@ -1405,6 +1438,10 @@ export function create(
     if (resumedFrom === null) runs = following.orchestrator.agent;
     if (model === null && runs === following.orchestrator.agent)
       model = orchestratorModel(following);
+  } else if (model === null && resumedFrom === null && prompt === null) {
+    // A new session the user starts alone begins on the model last chosen
+    // for its agent.
+    model = modelToStart(runs, account);
   }
   const runsAs: SessionKind = kind ?? kindFor(runs);
   // A resumed session left to follow what it followed before finds out what
@@ -1526,8 +1563,8 @@ export function cannotDirect(workflow: Workflow): string | null {
 /**
  * Puts a row under a workflow, or under none, the way a new row is put
  * under one: on the orchestrator's agent and model and told the workflow
- * as it starts, or alone on the agent given and that agent's own default
- * model. It changes what the row says it is; the run behind it is the
+ * as it starts, or alone on the agent given and the model last chosen for
+ * it, else its own default. It changes what the row says it is; the run behind it is the
  * caller's to start again. False when the workflow cannot direct a
  * conversation here.
  */
@@ -1538,7 +1575,7 @@ export function putUnder(key: string, workflow: Workflow | null, alone: AgentId)
   if (workflow === null) {
     session.workflow = null;
     session.agent = alone;
-    session.model = null;
+    session.model = modelToStart(alone, session.account);
   } else {
     session.workflow = structuredClone($state.snapshot(workflow)) as Workflow;
     session.agent = workflow.orchestrator.agent;
@@ -1748,6 +1785,7 @@ function row(
     modeNamed: null,
     modeGiven: null,
     modeSeen: null,
+    carried: null,
     turns: 0,
     changedAt: Date.now(),
     exitCode: null,
@@ -1918,10 +1956,14 @@ export async function launch(
   // own down. A new one another session started begins in the mode its
   // starter gave it, and one reopened before anything was said in it, in
   // the mode kept for the conversation it leaves.
+  // A new one the user started begins in the mode last chosen for its
+  // agent.
+  const carried = carriedFor(session);
   const mode =
     session.resumedFrom !== null
       ? modeOf(session.resumedFrom)
-      : (session.modeGiven ?? (session.id === null ? null : modeOf(session.id)));
+      : (session.modeGiven ?? (session.id === null ? null : modeOf(session.id)) ?? carried?.mode ?? null);
+  session.carried = carried === null ? null : { ...carried, effort: null, mode: mode === carried.mode ? mode : null };
   session.modeNamed = mode;
   session.modeSeen = null;
   const back = bringingBack.delete(key);
@@ -3138,7 +3180,14 @@ export function exact(
   // The hooks have spoken since the user's Escape or Ctrl+C: what it did
   // is theirs to say.
   interrupts.delete(session.key);
-  if (typeof more.mode === "string" && more.mode !== "") session.modeSeen = more.mode;
+  if (typeof more.mode === "string" && more.mode !== "") {
+    // A mode the terminal switched to once its run had said the one it
+    // began in narrows what the agent's next sessions begin in, and never
+    // widens it. The mode it began in, whether its settings', one it fell
+    // back to or one its starter gave it, is no switch at all.
+    if (session.modeSeen !== null && session.modeSeen !== more.mode) narrowTo(session.agent, more.mode);
+    session.modeSeen = more.mode;
+  }
   answered.delete(session.key);
   // The line a run that a reopen stops leaves on its way out is not left
   // for the user.

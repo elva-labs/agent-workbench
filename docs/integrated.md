@@ -152,7 +152,7 @@ says which.
 A session starts in the mode a terminal session of its agent would start
 in, chosen by the agent from the user's own settings, and the window shows
 the mode the agent says it runs in. The workbench names a mode at the start
-in three cases only. A session that starts again, or a conversation resumed
+in four cases only. A session that starts again, or a conversation resumed
 or reopened integrated, names the mode it last ran in integrated, which the
 window keeps for each conversation; one reopened before anything was said
 in it starts afresh, in the mode kept for the conversation it leaves. A
@@ -161,12 +161,14 @@ Code's terminal resumes a conversation, since its stream would start one as
 a new conversation. A new conversation another session started names the
 mode its starter gave it, the starter's own as far as its agent has it, so
 it begins in no more than the session that started it (see
-[orchestrator](orchestrator.md#what-the-user-is-asked)). None is ever
-bypassing permissions, nor any mode a session cannot be switched to; those
-are left to the agent's own settings. Nothing else names a mode, so a
-start never grants more than those settings would in a terminal, or than
-the session that started it held then, and every tool call that asks is
-answered in the window by the user.
+[orchestrator](orchestrator.md#what-the-user-is-asked)). A new session the
+user starts names the mode the user last chose for its agent, as
+[below](#what-a-new-session-starts-on) describes. None is ever bypassing
+permissions, nor any mode a session cannot be switched to; those are left
+to the agent's own settings. Nothing else names a mode, so a start never
+grants more than those settings would in a terminal, than the user chose
+themselves, or than the session that started it held then, and every tool
+call that asks is answered in the window by the user.
 
 For Claude Code that is the `permissions.defaultMode` of its settings,
 which a stream session takes from the same files as the terminal, with
@@ -192,8 +194,8 @@ the next start. A run that was killed, as a stop on Windows or a crash
 ends one, wrote nothing down, and the window's record decides the next
 start. A record still held by a terminal run when the window starts is
 let go, since the app's quit hung up on that run.
-A mode is the conversation's own: a new session the user starts names
-none, and no conversation takes another's.
+A mode kept for a conversation is that conversation's own, and no
+conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept
 the same way.
 
@@ -207,6 +209,58 @@ not offer to switch to, such as bypassing permissions or a Codex approval
 policy and sandbox that make none of its modes, is shown on the chip in
 plain words, and once another is chosen it comes back only in a new
 session.
+
+## What a new session starts on
+
+A new session the user starts, integrated or in a terminal, starts on the
+model, the effort and the permission mode the user last chose for its
+agent, each where one is kept, and otherwise on the agent's own default
+for it. An integrated session is started with all three, and its chips
+show them from the first frame, until the agent says what it runs on. A
+terminal session is started with the model and the mode, on the flags its
+start already takes for them; a terminal takes no effort from the
+workbench.
+
+What is kept is the user's own choice: a model, an effort or a mode picked
+on a conversation's chips once the agent runs on it. Only the window makes
+those picks, so only they can keep a mode that lets the agent do more
+without asking. A Claude Code terminal's hooks report its mode, and a
+switch they report after the first mode they reported for its run is kept
+only where it lets the agent do no more than the mode kept now, Default
+standing in for none kept: what the hooks report can be written by any of
+the user's processes, so it can narrow what new sessions begin in and
+never widen it. The mode a run began in, the agent's own default, a mode
+an agent fell back to, the model a workflow sets and what a session
+another started was given are not choices and change nothing.
+
+Plan, bypassing permissions and Codex's full access are never kept: a new
+session does not begin unable to edit, or unguarded, because of where the
+last one stood, and choosing one leaves the mode kept before. The rule
+holds where the choices are used as well as where they are made: the core
+refuses such a mode in the settings file, the window takes none from the
+file, and a start names none, so a file that names one, written by hand,
+by an agent's shell or by a later version, starts nothing in it. Claude
+Code's default model, chosen on the chip, keeps no model, and the settings
+let go of everything kept for an agent, as
+[settings](settings.md#sessions) describes. The choices are kept for the
+machine in the settings file, by agent.
+
+They are kept per agent, not per account or per project, so they follow
+the user into every project and account. What one account or project
+cannot take is settled when a session starts, and never changes what is
+kept. A model the agent does not offer the session's account starts it on
+the agent's default model, or the first it offers, with a notice; once a
+session under an account has said which models it offers, a new one under
+that account, while the window is open, is started on the default without
+asking for the model first. A mode the agent does
+not take, such as auto where the account or the project's settings give
+none, is switched to the nearest narrower mode the agent offers, with a
+notice, as for a session another started. An effort the model does not
+take is switched to the nearest lower one it does. The chips then show
+what the session runs on. A resumed session goes on as its conversation
+did, a session another started begins as its starter says, and a session
+that follows a workflow takes the mode and the effort but runs on the
+model the workflow sets.
 
 ## Trust
 

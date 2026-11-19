@@ -44,7 +44,7 @@
     updateSource,
   } from "$lib/plugins.svelte";
   import { lastSegment } from "$lib/paths";
-  import type { PluginInfo, PluginSource } from "$lib/core";
+  import type { AgentId, PluginInfo, PluginSource } from "$lib/core";
   import { hook, overrideOf, reapply, setEverywhere, setOverride } from "$lib/hook.svelte";
   import {
     OWN_LABEL,
@@ -82,6 +82,10 @@
   import { compact, setCompact } from "$lib/compact.svelte";
   import { notify, setChime, setNotifications } from "$lib/notify.svelte";
   import { setAskEveryStart, startAsk } from "$lib/startAsk.svelte";
+  import { anyChosen, chosenFor, forget as forgetChosen } from "$lib/lastChosen.svelte";
+  import { modelLabel } from "$lib/models";
+  import { modeName } from "$lib/modeFit";
+  import { effortName } from "$lib/settingChoices";
   import BackgroundPicker from "$lib/components/BackgroundPicker.svelte";
   import UnreadEntries from "$lib/components/UnreadEntries.svelte";
   import WorkflowsTab from "$lib/components/WorkflowsTab.svelte";
@@ -305,6 +309,22 @@
   });
 
   /** What a row says of where an account keeps each agent. */
+  /** What new sessions of an agent start on, as its row says it. */
+  function chosenLine(agent: AgentId): string {
+    const kept = chosenFor(agent);
+    const parts = [
+      kept.model === undefined ? null : modelLabel(agent, kept.model),
+      // A terminal takes no effort from the workbench.
+      kept.effort === undefined
+        ? null
+        : kindFor(agent) === "terminal"
+          ? `${effortName(kept.effort)} in conversations`
+          : effortName(kept.effort),
+      kept.mode === undefined ? null : modeName(agent, kept.mode),
+    ].filter((part) => part !== null);
+    return parts.length === 0 ? "Its own defaults" : parts.join(" · ");
+  }
+
   function dirsLine(name: string): string {
     const dirs = accounts.list[name];
     return [
@@ -722,6 +742,33 @@
               allowed it for the session stays; either says so on its row, and Reopen, from a right
               click on it, moves it now.
             </p>
+            <h3>What new sessions start on</h3>
+            <UnreadEntries field="lastChosen" />
+            <p class="note">
+              A new session you start begins on the model, the effort and the mode you last chose for
+              its agent on a conversation's chips. A Claude Code terminal's switch to a mode that lets
+              the agent do no more without asking is kept too; a mode that lets it do more is kept only
+              from a chip. Plan, Bypass permissions and Full
+              access are not carried over. A terminal session takes the model and the mode. A session
+              another one starts begins as its starter says, and a workflow sets the model of its
+              sessions.
+            </p>
+            <div data-testid="chosen-list">
+              {#each installed().length > 0 ? installed() : AGENTS as id (id)}
+                <div class="account" data-testid="chosen" data-agent={id}>
+                  <span class="account-name">{agentLabel(id)}</span>
+                  <span class="account-meta chosen" data-testid="chosen-line">{chosenLine(id)}</span>
+                  {#if anyChosen(id)}
+                    <button
+                      class="tool"
+                      onclick={() => forgetChosen(id)}
+                      aria-label="Start new {agentLabel(id)} sessions on its own defaults"
+                      data-testid="chosen-forget">Use defaults</button
+                    >
+                  {/if}
+                </div>
+              {/each}
+            </div>
             <h3>When a session starts another</h3>
             <UnreadEntries field="askEveryStart" />
             <p class="note">
@@ -1698,6 +1745,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .account-meta.chosen {
+    font-family: var(--chrome);
+    font-size: 12px;
   }
 
   .account-form {

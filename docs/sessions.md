@@ -846,7 +846,10 @@ composer says which were left out until the message is sent. A message sent whil
 being read waits for it. The empty composer names the keys that open its
 menus, `/` for commands where the agent lists them and `@` for files where
 the project has a git repository. It shows the model the
-session runs on, which a click changes: the agent's default is named once
+session runs on, which a click changes, and a new session the user starts
+shows from its first frame the model, the mode and the effort last chosen
+for its agent, which it starts on, as
+[integrated](integrated.md#what-a-new-session-starts-on) describes: the agent's default is named once
 the agent has said which model that is, and a model chosen during a turn is
 said to be used from the next. A session that follows a workflow shows its
 orchestrator's model and holds it, saying the workflow sets it, and so does
@@ -855,8 +858,9 @@ workflow's own name for it until the run has said. It shows the mode the
 session runs in, as the agent says it does, which a click changes at once
 among the modes the agent offers. A session starts in the mode a terminal
 session would, as [integrated](integrated.md#the-mode-a-session-starts-in)
-describes: the one the user's own agent settings name, and for a session
-that starts again or is resumed, the one it last ran in. A mode from those
+describes: for a new session the one last chosen for its agent, else the
+one the user's own agent settings name, and for a session that starts again
+or is resumed, the one it last ran in. A mode from those
 settings that the agent offers no switch to, such as bypassing permissions,
 is shown in plain words and comes back only in a new session once another
 is chosen. It shows how much of the context window the conversation takes. While
@@ -906,8 +910,8 @@ the workflow's instructions and with the agent's own subagent tools taken
 away where the workflow says so, and the thread's first line says what it
 follows. A workflow directed by another agent puts the session on that
 agent, still as a conversation, whatever that agent's own setting is.
-Picking none starts it again alone, on the agent it was started on and that
-agent's own default model. Either way it keeps its row and its token, the
+Picking none starts it again alone, on the agent it was started on and the
+model last chosen for that agent, else its own default. Either way it keeps its row and its token, the
 words being written, the keyboard, and, while the agent stays the same, the
 user's last choice of mode, one still on its way included. The run it
 leaves is stopped before anything can reach it, and what that run answers

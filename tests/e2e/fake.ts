@@ -599,6 +599,7 @@ export async function installFakeCore(
         notifications: true,
         chime: false,
         askEveryStart: false,
+        lastChosen: {},
       };
       const allowed: Record<string, string[]> = {
         appearance: ["system", "light", "dark"],
@@ -1715,6 +1716,19 @@ export async function installFakeCore(
             } else if (field === "backgrounds") {
               if (typeof value !== "object" || value === null || Array.isArray(value))
                 throw new Error("backgrounds is a table of backgrounds by palette or theme");
+            } else if (field === "lastChosen") {
+              if (
+                typeof value !== "object" ||
+                value === null ||
+                Array.isArray(value) ||
+                Object.values(value).some(
+                  (entry) =>
+                    typeof entry !== "object" ||
+                    entry === null ||
+                    Object.values(entry).some((one) => one !== null && typeof one !== "string"),
+                )
+              )
+                throw new Error("lastChosen is a table by agent of the model, the effort and the mode last chosen");
             } else if (field === "cards") {
               if (
                 typeof value !== "object" ||
