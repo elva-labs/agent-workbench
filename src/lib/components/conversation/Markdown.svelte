@@ -224,6 +224,7 @@
      line hangs its continuation under its own indent and list marker. */
   .md :global(.code[data-wrap] pre) {
     overflow-x: hidden;
+    tab-size: 8;
   }
 
   .md :global(.code[data-wrap] pre code) {

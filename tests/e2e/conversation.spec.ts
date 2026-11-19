@@ -2745,6 +2745,31 @@ test.describe("copying from the conversation", () => {
     expect((await copied(page)).at(-1)).toBe(prose);
   });
 
+  test("keeps the lines of a table and a tree drawn in text", async ({
+    page,
+  }) => {
+    await openIntegrated(page);
+    const long = "word ".repeat(60).trim();
+    const table = `| name | note |\n|------|------|\n| a | ${long} |`;
+    const tree = `src\n\u251c\u2500\u2500 lib\n\u2502   \u2514\u2500\u2500 ${long}.ts`;
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Show it.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify("```\n" + table + "\n```\n\n```\n" + tree + "\n```")}, done: true });
+       f.endTurn("${H}");`,
+    );
+    const blocks = page.locator("[data-testid='markdown'] div.code");
+    await expect(blocks).toHaveCount(2);
+    for (const i of [0, 1])
+      expect(
+        await blocks
+          .nth(i)
+          .locator("pre")
+          .evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeGreaterThan(0);
+  });
+
   test("shows a Copy only over what it copies, and turns to Copied for a moment", async ({ page }) => {
     await withEverything(page);
     const message = page.getByTestId("copy-message");

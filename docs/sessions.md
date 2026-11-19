@@ -712,8 +712,10 @@ A fenced block that holds words, one with no language or marked text,
 Markdown, message, email or comment, wraps at the block's width, at word
 boundaries, and a line that starts with spaces or a list marker keeps its
 continuation lines under its words. Copy still gives the lines as written.
-A block in any other language, a diff included, keeps its lines and scrolls
-sideways, since wrapped code misleads.
+A block with no language that is laid out in columns, such as a table or a
+tree drawn in text, aligned output or a diff, keeps its lines, as does a
+block in any other language, and scrolls sideways, since wrapped code
+misleads.
 
 The conversation can be searched with find, which looks in all of it
 whether the thread draws it yet or not: the messages, what the agent wrote
