@@ -17,7 +17,56 @@ fn reading_never_makes_a_store() {
     let kept = kept(home.path(), "token", true).unwrap();
     assert_eq!(kept.standing, 0);
     assert_eq!(kept.page, None);
+    assert!(!folder(home.path()).exists());
+}
+
+#[test]
+fn the_store_is_in_the_workbench_directory_and_the_users_alone() {
+    let home = Scratch::new("notes-own");
+    let notes = Notes::open(home.path()).unwrap();
+    notes.add("a", &note("One", "First."), 0).unwrap();
+    let page = kept(home.path(), "a", true).unwrap().page.unwrap();
+    let dir = home.path().join(".agent-workbench").join("notes");
+    assert!(dir.join(FILE).is_file());
+    assert!(Path::new(&page).starts_with(&dir));
     assert!(!home.path().join(FILE).exists());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join(FILE)), 0o600);
+        assert_eq!(mode(Path::new(&page)), 0o600);
+        assert_eq!(mode(Path::new(&page).parent().unwrap()), 0o700);
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_file() {
+                assert_eq!(mode(&path) & 0o077, 0, "{}", path.display());
+            }
+        }
+    }
+}
+
+#[test]
+fn a_note_kept_after_the_point_gone_back_to_is_said_to_be_so() {
+    let home = Scratch::new("notes-since");
+    let notes = Notes::open(home.path()).unwrap();
+    notes.add("a", &note("Before", "Stands."), 100).unwrap();
+    notes
+        .add("a", &note("After", "Went back on."), 200)
+        .unwrap();
+    let all = briefing_since(home.path(), "a", Some(150)).unwrap();
+    let line = |title: &str| {
+        all.lines()
+            .find(|line| line.contains(title))
+            .unwrap()
+            .to_string()
+    };
+    assert!(!line("Before").contains("went back on"));
+    assert!(line("After").contains("kept on a turn the conversation went back on"));
+    assert!(!briefing(home.path(), "a")
+        .unwrap()
+        .contains("went back on:"));
 }
 
 #[test]
@@ -202,6 +251,10 @@ fn a_page_path_keeps_to_the_folder() {
     let home = Path::new("/home");
     assert_eq!(
         page_path(home, "../x"),
-        Path::new("/home").join(PAGES).join("___x").join(PAGE_NAME)
+        Path::new("/home")
+            .join(".agent-workbench")
+            .join("notes")
+            .join("___x")
+            .join(PAGE_NAME)
     );
 }

@@ -615,12 +615,18 @@ impl Core {
                     Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
             }
         }
+        let through_cmd = cfg!(windows)
+            && adapter
+                .detect(vars)
+                .is_some_and(|binary| env::is_shell_script(&binary));
+        let prompt = prompt.filter(|prompt| !prompt.trim().is_empty());
+        let prompt = first_prompt(prompt, through_cmd, &mut files, self.home.as_deref())?;
         let ctx = LaunchCtx {
             project,
             env: vars,
             session: session_id.as_deref(),
             token,
-            prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
+            prompt: prompt.as_deref(),
             model: model.filter(|model| !model.trim().is_empty()),
             mode: mode.filter(|mode| !mode.trim().is_empty()),
             config_dir: expanded.as_deref(),
@@ -1037,11 +1043,15 @@ impl Core {
         let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
             return Ok(whole);
         };
-        let notes = crate::notes::briefing(home, token);
+        // A conversation held at a point it went back to is judged and
+        // briefed as it stands there.
+        let leaf = crate::claude_history::leaf(&path);
+        let held = self.held.at(session, leaf.as_deref());
         Ok(crate::going_on::judge(
             &path,
-            notes.as_deref(),
+            |since| crate::notes::briefing_since(home, token, since),
             crate::notes::now() as u64 * 1000,
+            held.as_deref(),
         ))
     }
 
@@ -1940,6 +1950,24 @@ struct SessionFiles {
     paths: Vec<PathBuf>,
 }
 
+/// The first prompt as it goes on the command line: as given, or, where it
+/// goes through the command interpreter and would not arrive as given, a
+/// line naming the file of the session's own it is written to.
+fn first_prompt(
+    prompt: Option<&str>,
+    through_cmd: bool,
+    files: &mut SessionFiles,
+    home: Option<&Path>,
+) -> Result<Option<String>, String> {
+    match (prompt, home) {
+        (Some(text), Some(home)) if through_cmd && !adapter::safe_through_cmd(text) => {
+            let path = files.write(home, "md", text)?;
+            Ok(Some(adapter::prompt_in_file(&path)))
+        }
+        _ => Ok(prompt.map(str::to_string)),
+    }
+}
+
 impl SessionFiles {
     /// Writes a file of the session's own under the workbench's directory,
     /// and answers with where it is.
@@ -2594,6 +2622,40 @@ mod tests {
         assert!(!own.with_extension("lock").exists());
         // Asked again, it answers with the same folder.
         assert_eq!(own_dir_locking(&home, unsupported).unwrap(), own);
+    }
+
+    /// Through the command interpreter, a briefing of thousands of
+    /// characters with line breaks and quotes would not arrive as given:
+    /// it goes in a file of the session's own, which the first prompt names.
+    #[test]
+    fn a_first_prompt_through_the_command_interpreter_goes_in_a_file() {
+        let home = Scratch::new("api-first-prompt");
+        let briefing = format!("{}\n\nUser:\nSay \"hi\" & go | wait", "word ".repeat(3000));
+        let mut files = SessionFiles::default();
+        let line = first_prompt(Some(&briefing), true, &mut files, Some(&home))
+            .unwrap()
+            .unwrap();
+        assert!(adapter::safe_through_cmd(&line), "{line}");
+        let path = files.paths[0].clone();
+        assert!(line.contains(&path.display().to_string()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), briefing);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // A short plain prompt, or one not going through it, goes as given.
+        let mut none = SessionFiles::default();
+        assert_eq!(
+            first_prompt(Some("Run the tests."), true, &mut none, Some(&home)).unwrap(),
+            Some("Run the tests.".to_string())
+        );
+        assert_eq!(
+            first_prompt(Some(&briefing), false, &mut none, Some(&home)).unwrap(),
+            Some(briefing.clone())
+        );
+        assert!(none.paths.is_empty());
     }
 
     #[cfg(unix)]

@@ -14,12 +14,42 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
-/// The database's file in the core's home.
+/// The database's file, in the notes' folder.
 pub const FILE: &str = "notes.db";
 
-/// The folder in the core's home the readable copy of a session's notes is
-/// written to, for the viewer.
-pub const PAGES: &str = "notes";
+/// The notes' folder in the workbench's directory in the user's home,
+/// which holds the database and each session's readable copy, for the
+/// viewer. It and everything in it are the user's alone.
+pub fn folder(home: &Path) -> PathBuf {
+    home.join(".agent-workbench").join("notes")
+}
+
+/// Makes the notes' folder, readable by the user alone.
+fn make_folder(path: &Path) -> Result<(), String> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder
+        .create(path)
+        .map_err(|e| format!("the notes could not be kept in {}: {e}", path.display()))
+}
+
+/// Writes a file of the notes' readable by the user alone, made so before
+/// anything is in it.
+fn write_own(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    std::io::Write::write_all(&mut options.open(path)?, text.as_bytes())
+}
 
 /// The most notes the list names: the newest, then the most read of the
 /// rest. The others are counted, and found by their words.
@@ -128,9 +158,16 @@ fn too_long(what: &str, text: &str, most: usize) -> Result<(), String> {
 impl Notes {
     /// Opens the store in the core's home, made the first time.
     pub fn open(home: &Path) -> Result<Self, String> {
-        std::fs::create_dir_all(home)
-            .map_err(|e| format!("the notes could not be kept in {}: {e}", home.display()))?;
-        let conn = Connection::open(home.join(FILE)).map_err(failed)?;
+        let dir = folder(home);
+        make_folder(&dir)?;
+        let file = dir.join(FILE);
+        // Made the user's alone before SQLite opens it: its journal files
+        // take the database's permissions.
+        if !file.exists() {
+            write_own(&file, "")
+                .map_err(|e| format!("the notes could not be kept in {}: {e}", dir.display()))?;
+        }
+        let conn = Connection::open(file).map_err(failed)?;
         conn.busy_timeout(BUSY).map_err(failed)?;
         // Several sessions' tool servers write at once, each a moment.
         let _ = conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
@@ -159,7 +196,7 @@ impl Notes {
 
     /// Opens the store only when it is there: reading notes never makes one.
     pub fn existing(home: &Path) -> Result<Option<Self>, String> {
-        if !home.join(FILE).is_file() {
+        if !folder(home).join(FILE).is_file() {
             return Ok(None);
         }
         Self::open(home).map(Some)
@@ -398,10 +435,17 @@ pub fn day(at: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
-/// One note's line in a list: its number, day, title and summary.
-fn listed_line(note: &Note) -> String {
+/// One note's line in a list: its number, day, title and summary, and
+/// whether it was kept after `since`, on a turn the conversation went back
+/// on.
+fn listed_line(note: &Note, since: Option<i64>) -> String {
+    let later = if since.is_some_and(|since| note.at > since) {
+        " (kept on a turn the conversation went back on: it may no longer stand)"
+    } else {
+        ""
+    };
     format!(
-        "#{} {} {}: {}",
+        "#{} {} {}: {}{later}",
         note.id,
         day(note.at),
         note.title,
@@ -412,6 +456,12 @@ fn listed_line(note: &Note) -> String {
 /// The brief and the list of notes as the agent reads them, the same at a
 /// restart as from the notes tool. None when nothing is kept.
 pub fn briefing_of(listed: &Listed) -> Option<String> {
+    briefing_of_since(listed, None)
+}
+
+/// The brief and the list, each note kept after `since`, in seconds, said
+/// to be kept on a turn the conversation went back on.
+pub fn briefing_of_since(listed: &Listed, since: Option<i64>) -> Option<String> {
     if listed.brief.is_none() && listed.notes.is_empty() {
         return None;
     }
@@ -428,7 +478,7 @@ pub fn briefing_of(listed: &Listed) -> Option<String> {
     }
     text.push_str("\nNotes, newest first, by number, day, title and summary:\n");
     for note in &listed.notes {
-        text.push_str(&listed_line(note));
+        text.push_str(&listed_line(note, since));
         text.push('\n');
     }
     if listed.more > 0 {
@@ -443,8 +493,14 @@ pub fn briefing_of(listed: &Listed) -> Option<String> {
 /// The brief and list for a session, or None when nothing is kept or the
 /// store cannot be read.
 pub fn briefing(home: &Path, owner: &str) -> Option<String> {
+    briefing_since(home, owner, None)
+}
+
+/// The brief and list for a session held at a point it went back to,
+/// which says of each note kept after `since` that it may no longer stand.
+pub fn briefing_since(home: &Path, owner: &str, since: Option<i64>) -> Option<String> {
     let notes = Notes::existing(home).ok()??;
-    briefing_of(&notes.listed(owner).ok()?)
+    briefing_of_since(&notes.listed(owner).ok()?, since)
 }
 
 /// One note whole, as the agent reads it.
@@ -522,7 +578,7 @@ fn page_folder(home: &Path, owner: &str) -> PathBuf {
             }
         })
         .collect();
-    home.join(PAGES).join(safe)
+    folder(home).join(safe)
 }
 
 /// Where the readable copy of a session's notes is written.
@@ -556,10 +612,9 @@ pub fn kept(home: &Path, owner: &str, page: bool) -> Result<Kept, String> {
     if page && (brief.is_some() || !all.is_empty()) {
         let path = page_path(home, owner);
         if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder)
-                .map_err(|e| format!("the notes could not be written out: {e}"))?;
+            make_folder(folder)?;
         }
-        std::fs::write(&path, page_of(brief.as_ref(), &all))
+        write_own(&path, &page_of(brief.as_ref(), &all))
             .map_err(|e| format!("the notes could not be written out: {e}"))?;
         written = Some(path.to_string_lossy().to_string());
     }

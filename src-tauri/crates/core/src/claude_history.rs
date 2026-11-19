@@ -159,10 +159,33 @@ fn main_chain(entry: &Value) -> bool {
     !flagged(entry, "isSidechain")
 }
 
-/// How the conversation stands at its end, from the usage of its last
-/// request: none where the end of the transcript records none. The cache
-/// lifetime is the last one a request wrote, an hour where none says.
-pub fn standing(path: &Path) -> Option<Standing> {
+/// Whether an entry is on `line`, the conversation as it stands where it
+/// is held at a point it went back to; every entry is where none is given.
+fn on_line(entry: &Value, line: Option<&HashSet<String>>) -> bool {
+    line.is_none_or(|line| {
+        entry["uuid"]
+            .as_str()
+            .is_some_and(|uuid| line.contains(uuid))
+    })
+}
+
+/// The ids of the entries of the conversation as it stands held at the
+/// entry `at`, from there back to its first. None where the transcript
+/// does not hold `at`, or the line breaks off before the first.
+pub fn held_line(path: &Path, at: &str) -> Option<HashSet<String>> {
+    let found = survey(path);
+    if !found.parents.contains_key(at) {
+        return None;
+    }
+    line(&found.placed, &found.parents, Some(at)).map(|line| line.into_iter().collect())
+}
+
+/// How the conversation stands at its end, or at the end of `line` where
+/// it is held at a point, from the usage of its last request: none where
+/// the end of the transcript records none, or does not say when that
+/// request was. The cache lifetime is the last one a request wrote, an
+/// hour where none says.
+pub fn standing(path: &Path, line: Option<&HashSet<String>>) -> Option<Standing> {
     let length = std::fs::metadata(path).ok()?.len();
     let span = Span {
         start: length.saturating_sub(TAIL_KEEP),
@@ -170,14 +193,14 @@ pub fn standing(path: &Path) -> Option<Standing> {
     };
     let mut last: Option<Standing> = None;
     let mut hour = true;
-    lines(path, Some(span), |line| {
-        if !line.windows(7).any(|window| window == b"\"usage\"") {
+    lines(path, Some(span), |bytes| {
+        if !bytes.windows(7).any(|window| window == b"\"usage\"") {
             return;
         }
-        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+        let Ok(entry) = serde_json::from_slice::<Value>(bytes) else {
             return;
         };
-        if entry["type"] != "assistant" || !main_chain(&entry) {
+        if entry["type"] != "assistant" || !main_chain(&entry) || !on_line(&entry, line) {
             return;
         }
         let usage = &entry["message"]["usage"];
@@ -201,8 +224,10 @@ pub fn standing(path: &Path) -> Option<Standing> {
         .iter()
         .filter_map(|key| usage[key].as_u64())
         .sum();
-        let at = entry["timestamp"].as_str().and_then(millis).unwrap_or(0);
-        last = Some(Standing { context, at, hour });
+        last = entry["timestamp"]
+            .as_str()
+            .and_then(millis)
+            .map(|at| Standing { context, at, hour });
     });
     last.map(|standing| Standing { hour, ..standing })
 }
@@ -253,8 +278,9 @@ fn said_in(entry: &Value) -> Option<Quoted> {
 }
 
 /// The last `most` messages of the user's, each with the agent's words
-/// after it, oldest first, from the end of the transcript.
-pub fn last_said(path: &Path, most: usize) -> Vec<Quoted> {
+/// after it, oldest first, from the end of the transcript, or of `line`
+/// where the conversation is held at a point.
+pub fn last_said(path: &Path, most: usize, line: Option<&HashSet<String>>) -> Vec<Quoted> {
     let Some(length) = std::fs::metadata(path).ok().map(|meta| meta.len()) else {
         return Vec::new();
     };
@@ -263,10 +289,13 @@ pub fn last_said(path: &Path, most: usize) -> Vec<Quoted> {
         end: length,
     };
     let mut said: Vec<Quoted> = Vec::new();
-    lines(path, Some(span), |line| {
-        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+    lines(path, Some(span), |bytes| {
+        let Ok(entry) = serde_json::from_slice::<Value>(bytes) else {
             return;
         };
+        if !on_line(&entry, line) {
+            return;
+        }
         if let Some(one) = said_in(&entry) {
             match said.last_mut() {
                 Some(last) if !last.user && !one.user => {
