@@ -107,9 +107,9 @@ describe("whose media it is", () => {
     select(a.key);
     // Nothing is taken from the folder or from the session on screen.
     for (const session of [null, "made-up"]) {
-      expect(
-        ownerFor(request(["/one/x.png"], "/one", null, session), "/one"),
-      ).toBe("project:/one");
+      expect(ownerFor(request(["/one/x.png"], "/one", null, session), "/one")).toBe(
+        "project:/one",
+      );
     }
   });
 
@@ -326,18 +326,12 @@ describe("what an agent says in a conversation", () => {
       "Look ![chart](https://example.com/leak?x=secret) and ![dot](data:image/png;base64,AAAA) and [docs](https://example.com) <img src=x>",
     );
     expect(html).not.toContain('src="https://example.com');
-    expect(html).toContain(
-      '<a href="https://example.com/leak?x=secret" rel="noopener noreferrer">chart</a>',
-    );
+    expect(html).toContain('<a href="https://example.com/leak?x=secret" rel="noopener noreferrer">chart</a>');
     expect(html).toContain('<img src="data:image/png;base64,AAAA" alt="dot">');
-    expect(html).toContain(
-      '<a href="https://example.com" rel="noopener noreferrer">docs</a>',
-    );
+    expect(html).toContain('<a href="https://example.com" rel="noopener noreferrer">docs</a>');
     expect(html).not.toContain("<img src=x");
     expect(html).toContain("&lt;img");
-    expect(renderSaid("![x](javascript:alert(1))")).not.toContain(
-      "javascript:",
-    );
+    expect(renderSaid("![x](javascript:alert(1))")).not.toContain("javascript:");
   });
 
   it("is drawn a block at a time as it is drawn whole, reference links and raw HTML included", () => {
@@ -357,52 +351,40 @@ describe("what an agent says in a conversation", () => {
 
   it("puts every code block in a box of its own, at the top, in a list and in a quote", () => {
     const box = document.createElement("div");
-    box.innerHTML = renderSaid(
-      "```sh\nnpm test\n```\n\n1. Run this:\n\n   ```sh\n   npm run check\n   ```\n\n> ```\n> quoted\n> ```\n\n    indented",
-    );
+    box.innerHTML = renderSaid("```sh\nnpm test\n```\n\n1. Run this:\n\n   ```sh\n   npm run check\n   ```\n\n> ```\n> quoted\n> ```\n\n    indented");
     const codes = [...box.querySelectorAll("div.code[data-copy-host='code']")];
-    expect(
-      codes.map((code) => code.querySelector("pre code")?.textContent),
-    ).toEqual(["npm test\n", "npm run check\n", "quoted\n", "indented\n"]);
+    expect(codes.map((code) => code.querySelector("pre code")?.textContent)).toEqual([
+      "npm test\n",
+      "npm run check\n",
+      "quoted\n",
+      "indented\n",
+    ]);
     expect(box.querySelectorAll("pre")).toHaveLength(4);
-    expect(
-      codes.map((code) => code.closest("li, blockquote")?.tagName ?? null),
-    ).toEqual([null, "LI", "BLOCKQUOTE", null]);
+    expect(codes.map((code) => code.closest("li, blockquote")?.tagName ?? null)).toEqual([null, "LI", "BLOCKQUOTE", null]);
   });
 
   it("draws a code block whose fence is still open as far as it has come", () => {
     const box = document.createElement("div");
     box.innerHTML = saidBlocks("Run:\n\n```sh\nnpm te").join("");
-    expect(box.querySelector("div.code pre code")?.textContent).toBe(
-      "npm te\n",
-    );
+    expect(box.querySelector("div.code pre code")?.textContent).toBe("npm te\n");
   });
 });
 
 describe("Markdown that is still being written", () => {
   /** Every point the text could stop at while it streams, a piece at a time. */
-  const prefixes = (text: string) =>
-    Array.from({ length: text.length }, (_, at) => text.slice(0, at + 1));
+  const prefixes = (text: string) => Array.from({ length: text.length }, (_, at) => text.slice(0, at + 1));
 
   it("keeps every whole block but the last, which may yet grow", () => {
-    expect(settled("A first paragraph.\n\nA second one")).toBe(
-      "A first paragraph.\n\n".length,
-    );
+    expect(settled("A first paragraph.\n\nA second one")).toBe("A first paragraph.\n\n".length);
     expect(settled("Only one paragraph")).toBe(0);
     expect(settled("")).toBe(0);
-    expect(settled("# Title\n\n- one\n- two\n\nAfter")).toBe(
-      "# Title\n\n- one\n- two\n\n".length,
-    );
+    expect(settled("# Title\n\n- one\n- two\n\nAfter")).toBe("# Title\n\n- one\n- two\n\n".length);
   });
 
   it("never settles a list, a fence, a table or a quote that the next line could still continue", () => {
     expect(settled("Intro\n\n- one\n- two\n\n")).toBe("Intro\n\n".length);
-    expect(settled("Intro\n\n```ts\nconst a = 1;\n\nconst b = 2;")).toBe(
-      "Intro\n\n".length,
-    );
-    expect(settled("Intro\n\n| a | b |\n| - | - |\n| 1 | 2 |")).toBe(
-      "Intro\n\n".length,
-    );
+    expect(settled("Intro\n\n```ts\nconst a = 1;\n\nconst b = 2;")).toBe("Intro\n\n".length);
+    expect(settled("Intro\n\n| a | b |\n| - | - |\n| 1 | 2 |")).toBe("Intro\n\n".length);
     expect(settled("Intro\n\n> quoted\n\n")).toBe("Intro\n\n".length);
   });
 
@@ -438,42 +420,29 @@ describe("Markdown that is still being written", () => {
     ].join("\n");
     for (const now of prefixes(text)) {
       const kept = settled(now);
-      expect(renderSaid(now.slice(0, kept)) + renderSaid(now.slice(kept))).toBe(
-        renderSaid(now),
-      );
-      expect([
-        ...saidBlocks(now.slice(0, kept)),
-        ...saidBlocks(now.slice(kept)),
-      ]).toEqual(saidBlocks(now));
+      expect(renderSaid(now.slice(0, kept)) + renderSaid(now.slice(kept))).toBe(renderSaid(now));
+      expect([...saidBlocks(now.slice(0, kept)), ...saidBlocks(now.slice(kept))]).toEqual(saidBlocks(now));
     }
   });
 });
 
 describe("code in Markdown", () => {
   it("shows a less-than sign as itself, in fenced code, in inline code and in text", () => {
-    const md =
-      "If `a < b` then:\n\n```ts\nif (a < b && c > d) { return `<b>${a}</b>`; }\n```\n\nand 1 < 2.";
+    const md = "If `a < b` then:\n\n```ts\nif (a < b && c > d) { return `<b>${a}</b>`; }\n```\n\nand 1 < 2.";
     for (const html of [renderSaid(md), render(md)]) {
       expect(html).not.toContain("&amp;lt;");
       expect(html).toContain("<code>a &lt; b</code>");
-      expect(html).toContain(
-        "if (a &lt; b &amp;&amp; c &gt; d) { return `&lt;b&gt;${a}&lt;/b&gt;`; }",
-      );
+      expect(html).toContain("if (a &lt; b &amp;&amp; c &gt; d) { return `&lt;b&gt;${a}&lt;/b&gt;`; }");
       expect(html).toContain("1 &lt; 2");
       const box = document.createElement("div");
       box.innerHTML = html;
-      expect(box.querySelector("pre code")?.textContent).toBe(
-        "if (a < b && c > d) { return `<b>${a}</b>`; }\n",
-      );
+      expect(box.querySelector("pre code")?.textContent).toBe("if (a < b && c > d) { return `<b>${a}</b>`; }\n");
       expect(box.querySelector("p code")?.textContent).toBe("a < b");
     }
   });
 
   it("still draws raw HTML as its text, inline and as a block", () => {
-    for (const html of [
-      renderSaid("Hi <b>there</b>\n\n<div onclick=x>block</div>"),
-      render("Hi <b>there</b>\n\n<div onclick=x>block</div>"),
-    ]) {
+    for (const html of [renderSaid("Hi <b>there</b>\n\n<div onclick=x>block</div>"), render("Hi <b>there</b>\n\n<div onclick=x>block</div>")]) {
       const box = document.createElement("div");
       box.innerHTML = html;
       expect(box.querySelector("b, div")).toBeNull();
@@ -485,9 +454,7 @@ describe("code in Markdown", () => {
 
 describe("what Markdown may draw", () => {
   const ELEMENTS = new Set(
-    "P,BR,EM,STRONG,DEL,CODE,PRE,A,IMG,UL,OL,LI,BLOCKQUOTE,H1,H2,H3,H4,H5,H6,HR,TABLE,THEAD,TBODY,TR,TH,TD,INPUT".split(
-      ",",
-    ),
+    "P,BR,EM,STRONG,DEL,CODE,PRE,A,IMG,UL,OL,LI,BLOCKQUOTE,H1,H2,H3,H4,H5,H6,HR,TABLE,THEAD,TBODY,TR,TH,TD,INPUT".split(","),
   );
   const PAYLOADS = [
     "x <code> <img/src=x onerror=alert(1)>",
@@ -515,37 +482,22 @@ describe("what Markdown may draw", () => {
         const box = document.createElement("div");
         box.innerHTML = html;
         for (const element of box.querySelectorAll("*")) {
-          expect(
-            ELEMENTS.has(element.tagName),
-            `${element.tagName} from ${markdown}`,
-          ).toBe(true);
+          expect(ELEMENTS.has(element.tagName), `${element.tagName} from ${markdown}`).toBe(true);
           for (const attribute of element.attributes) {
-            expect(
-              attribute.name.startsWith("on"),
-              `${attribute.name} from ${markdown}`,
-            ).toBe(false);
-            expect(
-              /javascript:/i.test(attribute.value),
-              `${attribute.value} from ${markdown}`,
-            ).toBe(false);
+            expect(attribute.name.startsWith("on"), `${attribute.name} from ${markdown}`).toBe(false);
+            expect(/javascript:/i.test(attribute.value), `${attribute.value} from ${markdown}`).toBe(false);
           }
         }
       }
   });
 
   it("draws an entity as its character, and markup an entity spells as its letters", () => {
-    for (const html of [
-      render("AT&T &copy; &mdash; a&nbsp;b &amp;"),
-      renderSaid("AT&T &copy; &mdash; a&nbsp;b &amp;"),
-    ]) {
+    for (const html of [render("AT&T &copy; &mdash; a&nbsp;b &amp;"), renderSaid("AT&T &copy; &mdash; a&nbsp;b &amp;")]) {
       const box = document.createElement("div");
       box.innerHTML = html;
       expect(box.textContent?.trim()).toBe("AT&T © — a\u00a0b &");
     }
-    for (const html of [
-      render("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;"),
-      renderSaid("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;"),
-    ]) {
+    for (const html of [render("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;"), renderSaid("&lt;b&gt;x&lt;/b&gt; &#60;i&#62;")]) {
       const box = document.createElement("div");
       box.innerHTML = html;
       expect(box.querySelector("b, i")).toBeNull();

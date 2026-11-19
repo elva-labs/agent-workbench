@@ -217,35 +217,20 @@ said.image = ({ href, title, text }) => {
     for the reader to copy. A block with no language is one too, unless
     it holds text laid out by its lines (see `drawn`). Any other language
     is code, whose lines are kept as written. */
-const PROSE = new Set([
-  "text",
-  "txt",
-  "plain",
-  "plaintext",
-  "markdown",
-  "md",
-  "message",
-  "email",
-  "comment",
-  "prose",
-]);
+const PROSE = new Set(["text", "txt", "plain", "plaintext", "markdown", "md", "message", "email", "comment", "prose"]);
 
 /** Whether a block's lines are laid out rather than written as prose: a
-    table or tree drawn in text, aligned columns, command output, a stack trace, a diff.
-    Such a block keeps its lines and scrolls sideways. */
+    table or tree drawn in text, aligned columns, command output, a stack
+    trace, a diff. Such a block keeps its lines and scrolls sideways. */
 function drawn(text: string): boolean {
   return text.split("\n").some((line) => {
     const trimmed = line.trim();
     return (
       /[\u2500-\u257f]/.test(line) ||
-      (trimmed.length > 1 &&
-        trimmed.startsWith("|") &&
-        trimmed.endsWith("|")) ||
+      (trimmed.length > 1 && trimmed.startsWith("|") && trimmed.endsWith("|")) ||
       /^(?:---|\+\+\+) |^@@ /.test(line) ||
       /\S(?: {2,}|\t+)\S/.test(line) ||
-      /^\s*at \S.*:\d+(?::\d+)?\)?$|^\s*File ".*", line \d+|^Traceback /.test(
-        line,
-      )
+      /^\s*at \S.*:\d+(?::\d+)?\)?$|^\s*File ".*", line \d+|^Traceback /.test(line)
     );
   });
 }
@@ -267,15 +252,11 @@ function hang(line: string): number {
 const drawCode = said.code;
 said.code = function (this: typeof said, token) {
   const lang = (token.lang ?? "").trim().split(/\s+/)[0].toLowerCase();
-  if ((lang !== "" && !PROSE.has(lang)) || (lang === "" && drawn(token.text)))
-    return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
+  if ((lang !== "" && !PROSE.has(lang)) || (lang === "" && drawn(token.text))) return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
   const named = lang === "" ? "" : ` class="language-${escapeAttribute(lang)}"`;
   const lines = token.text
     .split("\n")
-    .map(
-      (line) =>
-        `<span class="line" style="--hang:${hang(line)}ch">${escapeAttribute(line)}\n</span>`,
-    )
+    .map((line) => `<span class="line" style="--hang:${hang(line)}ch">${escapeAttribute(line)}\n</span>`)
     .join("");
   return `<div class="code" data-copy-host="code" data-wrap><pre><code${named}>${lines}</code></pre></div>\n`;
 };
@@ -287,13 +268,9 @@ said.code = function (this: typeof said, token) {
 renderer.html = ({ text }) => escapeText(text);
 said.html = ({ text }) => escapeText(text);
 renderer.text = (token) =>
-  "tokens" in token && token.tokens
-    ? renderer.parser.parseInline(token.tokens)
-    : escapeText(token.text);
+  "tokens" in token && token.tokens ? renderer.parser.parseInline(token.tokens) : escapeText(token.text);
 said.text = (token) =>
-  "tokens" in token && token.tokens
-    ? said.parser.parseInline(token.tokens)
-    : escapeText(token.text);
+  "tokens" in token && token.tokens ? said.parser.parseInline(token.tokens) : escapeText(token.text);
 
 /** Text as HTML that draws it as text: `<` and `>` always escaped, and
     `&` escaped unless it starts an entity, which then draws as its
@@ -302,10 +279,7 @@ said.text = (token) =>
     never a tag. */
 function escapeText(text: string): string {
   return text
-    .replace(
-      /&(?!(?:#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});)/gi,
-      "&amp;",
-    )
+    .replace(/&(?!(?:#\d{1,7}|#x[0-9a-f]{1,6}|[a-z][a-z0-9]{1,31});)/gi, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
@@ -323,21 +297,13 @@ function escapeAttribute(text: string): string {
     `IMAGE` allow, since the document is the agent's and the window is the
     app's. */
 export function render(markdown: string): string {
-  return marked.parse(markdown, {
-    async: false,
-    gfm: true,
-    renderer,
-  }) as string;
+  return marked.parse(markdown, { async: false, gfm: true, renderer }) as string;
 }
 
 /** Markdown an agent wrote in a conversation, rendered as `render` does,
     with an image from anywhere but the text itself shown as a link. */
 export function renderSaid(markdown: string): string {
-  return marked.parse(markdown, {
-    async: false,
-    gfm: true,
-    renderer: said,
-  }) as string;
+  return marked.parse(markdown, { async: false, gfm: true, renderer: said }) as string;
 }
 
 /** Markdown an agent wrote, rendered as `renderSaid` does, one top-level
