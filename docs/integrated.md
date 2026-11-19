@@ -201,7 +201,9 @@ the same way. The composer's chips are the model, the effort and the mode,
 in that order; the effort's is there only while the model takes an effort,
 lists the efforts the agent says that model takes, and always names the one
 the status bar names. In a narrow pane it drops the word effort and keeps
-the level.
+the level. An effort set with the agent's own command is shown but is not
+the one a new session starts on; only a pick on the chip or the status bar
+is.
 
 A mode the agent was asked to start in and did not, such as auto where the
 account or the model has none, is said in a notice, and the session runs in

@@ -1221,6 +1221,18 @@ describe("titles", () => {
     expect(sessions.names["session-pty-1"]).toBe("kept name");
   });
 
+  it("keeps the user's name over automatic titles after a resume", () => {
+    const session = live(A, "pty-1");
+    renamed(session.key, "My name");
+    close(session.key);
+    reset();
+    loadRemembered();
+    const again = create(A, "session-pty-1");
+    expect(label(again)).toBe("My name");
+    titled(again.key, "✳ an-automatic-title");
+    expect(label(again)).toBe("My name");
+  });
+
   it("does not remember the agent's own name as a session's", () => {
     const session = live(A, "pty-1");
     titled(session.key, "Claude Code");

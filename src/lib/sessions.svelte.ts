@@ -234,6 +234,7 @@ export function carriedFor(session: Session): Carried | null {
 
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
+const OWN_NAMES_KEY = "workbench.ownNames";
 const TOKENS_KEY = "workbench.tokens";
 const PREFERRED_KEY = "workbench.agents";
 const WORKFLOWS_KEY = "workbench.workflows";
@@ -317,6 +318,9 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** The session ids whose name the user gave, kept between runs, so an
+      automatic title never replaces it after a resume or a restart. */
+  own: {} as Record<string, true>,
   /** The token each session's tools name it by, with the project it runs
       in, by the agent's id for the session, kept between runs, so a session
       resumed is named as it was and still owns what was kept under its
@@ -676,6 +680,17 @@ export function loadRemembered() {
   } catch {
     // Nothing is named, then.
   }
+  try {
+    const raw = localStorage.getItem(OWN_NAMES_KEY);
+    const stored: unknown = raw === null ? null : JSON.parse(raw);
+    if (Array.isArray(stored)) {
+      const own: Record<string, true> = {};
+      for (const id of stored) if (typeof id === "string") own[id] = true;
+      sessions.own = own;
+    }
+  } catch {
+    // No name is the user's own, then.
+  }
   loadWaiting();
   try {
     const raw = localStorage.getItem(TOKENS_KEY);
@@ -1016,6 +1031,16 @@ function rememberName(id: string, name: string) {
   }
 }
 
+function rememberOwn(id: string) {
+  if (sessions.own[id]) return;
+  sessions.own[id] = true;
+  try {
+    localStorage.setItem(OWN_NAMES_KEY, JSON.stringify(Object.keys(sessions.own)));
+  } catch {
+    // Non-fatal: a later automatic title may replace the name after a restart.
+  }
+}
+
 /** Transcripts not already open as a row: the one a row was resumed from, or
     the one it has been writing since it started, is that row. */
 function closed(project: string): HistoryEntry[] {
@@ -1306,6 +1331,7 @@ export function renamed(key: string, title: string) {
   const name = title.trim();
   if (session === null || name === "" || reservedName(name) || nameTaken(name, key)) return;
   session.ownTitle = true;
+  if (session.id !== null) rememberOwn(session.id);
   if (session.title === name) return;
   session.title = name;
   if (session.id !== null) rememberName(session.id, name);
@@ -1783,7 +1809,7 @@ function row(
     ordinal: ordinals[project],
     // A resumed session keeps the name it had until the agent says otherwise.
     title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
-    ownTitle: false,
+    ownTitle: resumedFrom !== null && sessions.own[resumedFrom] === true,
     cwd: null,
     startIn,
     prompt,
@@ -3412,6 +3438,7 @@ export function reset() {
   loading.clear();
   sessions.mine = {};
   sessions.names = {};
+  sessions.own = {};
   sessions.tokens = {};
   sessions.workflows = {};
   pending.clear();

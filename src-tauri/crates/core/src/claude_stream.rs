@@ -1621,7 +1621,10 @@ impl Stream {
             }
             // The user named the session, by its rename command.
             Some("session_title_changed") => {
-                if let Some(title) = text(&line["title"]).filter(|title| !title.trim().is_empty()) {
+                if let Some(title) = text(&line["title"])
+                    .map(|title| crate::transcripts::tidy(&title))
+                    .filter(|title| !title.is_empty())
+                {
                     out.events.push(Event::Titled { title });
                 }
             }
@@ -3807,14 +3810,27 @@ mod tests {
             &[
                 json!({"type":"system","subtype":"session_title_changed","title":"Shared ARM64 host"}),
                 json!({"type":"system","subtype":"session_title_changed","title":"  "}),
+                json!({"type":"system","subtype":"session_title_changed","title":"two\nlines"}),
+                json!({"type":"system","subtype":"session_title_changed","title":"x".repeat(5000)}),
             ],
         );
+        assert_eq!(out.len(), 3);
         assert_eq!(
-            out,
-            [Event::Titled {
+            out[0],
+            Event::Titled {
                 title: "Shared ARM64 host".into()
-            }]
+            }
         );
+        assert_eq!(
+            out[1],
+            Event::Titled {
+                title: "two lines".into()
+            }
+        );
+        let Event::Titled { title } = &out[2] else {
+            panic!("{:?}", out[2]);
+        };
+        assert!(title.chars().count() <= 81, "{title}");
     }
 
     #[test]
