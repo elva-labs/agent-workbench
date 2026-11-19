@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, SETTINGS_FILE, foldedWidth, installFakeCore } from "./fake";
+import { PROJECT, SETTINGS_FILE, columnsAtRest, foldedWidth, installFakeCore } from "./fake";
 
 const SESSIONS = "section[data-pane='sessions']";
 const AGENT = "section[data-pane='agent']";
@@ -16,23 +16,6 @@ async function widthOf(page: Page, selector: string) {
 async function sessionsFolded(page: Page, folded = true) {
   const narrow = await foldedWidth(page);
   await expect.poll(() => widthOf(page, SESSIONS).then((width) => width <= narrow + 1)).toBe(folded);
-}
-
-/** Waits for the columns to arrive: two frames apart, the grid reads the same. */
-async function settled(page: Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<boolean>((resolve) => {
-            const shell = document.querySelector("[data-testid='shell']")!;
-            const read = () => getComputedStyle(shell).gridTemplateColumns;
-            const first = read();
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
-          }),
-      ),
-    )
-    .toBe(true);
 }
 
 /** Cmd on macOS, Ctrl elsewhere. */
@@ -826,7 +809,7 @@ test.describe("the file viewer", () => {
     // The changes column eases wider as the viewer opens. The rows are
     // measured and dragged across once it is still: a drag begun while the
     // text slides under the pointer loses its anchor in Chromium.
-    await settled(page);
+    await columnsAtRest(page);
     const start = (await row(1).boundingBox())!;
     const end = (await row(6).boundingBox())!;
     await page.mouse.move(start.x + 4, start.y + start.height / 2);
@@ -1813,13 +1796,14 @@ test.describe("the file viewer", () => {
 
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
     await expect(page.getByTestId("viewer")).toBeVisible();
+    await columnsAtRest(page);
     expect(await widthOf(page, CHANGES)).toBeGreaterThan(before);
   });
 
   // The tree keeps the pane's left column; the content takes the rest.
   test("puts the tree beside the content, not above it", async ({ page }) => {
     await row(page, "mod.rs").click();
-    await settled(page);
+    await columnsAtRest(page);
 
     const tree = (await page.locator(TREE).boundingBox())!;
     const viewer = (await page.getByTestId("viewer").boundingBox())!;
@@ -1930,7 +1914,7 @@ test.describe("the file viewer", () => {
     page,
   }) => {
     await row(page, "mod.rs").click();
-    await settled(page);
+    await columnsAtRest(page);
     const agentWidth = await widthOf(page, AGENT);
     const treeWidth = await widthOf(page, TREE);
 
@@ -1945,7 +1929,7 @@ test.describe("the file viewer", () => {
 
   test("resizes the tree against the content", async ({ page }) => {
     await row(page, "mod.rs").click();
-    await settled(page);
+    await columnsAtRest(page);
     const before = await widthOf(page, TREE);
 
     const handle = page.getByRole("separator", {
@@ -1965,7 +1949,7 @@ test.describe("the file viewer", () => {
   test("resizes the whole pane against the agent", async ({ page }) => {
     await row(page, "mod.rs").click();
     // The viewer opening widens the pane; it is measured once that is done.
-    await settled(page);
+    await columnsAtRest(page);
     const before = await widthOf(page, CHANGES);
 
     const handle = page.getByRole("separator", { name: "Resize the viewer" });
@@ -1977,7 +1961,7 @@ test.describe("the file viewer", () => {
     });
     await page.mouse.up();
 
-    await settled(page);
+    await columnsAtRest(page);
     await expect.poll(() => widthOf(page, CHANGES)).toBeGreaterThan(before + 60);
     await expect.poll(() => widthOf(page, AGENT)).toBeGreaterThanOrEqual(360);
   });
@@ -2046,7 +2030,7 @@ test.describe("the file viewer", () => {
 
   test("gives the agent back at exactly its old width", async ({ page }) => {
     await page.setViewportSize({ width: 720, height: 800 });
-    await settled(page);
+    await columnsAtRest(page);
     const before = await widthOf(page, AGENT);
 
     await page.keyboard.press(`${MOD}+d`);
@@ -2054,25 +2038,29 @@ test.describe("the file viewer", () => {
     await page.keyboard.press(`${MOD}+d`);
 
     await expect(page.locator(AGENT)).toBeVisible();
-    await settled(page);
+    await columnsAtRest(page);
     expect(await widthOf(page, AGENT)).toBeCloseTo(before, 0);
   });
 
   test("remembers the working and reviewing widths separately", async ({
     page,
   }) => {
+    const shell = page.getByTestId("shell");
     const working = await widthOf(page, CHANGES);
     await row(page, "mod.rs").click();
-    await settled(page);
+    await expect(shell).toHaveAttribute("data-mode", "reviewing");
+    await columnsAtRest(page);
     const reviewing = await widthOf(page, CHANGES);
     expect(reviewing).toBeGreaterThan(working);
 
     await page.keyboard.press("Escape");
-    await settled(page);
+    await expect(shell).toHaveAttribute("data-mode", "working");
+    await columnsAtRest(page);
     expect(await widthOf(page, CHANGES)).toBeCloseTo(working, 0);
 
     await page.keyboard.press(`${MOD}+d`);
-    await settled(page);
+    await expect(shell).toHaveAttribute("data-mode", "reviewing");
+    await columnsAtRest(page);
     expect(await widthOf(page, CHANGES)).toBeCloseTo(reviewing, 0);
   });
 });

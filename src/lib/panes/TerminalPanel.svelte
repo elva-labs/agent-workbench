@@ -32,12 +32,12 @@
     keepAsked,
     label,
     launch,
+    opensWithShell,
     ownerOnScreen,
     resizeSplit,
     select,
     share,
     shortCommand,
-    shownFor,
     shownGroup,
     split,
     statusMessage,
@@ -88,8 +88,7 @@
     const anyone = someone;
     const settled = startup.settled;
     untrack(() => {
-      const now = ownerOnScreen();
-      if (visible && anyone && settled && now !== null && shownFor(now).length === 0) create(now);
+      if (visible && anyone && settled && opensWithShell()) create(ownerOnScreen()!);
     });
   });
 
