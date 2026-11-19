@@ -84,6 +84,17 @@ describe("the workbench's note in a message", () => {
     });
   });
 
+  it("asks a started session for a report another could go on from", () => {
+    expect(OUTCOME_ASK).toContain("call the notify tool with one line saying which");
+    expect(OUTCOME_ASK).toContain("short report that someone with none of your context could go on from");
+  });
+
+  it("takes out the sentence an earlier version added, which older conversations still hold", () => {
+    const before =
+      "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
+    expect(spoken(`Fix it ${before}`)).toEqual({ text: "Fix it", instructions: before, reports: null, filesBack: null });
+  });
+
   it("names each session as the user knows it, and one with no name kept as a session, never by its id", () => {
     const names: Record<string, string> = { "sid-1": "Fix the cache", "sid-2": "Run the tests" };
     expect(reportsShown(spoken(`${NOTE}\n\nHi`, true).reports!, (id) => names[id] ?? null)).toBe(

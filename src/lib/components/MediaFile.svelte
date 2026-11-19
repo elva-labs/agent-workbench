@@ -117,7 +117,6 @@
   }
 
   .document {
-    max-width: 78ch;
     padding: 4px 0;
     font-size: 13.5px;
     line-height: 1.6;

@@ -56,7 +56,7 @@ Every pane header is one height in a look, 40 pixels in the modern look and
 35 in the terminal look, the terminal list's top row included, and each
 title's line sits in its middle, so the titles stand on one line across the
 window whatever a header holds. What a header holds beside its title, such
-as a session's project and branch, is centred on that line.
+as a run's chip, is centred on that line.
 
 Inside a pane, a list beside what is read sits a step from the surface
 toward the ground: the tree beside the viewer or the editor, and the
@@ -97,7 +97,10 @@ and goes without fading.
 
 The switch and a button that shows and hides the right pane stand at the
 end of the rightmost pane's header, so they are in the same place in both
-modes whatever the panes under them do. The right pane is the changes pane
+modes whatever the panes under them do. In the modern look the switch's
+right edge stands on the right edge of the card under it, so it lines up
+with the pane; in the terminal look it stands the box's padding in from
+the box's edge, as the title does at the other end. The right pane is the changes pane
 in agent mode and the agent while editing; the button and
 <kbd>Cmd</kbd><kbd>\\</kbd> show and hide whichever it is, and in a window
 too narrow to show it at all the status bar says so. On Windows and Linux
@@ -106,11 +109,11 @@ widths are 60 pixels more in both modes: the changes pane opens at 400 and
 never goes below 320, so the corner and the window controls never cover
 each other, and the agent opens at 480 while editing. A width dragged by
 hand stays as dragged, and a double-click on the divider gives the
-default back. Short of room, a header's status gives way before its name,
-and goes once it would show no more than a letter or two. The agent's header
-gives way in this order: a workflow's name and a session's project and
-branch, then the status, then the session's place in the workflow, or the
-words of a run's chip, and its title last. Each is cut short and then goes
+default back. Short of room, a header's status, such as the worktree the
+changes pane names, gives way before its name, and goes once it would show
+no more than a letter or two. The agent's header gives way in this order: a
+workflow's name, then the session's place in the workflow, or the words of
+a run's chip, and its title last. Each is cut short and then goes
 at a letter or two, its icon or its tag with it. A run's chip keeps its
 pips: once its words have gone it stands as the pips alone, the words
 taking no room, and the title gives way to them. In editor mode on Windows and Linux the window controls
@@ -124,16 +127,26 @@ keyboard on it there.
 
 ## The status bar
 
-The status bar is the row along the window's foot. From the left it names
-the pane that has the keyboard, then what the session on screen runs on,
-its model and its effort, then the account the session runs under, once
-accounts are named, with that account's allowance. At the right end stand
-how many sessions wait for you and, just before it, a word in passing, such
-as a new zoom, so they keep their place whatever the figures do. With no
-session on screen only the focus and those two remain. What the session is
-doing is said once, in the agent pane's header beside its name and by the
-dot on its row, and the window's mode by the switch in [the
-corner](#the-corner), so the bar says neither.
+The status bar is the row along the window's foot, and it carries the
+state of the session on screen, so the pane headers carry only names and
+what is theirs to act on. From the left it names the pane that has the
+keyboard, then what the session is doing, in the words its row uses
+(`idle`, `working`, `a session working`, `asks you` and the rest), then
+the folder it works in and the branch checked out there, each after a
+small icon, then what it runs on, its model and its effort, then
+`account:` and the account it runs under, shown only once there is more
+than one account, with that account's allowance. A rule stands between
+each of these groups. At the right end stand how many sessions wait for
+you and, just before it, a word in passing, such as a new zoom, so they
+keep their place whatever the figures do. With no session on screen only
+the focus and those two remain. What the session is doing is said here and
+by the dot on its row, and the window's mode by the switch in [the
+corner](#the-corner), so the bar does not say it.
+
+The state is plain text, so a screen reader reads it when it walks to the
+bar. A hidden polite region says it aloud only when the session starts asking,
+`asks you` or `waits for permission`, once for each time; working and idle
+changes are not said.
 
 In the modern look the bar lies on the ground with no rule of its own, so
 its row is the whole band of ground from the cards' foot to the window's,
@@ -184,10 +197,11 @@ from 20 min ago`. How the bar's menus and the popover take the
 keyboard and give it back is in the [focus model](focus-model.md#the-status-bar).
 
 Short of room, the bar lets its parts go in this order: the focus, then
-the word `account:`, then every figure but the one nearest its
-end, then that figure's reset time. It measures what fits rather than going
-by the window's width, and only after all four are the model and the
-account's name cut short. What waits for you is never cut. The word in
+the folder, then the word `account:`, then every figure but the one
+nearest its end, then the branch, then that figure's reset time. It
+measures what fits rather than going by the window's width, and only after
+all six are the model and the account's name cut short. What the session is
+doing and what waits for you are never cut. The word in
 passing takes no room in that measure, so nothing gives way for it: where
 the space before what waits is shorter than the word, the word is drawn
 over the parts before it until it goes.

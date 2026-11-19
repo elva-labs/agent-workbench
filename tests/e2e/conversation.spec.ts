@@ -72,13 +72,16 @@ async function openIntegrated(page: Page, options: { untrusted?: boolean; defaul
 }
 
 test.describe("an integrated session", () => {
-  test("draws a conversation in place of a terminal, with its name, project and branch", async ({ page }) => {
+  test("draws a conversation in place of a terminal, its name in the header and its project and branch in the bar", async ({ page }) => {
     await openIntegrated(page);
     await expect(page.getByTestId("conversation")).toBeVisible();
     await expect(page.locator(`${AGENT} .xterm`)).toHaveCount(0);
     await expect(page.getByTestId("thread-intro")).toContainText("A new Claude Code session in demo");
-    await expect(page.getByTestId("conversation-project")).toHaveText("demo");
-    await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+    await expect(page.getByTestId("folder-readout")).toHaveText("demo");
+    await expect(page.getByTestId("branch-readout")).toHaveText("main");
+    // The header holds the name and nothing the bar says.
+    await expect(page.locator(`${AGENT} > header .title`)).toHaveText("session 1");
+    await expect(page.locator(`${AGENT} > header`)).not.toContainText(/demo|main|idle/);
     await expect(page.getByTestId("session-row")).toHaveCount(1);
     const start = (await calls(page))[0];
     expect(start).toMatchObject({ method: "start", options: { agent: "claude-code", project: PROJECT } });
@@ -247,7 +250,7 @@ test.describe("an integrated session", () => {
     await openIntegrated(page, { untrusted: true });
     const gate = page.getByTestId("trust-gate");
     await expect(gate).toContainText("Trust this folder?");
-    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("asks to trust the folder");
+    await expect(page.getByTestId("state-readout")).toHaveText("asks to trust the folder");
     await expect(gate).toContainText(PROJECT);
     await page.getByTestId("trust-folder").click();
     await expect(gate).toHaveCount(0);
@@ -263,9 +266,9 @@ test.describe("an integrated session", () => {
     await expect(gate.locator("code")).toHaveText("claude");
   });
 
-  test("says on its row and in the header what the core says it is doing", async ({ page }) => {
+  test("says on its row and in the status bar what the core says it is doing", async ({ page }) => {
     await openIntegrated(page);
-    const meta = page.locator(`${AGENT} header .meta`);
+    const meta = page.getByTestId("state-readout");
     await expect(meta).toHaveText("idle");
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}");`);
     await expect(meta).toHaveText("working");
@@ -279,9 +282,9 @@ test.describe("an integrated session", () => {
     await expect(meta).toHaveText("idle");
   });
 
-  test("says working in the header and on its row while a turn only waits on its sessions", async ({ page }) => {
+  test("says working in the status bar and on its row while a turn only waits on its sessions", async ({ page }) => {
     await openIntegrated(page);
-    const meta = page.locator(`${AGENT} header .meta`);
+    const meta = page.getByTestId("state-readout");
     const row = page.getByTestId("session-row");
     await agent(
       page,
@@ -293,8 +296,8 @@ test.describe("an integrated session", () => {
     await expect(meta).toHaveText("working");
     await expect(row.locator(".dot")).toHaveClass(/\bworking\b/);
     await expect(row.locator(".dot")).toHaveAttribute("title", "working");
-    // The status bar says nothing of the session's state.
-    await expect(page.getByTestId("status-bar")).not.toContainText(/working|idle/);
+    // Said once: the header holds the name alone.
+    await expect(page.locator(`${AGENT} > header`)).not.toContainText(/working|idle/);
     await agent(page, `f.endTurn("${H}");`);
     await expect(meta).toHaveText("idle");
     await expect(row.locator(".dot")).not.toHaveClass(/\bworking\b/);
@@ -806,7 +809,7 @@ test.describe("a session of an agent shaped as Codex is", () => {
     await expect(page.getByTestId("permission-dock")).toBeVisible();
     await agent(page, `f.endTurn("${H}");`);
     await expect(page.getByTestId("permission-dock")).toHaveCount(0);
-    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+    await expect(page.getByTestId("state-readout")).toHaveText("idle");
     await expect(page.getByTestId("composer-input")).toBeEnabled();
   });
 
@@ -900,7 +903,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
     await input.fill("Fix the flaky cache test");
     await page.keyboard.press("Enter");
     await agent(page, `f.startTurn("${H}");`);
-    const status = page.locator(`${AGENT} header .meta`);
+    const status = page.getByTestId("state-readout");
     await expect(status).toHaveText("working");
     const rules = page.getByTestId("run-popover");
     const interrupted = async () => (await calls(page)).some((call) => call.method === "interrupt");
@@ -1572,13 +1575,13 @@ test("takes up a session the core still runs when the window is reloaded", async
   await expect(page.getByTestId("work-line")).toHaveCount(1);
   await expect(page.getByTestId("thread-intro")).toHaveCount(0);
   await expect(page.getByTestId("run-began")).toHaveCount(0);
-  await expect(page.locator(`${AGENT} header .meta`)).toHaveText("waits for permission");
+  await expect(page.getByTestId("state-readout")).toHaveText("waits for permission");
   expect((await calls(page)).map((call) => call.method)).toEqual(["snapshot", "history"]);
   await page.getByTestId("choice-allow").click();
   expect((await calls(page)).at(-1)).toMatchObject({ method: "answer", id: H, choice: "allow" });
   await agent(page, `f.emit("${H}", { type: "text", block: "c", parent: null, text: "All 12 pass.", done: true }); f.endTurn("${H}");`);
   await expect(page.getByTestId("agent-text").last()).toHaveText("All 12 pass.");
-  await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+  await expect(page.getByTestId("state-readout")).toHaveText("idle");
 });
 
 test.describe("a resumed conversation", () => {
@@ -1792,7 +1795,7 @@ test.describe("a resumed conversation", () => {
     // The turn the quit cut short is over: nothing in it is still at work.
     await expect(page.getByTestId("work-line").last()).toContainText("Worked for");
     await expect(page.getByTestId("now")).toHaveCount(0);
-    await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+    await expect(page.getByTestId("state-readout")).toHaveText("idle");
     await expect(page.getByTestId("send")).toBeVisible();
     // The line stands under all of it, where this run began.
     const line = await box(page, "run-began", 0);
@@ -2664,7 +2667,7 @@ test.describe("after a reload, an orchestrated session", () => {
     await expect(own.locator(".label")).toHaveText("session 1");
     await own.click();
     // It is at rest itself, and the session it started is in its turn.
-    await expect(page.locator(`${AGENT} > header .meta`)).toHaveText("a session working");
+    await expect(page.getByTestId("state-readout")).toHaveText("a session working");
     await expect(page.locator("[data-testid='conversation']:visible").getByTestId("thread-intro")).not.toContainText(
       "Earlier messages",
     );

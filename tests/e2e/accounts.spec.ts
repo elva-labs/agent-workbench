@@ -158,8 +158,6 @@ test.describe("starting a session under an account", () => {
     expect((await spawns(page))[0].agent).toBe("claude-code");
     expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
-    // The foot says the same, beside the settings.
-    await expect(page.getByTestId("pane-account")).toHaveText("Work");
 
     // Switched in the account control, for this one session only.
     await page.getByTestId("project-new-session").click();
@@ -170,7 +168,6 @@ test.describe("starting a session under an account", () => {
     await expect.poll(() => spawns(page)).toHaveLength(2);
     expect((await spawns(page))[1].configDir).toBeUndefined();
     await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
-    await expect(page.getByTestId("pane-account")).toHaveText("Default");
     await page.getByTestId("project-new-session").click();
     await expect(
       page.locator('[data-testid="account-option"][data-account="Work"]'),
@@ -411,7 +408,7 @@ test.describe("a started session's row", () => {
     // follows: session-1.
     await page.locator(`[data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
     await page.getByTestId("agent-option").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
   });
 
   test("names its account after its name when it is not the project's", async ({ page }) => {
