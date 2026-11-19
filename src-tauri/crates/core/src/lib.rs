@@ -22,6 +22,7 @@ pub mod events;
 pub mod executable;
 pub mod files;
 pub mod git;
+pub mod going_on;
 pub mod hook;
 pub mod integrated;
 pub mod known;

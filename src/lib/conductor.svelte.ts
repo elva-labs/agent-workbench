@@ -90,6 +90,7 @@ import type { AgentId, ReviewStep, Workflow, WorkflowStep, WorkStep } from "$lib
 import { CODEX_DEFAULT } from "$lib/models";
 import { hostOf } from "$lib/remote.svelte";
 import { forgetNotes } from "$lib/notes";
+import { onWentOn, wentOn, wentOnFrom } from "$lib/goingOn.svelte";
 import { instructionLines, modelText } from "$lib/workflowInstructions";
 import { stepFacts } from "$lib/workflows.svelte";
 import {
@@ -1609,6 +1610,12 @@ function wholeIds(call: Placed): Placed | { refusal: string } {
     const own = ownIds(call.caller, name === "work");
     if (own.has(given)) continue;
     const fits = [...own].filter((id) => id.startsWith(given)).sort();
+    // One that went on from its notes is still named by its old id.
+    const now = fits.length === 0 ? wentOnFrom(given) : null;
+    if (now !== null && own.has(now)) {
+      args = { ...args, [name]: now };
+      continue;
+    }
     if (fits.length > 1)
       return {
         refusal: `More than one of your sessions has an id that starts with ${idText(given)}: ${either(fits.map(idText), "and")}. Give enough of the id to tell them apart.`,
@@ -3244,10 +3251,18 @@ async function resumeSession(
     if (trouble !== null) return refused(trouble);
     started = true;
     if (owesRound) owed.add(session.key);
-    if (goesOn !== null && goesOn !== at) place(caller, id, goesOn);
+    // A cold and large conversation went on fresh from its notes, under
+    // an id of its own that the old one still names.
+    const fresh = wentOn(session.key) !== null;
+    const named = (fresh ? byKey(session.key)?.id : null) ?? id;
+    if (goesOn !== null && goesOn !== at) place(caller, named, goesOn);
     const where = worktree === null ? project : `${project}, in ${worktree}`;
     const round =
       goesOn !== null && goesOn !== at ? ` for ${placeText(goesOn)}` : "";
+    if (fresh)
+      return said(
+        `Session ${id}${round} went on in ${where} as a fresh conversation, ${idText(named)}, from its notes and last exchanges: its own was cold and large, so it was not read again. Either id names it. ${prompt === null ? "It is waiting. Send it a line to go on, then call wait." : `It has the prompt. ${KEEP_WAITING}`}`,
+      );
     return said(
       prompt === null
         ? `Resumed session ${id} in ${where}. It has its conversation and is waiting. Send it a line to go on, then call wait.`
@@ -4053,6 +4068,40 @@ onForgotten((tokens, project) => {
   forgetNotes(notes);
   for (const token of tokens) delete conductor.runs[token];
   saveRuns();
+});
+
+// A session another started that went on from its notes as a fresh
+// conversation keeps its place on its starter's list and in its workflow
+// under the fresh conversation's id, and the old id still names it.
+onWentOn((from, to) => {
+  let started = false;
+  for (const list of Object.values(conductor.started))
+    for (const entry of list)
+      if (entry.id === from) {
+        entry.id = to;
+        started = true;
+      }
+  if (started) saveStarted();
+  let ran = false;
+  for (const run of Object.values(conductor.runs)) {
+    const place = run.places[from];
+    if (place !== undefined) {
+      delete run.places[from];
+      run.places[to] = place;
+      ran = true;
+    }
+    for (const at of Object.values(run.places))
+      if (at.work === from) {
+        at.work = to;
+        ran = true;
+      }
+    if (run.rested?.includes(from)) {
+      run.rested = run.rested.map((id) => (id === from ? to : id));
+      ran = true;
+    }
+  }
+  for (const at of Object.values(conductor.places)) if (at.work === from) at.work = to;
+  if (ran) saveRuns();
 });
 
 // A session from before there were tokens kept what it started, what its

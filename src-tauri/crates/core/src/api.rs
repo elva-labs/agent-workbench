@@ -1007,6 +1007,44 @@ impl Core {
         }
     }
 
+    /// How a session's conversation is taken up again: whole, or for a
+    /// Claude Code conversation that is cold and large, as a fresh one
+    /// from the briefing this answers with. Whole for any other agent, and
+    /// where no transcript of it is found.
+    pub fn taken_up(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: &str,
+        config_dir: Option<&str>,
+        token: &str,
+    ) -> Result<crate::going_on::GoingOn, String> {
+        let whole = crate::going_on::GoingOn {
+            context: None,
+            idle: None,
+            goes_on: false,
+            briefing: None,
+        };
+        let Some(home) = self.home.as_ref() else {
+            return Ok(whole);
+        };
+        if agent != "claude-code" {
+            return Ok(whole);
+        }
+        let environment = env::environment();
+        let dir = account::claude_dir(home, config_dir, &environment.vars);
+        let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
+            return Ok(whole);
+        };
+        let notes = crate::notes::briefing(home, token);
+        Ok(crate::going_on::judge(
+            &path,
+            notes.as_deref(),
+            crate::notes::now() as u64 * 1000,
+        ))
+    }
+
     /// How an integrated session that runs was started.
     fn run(&self, id: &str) -> Result<Run, String> {
         self.runs

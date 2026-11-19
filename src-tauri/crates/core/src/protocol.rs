@@ -177,6 +177,19 @@ struct IntegratedHistoryParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GoingOnParams {
+    agent: String,
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    session: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+    token: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegratedTrustParams {
     agent: String,
     project: PathBuf,
@@ -598,6 +611,17 @@ pub fn dispatch(
         "integrated_snapshot" => {
             let p: IdParams = parse(params)?;
             value(core.integrated_snapshot(&p.id)?)
+        }
+        "going_on" => {
+            let p: GoingOnParams = parse(params)?;
+            value(core.taken_up(
+                &p.agent,
+                &p.project,
+                p.cwd.as_deref(),
+                &p.session,
+                p.config_dir.as_deref(),
+                &p.token,
+            )?)
         }
         "integrated_history" => {
             let p: IntegratedHistoryParams = parse(params)?;

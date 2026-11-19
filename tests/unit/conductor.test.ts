@@ -1834,6 +1834,31 @@ describe("a session named by the start of its id", () => {
     expect(notesForgotten).toEqual([{ project: A, tokens: [row.token] }]);
   });
 
+  it("still names one that went on from its notes by its old id, its place and list entry moved", async () => {
+    const { going, identified, resetGoingOn } = await import("$lib/goingOn.svelte");
+    resetGoingOn();
+    const row = own(A, "pty-1", TWO);
+    const caller = callerKey(ME);
+    conductor.started[caller] = [{ id: ONE, project: A, worktree: null, agent: "claude-code", name: "Fix it" }];
+    conductor.runs[caller] = {
+      places: { [ONE]: { step: "Work", kind: "work", piece: ONE, round: null, work: null } },
+      rounds: {},
+      rested: [ONE],
+    };
+    going.runs[row.key] = { from: ONE, context: 400_000, briefing: null };
+    identified(row.key, TWO);
+    expect(conductor.started[caller].map((entry) => entry.id)).toEqual([TWO]);
+    expect(Object.keys(conductor.runs[caller].places)).toEqual([TWO]);
+    expect(conductor.runs[caller].places[TWO].piece).toBe(ONE);
+    expect(conductor.runs[caller].rested).toEqual([TWO]);
+    const sending = handle(call("send", { session: ONE, text: "go on" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await sending;
+    expect(last().content).toBe(`Sent to session ${TWO}. Call wait to hear what it does next.`);
+    resetGoingOn();
+    localStorage.removeItem("workbench.wentOn");
+  });
+
   it("resumes one of the caller's own by the start of its id", async () => {
     await startAllowed(call("start", { project: B, prompt: "Fix it" }), "pty-1", ONE);
     ended({ id: "pty-1", code: 0, clean: true });

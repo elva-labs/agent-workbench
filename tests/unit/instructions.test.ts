@@ -129,3 +129,26 @@ describe("the workbench's message to a session it woke", () => {
     expect(wakeShown("Session sid-1 stopped working. It has left no line.", name)).toBeNull();
   });
 });
+
+describe("the briefing a fresh conversation goes on with", () => {
+  it("is taken out of the first message whole, whoever sent it, and the words after it kept", async () => {
+    const { GOING_ON_HEAD, GOING_ON_END, GOING_ON_WAIT, spoken } = await import("$lib/instructions");
+    const briefing = `${GOING_ON_HEAD}\n\nNo notes were kept of the earlier conversation.\n${GOING_ON_END}`;
+    expect(spoken(`${briefing}\n\nWhere were we?`, true)).toMatchObject({
+      text: "Where were we?",
+      briefing: "No notes were kept of the earlier conversation.",
+    });
+    expect(spoken(`${briefing}\n\n${GOING_ON_WAIT}`, true).text).toBe("");
+    expect(spoken(`${GOING_ON_HEAD}\nnever ended`, true).text).toBe(`${GOING_ON_HEAD}\nnever ended`);
+    expect(spoken("Plain words", true).briefing).toBeUndefined();
+  });
+
+  it("is marked as the core writes it", async () => {
+    const { GOING_ON_HEAD, GOING_ON_END } = await import("$lib/instructions");
+    const { readFileSync } = await import("node:fs");
+    const core = readFileSync("src-tauri/crates/core/src/going_on.rs", "utf8");
+    expect(core).toContain(`pub const HEAD: &str = "${GOING_ON_HEAD}";`);
+    expect(core).toContain(`pub const END: &str = "${GOING_ON_END}";`);
+  });
+});
+

@@ -1162,6 +1162,15 @@ export async function installFakeCore(
         },
         notesBriefing: async (_project: string, token: string) =>
           (window as unknown as { __briefings?: Record<string, string> }).__briefings?.[token] ?? null,
+        // How a conversation is taken up again: whole unless a test says
+        // it goes on from its notes.
+        goingOn: async () =>
+          (window as unknown as { __goingOn?: unknown }).__goingOn ?? {
+            context: null,
+            idle: null,
+            goesOn: false,
+            briefing: null,
+          },
         notesForget: async (project: string, tokens: string[]) => {
           const w = window as unknown as { __notesForgotten?: { project: string; tokens: string[] }[] };
           (w.__notesForgotten ??= []).push({ project, tokens });

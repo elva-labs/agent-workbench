@@ -38,6 +38,13 @@ import { starterOf } from "$lib/senders.svelte";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
+import {
+  briefingFor,
+  identified as wentOnAs,
+  superseded as wentOnFromIt,
+  takeUp as takeUpAgain,
+} from "$lib/goingOn.svelte";
+import { GOING_ON_WAIT } from "$lib/instructions";
 
 /**
  * Every session this window has, live or finished.
@@ -1022,7 +1029,8 @@ function closed(project: string): HistoryEntry[] {
       .map((session) => session.id)
       .filter((id): id is string => id !== null),
   );
-  return known.filter((transcript) => !open.has(transcript.id));
+  // A conversation another went on from is that one's, which lists it.
+  return known.filter((transcript) => !open.has(transcript.id) && !wentOnFromIt(transcript.id));
 }
 
 /** Whether a past session is listed under its project: one this app ran,
@@ -1273,6 +1281,18 @@ export function identified(
   rememberWorkflow(session);
   replayActivity(sessionId);
   if (title !== null) named(session.key, title);
+}
+
+/** The name a row that goes on from its notes keeps: the one it has, or
+    the title its old conversation is listed under. None where it has
+    neither, and its first message names it then, as any row's does. */
+export function nameGoingOn(session: Session): string | null {
+  const own = session.title ?? givenName(session);
+  if (own !== null) return own;
+  const from = session.resumedFrom;
+  const listed = (sessions.history[session.project] ?? []).find((entry) => entry.id === from);
+  const title = listed?.title?.trim() ?? "";
+  return title === "" || reservedName(title) ? null : title;
 }
 
 /** Keeps the name a session's row goes by under its id, for when the row
@@ -1969,15 +1989,27 @@ export async function launch(
   session.modeSeen = null;
   const back = bringingBack.delete(key);
   try {
+    // A cold and large conversation goes on fresh from its notes, briefed
+    // in its first prompt, which says to wait for the user when there is
+    // nothing else to go on with. A conversation held at a point it went
+    // back to is resumed as it is.
+    const resume = session.resumedFrom === null || back ? session.resumedFrom : await takeUpAgain(session);
+    const briefing = resume === null && session.resumedFrom !== null ? briefingFor(key) : null;
+    // The row keeps the name it showed, which its old conversation gave.
+    if (briefing !== null) session.title ??= nameGoingOn(session);
+    const prompt =
+      briefing === null
+        ? (session.prompt ?? undefined)
+        : `${briefing}\n\n${session.prompt ?? GOING_ON_WAIT}`;
     const { ptyId, sessionId } = await core().spawn(
       {
         ...(back ? { bringBack: true } : {}),
         agent: session.agent,
         project: session.project,
         cwd: session.startIn ?? undefined,
-        session: session.resumedFrom ?? undefined,
+        session: resume ?? undefined,
         token: session.token,
-        prompt: session.prompt ?? undefined,
+        prompt,
         model: session.model ?? undefined,
         mode: mode ?? undefined,
         configDir: dirFor(session.account, session.agent),
@@ -2034,6 +2066,7 @@ export function started(
     keepToken(session);
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
+    wentOnAs(key, sessionId);
     rememberWorkflow(session);
     replayActivity(sessionId);
   }

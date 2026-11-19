@@ -135,6 +135,183 @@ pub fn last_mode(path: &Path) -> Option<String> {
 /// What a line that records a mode holds, to pass over the rest unread.
 const MODE_ENTRY: &[u8] = b"permission-mode";
 
+/// The most of a transcript's end read for how it stands and what was
+/// last said, and of its start for how it began.
+#[cfg(not(test))]
+const TAIL_KEEP: u64 = 8 * 1024 * 1024;
+#[cfg(test)]
+const TAIL_KEEP: u64 = 64 * 1024;
+const HEAD_KEEP: u64 = 1024 * 1024;
+
+/// How a conversation stood when its last request ended: the tokens of
+/// context that request read, when it ended, and whether its prompt cache
+/// was written to last an hour rather than five minutes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Standing {
+    pub context: u64,
+    /// Milliseconds since the epoch.
+    pub at: u64,
+    pub hour: bool,
+}
+
+/// Whether an entry is of the conversation itself, not of a subagent's.
+fn main_chain(entry: &Value) -> bool {
+    !flagged(entry, "isSidechain")
+}
+
+/// How the conversation stands at its end, from the usage of its last
+/// request: none where the end of the transcript records none. The cache
+/// lifetime is the last one a request wrote, an hour where none says.
+pub fn standing(path: &Path) -> Option<Standing> {
+    let length = std::fs::metadata(path).ok()?.len();
+    let span = Span {
+        start: length.saturating_sub(TAIL_KEEP),
+        end: length,
+    };
+    let mut last: Option<Standing> = None;
+    let mut hour = true;
+    lines(path, Some(span), |line| {
+        if !line.windows(7).any(|window| window == b"\"usage\"") {
+            return;
+        }
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if entry["type"] != "assistant" || !main_chain(&entry) {
+            return;
+        }
+        let usage = &entry["message"]["usage"];
+        if !usage.is_object() {
+            return;
+        }
+        let written = &usage["cache_creation"];
+        let long = written["ephemeral_1h_input_tokens"].as_u64().unwrap_or(0);
+        let short = written["ephemeral_5m_input_tokens"].as_u64().unwrap_or(0);
+        if long > 0 {
+            hour = true;
+        } else if short > 0 {
+            hour = false;
+        }
+        let context = [
+            "input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "output_tokens",
+        ]
+        .iter()
+        .filter_map(|key| usage[key].as_u64())
+        .sum();
+        let at = entry["timestamp"].as_str().and_then(millis).unwrap_or(0);
+        last = Some(Standing { context, at, hour });
+    });
+    last.map(|standing| Standing { hour, ..standing })
+}
+
+/// A message of the conversation, the user's or the agent's, as the
+/// briefing quotes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quoted {
+    pub user: bool,
+    pub text: String,
+}
+
+/// What an entry says, when it is the user's words or the agent's text.
+fn said_in(entry: &Value) -> Option<Quoted> {
+    if !main_chain(entry) || flagged(entry, "isMeta") {
+        return None;
+    }
+    match entry["type"].as_str() {
+        Some("user") => {
+            if flagged(entry, "isCompactSummary")
+                || flagged(entry, "isVisibleInTranscriptOnly")
+                || results(entry).next().is_some()
+            {
+                return None;
+            }
+            match prompt(
+                &entry["message"]["content"],
+                entry["origin"]["kind"].as_str(),
+            ) {
+                Prompt::Said { text, .. } if !text.trim().is_empty() => {
+                    Some(Quoted { user: true, text })
+                }
+                _ => None,
+            }
+        }
+        Some("assistant") => {
+            let text = entry["message"]["content"]
+                .as_array()?
+                .iter()
+                .filter(|block| block["type"] == "text")
+                .filter_map(|block| block["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            (!text.trim().is_empty()).then_some(Quoted { user: false, text })
+        }
+        _ => None,
+    }
+}
+
+/// The last `most` messages of the user's, each with the agent's words
+/// after it, oldest first, from the end of the transcript.
+pub fn last_said(path: &Path, most: usize) -> Vec<Quoted> {
+    let Some(length) = std::fs::metadata(path).ok().map(|meta| meta.len()) else {
+        return Vec::new();
+    };
+    let span = Span {
+        start: length.saturating_sub(TAIL_KEEP),
+        end: length,
+    };
+    let mut said: Vec<Quoted> = Vec::new();
+    lines(path, Some(span), |line| {
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if let Some(one) = said_in(&entry) {
+            match said.last_mut() {
+                Some(last) if !last.user && !one.user => {
+                    last.text.push_str("\n\n");
+                    last.text.push_str(&one.text);
+                }
+                _ => said.push(one),
+            }
+        }
+    });
+    let users: Vec<usize> = said
+        .iter()
+        .enumerate()
+        .filter(|(_, one)| one.user)
+        .map(|(at, _)| at)
+        .collect();
+    let from = match users.len().checked_sub(most) {
+        Some(skip) => users.get(skip).copied().unwrap_or(0),
+        None => users.first().copied().unwrap_or(said.len()),
+    };
+    said.split_off(from)
+}
+
+/// The first message of the user's, which began the conversation.
+pub fn first_said(path: &Path) -> Option<String> {
+    let length = std::fs::metadata(path).ok()?.len();
+    let span = Span {
+        start: 0,
+        end: length.min(HEAD_KEEP),
+    };
+    let mut first = None;
+    lines(path, Some(span), |line| {
+        if first.is_some() {
+            return;
+        }
+        let Ok(entry) = serde_json::from_slice::<Value>(line) else {
+            return;
+        };
+        if let Some(said) = said_in(&entry).filter(|said| said.user) {
+            first = Some(said.text);
+        }
+    });
+    first
+}
+
 /// What one transcript says was said and done. The first reading finds
 /// which lines make up the conversation from their ids alone; the second
 /// reads those lines, each made into its events and let go before the next.

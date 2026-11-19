@@ -72,6 +72,8 @@
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { hasNotes, openNotes } from "$lib/notes";
+  import { tokensText, wentOn } from "$lib/goingOn.svelte";
+  import { resumeWhole } from "$lib/integrated.svelte";
   import { lastSegment } from "$lib/paths";
   import {
     FOLDED,
@@ -487,6 +489,7 @@
     if (session === null) return [];
     const other = otherWayFor(session);
     const live = isLive(session);
+    const wentOnNow = wentOn(session.key);
     return [
       session.unread
         ? {
@@ -515,6 +518,20 @@
                   : "Stop it, and go on with the same conversation in the agent's own terminal",
               disabled: false,
               run: () => void reopenAsking(session, other),
+            },
+          ]),
+      ...(wentOnNow === null || session.kind !== "integrated"
+        ? []
+        : [
+            {
+              id: "session-menu-whole",
+              label:
+                wentOnNow.context === null
+                  ? "Resume whole conversation"
+                  : `Resume whole, reads ${tokensText(wentOnNow.context)}`,
+              title: "Go on with the whole earlier conversation read again, rather than from its notes",
+              disabled: session.working,
+              run: () => void resumeWhole(session.key),
             },
           ]),
       ...(sessionMenuNotes !== session.key

@@ -1672,6 +1672,51 @@ test.describe("a resumed conversation", () => {
     expect(copied).toEqual(["Count the files in src", "There are **12** files in `src`.", "ls src | wc -l", "12"]);
   });
 
+  test("goes on from its notes when cold and large, under what it said before, and resumes whole from the menu", async ({ page }) => {
+    const head =
+      "From the workbench, not the user: this conversation goes on from an earlier one of yours, which was not read again, since reading all of it with its cache lapsed would cost far more. What you need to go on is below.";
+    const briefing = `${head}\n\nYour brief and notes:\nBrief (2026-11-19):\nCount things.\n\nThe whole earlier conversation is at /t/${PAST}.jsonl.\nEnd of the workbench's briefing.`;
+    await page.addInitScript(
+      (briefing) => ((window as unknown as { __goingOn: unknown }).__goingOn = { context: 412_000, idle: 7200, goesOn: true, briefing }),
+      briefing,
+    );
+    await withPast(page, { keep: true });
+    await page.getByTestId("past-session").click();
+    // The earlier messages are drawn above, and the line says how it went on.
+    await expect(page.getByTestId("user-message")).toHaveCount(2);
+    await expect(page.getByTestId("run-began")).toHaveText(/^Went on from its notes here, today \d{1,2}:\d{2}/);
+    const start = (await calls(page)).find((call) => call.method === "start") as unknown as { options: { session?: string } };
+    expect(start.options.session).toBeUndefined();
+
+    await page.getByTestId("composer-input").fill("And the tests?");
+    await page.keyboard.press("Enter");
+    // The briefing goes ahead of the first message, and is drawn folded.
+    const sent = (await calls(page)).find((call) => call.method === "send") as unknown as { text: string };
+    expect(sent.text).toBe(`${briefing}\n\nAnd the tests?`);
+    const mine = page.getByTestId("user-message").last();
+    await expect(mine.locator(".bubble")).toHaveText("And the tests?");
+    await expect(mine.getByTestId("workbench-briefing")).toHaveText("Went on from its notes");
+    await expect(mine.getByTestId("workbench-briefing-text")).toHaveCount(0);
+    await mine.getByTestId("workbench-briefing").click();
+    await expect(mine.getByTestId("workbench-briefing-text")).toContainText("Count things.");
+    await agent(page, `f.turn("${H}", "Four of them pass.");`);
+    await expect(page.getByTestId("agent-text").last()).toHaveText("Four of them pass.");
+    // The same row, with the name it had, and its old conversation is not
+    // listed beside it as another.
+    await expect(page.locator("[data-testid='session-row']")).toHaveCount(1);
+    await expect(page.locator("[data-testid='session-row']")).toContainText("Count the files in src");
+    await expect(page.getByTestId("past-session")).toHaveCount(0);
+
+    // The menu says what resuming whole reads, and does it.
+    await page.locator("[data-testid='session-row']").first().click({ button: "right" });
+    await expect(page.getByTestId("session-menu-whole")).toHaveText("Resume whole, reads 412k tokens");
+    await page.getByTestId("session-menu-whole").click();
+    await expect.poll(async () => (await calls(page)).filter((call) => call.method === "start").length).toBe(2);
+    const again = (await calls(page)).filter((call) => call.method === "start")[1] as unknown as { options: { session?: string } };
+    expect(again.options.session).toBe(PAST);
+    await expect(page.getByTestId("run-began")).toHaveText(/^Resumed here/);
+  });
+
   test("draws what it said before above what it says now, with a line where it resumed", async ({ page }) => {
     await withPast(page, { keep: true });
     await page.getByTestId("past-session").click();

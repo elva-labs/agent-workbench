@@ -24,6 +24,7 @@ import {
 } from "$lib/core";
 import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
+import { askWhole, briefingBack, briefingFor, forgetWent, identified, takeUp, wentOn } from "$lib/goingOn.svelte";
 import { clock as timeOfDay } from "$lib/thread";
 import {
   nameTaken,
@@ -37,6 +38,7 @@ import {
   keepToken,
   renewToken,
   loadHistory,
+  nameGoingOn,
   named,
   newTurnLine,
   lineComing,
@@ -445,6 +447,7 @@ function identify(session: Session, id: string) {
   session.id = id;
   keepToken(session);
   adopt(session.project, id);
+  identified(session.key, id);
 }
 
 /** The row says what the session's events say it is doing. A session that
@@ -545,6 +548,14 @@ export async function launch(key: string): Promise<void> {
       link.busy = false;
       return;
     }
+    // A cold and large conversation goes on fresh from its notes, under
+    // its earlier messages, which are still drawn from the old one.
+    if (starting.resumedFrom !== null) {
+      await takeUp(starting);
+      link.conversation.wentOn = wentOn(key) !== null;
+      // The row keeps the name it showed, which its old conversation gave.
+      if (link.conversation.wentOn) starting.title ??= nameGoingOn(starting);
+    }
     await begin(key, link, starting, told);
   } catch (error) {
     startFailed(key, link, error);
@@ -569,7 +580,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     agent: starting.agent,
     project: starting.project,
     cwd: starting.startIn ?? undefined,
-    session: starting.resumedFrom ?? undefined,
+    session: wentOn(key) === null ? (starting.resumedFrom ?? undefined) : undefined,
     token: starting.token,
     model: starting.model ?? undefined,
     mode,
@@ -1115,7 +1126,10 @@ export function send(
   // the conversation goes back on it.
   const files = from === null ? link.filesBack : [];
   const told = files.length === 0 ? null : filesBackNote(files);
-  const text = [told, note?.text ?? null, words].filter((part) => part !== null).join("\n\n");
+  // A run that went on from notes is briefed ahead of its first message,
+  // whoever sends it, the workbench's own wake among them.
+  const briefing = briefingFor(key);
+  const text = [briefing, told, note?.text ?? null, words].filter((part) => part !== null).join("\n\n");
   const id = crypto.randomUUID();
   mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
@@ -1157,8 +1171,100 @@ export function send(
     .catch((error) => {
       link.conversation.sendFailed(id, message(error));
       settleNotes(key, link);
+      if (briefing !== null) briefingBack(key, briefing);
     });
   return id;
+}
+
+/** The context from which a cold conversation is large, as the core
+    judges it: a row with less is not looked at again. */
+const LARGE = 100_000;
+/** How often a running row is looked at again for having gone cold. */
+const LOOK_EVERY = 5 * 60_000;
+const looked = new Map<string, number>();
+
+/**
+ * Goes on from its notes with a row whose run is at rest and whose
+ * conversation went cold and large while it ran, as when the user comes
+ * back to it after a pause: its run is started again fresh, under the
+ * same row, so the next message is not read with the whole conversation.
+ * Nothing is sent and nothing is spent until the user writes. Only for a
+ * run whose context this window has seen pass the size, with nothing of
+ * its own that a stop would end, and at most every few minutes for a row.
+ */
+export async function goOnIfCold(key: string, now = Date.now()): Promise<boolean> {
+  const session = byKey(key);
+  const link = links.get(key);
+  if (session === null || link === undefined || session.kind !== "integrated") return false;
+  if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return false;
+  if (link.busy || link.handle === null || session.working || link.sendingNow) return false;
+  // Only a run this window has seen grow large: one whose context is not
+  // known yet has just started, or is taken up after a reload.
+  const used = link.conversation.context?.used ?? null;
+  if (used === null || used < LARGE) return false;
+  if (link.conversation.tasks.some((task) => task.status === "running" && !task.ambient)) return false;
+  if (now - (looked.get(key) ?? 0) < LOOK_EVERY) return false;
+  looked.set(key, now);
+  const id = session.id;
+  const handle = link.handle;
+  const resume = await takeUp({ ...session, resumedFrom: id });
+  const row = byKey(key);
+  if (resume !== null || row === null || link.handle !== handle || link.busy || row.working) {
+    if (resume === null) forgetWent(key);
+    return false;
+  }
+  row.title ??= nameGoingOn({ ...row, resumedFrom: id });
+  row.resumedFrom = id;
+  link.conversation.wentOn = true;
+  link.conversation.beganHere(now);
+  link.handle = null;
+  byHandle.delete(handle);
+  stopped.add(handle);
+  core()
+    .integratedStop(handle)
+    .catch(() => {});
+  link.busy = true;
+  link.prompted = true;
+  try {
+    await begin(key, link, row, toldFor(row));
+  } catch (error) {
+    startFailed(key, link, error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Starts a row's run that went on from its notes again on the whole of
+ * its earlier conversation, as the user asked from its row's menu: the
+ * old conversation is resumed, read again in full. Only at rest: a turn
+ * running is not cut short for it.
+ */
+export async function resumeWhole(key: string): Promise<boolean> {
+  const session = byKey(key);
+  const link = links.get(key);
+  const went = wentOn(key);
+  if (session === null || link === undefined || went === null) return false;
+  if (link.busy || link.handle === null || session.working) return false;
+  askWhole(key);
+  session.resumedFrom = went.from;
+  link.conversation.wentOn = false;
+  link.conversation.beganHere(Date.now());
+  const handle = link.handle;
+  link.handle = null;
+  byHandle.delete(handle);
+  stopped.add(handle);
+  core()
+    .integratedStop(handle)
+    .catch(() => {});
+  link.busy = true;
+  try {
+    await begin(key, link, session, toldFor(session));
+  } catch (error) {
+    startFailed(key, link, error);
+    return false;
+  }
+  return true;
 }
 
 /** Compacts the conversation through the agent's own compaction, with

@@ -1185,7 +1185,8 @@ written into the project. A call carrying a session's token keeps notes as
 that session, as [who is calling](orchestrator.md#who-is-calling)
 describes for the other tools.
 
-The list the notes tool gives names the brief and at most thirty notes: the
+The list the agent is given, by the notes tool and when it goes on from
+its notes, names the brief and at most thirty notes: the
 twenty newest, then the most read of the rest, newest first, each by its
 number, day, title and summary, and a count of the others, which it finds
 by their words. A note is read whole by its number.
@@ -1194,6 +1195,52 @@ A row's menu has Show notes when its session keeps any. It writes them
 out as a document and opens it in the viewer: the brief, the standing
 notes newest first, then those a later note replaced. There is nothing to
 manage.
+
+### Going on from the notes
+
+A conversation that is needed again after a pause is read again whole by
+its agent, and once its prompt cache has lapsed, that read costs as much
+as writing all of it to the cache afresh: for a conversation of hundreds
+of thousands of tokens, far more than anything said after it. So a Claude
+Code conversation that is cold and large goes on from its notes instead.
+Cold is past the lifetime of its last cache write, an hour or five
+minutes as its transcript records, less two minutes; large is a context
+of a hundred thousand tokens or more, as its last request read it. Warm
+or small, it is resumed whole, as before. The same rule holds for the
+user's own sessions, the one on screen included, and for sessions another
+started.
+
+Going on, the row starts a fresh conversation of the agent's, with the
+same row, name and token, so the notes and everything the workbench
+keeps of the session follow it. The core writes a briefing, a few
+thousand tokens whatever the size of what came before: the brief and the
+list of notes, the user's first message, the last three of the user's
+messages each with the agent's words after it, word for word, and where
+the old transcript is, to be searched for a detail the notes lack and
+never read whole. The briefing goes ahead of the first message the fresh
+conversation is sent, the user's, a line from the session's starter, or
+the workbench's own; a terminal session is given it as its first prompt,
+told to wait for the user when nothing else goes with it.
+
+This is weighed as a row is started again: a row left from before a
+restart once it is opened, a session another started once a line brings
+it back, and a conversation row still running at rest whose context this
+window saw grow large, once it is on screen again or the window is
+brought forward after its cache lapsed. That last restarts the run before
+anything is sent, and only with nothing running in its background. In
+the conversation view the earlier messages are still drawn above, read
+from each conversation the row went on through, the line where the run
+began says it went on from its notes, and the briefing is folded under
+the first message. The old conversation is no longer listed among the
+earlier sessions: the row goes on with it.
+
+What can be lost is what the old conversation held and the notes did
+not: files read, results seen, reasoning not written down. The agent is
+told to read the matching notes, then search the old transcript, before
+asking the user. The row's menu has Resume whole for a conversation row
+whose run went on from its notes, saying how many tokens it reads; it
+starts the run again on the whole old conversation. A Codex conversation
+is always resumed whole.
 
 The notes go once the session cannot come back. For a session another
 session started, that is when its starter stops it, or when the starter

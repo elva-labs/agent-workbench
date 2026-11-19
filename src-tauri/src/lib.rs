@@ -512,6 +512,50 @@ async fn integrated_history(
     .await
 }
 
+/// How a session's conversation is taken up again, judged where its
+/// project is: whole, or fresh from the briefing the answer holds.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn going_on(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+    token: String,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.taken_up(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            &session,
+            config_dir.as_deref(),
+            &token,
+        )?),
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "going_on",
+            json!({
+                "agent": agent,
+                "project": rest,
+                "cwd": cwd,
+                "session": session,
+                "configDir": config_dir,
+                "token": token,
+            }),
+        ),
+    })
+    .await
+}
+
 /// Where an integrated session's conversation can go back to, read on the
 /// machine it runs on.
 #[tauri::command]
@@ -2136,6 +2180,7 @@ pub fn run() {
             notes_kept,
             notes_briefing,
             notes_forget,
+            going_on,
             file_info,
             check_page_file,
             page_files::page_files_base,
