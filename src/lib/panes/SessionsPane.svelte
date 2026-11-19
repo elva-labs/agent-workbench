@@ -739,7 +739,7 @@
       : starter.kind === "terminal" && drafting(starter.key)
         ? " The workbench does not wake it while keys of yours are on its line: it waits until you send a line or clear it with Ctrl+C."
         : held === "cold"
-          ? ` The workbench tells it in one message once the others it started are done, or within ${COLD_MOST / 60_000} minutes.`
+          ? ` The workbench tells it in one message once the others it started are done, or ${COLD_MOST / 60_000} minutes after the first of these stopped.`
           : held === "gathering"
             ? " The workbench tells it shortly, with any of the others that stop meanwhile."
             : "";

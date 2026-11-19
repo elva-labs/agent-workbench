@@ -252,7 +252,9 @@ background and no error or usage limit; its starter has been told so, by a
 wait, a listing, a note or a wake; it asks nothing; no message of the
 user's or the starter's waits for it and no line is being typed into it;
 no call of the starter's that is not done names it, such as a wait on it
-alone, a read or a line on its way; it is not the session on screen; the
+alone, a read or a line on its way; none of the sessions it started
+itself is at work or has come to rest without its hearing, so it is there
+to be woken for them; it is not the session on screen; the
 user has read it; and the user has no words in its terminal or its
 composer. Once that has held for at least five minutes without a break,
 its row closes and the session goes among the earlier sessions to resume,
@@ -434,7 +436,10 @@ under none are woken alike, and there is no setting for it.
 Each wake is a turn that reads the starter's whole conversation, so the
 workbench gathers what comes to rest into as few wakes as it can. With
 nothing else the starter started at work, the wake goes three seconds after
-the last session came to rest. While others are still at work, it waits
+the last session came to rest. So does a wake for a session that failed or
+ended, since the starter may want to retry, resume or plan again at once,
+and one for a call answered early that is now done, counted from when the
+window saw it done. While others are still at work, it waits
 thirty seconds after the last for more to come along, and never more than
 two minutes after the first. A starter that has rested long enough for its
 prompt cache to lapse, an hour for Claude Code and ten minutes for Codex,
@@ -443,7 +448,9 @@ none of its sessions is at work, or twenty minutes after the first came to
 rest. While a wake is held so, the pointer text on the row's not heard yet
 mark says when it goes. A message from the user carries everything
 unheard at once, and a wait answers as soon as a session it watches comes
-to rest, held by none of this.
+to rest, held by none of this. A session that came to rest unheard while
+a window watched stays so across a reload of the window, which then plans
+the starter's wake for it as above, counted from the reload.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal

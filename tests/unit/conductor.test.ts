@@ -2705,6 +2705,70 @@ describe("waking an idle starter", () => {
     expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
   });
 
+  it("wakes a cold starter a moment after a session fails or ends, though others are at work", async () => {
+    const starter = idleStarter();
+    const failing = own(A, "pty-1", "sid-1", "caller-1");
+    exact("sid-1", "prompt");
+    const ending = atWork("pty-2", "sid-2");
+    atWork("pty-3", "sid-3");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    exact("sid-1", "failed", "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)", false, {
+      error: "rate_limit",
+    });
+    flushSync();
+    expect(unheard(starter)).toEqual([failing]);
+    expect(wakeHeld(starter)).toBeNull();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-1 is at its usage limit until 4pm.");
+    expect(typedInto("pty-0")).toContain("Still at work: sid-2 and sid-3.");
+    // A turn of the workbench's ran and ended, and the starter rested
+    // again past its cache.
+    written.length = 0;
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    ending.status = "exited";
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-2");
+  });
+
+  it("wakes a starter after a reload for a rest it had not heard, as it would have before", async () => {
+    idleStarter();
+    await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
+    await startAllowed(call("start", { project: A, prompt: "Fix that" }, { session: "caller-1" }), "pty-2", "sid-2");
+    exact("sid-1", "prompt");
+    exact("sid-2", "prompt");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    exact("sid-1", "stop", "Fixed");
+    flushSync();
+    expect(wakeHeld(byId("caller-1")!)).toBe("cold");
+    // The window reloads while the core still runs all three, and their
+    // rows come back as the core has them.
+    written.length = 0;
+    restarted();
+    const back = (id: string, ptyId: string) => {
+      const row = create(A, id, "claude-code", null, null, null, null, null);
+      started(row.key, ptyId, id);
+      return row;
+    };
+    const starter = back("caller-1", "pty-0");
+    Object.assign(starter, { exact: true, turns: 2, turnEnd: "done" });
+    Object.assign(back("sid-1", "pty-1"), { exact: true, turns: 1, turnEnd: "done", note: "Fixed" });
+    const two = back("sid-2", "pty-2");
+    two.working = true;
+    flushSync();
+    expect(unheard(starter).map((row) => row.id)).toEqual(["sid-1"]);
+    two.working = false;
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain('Session sid-1 stopped working. Its last line: "Fixed"');
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
   it("does not wake a starter for a session asking for permission, which goes along with the next wake", async () => {
     const starter = idleStarter();
     const asking = atWork("pty-1", "sid-1");
@@ -6753,6 +6817,26 @@ describe("a call that waits on the user", () => {
     );
     expect(conductor.later).toEqual({});
   });
+
+  it("wakes it a moment after the call is done, however often wakes are planned meanwhile", async () => {
+    caller();
+    const other = live(B, "pty-9", "other-1");
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    // Something else moves every second, and the wakes are planned again
+    // each time.
+    for (let at = 0; at < WAKE_AFTER + 10_000; at += 1000) {
+      other.working = !other.working;
+      flushSync();
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    const typedIn = written
+      .filter(([id]) => id === "pty-0")
+      .map(([, data]) => data)
+      .join("");
+    expect(typedIn).toContain(`Your start of "Fix the flake" in ${B} did not go ahead`);
+  });
 });
 
 describe("a session whose work is over", () => {
@@ -6810,6 +6894,22 @@ describe("a session whose work is over", () => {
     await waiting;
     expect(last().content).toMatch(/^Nothing happened within 900 seconds/);
     await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+  });
+
+  it("stays while a session it started itself is at work or has not been heard by it", async () => {
+    const row = await told();
+    const sub = own(A, "pty-5", "sub-1", "sid-1");
+    sub.working = true;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    sub.working = false;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    await handle(call("sessions", {}, { session: "sid-1" }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER + 1000);
     expect(byKey(row.key)).toBeNull();
   });
 

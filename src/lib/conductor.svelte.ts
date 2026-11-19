@@ -302,8 +302,9 @@ export function stopStarted(key: string): void {
  * turn itself with nothing left running and no error, its starter has
  * been told so, and nothing of it is open: the user has read it, has it
  * not on screen and has no words in it, it asks nothing, no message waits
- * for it and none is being typed into it, and its starter holds no call
- * that names it. After `PUT_AWAY_AFTER` of that, unbroken, and counted
+ * for it and none is being typed into it, its starter holds no call that
+ * names it, and none of the sessions it started itself is at work or has
+ * come to rest without its hearing. After `PUT_AWAY_AFTER` of that, unbroken, and counted
  * again from the end of each call that names it, its row closes and goes
  * among the earlier sessions, as a stopped one does, but it stays on its
  * starter's list, and a line its starter sends it resumes it. The time is
@@ -389,6 +390,9 @@ function overWith(session: Session): boolean {
   const mark = stops.get(session.key);
   if (mark === undefined || !mark.worked || mark.rest !== "quiet" || mark.told !== "quiet") return false;
   if (restWay(session).way !== "done") return false;
+  // What it started itself reports to it: it stays while one of those is
+  // at work or has a rest it has not heard.
+  if (startedBy(session.token).some((kid) => atWork(kid) || untold(kid))) return false;
   return session.kind === "integrated" ? handleOf(session.key) !== null : session.ptyId !== null;
 }
 
@@ -587,6 +591,11 @@ export interface Started {
       asked, so it takes no command but /compact from its caller. A version
       that does not know it reads the record without it. */
   unasked?: true;
+  /** It came to rest while a window watched, and its caller has not heard
+      yet, so a window that comes back to it at rest still wakes the
+      caller for it. A version that does not know it reads the record
+      without it. */
+  unheard?: true;
 }
 
 /** Where a started session stands in its caller's workflow. */
@@ -1887,7 +1896,8 @@ type Rest = "ended" | "permission" | "quiet" | "cut";
  * output has no turns but its spells of work, and each starts over.
  * Whether it has been seen not at rest in this window's run, too: a rest
  * that began before the window first saw the session, as after a reload,
- * wakes no one.
+ * wakes no one, unless the window before saw it begin and its caller had
+ * not heard of it.
  */
 type Mark = {
   worked: boolean;
@@ -1924,6 +1934,7 @@ function observe(session: Session) {
   // Reopened the other way, it is the same session going on: how it is
   // stays as last seen until its next run is up.
   if (reopeningRow(key) && stops.has(key)) return;
+  const fresh = !stops.has(key);
   const mark =
     stops.get(key) ?? { worked: false, rest: null, told: null, toldTurn: null, turn: 0, seen: false, restAt: null };
   const before = unheardMark(stops.get(key));
@@ -1950,11 +1961,16 @@ function observe(session: Session) {
   else mark.rest = session.turnEnd === "cut" ? "cut" : "quiet";
   if (mark.rest !== was) mark.restAt = mark.rest === null ? null : Date.now();
   if (mark.rest === null) mark.seen = true;
-  if (unheardMark(mark) !== before) moved();
-  // Kept with the run as well: a session that ends keeps what was last
-  // seen of it before it ended.
   const { id } = session;
   const caller = startedFor(key);
+  // A rest a window before this one saw come, which its caller has not
+  // heard, was seen.
+  if (fresh && mark.rest !== null && id !== null && caller !== null && untrack(() => remembered(caller, id)?.unheard))
+    mark.seen = true;
+  if (unheardMark(mark) !== before) moved();
+  keepUnheard(key);
+  // Kept with the run as well: a session that ends keeps what was last
+  // seen of it before it ended.
   if (id !== null && caller !== null && mark.rest !== "ended") {
     const rested = mark.rest === "quiet" || mark.rest === "cut";
     untrack(() => keepRested(caller, id, rested));
@@ -2002,6 +2018,25 @@ function tell(key: string) {
   mark.told = mark.rest;
   mark.toldTurn = mark.turn;
   moved();
+  keepUnheard(key);
+}
+
+/** Keeps with a started session's record whether it came to rest while
+    the window watched without its caller having heard. */
+function keepUnheard(key: string) {
+  untrack(() => {
+    const row = byKey(key);
+    const caller = startedFor(key);
+    if (row === null || row.id === null || caller === null) return;
+    const entry = remembered(caller, row.id);
+    if (entry === null) return;
+    const mark = stops.get(key);
+    const unheard = mark !== undefined && unheardMark(mark) && mark.seen;
+    if ((entry.unheard === true) === unheard) return;
+    if (unheard) entry.unheard = true;
+    else delete entry.unheard;
+    saveStarted();
+  });
 }
 
 /**
@@ -2023,6 +2058,7 @@ export function watchStops(): () => void {
     for (const wake of wakes.values()) clearTimeout(wake.timer);
     wakes.clear();
     restingSince.clear();
+    answeredAt.clear();
     for (const timer of puttingAway.values()) clearTimeout(timer);
     puttingAway.clear();
     leftToSee.clear();
@@ -2203,6 +2239,10 @@ export const WAKE_TAKEN = 30_000;
 const wakes = new Map<string, { timer: ReturnType<typeof setTimeout>; at: number; keys?: true }>();
 /** Since when each row has not been at work, as the window saw it. */
 const restingSince = new Map<string, number>();
+/** When the window first saw each call answered later done, by the call's
+    id, so the wake for it goes a moment after that however often wakes
+    are planned meanwhile. */
+const answeredAt = new Map<string, number>();
 /** Starters whose wake is being typed or sent. */
 const waking = new Set<string>();
 /** Starters whose next turn is the one their wake began, with what gives
@@ -2246,28 +2286,35 @@ function cold(starter: Session, now: number): boolean {
  * When an idle starter is woken, or null when nothing it has to hear wakes
  * it: a session asking for permission is the user's to answer, so it goes
  * along in a wake but sets none off. With nothing else it started at
- * work, or a call answered later to hear, the wake goes a moment after the
- * last came to rest. While others are at work it waits for them to come
- * along: a warm starter a while after the last, within a bound after the
- * first, and a cold one until they are done, within a longer bound, since
- * each wake of a cold starter reads its whole conversation again. Never
- * sooner than a moment after the starter came to rest itself.
+ * work, a session that failed or ended to hear, which the starter may
+ * want to take up at once, or a call answered later, the wake goes a
+ * moment after the last came to rest or the call was seen done. While
+ * others are at work it waits for them to come along: a warm starter a
+ * while after the last, within a bound after the first, and a cold one
+ * until they are done, within a longer bound, since each wake of a cold
+ * starter reads its whole conversation again. Never sooner than a moment
+ * after the starter came to rest itself.
  */
 function wakeAt(starter: Session, now: number): number | null {
   const news = wakeNews(starter).filter((kid) => stops.get(kid.key)?.rest !== "permission");
-  const calls = laterNews(starter.token).calls.length > 0;
-  if (news.length === 0 && !calls) return null;
+  const calls = laterNews(starter.token).calls.map((call) => {
+    if (!answeredAt.has(call)) answeredAt.set(call, now);
+    return answeredAt.get(call)!;
+  });
+  if (news.length === 0 && calls.length === 0) return null;
   const rests = news.map((kid) => stops.get(kid.key)?.restAt ?? now);
-  const first = rests.length === 0 ? now : Math.min(...rests);
-  const last = rests.length === 0 ? now : Math.max(...rests);
+  const first = Math.min(...rests, ...calls);
+  const last = Math.max(...rests, ...calls);
   const soonest = (restingSince.get(starter.key) ?? now) + WAKE_AFTER;
-  const others = startedBy(starter.token).some(atWork);
-  const at =
-    calls || !others
-      ? last + WAKE_AFTER
-      : cold(starter, now)
-        ? first + COLD_MOST
-        : Math.min(last + GATHER, first + GATHER_MOST);
+  const pressing =
+    calls.length > 0 ||
+    !startedBy(starter.token).some(atWork) ||
+    news.some((kid) => ["failed", "ended"].includes(restWay(kid).way));
+  const at = pressing
+    ? last + WAKE_AFTER
+    : cold(starter, now)
+      ? first + COLD_MOST
+      : Math.min(last + GATHER, first + GATHER_MOST);
   return Math.max(soonest, at);
 }
 
@@ -2293,6 +2340,8 @@ function planWakes() {
     if (row.working) restingSince.delete(row.key);
     else if (!restingSince.has(row.key)) restingSince.set(row.key, now);
   for (const key of restingSince.keys()) if (byKey(key) === null) restingSince.delete(key);
+  const later = new Set(Object.values(conductor.later).flatMap((list) => list.map((one) => one.call)));
+  for (const call of answeredAt.keys()) if (!later.has(call)) answeredAt.delete(call);
   const due = new Map<string, number>();
   for (const starter of sessions.all) {
     if (!idle(starter) || spent(starter)) continue;
@@ -4611,6 +4660,7 @@ export function resetConductor() {
   for (const wake of wakes.values()) clearTimeout(wake.timer);
   wakes.clear();
   restingSince.clear();
+  answeredAt.clear();
   waking.clear();
   for (const timer of wakeTurns.values()) if (timer !== null) clearTimeout(timer);
   wakeTurns.clear();
