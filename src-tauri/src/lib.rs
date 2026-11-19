@@ -116,6 +116,7 @@ async fn pty_spawn(
     instructions: Option<String>,
     start_only: Option<bool>,
     afresh: Option<bool>,
+    compact_at: Option<u64>,
     bring_back: Option<bool>,
     cols: u16,
     rows: u16,
@@ -144,6 +145,7 @@ async fn pty_spawn(
                 instructions.as_deref(),
                 start_only.unwrap_or(false),
                 afresh.unwrap_or(false),
+                compact_at,
                 bring_back.unwrap_or(false),
                 cols,
                 rows,
@@ -155,7 +157,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "bringBack": bring_back.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at, "bringBack": bring_back.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
@@ -185,6 +187,7 @@ async fn integrated_start(
     instructions: Option<String>,
     start_only: Option<bool>,
     afresh: Option<bool>,
+    compact_at: Option<u64>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
@@ -206,11 +209,12 @@ async fn integrated_start(
             instructions.as_deref(),
             start_only.unwrap_or(false),
             afresh.unwrap_or(false),
+            compact_at,
         )?),
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false) }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             let id = with_host_id(&host, id);

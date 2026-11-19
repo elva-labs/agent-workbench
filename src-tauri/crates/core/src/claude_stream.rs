@@ -207,6 +207,9 @@ impl Protocol for ClaudeStream {
         if launch.resume && launch.afresh {
             command.args(["--system-prompt-snapshot", "off"]);
         }
+        if let Some(tokens) = launch.compact_at {
+            command.args(["--autocompact", &tokens.to_string()]);
+        }
         if let Some(server) = launch.tool_server {
             let config = json!({
                 "mcpServers": {

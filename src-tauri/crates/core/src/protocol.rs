@@ -116,6 +116,8 @@ struct SpawnParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    #[serde(default)]
+    compact_at: Option<u64>,
     /// The user agreed to bring back what a conversation held at the point
     /// it went back to left out.
     #[serde(default)]
@@ -149,6 +151,8 @@ struct IntegratedStartParams {
     start_only: bool,
     #[serde(default)]
     afresh: bool,
+    #[serde(default)]
+    compact_at: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -531,6 +535,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.compact_at,
                 p.bring_back,
                 p.cols,
                 p.rows,
@@ -552,6 +557,7 @@ pub fn dispatch(
                 p.instructions.as_deref(),
                 p.start_only,
                 p.afresh,
+                p.compact_at,
             )?)
         }
         "integrated_trust" => {
@@ -1394,6 +1400,25 @@ mod tests {
             Some("The user declined the change.")
         );
         std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn the_context_to_compact_at_is_optional_in_a_start() {
+        let spawn: SpawnParams = parse(
+            json!({ "agent": "claude-code", "project": "/p", "cols": 80, "rows": 24, "compactAt": 150000 }),
+        )
+        .unwrap();
+        assert_eq!(spawn.compact_at, Some(150_000));
+        let spawn: SpawnParams =
+            parse(json!({ "agent": "claude-code", "project": "/p", "cols": 80, "rows": 24 }))
+                .unwrap();
+        assert_eq!(spawn.compact_at, None);
+        let start: IntegratedStartParams =
+            parse(json!({ "agent": "claude-code", "project": "/p", "compactAt": 150000 })).unwrap();
+        assert_eq!(start.compact_at, Some(150_000));
+        let start: IntegratedStartParams =
+            parse(json!({ "agent": "claude-code", "project": "/p" })).unwrap();
+        assert_eq!(start.compact_at, None);
     }
 
     #[test]

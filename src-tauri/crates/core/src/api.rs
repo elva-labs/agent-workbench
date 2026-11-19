@@ -138,6 +138,7 @@ struct Run {
     instructions: Option<String>,
     start_only: bool,
     afresh: bool,
+    compact_at: Option<u64>,
     undo: Option<Undo>,
 }
 
@@ -436,6 +437,8 @@ impl Core {
     /// agent's tools are given so that every call they make names it.
     /// `mode` is the mode the conversation last ran in where the window
     /// knows it, by the name its integrated sessions offer it under.
+    /// `compact_at` is the context, in tokens, at which an agent that takes
+    /// one compacts the conversation on its own.
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
         &self,
@@ -451,6 +454,7 @@ impl Core {
         instructions: Option<&str>,
         start_only: bool,
         afresh: bool,
+        compact_at: Option<u64>,
         bring_back: bool,
         cols: u16,
         rows: u16,
@@ -473,6 +477,7 @@ impl Core {
             instructions,
             start_only,
             afresh,
+            compact_at,
             bring_back,
             &env::environment().vars,
         )?;
@@ -539,6 +544,7 @@ impl Core {
         instructions: Option<&str>,
         start_only: bool,
         afresh: bool,
+        compact_at: Option<u64>,
         bring_back: bool,
         vars: &HashMap<String, String>,
     ) -> Result<Prepared, String> {
@@ -638,6 +644,7 @@ impl Core {
             server_file: server_file.as_deref(),
             configured: configured.as_deref(),
             afresh: resumed && afresh,
+            compact_at,
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
@@ -684,6 +691,7 @@ impl Core {
         instructions: Option<&str>,
         start_only: bool,
         afresh: bool,
+        compact_at: Option<u64>,
     ) -> Result<crate::integrated::Started, String> {
         let run = Run {
             agent: agent.to_string(),
@@ -698,6 +706,7 @@ impl Core {
             instructions: instructions.map(str::to_string),
             start_only,
             afresh,
+            compact_at,
             undo: None,
         };
         // A conversation held at the point it went back to goes on from
@@ -797,6 +806,7 @@ impl Core {
             instructions,
             start_only: instructions.is_some() && start_only,
             afresh: resume && afresh,
+            compact_at: run.compact_at,
             resume_at: at.as_deref().filter(|_| resume),
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
@@ -2246,6 +2256,7 @@ mod tests {
                     instructions,
                     true,
                     false,
+                    None,
                     false,
                     &vars,
                 )
@@ -2278,6 +2289,7 @@ mod tests {
             Some("1. Direct the work."),
             true,
             false,
+            None,
             false,
             80,
             24,
@@ -2421,6 +2433,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
                 bring_back,
                 &vars,
             )
@@ -2478,6 +2491,7 @@ mod tests {
             instructions: None,
             start_only: false,
             afresh: false,
+            compact_at: None,
             undo: None,
         };
         let again = |session: Option<&str>, at: Option<&str>| Again {
@@ -2527,6 +2541,7 @@ mod tests {
                 Some("1. Direct the work."),
                 true,
                 false,
+                None,
             );
             // Refused before the folder is asked about, since trusting it
             // would not let the session start.

@@ -206,6 +206,12 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
+
+A session another started compacts its conversation once its context
+reaches 150,000 tokens, through Claude Code's own setting for when it
+compacts, since every turn reads the whole context. The user's own
+sessions keep the agent's default. There is no setting for it.
+
 A start can name an account, by the name it has in the settings, or
 Default, in any case, for the agents' own login, for work the user asked
 to have done under a particular login, or for work a session under a

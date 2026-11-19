@@ -92,6 +92,8 @@ import {
   started as cameUp,
   titled,
   typed,
+  STARTED_CONTEXT,
+  toldFor,
   WORK_BYTES,
   WORK_WINDOWS,
   type Session,
@@ -1560,6 +1562,14 @@ describe("a start in the caller's own project", () => {
     // Nothing standing was given: another project is still asked about.
     expect(allowedProjects(tok("caller-1"))).toEqual([]);
     expect((await asked({ project: B })).project).toBe(B);
+  });
+
+  it("caps the context of a session it starts, and leaves the caller's own to the agent", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    heard("caller-1");
+    const row = await unasked({ project: A }, "sid-1");
+    expect(toldFor(row).compactAt).toBe(STARTED_CONTEXT);
+    expect(toldFor(caller).compactAt).toBeUndefined();
   });
 
   it("is the project of a caller that runs in a worktree of it", async () => {

@@ -849,6 +849,9 @@ pub struct Launch<'a> {
     /// its conversation was first given, no instructions at all among
     /// them, so an agent that records what it was first told lets go of it.
     pub afresh: bool,
+    /// The context, in tokens, at which the agent compacts the conversation
+    /// on its own, for an agent that takes one. Its own default when None.
+    pub compact_at: Option<u64>,
     /// For a resumed conversation, the entry of the agent's record it goes
     /// on from, leaving out everything after it; from its newest when None.
     pub resume_at: Option<&'a str>,
@@ -4941,6 +4944,7 @@ mod tests {
             instructions: None,
             start_only: false,
             afresh: false,
+            compact_at: None,
             resume_at: None,
         };
         let sessions = Arc::new(Sessions::default());

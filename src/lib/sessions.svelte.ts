@@ -1595,7 +1595,16 @@ export interface Told {
   /** Whether a resumed session lets go of what its conversation was
       first told. */
   afresh?: boolean;
+  /** The context at which the agent compacts on its own. */
+  compactAt?: number;
 }
+
+/** The context, in tokens, at which a session another session started
+    compacts its conversation, on an agent that takes one: every turn reads
+    the whole context, and a started session's work seldom needs its
+    oldest turns word for word. The user's own sessions keep the agent's
+    default. */
+export const STARTED_CONTEXT = 150_000;
 
 /**
  * What the agent behind a starting row is told of its workflow, the same
@@ -1635,6 +1644,7 @@ export function toldFor(session: Session): Told {
           startOnly: startsOnly(session.workflow),
         }),
     ...(afresh ? { afresh: true } : {}),
+    ...(session.agent === "claude-code" && starterOf(session.key) !== null ? { compactAt: STARTED_CONTEXT } : {}),
   };
 }
 
