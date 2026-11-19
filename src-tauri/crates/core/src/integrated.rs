@@ -170,6 +170,9 @@ pub enum Event {
     /// The slash commands and skills changed, or the agent said more of
     /// which is which. All of them, as they now are.
     Commands { commands: Vec<CommandInfo> },
+    /// The user named the conversation through the agent, by its own
+    /// command for it: `title` is the name.
+    Titled { title: String },
     /// Where a message the window sent stands, between `send` and the turn
     /// that answers it: `sent` when it went to the agent with nothing ahead
     /// of it, `queued` while it waits behind a turn already running,

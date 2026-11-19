@@ -1523,10 +1523,15 @@ impl Core {
     }
 
     /// What an agent calls a session now, for agents that keep that in an
-    /// index of their own rather than in the terminal title.
+    /// index of their own rather than in the terminal title, and for Claude
+    /// Code the name the user gave the session, which its transcript keeps.
     pub fn session_title(&self, agent: &str, id: &str, config_dir: Option<&str>) -> Option<String> {
         let home = self.home.as_ref()?;
         match agent {
+            "claude-code" => transcripts::given_name(
+                &account::claude_dir(home, config_dir, &env::environment().vars),
+                id,
+            ),
             "codex" => codex::title_of(
                 &account::codex_home(home, config_dir, &env::environment().vars),
                 id,

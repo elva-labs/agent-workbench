@@ -514,6 +514,10 @@ struct Stream {
     /// The commands as last told.
     commands_told: Vec<CommandInfo>,
     settings_known: bool,
+    /// A command ran in the turn, which may have changed the model or the
+    /// effort without a word on the stream, so the settings are read again
+    /// once it is over.
+    settings_due: bool,
     ready: bool,
     next: u64,
     sent: HashMap<String, Sent>,
@@ -957,6 +961,7 @@ impl Stream {
             terminal_only: Vec::new(),
             commands_told: Vec::new(),
             settings_known: false,
+            settings_due: false,
             ready: false,
             next: 0,
             sent: HashMap::new(),
@@ -1184,6 +1189,16 @@ impl Stream {
             Sent::Usage,
             json!({ "subtype": "get_usage", "skip_behaviors": true }),
         );
+        out.writes.push(line);
+    }
+
+    /// Reads the settings again after a turn that ran a command, which says
+    /// nothing on the stream of a model or an effort it set.
+    fn ask_settings(&mut self, out: &mut Reading) {
+        if !self.ready || !std::mem::take(&mut self.settings_due) {
+            return;
+        }
+        let (line, _) = self.request(Sent::Settings, json!({ "subtype": "get_settings" }));
         out.writes.push(line);
     }
 
@@ -1544,6 +1559,12 @@ impl Stream {
             if let Some(uuid) = line["uuid"].as_str() {
                 self.took(uuid, out);
             }
+            if text_of(&line["message"]["content"])
+                .trim_start()
+                .starts_with("<command-name>")
+            {
+                self.settings_due = true;
+            }
         }
         let results: Vec<&Value> = line["message"]["content"]
             .as_array()
@@ -1597,6 +1618,12 @@ impl Stream {
                 }
                 self.terminal_only = strings(&line["terminal_slash_commands"]);
                 self.tell_commands(out);
+            }
+            // The user named the session, by its rename command.
+            Some("session_title_changed") => {
+                if let Some(title) = text(&line["title"]).filter(|title| !title.trim().is_empty()) {
+                    out.events.push(Event::Titled { title });
+                }
             }
             Some("commands_changed") => {
                 self.listed = listed_commands(&line["commands"]);
@@ -1857,6 +1884,7 @@ impl Stream {
             duration_ms: line["duration_ms"].as_u64(),
             usage: usage(&line["usage"]),
         });
+        self.ask_settings(out);
         self.ask_usage(out);
     }
 
@@ -2027,12 +2055,7 @@ impl Stream {
             }
             Sent::Settings => {
                 if let Some(applied) = body.map(|b| &b["applied"]) {
-                    if let Some(model) = text(&applied["model"]) {
-                        self.model = Some(model);
-                    }
-                    if let Some(effort) = text(&applied["effort"]) {
-                        self.effort = Some(effort);
-                    }
+                    self.configure(text(&applied["model"]), None, text(&applied["effort"]), out);
                 }
                 self.settings_known = true;
                 self.introduce(out);
@@ -3774,6 +3797,67 @@ mod tests {
             &[json!({"type":"control_response","response":{"subtype":"success","request_id":"wb-2","response":{"applied":applied}}})],
         ));
         out
+    }
+
+    #[test]
+    fn a_rename_names_the_conversation() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"system","subtype":"session_title_changed","title":"Shared ARM64 host"}),
+                json!({"type":"system","subtype":"session_title_changed","title":"  "}),
+            ],
+        );
+        assert_eq!(
+            out,
+            [Event::Titled {
+                title: "Shared ARM64 host".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_command_s_turn_reads_the_settings_again() {
+        let mut stream = stream();
+        opened(
+            &mut stream,
+            json!({"apiProvider":"firstParty","subscriptionType":"pro"}),
+            json!({"model":"claude-haiku","effort":"low"}),
+        );
+        sent(&mut stream, M1);
+        stream.read(&json!({"type":"user","isReplay":true,"uuid":M1,"message":{"role":"user","content":"<command-name>/effort</command-name>\n<command-args>high</command-args>"}}).to_string());
+        let ended = stream.read(&result().to_string());
+        let asked: Vec<&String> = ended
+            .writes
+            .iter()
+            .filter(|line| line.contains("\"get_settings\""))
+            .collect();
+        assert_eq!(asked.len(), 1, "{:?}", ended.writes);
+        let id = serde_json::from_str::<Value>(asked[0]).unwrap()["request_id"].clone();
+        let out = events(
+            &mut stream,
+            &[
+                json!({"type":"control_response","response":{"subtype":"success","request_id":id,"response":{"applied":{"model":"claude-sonnet","effort":"high"}}}}),
+            ],
+        );
+        assert_eq!(
+            out,
+            [Event::Configured {
+                model: Some("claude-sonnet".into()),
+                mode: Some("default".into()),
+                effort: Some("high".into()),
+                efforts: vec!["low".into(), "high".into()],
+            }]
+        );
+        // A turn of a plain message reads nothing again.
+        sent(&mut stream, M2);
+        stream.read(&json!({"type":"user","isReplay":true,"uuid":M2,"message":{"role":"user","content":"Fix the build"}}).to_string());
+        let ended = stream.read(&result().to_string());
+        assert!(!ended
+            .writes
+            .iter()
+            .any(|line| line.contains("\"get_settings\"")));
     }
 
     #[test]
