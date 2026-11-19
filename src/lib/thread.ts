@@ -59,10 +59,11 @@ export function segments(parts: Part[]): Segment[] {
 }
 
 /** The workbench's own calls the thread does not draw: a wait on the
-    sessions the agent started, a line left on its row, and a note kept of
-    the conversation. None is work the user reads, so none has a step, a count or a line of its own,
-    and what the agent wrote before them stays the last thing in its run. */
-const UNDRAWN = new Set(["wait", "notify", "note"]);
+    sessions the agent started, a line left on its row, and the notes kept
+    of the conversation and read back. None is work the user reads, so none
+    has a step, a count or a line of its own, and what the agent wrote
+    before them stays the last thing in its run. */
+const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
 
 /** Whether the thread draws a part of a run. */
 export function drawnPart(part: Part): boolean {
