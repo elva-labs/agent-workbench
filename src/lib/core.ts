@@ -139,6 +139,10 @@ export interface SpawnOptions {
       or none, differs from what its conversation was first given, so an
       agent that records the first lets go of it. */
   afresh?: boolean;
+  /** The context, in tokens, at which the agent compacts the conversation
+      on its own, for an agent that takes one. Its own default when left
+      out. */
+  compactAt?: number;
   /** For a Claude Code conversation resumed in a terminal while it is held
       at the point it went back to (`integratedHeld`): the user agreed to
       bring back what that point left out, which the terminal shows and
@@ -193,6 +197,8 @@ export interface IntegratedStartOptions {
   /** For a resumed session, whether what it is told now differs from what
       its conversation was first given, as for `spawn`. */
   afresh?: boolean;
+  /** The context at which the agent compacts on its own, as for `spawn`. */
+  compactAt?: number;
 }
 
 /** What starting an integrated session hands back: the id every other
@@ -391,6 +397,9 @@ export type IntegratedEventBody =
         name: string | null;
         description: string | null;
         efforts: string[];
+        /** The model it stands for, where the agent says, as Claude
+            Code does for an alias and for its default. */
+        resolved?: string;
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];
@@ -1632,6 +1641,16 @@ export interface Core {
   notesBriefing(project: string, token: string): Promise<string | null>;
   /** Lets go of the notes of these sessions of a project. */
   notesForget(project: string, tokens: string[]): Promise<void>;
+  /** Adds an entry to a session's usage log, where its project is. With
+      `transcript`, for a turn of a Claude Code session in a terminal, the
+      core reads the turn's tokens and the context from the conversation's
+      transcript. */
+  usageLog(
+    project: string,
+    token: string,
+    entry: Record<string, unknown>,
+    transcript?: { cwd?: string; session: string; configDir?: string },
+  ): Promise<void>;
   /** How a session's conversation is taken up again, judged where its
       project is: whole, or fresh from the briefing the answer holds. */
   goingOn(options: GoingOnOptions): Promise<GoingOn>;
@@ -2166,6 +2185,8 @@ const tauriCore: Core = {
   notesKept: (project, token, page) => invoke<NotesKept>("notes_kept", { project, token, page }),
   notesBriefing: (project, token) => invoke<string | null>("notes_briefing", { project, token }),
   notesForget: (project, tokens) => invoke<void>("notes_forget", { project, tokens }),
+  usageLog: (project, token, entry, transcript) =>
+    invoke<void>("usage_log", { project, token, entry, transcript: transcript ?? null }),
   goingOn: (options) => invoke<GoingOn>("going_on", { ...options }),
   readMedia: (path) => invoke<Media>("read_media", { path }),
   fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
@@ -2541,6 +2562,7 @@ const detachedCore: Core = {
     return null;
   },
   async notesForget() {},
+  async usageLog() {},
   async goingOn() {
     return { context: null, idle: null, goesOn: false, briefing: null };
   },

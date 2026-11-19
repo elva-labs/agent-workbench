@@ -207,6 +207,9 @@ impl Protocol for ClaudeStream {
         if launch.resume && launch.afresh {
             command.args(["--system-prompt-snapshot", "off"]);
         }
+        if let Some(tokens) = launch.compact_at {
+            command.args(["--autocompact", &tokens.to_string()]);
+        }
         if let Some(server) = launch.tool_server {
             let config = json!({
                 "mcpServers": {
@@ -498,8 +501,8 @@ struct Stream {
     /// agent may not run in where it is not available.
     asked_mode: Option<String>,
     effort: Option<String>,
-    /// The models the agent offers, with the name it resolves each to.
-    models: Vec<(ModelInfo, Option<String>)>,
+    /// The models the agent offers.
+    models: Vec<ModelInfo>,
     /// What the agent said of itself at the start, held until the
     /// settings it runs on are known too.
     introduced: Option<Value>,
@@ -1008,8 +1011,8 @@ impl Stream {
         };
         self.models
             .iter()
-            .find(|(info, resolved)| &info.value == model || resolved.as_ref() == Some(model))
-            .map(|(info, _)| info.efforts.clone())
+            .find(|info| &info.value == model || info.resolved.as_ref() == Some(model))
+            .map(|info| info.efforts.clone())
             .unwrap_or_default()
     }
 
@@ -1104,15 +1107,13 @@ impl Stream {
             .into_iter()
             .flatten()
             .filter_map(|model| {
-                Some((
-                    ModelInfo {
-                        value: model["value"].as_str()?.to_string(),
-                        name: text(&model["displayName"]),
-                        description: text(&model["description"]),
-                        efforts: strings(&model["supportedEffortLevels"]),
-                    },
-                    text(&model["resolvedModel"]),
-                ))
+                Some(ModelInfo {
+                    value: model["value"].as_str()?.to_string(),
+                    name: text(&model["displayName"]),
+                    description: text(&model["description"]),
+                    efforts: strings(&model["supportedEffortLevels"]),
+                    resolved: text(&model["resolvedModel"]),
+                })
             })
             .collect();
         if let Some(mode) = text(&body["current_permission_mode"]) {
@@ -1125,7 +1126,7 @@ impl Stream {
             mode: self.mode.clone(),
             effort: self.effort.clone(),
             version: text(&body["claude_code_version"]),
-            models: self.models.iter().map(|(info, _)| info.clone()).collect(),
+            models: self.models.clone(),
             modes: MODES
                 .iter()
                 .map(|(value, name)| ModeInfo {
@@ -3912,6 +3913,20 @@ mod tests {
         assert!(!modes.iter().any(|mode| mode.value == "bypassPermissions"));
         assert_eq!(commands[0].hint, None);
         assert_eq!(out.len(), 1, "signed in: {out:?}");
+    }
+
+    #[test]
+    fn ready_says_which_model_each_offer_stands_for() {
+        let mut stream = Stream::new("s-1", None, None, None);
+        let out = opened(&mut stream, json!({"apiProvider":"firstParty"}), json!({}));
+        let Event::Ready { models, .. } = &out[0] else {
+            panic!("{out:?}");
+        };
+        let resolved: Vec<_> = models
+            .iter()
+            .map(|model| model.resolved.as_deref())
+            .collect();
+        assert_eq!(resolved, [Some("claude-haiku"), Some("claude-sonnet")]);
     }
 
     #[test]

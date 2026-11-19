@@ -48,6 +48,7 @@ pub(crate) mod short_lived;
 pub mod show;
 pub mod styles;
 pub mod transcripts;
+pub mod usage;
 pub mod watch;
 pub mod workflow;
 

@@ -13,6 +13,7 @@
  */
 import { dirFor } from "$lib/accounts.svelte";
 import { core } from "$lib/core";
+import { logUsage } from "$lib/usageLog";
 import type { Session } from "$lib/sessions.svelte";
 
 /** A row's run that went on from notes: the conversation it went on from,
@@ -79,7 +80,10 @@ export async function takeUp(session: Session): Promise<string | null> {
   const from = session.resumedFrom;
   delete going.runs[session.key];
   if (from === null) return null;
-  if (whole.delete(session.key) || session.agent !== "claude-code") return from;
+  if (whole.delete(session.key) || session.agent !== "claude-code") {
+    logUsage(session, "resume", { from, whole: true, asked: session.agent === "claude-code" });
+    return from;
+  }
   try {
     const judged = await core().goingOn({
       agent: session.agent,
@@ -89,7 +93,9 @@ export async function takeUp(session: Session): Promise<string | null> {
       configDir: dirFor(session.account, session.agent),
       token: session.token,
     });
-    if (!judged.goesOn || judged.briefing === null) return from;
+    const goes = judged.goesOn && judged.briefing !== null;
+    logUsage(session, "resume", { from, whole: !goes, context: judged.context, idle: judged.idle });
+    if (!goes) return from;
     going.runs[session.key] = { from, context: judged.context, briefing: judged.briefing, spoken: false };
     return null;
   } catch {

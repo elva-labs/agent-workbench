@@ -98,6 +98,9 @@ pub struct LaunchCtx<'a> {
     /// them. Claude Code records what it was first told and gives that on
     /// every resume until told otherwise.
     pub afresh: bool,
+    /// The context, in tokens, at which the agent compacts the conversation
+    /// on its own, for an agent that takes one. Its own default when None.
+    pub compact_at: Option<u64>,
 }
 
 /// The tools Claude Code hands work to agents the user cannot see with: its
@@ -375,6 +378,15 @@ fn claude_workflow(ctx: &LaunchCtx) -> Vec<String> {
     args
 }
 
+/// What Claude Code is given for the context at which it compacts the
+/// conversation on its own, when the session names one.
+fn claude_compaction(ctx: &LaunchCtx) -> Vec<String> {
+    match ctx.compact_at {
+        Some(tokens) => vec!["--autocompact".to_string(), tokens.to_string()],
+        None => Vec::new(),
+    }
+}
+
 /// Why Codex does not start a session that follows a workflow in a
 /// terminal on Windows: it takes the instructions only on its command line
 /// there, and an install run through the command interpreter loses every
@@ -590,16 +602,20 @@ impl AgentAdapter for ClaudeCode {
 
     fn launch(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
         let workflow = claude_workflow(ctx);
+        let compaction = claude_compaction(ctx);
         let mut args = vec!["--session-id", session];
         args.extend(workflow.iter().map(String::as_str));
+        args.extend(compaction.iter().map(String::as_str));
         args.extend(claude_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
 
     fn resume(&self, ctx: &LaunchCtx, session: &str) -> Result<Surface, String> {
         let workflow = claude_workflow(ctx);
+        let compaction = claude_compaction(ctx);
         let mut args = vec!["--resume", session];
         args.extend(workflow.iter().map(String::as_str));
+        args.extend(compaction.iter().map(String::as_str));
         args.extend(claude_mode(ctx)?);
         self.command(ctx, &with_prompt(ctx, args))
     }
@@ -817,6 +833,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -862,6 +879,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -914,6 +932,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
         assert_eq!(claude.get_env(CLAUDE_CONFIG_VAR), Some(own.as_os_str()));
@@ -956,6 +975,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1029,6 +1049,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1104,6 +1125,7 @@ mod tests {
             server_file: Some(named),
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1439,6 +1461,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let named_settings = codex_workflow(&named, false, false).unwrap();
         let said = starts(&named_settings);
@@ -1524,6 +1547,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -1562,6 +1586,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "abc-123").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
@@ -1588,6 +1613,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         // No server anywhere: nothing is said of one, since an entry Codex
         // cannot start would stop the session from starting.
@@ -1682,6 +1708,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let says = |text: &str| {
             crate::executable::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
@@ -1741,6 +1768,7 @@ mod tests {
                 server_file: None,
                 configured: None,
                 afresh: false,
+                compact_at: None,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
             command
@@ -1778,6 +1806,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -1805,6 +1834,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -1815,6 +1845,56 @@ mod tests {
             .collect();
         assert_eq!(&argv[1..], ["--session-id", "fresh-id"], "{argv:?}");
         assert_eq!(command.get_env("TERM"), Some("xterm-256color".as_ref()));
+    }
+
+    #[test]
+    fn claude_code_compacts_at_the_context_it_is_given() {
+        let dir = fake_claude("adapter-compact-at");
+        let vars = vars_with_path(&dir);
+        let ctx = |compact_at| LaunchCtx {
+            project: Path::new("/tmp"),
+            env: &vars,
+            config_dir: None,
+            session: None,
+            token: None,
+            prompt: None,
+            model: None,
+            mode: None,
+            orchestrator: false,
+            instructions: None,
+            start_only: false,
+            server: None,
+            instructions_file: None,
+            server_file: None,
+            configured: None,
+            afresh: false,
+            compact_at,
+        };
+        let argv = |surface: Surface| {
+            let Surface::Pty(command) = surface;
+            command
+                .get_argv()
+                .iter()
+                .skip(1)
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        };
+        let with = ctx(Some(150_000));
+        assert_eq!(
+            argv(ClaudeCode.launch(&with, "abc").unwrap()),
+            ["--session-id", "abc", "--autocompact", "150000"]
+        );
+        assert_eq!(
+            argv(ClaudeCode.resume(&with, "abc").unwrap()),
+            ["--resume", "abc", "--autocompact", "150000"]
+        );
+        let without = ctx(None);
+        for args in [
+            argv(ClaudeCode.launch(&without, "abc").unwrap()),
+            argv(ClaudeCode.resume(&without, "abc").unwrap()),
+        ] {
+            assert!(!args.contains(&"--autocompact".to_string()), "{args:?}");
+        }
     }
 
     #[test]
@@ -1838,6 +1918,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -1877,6 +1958,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -1913,6 +1995,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -1944,6 +2027,7 @@ mod tests {
             server_file: None,
             configured: None,
             afresh: false,
+            compact_at: None,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

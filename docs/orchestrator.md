@@ -206,6 +206,24 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
+A start that names no model, for a step that names none either, runs one
+model below its starter's when both run Claude Code, the starter is a
+conversation, whose agent reports the model it runs on, and that model is
+above Sonnet: Opus under Fable, Sonnet under Opus. Most work handed out
+needs less than the session directing it, and each turn costs by its
+model. A review step's session is the exception and runs on the agent's
+default, since judging work is where a weaker model costs most. A starter
+in a terminal, whose model may have changed since it started, one on
+Sonnet or below, and one whose model the window has not heard leave the
+model to the agent. So does a model below that would still be above the
+default the account runs on, as Claude Code reports it to a conversation.
+The start's answer says which model the session runs on.
+
+A session another started also compacts its conversation once its context
+reaches 150,000 tokens, through Claude Code's own setting for when it
+compacts, since every turn reads the whole context. The user's own
+sessions keep the agent's default. There is no setting for either.
+
 A start can name an account, by the name it has in the settings, or
 Default, in any case, for the agents' own login, for work the user asked
 to have done under a particular login, or for work a session under a
@@ -237,7 +255,9 @@ background and no error or usage limit; its starter has been told so, by a
 wait, a listing, a note or a wake; it asks nothing; no message of the
 user's or the starter's waits for it and no line is being typed into it;
 no call of the starter's that is not done names it, such as a wait on it
-alone, a read or a line on its way; it is not the session on screen; the
+alone, a read or a line on its way; none of the sessions it started
+itself is at work or has come to rest without its hearing, so it is there
+to be woken for them; it is not the session on screen; the
 user has read it; and the user has no words in its terminal or its
 composer. Once that has held for at least five minutes without a break,
 its row closes and the session goes among the earlier sessions to resume,
@@ -407,13 +427,33 @@ out.
 ## When it is idle
 
 A session that started others may hand its turn back while they still
-work. When one of them then stops working, asks for permission or ends, and
-the starter is idle, the workbench wakes it: it sends the starter what a
-wait would have answered, a line for each session in the same words, then
-the ones still at work by their ids, and the starter goes on as it would
-after a wait. Sessions that come to rest within three seconds of the first
-go in the same message. A starter under a workflow and one under none are
-woken alike, and there is no setting for it.
+work. When one of them then stops working or ends, and the starter is
+idle, the workbench wakes it: it sends the starter what a wait would have
+answered, a line for each session in the same words, then the ones still
+at work by their ids, and the starter goes on as it would after a wait. A
+session that asks for permission wakes no one, since only the user can
+answer it and the row shows the ask at once; it goes along in the next
+wake, wait or message to the starter. A starter under a workflow and one
+under none are woken alike, and there is no setting for it.
+
+Each wake is a turn that reads the starter's whole conversation, so the
+workbench gathers what comes to rest into as few wakes as it can. With
+nothing else the starter started at work, the wake goes three seconds after
+the last session came to rest. So does a wake for a session that failed or
+ended, since the starter may want to retry, resume or plan again at once,
+and one for a call answered early that is now done, counted from when the
+window saw it done. While others are still at work, it waits
+thirty seconds after the last for more to come along, and never more than
+two minutes after the first. A starter that has rested long enough for its
+prompt cache to lapse, an hour for Claude Code and ten minutes for Codex,
+would read its conversation again at full price, so its wake waits until
+none of its sessions is at work, or twenty minutes after the first came to
+rest. While a wake is held so, the pointer text on the row's not heard yet
+mark says when it goes. A message from the user carries everything
+unheard at once, and a wait answers as soon as a session it watches comes
+to rest, held by none of this. A session that came to rest unheard while
+a window watched stays so across a reload of the window, which then plans
+the starter's wake for it as above, counted from the reload.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal

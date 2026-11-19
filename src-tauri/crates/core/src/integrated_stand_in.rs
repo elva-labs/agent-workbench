@@ -189,6 +189,7 @@ fn start_in(
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     adjust(&mut launch);
@@ -303,6 +304,7 @@ impl Harness {
             instructions: None,
             start_only: false,
             afresh: false,
+            compact_at: None,
             resume_at: again.at.as_deref(),
         };
         super::start(
@@ -580,6 +582,31 @@ fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
         assert!(Instant::now() < deadline, "{file:?} outlived the session");
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn a_session_given_a_context_to_compact_at_passes_it_to_the_agent() {
+    let h = start_with("compact-at", &format!("{READY}\ndrain"), |launch| {
+        launch.compact_at = Some(150_000);
+        launch.tool_server = Some(Box::leak(
+            PathBuf::from("/opt/workbench/agent-workbench-remote").into_boxed_path(),
+        ));
+    });
+    h.until_type("ready");
+    let args = arguments(&h);
+    let at = args
+        .iter()
+        .position(|arg| arg == "--autocompact")
+        .unwrap_or_else(|| panic!("--autocompact in {args:?}"));
+    assert_eq!(args[at + 1], "150000");
+    assert_eq!(args[args.len() - 2], "--mcp-config");
+    h.stop();
+
+    let h = start_with("no-compact-at", &format!("{READY}\ndrain"), |_| {});
+    h.until_type("ready");
+    let args = arguments(&h);
+    assert!(!args.contains(&"--autocompact".to_string()), "{args:?}");
+    h.stop();
 }
 
 #[test]
@@ -1878,6 +1905,7 @@ fn a_missing_agent_explains_itself() {
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     let error = super::start(
@@ -1918,6 +1946,7 @@ fn real_claude_holds_a_short_turn() {
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     let started = super::start(

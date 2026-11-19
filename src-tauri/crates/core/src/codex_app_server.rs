@@ -1703,6 +1703,7 @@ impl AppServer {
                                                 .or_else(|| text(effort))
                                         })
                                         .collect(),
+                                    resolved: None,
                                     value,
                                 },
                                 text(&model["defaultReasoningEffort"]),

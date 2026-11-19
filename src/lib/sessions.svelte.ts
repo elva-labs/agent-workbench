@@ -35,6 +35,7 @@ import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { chosenFor, modelToStart, narrowTo } from "$lib/lastChosen.svelte";
 import { carriedOver } from "$lib/modeFit";
 import { starterOf } from "$lib/senders.svelte";
+import { logUsage } from "$lib/usageLog";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
@@ -1595,7 +1596,16 @@ export interface Told {
   /** Whether a resumed session lets go of what its conversation was
       first told. */
   afresh?: boolean;
+  /** The context at which the agent compacts on its own. */
+  compactAt?: number;
 }
+
+/** The context, in tokens, at which a session another session started
+    compacts its conversation, on an agent that takes one: every turn reads
+    the whole context, and a started session's work seldom needs its
+    oldest turns word for word. The user's own sessions keep the agent's
+    default. */
+export const STARTED_CONTEXT = 150_000;
 
 /**
  * What the agent behind a starting row is told of its workflow, the same
@@ -1635,6 +1645,7 @@ export function toldFor(session: Session): Told {
           startOnly: startsOnly(session.workflow),
         }),
     ...(afresh ? { afresh: true } : {}),
+    ...(session.agent === "claude-code" && starterOf(session.key) !== null ? { compactAt: STARTED_CONTEXT } : {}),
   };
 }
 
@@ -3372,6 +3383,7 @@ export function exact(
       newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
+      logUsage(session, "turn");
       break;
     case "failed":
       // An error ended the turn, a usage limit among them, and the agent did
@@ -3386,6 +3398,7 @@ export function exact(
       newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
+      logUsage(session, "turn", { outcome: "failed" });
       break;
     case "delegated": {
       // The turn ended, and the next starts when the subagents report:

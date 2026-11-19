@@ -26,6 +26,7 @@ fn launch_with<'a>(
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     adjust(&mut launch);
@@ -2007,6 +2008,7 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     let prepared = CODEX_APP_SERVER.command(&launch).unwrap();
