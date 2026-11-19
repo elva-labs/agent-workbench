@@ -157,6 +157,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     adjust(&mut launch);
@@ -1798,6 +1799,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
             instructions: None,
             start_only: false,
             afresh: false,
+            compact_at: None,
             resume_at: None,
         };
         let started = super::start(
@@ -2077,6 +2079,7 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
             instructions: workflow.then_some(told),
             start_only,
             afresh: false,
+            compact_at: None,
             resume_at: None,
         };
         let started = super::start(
@@ -2496,6 +2499,7 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
         instructions: None,
         start_only: false,
         afresh: false,
+        compact_at: None,
         resume_at: None,
     };
     let started = super::start(

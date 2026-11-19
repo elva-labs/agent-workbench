@@ -63,8 +63,10 @@
     placeTextOf,
     startedFor,
     unheard,
+    COLD_MOST,
     WAKES_MAX,
     wakesSpent,
+    wakeHeld,
     wokenBy,
     type Woken,
   } from "$lib/conductor.svelte";
@@ -731,11 +733,16 @@
       !isLive(kid) ? "ended" : kid.needs === "permission" ? "is asking" : "stopped";
     const told = starter.kind === "integrated" || isInstalled(starter.project);
     const hears = `It hears on its next wait${told ? ", or with your next message" : ""}.`;
+    const held = wakeHeld(starter);
     const woken = wakesSpent(starter)
       ? ` The workbench has woken it ${WAKES_MAX} times in a row, and wakes it again only after a turn it did not start, such as one of yours.`
       : starter.kind === "terminal" && drafting(starter.key)
         ? " The workbench does not wake it while keys of yours are on its line: it waits until you send a line or clear it with Ctrl+C."
-        : "";
+        : held === "cold"
+          ? ` The workbench tells it in one message once the others it started are done, or ${COLD_MOST / 60_000} minutes after the first of these stopped.`
+          : held === "gathering"
+            ? " The workbench tells it shortly, with any of the others that stop meanwhile."
+            : "";
     return `${label(starter)} has not heard: ${news.map((kid) => `${label(kid)} ${what(kid)}`).join(", ")}. ${hears}${woken}`;
   }
 

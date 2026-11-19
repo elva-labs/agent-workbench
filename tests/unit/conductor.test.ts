@@ -19,6 +19,11 @@ import {
   runsShell,
   WAIT_EARLY,
   WAKE_AFTER,
+  GATHER,
+  GATHER_MOST,
+  COLD_AFTER,
+  COLD_MOST,
+  wakeHeld,
   WAKE_QUIET,
   WAKE_TAKEN,
   WAKES_MAX,
@@ -87,6 +92,8 @@ import {
   started as cameUp,
   titled,
   typed,
+  STARTED_CONTEXT,
+  toldFor,
   WORK_BYTES,
   WORK_WINDOWS,
   type Session,
@@ -106,6 +113,7 @@ import Started from "$lib/components/conversation/Started.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetFolder } from "$lib/orchestratorFolder.svelte";
 import { resetStartAsk, startAsk } from "$lib/startAsk.svelte";
+import { heardOffers, resetLastChosen } from "$lib/lastChosen.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { BOUNDED, BOUNDED_TYPED, FORGED } from "../forgedName";
@@ -348,6 +356,7 @@ beforeEach(() => {
   resetWorkflows();
   resetStartAsk();
   resetAccounts();
+  resetLastChosen();
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();
@@ -689,7 +698,7 @@ describe("starting a session", () => {
     );
     expect(Array.from(row.title!)).toHaveLength(NAME_MOST);
     expect(last().content).toBe(
-      `Started session sid-new in ${A}. It has the prompt. Its name is cut to ${NAME_MOST} characters: ${BOUNDED}. ${KEEP_WAITING}`,
+      `Started session sid-new in ${A}. It has the prompt. It runs on Claude Code's default model. Its name is cut to ${NAME_MOST} characters: ${BOUNDED}. ${KEEP_WAITING}`,
     );
     // The same name again is the first one's, and the refusal says it the
     // same way.
@@ -700,7 +709,7 @@ describe("starting a session", () => {
     );
     expect(again.title).toBeNull();
     expect(last().content).toBe(
-      `Started session sid-2 in ${A}. It has the prompt. It is not called ${BOUNDED}: another session is called that, so the session is named by its prompt. ${KEEP_WAITING}`,
+      `Started session sid-2 in ${A}. It has the prompt. It runs on Claude Code's default model. It is not called ${BOUNDED}: another session is called that, so the session is named by its prompt. ${KEEP_WAITING}`,
     );
   });
 
@@ -1547,7 +1556,7 @@ describe("a start in the caller's own project", () => {
     live(A, "pty-caller", "caller-1");
     heard("caller-1");
     const row = await unasked({ project: A }, "sid-1");
-    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. It begins in Default mode. ${KEEP_WAITING}`);
+    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. It runs on Claude Code's default model. It begins in Default mode. ${KEEP_WAITING}`);
     expect(startedFor(row.key)).toBe(tok("caller-1"));
     const tree = await unasked({ project: A, worktree: true, name: "Fix it" }, "sid-2");
     expect(tree.startIn).toBe(`${A}/.worktrees/fix-it`);
@@ -1555,6 +1564,47 @@ describe("a start in the caller's own project", () => {
     // Nothing standing was given: another project is still asked about.
     expect(allowedProjects(tok("caller-1"))).toEqual([]);
     expect((await asked({ project: B })).project).toBe(B);
+  });
+
+  it("starts on the model below the caller's when nothing names one, and says what it runs on", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    heard("caller-1");
+    // A terminal's model may have changed since it started, so only one
+    // its agent reports, a conversation's, is gone below.
+    caller.model = "claude-fable-5-2";
+    expect((await unasked({ project: A }, "sid-0")).model).toBeNull();
+    caller.kind = "integrated";
+    const begun = (id: string, args: Record<string, unknown> = {}) =>
+      startAllowed(call("start", { project: A, prompt: "Fix it", ...args }, { session: "caller-1" }), `pty-${id}`, id);
+    expect((await begun("sid-1")).model).toBe("opus");
+    expect(last().content).toContain(
+      "It runs on Opus, one model below yours, since the start named none: name a model to choose another.",
+    );
+    caller.model = "opus[1m]";
+    expect((await begun("sid-2")).model).toBe("sonnet");
+    // Sonnet and below, and a model the window does not know, leave it to
+    // the agent.
+    caller.model = "claude-sonnet-5-5";
+    expect((await begun("sid-3")).model).toBeNull();
+    caller.model = null;
+    expect((await begun("sid-4")).model).toBeNull();
+    // A model the start names is the one.
+    caller.model = "fable";
+    expect((await begun("sid-5", { agent: "claude-code", model: "haiku" })).model).toBe("haiku");
+    expect(last().content).toContain("It runs on Haiku.");
+    // Never above the default the account runs on, where the agent said.
+    heardOffers("claude-code", null, ["default", "opus", "sonnet"], "claude-sonnet-5-5");
+    expect((await begun("sid-6")).model).toBeNull();
+    heardOffers("claude-code", null, ["default", "opus", "sonnet"], "claude-opus-5-5");
+    expect((await begun("sid-7")).model).toBe("opus");
+  });
+
+  it("caps the context of a session it starts, and leaves the caller's own to the agent", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    heard("caller-1");
+    const row = await unasked({ project: A }, "sid-1");
+    expect(toldFor(row).compactAt).toBe(STARTED_CONTEXT);
+    expect(toldFor(caller).compactAt).toBeUndefined();
   });
 
   it("is the project of a caller that runs in a worktree of it", async () => {
@@ -1710,7 +1760,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect(await asks({ project: A })).toBe(true);
     const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
     expect(row.modeGiven).toBe("acceptEdits");
-    expect(last().content).toContain("It has the prompt. It begins in Accept edits mode.");
+    expect(last().content).toContain("It has the prompt. It runs on Claude Code's default model. It begins in Accept edits mode.");
   });
 
   it("goes ahead for a Claude Code terminal caller once its hooks have said its mode, over the one it was started in", async () => {
@@ -2593,11 +2643,159 @@ describe("waking an idle starter", () => {
     exact("sid-2", "permission");
     flushSync();
     expect(two.needs).toBe("permission");
+    await vi.advanceTimersByTimeAsync(GATHER);
     await wakeGoes();
     expect(typedInto("pty-0")).toBe(
       `${REPORTS_HEAD} Session sid-1 stopped working. It has left no line. | Session sid-2 is asking for permission. It has left no line. | Still at work: sid-3. Call wait to hear from them.\r`,
     );
     expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(1);
+  });
+
+  it("waits a while for others still at work, within a bound after the first", async () => {
+    const starter = idleStarter();
+    const kids = [1, 2, 3, 4, 5].map((n) => atWork(`pty-${n}`, `sid-${n}`));
+    atWork("pty-6", "sid-6");
+    stops(kids[0]);
+    await vi.advanceTimersByTimeAsync(GATHER - 5000);
+    expect(typedInto("pty-0")).toBe("");
+    expect(wakeHeld(starter)).toBe("gathering");
+    // Each that comes to rest meanwhile moves the wake on, never past the
+    // bound after the first.
+    for (const kid of kids.slice(1, -1)) {
+      stops(kid);
+      await vi.advanceTimersByTimeAsync(GATHER - 5000);
+    }
+    stops(kids.at(-1)!);
+    expect(typedInto("pty-0")).toBe("");
+    await vi.advanceTimersByTimeAsync(GATHER_MOST - (kids.length - 1) * (GATHER - 5000) - 1);
+    expect(typedInto("pty-0")).toBe("");
+    await wakeGoes();
+    expect(typedInto("pty-0").split(" | ")).toHaveLength(6);
+    expect(typedInto("pty-0")).toContain("Session sid-5 stopped working. It has left no line. | Still at work: sid-6.");
+  });
+
+  it("wakes a moment after the last of them comes to rest", async () => {
+    idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER / 2);
+    stops(two);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 stopped working. It has left no line. | Session sid-2 stopped working. It has left no line.\r`,
+    );
+  });
+
+  it("holds a cold starter's wake until the rest are done, or the longer bound", async () => {
+    const starter = idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    atWork("pty-3", "sid-3");
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER_MOST * 2);
+    expect(typedInto("pty-0")).toBe("");
+    expect(wakeHeld(starter)).toBe("cold");
+    stops(two);
+    await vi.advanceTimersByTimeAsync(COLD_MOST - GATHER_MOST * 2 - 1000);
+    expect(typedInto("pty-0")).toBe("");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Still at work: sid-3.");
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
+  it("wakes a cold starter a moment after the last of its sessions is done", async () => {
+    idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    stops(one);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(typedInto("pty-0")).toBe("");
+    stops(two);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
+  it("wakes a cold starter a moment after a session fails or ends, though others are at work", async () => {
+    const starter = idleStarter();
+    const failing = own(A, "pty-1", "sid-1", "caller-1");
+    exact("sid-1", "prompt");
+    const ending = atWork("pty-2", "sid-2");
+    atWork("pty-3", "sid-3");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    exact("sid-1", "failed", "You've hit your 5-hour limit · resets 4pm (Europe/Stockholm)", false, {
+      error: "rate_limit",
+    });
+    flushSync();
+    expect(unheard(starter)).toEqual([failing]);
+    expect(wakeHeld(starter)).toBeNull();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-1 is at its usage limit until 4pm.");
+    expect(typedInto("pty-0")).toContain("Still at work: sid-2 and sid-3.");
+    // A turn of the workbench's ran and ended, and the starter rested
+    // again past its cache.
+    written.length = 0;
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    ending.status = "exited";
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-2");
+  });
+
+  it("wakes a starter after a reload for a rest it had not heard, as it would have before", async () => {
+    idleStarter();
+    await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
+    await startAllowed(call("start", { project: A, prompt: "Fix that" }, { session: "caller-1" }), "pty-2", "sid-2");
+    exact("sid-1", "prompt");
+    exact("sid-2", "prompt");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    exact("sid-1", "stop", "Fixed");
+    flushSync();
+    expect(wakeHeld(byId("caller-1")!)).toBe("cold");
+    // The window reloads while the core still runs all three, and their
+    // rows come back as the core has them.
+    written.length = 0;
+    restarted();
+    const back = (id: string, ptyId: string) => {
+      const row = create(A, id, "claude-code", null, null, null, null, null);
+      started(row.key, ptyId, id);
+      return row;
+    };
+    const starter = back("caller-1", "pty-0");
+    Object.assign(starter, { exact: true, turns: 2, turnEnd: "done" });
+    Object.assign(back("sid-1", "pty-1"), { exact: true, turns: 1, turnEnd: "done", note: "Fixed" });
+    const two = back("sid-2", "pty-2");
+    two.working = true;
+    flushSync();
+    expect(unheard(starter).map((row) => row.id)).toEqual(["sid-1"]);
+    two.working = false;
+    flushSync();
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain('Session sid-1 stopped working. Its last line: "Fixed"');
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
+  it("does not wake a starter for a session asking for permission, which goes along with the next wake", async () => {
+    const starter = idleStarter();
+    const asking = atWork("pty-1", "sid-1");
+    const other = atWork("pty-2", "sid-2");
+    exact("sid-1", "permission");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_MOST);
+    expect(typedInto("pty-0")).toBe("");
+    expect(unheard(starter)).toEqual([asking]);
+    stops(other);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 is asking for permission. It has left no line. | Session sid-2 stopped working. It has left no line.\r`,
+    );
   });
 
   it("leaves a starter that is working, waiting or asking alone, and wakes it once its turn ends", async () => {
@@ -2834,6 +3032,7 @@ describe("waking an idle starter", () => {
       row.title = FORGED;
     }
     stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER);
     await wakeGoes();
     const line = typedInto("pty-0");
     expect(line.split(" | ")).toHaveLength(2);
@@ -3859,6 +4058,15 @@ describe("starting in a workflow's shape", () => {
     expect(last().error).toBeNull();
     return row;
   }
+
+  it("starts a work step that names no model one below the orchestrator's, and leaves a review's to the agent", async () => {
+    const workflow = defaultWorkflow();
+    for (const step of workflow.steps) step.models = [];
+    orchestrating(workflow).kind = "integrated";
+    expect((await begun({ step: "Work" }, "w1")).model).toBe("opus");
+    expect((await begun({ step: "Review", work: "w1" }, "r1")).model).toBeNull();
+    expect(last().content).toContain("It runs on Claude Code's default model.");
+  });
 
   it("carries a piece on from a work session it stopped, named whole or by the start of its id", async () => {
     orchestrating();
@@ -6622,6 +6830,26 @@ describe("a call that waits on the user", () => {
     );
     expect(conductor.later).toEqual({});
   });
+
+  it("wakes it a moment after the call is done, however often wakes are planned meanwhile", async () => {
+    caller();
+    const other = live(B, "pty-9", "other-1");
+    await heldPast(elsewhere());
+    refuse();
+    await settle();
+    // Something else moves every second, and the wakes are planned again
+    // each time.
+    for (let at = 0; at < WAKE_AFTER + 10_000; at += 1000) {
+      other.working = !other.working;
+      flushSync();
+      await vi.advanceTimersByTimeAsync(1000);
+    }
+    const typedIn = written
+      .filter(([id]) => id === "pty-0")
+      .map(([, data]) => data)
+      .join("");
+    expect(typedIn).toContain(`Your start of "Fix the flake" in ${B} did not go ahead`);
+  });
 });
 
 describe("a session whose work is over", () => {
@@ -6679,6 +6907,22 @@ describe("a session whose work is over", () => {
     await waiting;
     expect(last().content).toMatch(/^Nothing happened within 900 seconds/);
     await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+  });
+
+  it("stays while a session it started itself is at work or has not been heard by it", async () => {
+    const row = await told();
+    const sub = own(A, "pty-5", "sub-1", "sid-1");
+    sub.working = true;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    sub.working = false;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    await handle(call("sessions", {}, { session: "sid-1" }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER + 1000);
     expect(byKey(row.key)).toBeNull();
   });
 

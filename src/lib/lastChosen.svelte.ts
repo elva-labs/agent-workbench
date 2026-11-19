@@ -41,6 +41,9 @@ export const lastChosen = $state<{ byAgent: Record<string, Chosen> }>({ byAgent:
 /** The models each account was last heard to offer, by agent and account,
     for as long as the window is open. */
 const offers = new Map<string, string[]>();
+/** The model an agent's default stands for under each account, as its
+    sessions were told, by the same key. */
+const defaults = new Map<string, string>();
 
 function offersKey(agent: AgentId, account: string | null): string {
   return `${agent}\n${account ?? ""}`;
@@ -125,9 +128,17 @@ export function forget(agent: AgentId) {
   if (anyChosen(agent)) store(agent, {});
 }
 
-/** An account's sessions of the agent were told which models it offers. */
-export function heardOffers(agent: AgentId, account: string | null, models: string[]) {
+/** An account's sessions of the agent were told which models it offers,
+    and where the agent said, which model its default stands for. */
+export function heardOffers(agent: AgentId, account: string | null, models: string[], fallback: string | null = null) {
   if (models.length > 0) offers.set(offersKey(agent, account), [...models]);
+  if (fallback !== null) defaults.set(offersKey(agent, account), fallback);
+}
+
+/** The model a session of the agent under the account runs on when none
+    is chosen for it, where a session of it has said. Null where none has. */
+export function defaultModelOf(agent: AgentId, account: string | null): string | null {
+  return defaults.get(offersKey(agent, account)) ?? null;
 }
 
 /** The model a new session of the agent under the account starts on: the
@@ -144,4 +155,5 @@ export function modelToStart(agent: AgentId, account: string | null): string | n
 export function resetLastChosen() {
   lastChosen.byAgent = {};
   offers.clear();
+  defaults.clear();
 }
