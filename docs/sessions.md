@@ -1236,9 +1236,12 @@ earlier sessions: the row goes on with it.
 What can be lost is what the old conversation held and the notes did
 not: files read, results seen, reasoning not written down. The agent is
 told to read the matching notes, then search the old transcript, before
-asking the user. The row's menu has Resume whole for a conversation row
-whose run went on from its notes, saying how many tokens it reads; it
-starts the run again on the whole old conversation. A Codex conversation
+asking the user. The way back to the old conversation is the row's
+menu: Resume whole, in a terminal row as in a conversation row and after
+a restart too, for as long as the row's conversation is one that went on
+from another. While the run that went on lasts, it says how many tokens
+it reads. It starts the row again on the whole old conversation, at once
+when the row is on screen. A Codex conversation
 is always resumed whole.
 
 The notes go once the session cannot come back. For a session another

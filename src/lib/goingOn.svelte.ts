@@ -100,6 +100,18 @@ export function wentOn(key: string): Went | null {
   return going.runs[key] ?? null;
 }
 
+/** What a row can resume whole: the conversation its run went on from in
+    this window, with the context it had, or the one its conversation is
+    kept as going on from, after a restart too. None for a row whose
+    conversation went on from none. */
+export function wholeOf(session: { key: string; id: string | null }): Went | null {
+  const went = going.runs[session.key];
+  if (went !== undefined) return went;
+  load();
+  const from = session.id === null ? undefined : going.lineage[session.id];
+  return from === undefined ? null : { from, context: null, briefing: null };
+}
+
 /** The briefing to send ahead of the run's first message, given once. */
 export function briefingFor(key: string): string | null {
   const went = going.runs[key];

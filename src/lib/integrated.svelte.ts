@@ -24,7 +24,16 @@ import {
 } from "$lib/core";
 import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
-import { askWhole, briefingBack, briefingFor, forgetWent, identified, takeUp, wentOn } from "$lib/goingOn.svelte";
+import {
+  askWhole,
+  briefingBack,
+  briefingFor,
+  forgetWent,
+  identified,
+  takeUp,
+  wentOn,
+  wholeOf,
+} from "$lib/goingOn.svelte";
 import { clock as timeOfDay } from "$lib/thread";
 import {
   nameTaken,
@@ -1238,13 +1247,22 @@ export async function goOnIfCold(key: string, now = Date.now()): Promise<boolean
  * Starts a row's run that went on from its notes again on the whole of
  * its earlier conversation, as the user asked from its row's menu: the
  * old conversation is resumed, read again in full. Only at rest: a turn
- * running is not cut short for it.
+ * running is not cut short for it. A row left from the last quit does so
+ * once it starts.
  */
 export async function resumeWhole(key: string): Promise<boolean> {
   const session = byKey(key);
   const link = links.get(key);
-  const went = wentOn(key);
-  if (session === null || link === undefined || went === null) return false;
+  const went = session === null ? null : wholeOf(session);
+  if (session === null || went === null) return false;
+  // A row left from the last quit resumes it whole once it starts.
+  if (session.status === "dormant") {
+    askWhole(key);
+    session.resumedFrom = went.from;
+    session.id = went.from;
+    return true;
+  }
+  if (link === undefined) return false;
   if (link.busy || link.handle === null || session.working) return false;
   askWhole(key);
   session.resumedFrom = went.from;

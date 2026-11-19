@@ -16,6 +16,7 @@
   import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
     bringBack,
+    resumeWholeTerminal,
     byChange,
     byKey,
     close as closeSession,
@@ -71,7 +72,7 @@
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
   import { hasNotes, openNotes } from "$lib/notes";
-  import { tokensText, wentOn } from "$lib/goingOn.svelte";
+  import { tokensText, wholeOf } from "$lib/goingOn.svelte";
   import { resumeWhole } from "$lib/integrated.svelte";
   import { lastSegment } from "$lib/paths";
   import {
@@ -488,7 +489,7 @@
     if (session === null) return [];
     const other = otherWayFor(session);
     const live = isLive(session);
-    const wentOnNow = wentOn(session.key);
+    const wentOnNow = wholeOf(session);
     return [
       session.unread
         ? {
@@ -519,7 +520,7 @@
               run: () => void reopenAsking(session, other),
             },
           ]),
-      ...(wentOnNow === null || session.kind !== "integrated"
+      ...(wentOnNow === null
         ? []
         : [
             {
@@ -530,7 +531,10 @@
                   : `Resume whole, reads ${tokensText(wentOnNow.context)}`,
               title: "Go on with the whole earlier conversation read again, rather than from its notes",
               disabled: session.working,
-              run: () => void resumeWhole(session.key),
+              run: () =>
+                void (session.kind === "integrated"
+                  ? resumeWhole(session.key)
+                  : resumeWholeTerminal(session.key, wentOnNow.from)),
             },
           ]),
       ...(sessionMenuNotes !== session.key

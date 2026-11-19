@@ -39,6 +39,7 @@ import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
 import {
+  askWhole as wholeNext,
   briefingFor,
   identified as wentOnAs,
   superseded as wentOnFromIt,
@@ -2315,6 +2316,45 @@ export async function reopenOtherWay(key: string, bySetting = false): Promise<bo
     // What the user agreed to was for this reopen.
     bringingBack.delete(key);
   }
+  return stopped;
+}
+
+/**
+ * Starts a terminal row that went on from its notes on the whole of the
+ * conversation it went on from, as the user asked from its menu. Its run
+ * is quit as a reopen quits it, and the row waits as one left from the
+ * last quit does, starting at once when it is on screen: it resumes that
+ * conversation whole, read again in full. False when the run did not
+ * stop in time.
+ */
+export async function resumeWholeTerminal(key: string, from: string): Promise<boolean> {
+  const session = byKey(key);
+  if (session === null || session.kind !== "terminal") return false;
+  const restart = () => {
+    const row = byKey(key);
+    if (row === null) return;
+    wholeNext(key);
+    row.resumedFrom = from;
+    row.id = from;
+    row.prompt = null;
+    row.ptyId = null;
+    row.working = false;
+    row.needs = null;
+    row.engaged = false;
+    row.startedAt = null;
+    row.error = null;
+    row.exitCode = null;
+    row.status = "dormant";
+    runUp(key);
+    changed(row);
+  };
+  if (session.status !== "running") {
+    restart();
+    return true;
+  }
+  reopening.add(key);
+  const stopped = await stopRun(session, restart);
+  if (!stopped) runUp(key);
   return stopped;
 }
 
