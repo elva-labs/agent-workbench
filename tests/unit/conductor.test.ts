@@ -4148,7 +4148,7 @@ describe("starting in a workflow's shape", () => {
       { agent: "claude-code", model: "sonnet" },
       { agent: "claude-code", model: "haiku" },
     ];
-    expect(stepFacts(step)).toContain("Models it may use: Sonnet, the default, or Haiku.");
+    expect(stepFacts(step)).toContain("Models it may use: Sonnet (the default) or Haiku.");
   });
 
   it("says a limit of one as once in the tag, as the diagram and the instructions do", () => {

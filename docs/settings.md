@@ -352,9 +352,9 @@ runs by default. Only the agents found on the machine are offered, with any
 a workflow already names so that its choice can still be shown.
 
 A step has a name, a kind and the models it may use. The models are any, or
-a chosen set across the agents, and the first one chosen is the default, the one used
-unless the orchestrator has a reason to pick another. A step that does work
-says how many sessions may run at once, from one to eight. A step that
+a chosen set across the agents, and the first one chosen is the default, the one
+used unless the orchestrator has a reason to pick another. A step that does
+work says how many sessions may run at once, from one to eight. A step that
 reviews says when the work passes: the reviewer approves, the orchestrator
 agrees, or both, so at least one is on. Otherwise the work goes back to a
 named earlier work step, never to another review, at most so many times,
