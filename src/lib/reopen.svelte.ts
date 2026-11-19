@@ -1,7 +1,7 @@
 import type { AgentId } from "$lib/core";
 import type { SessionKind } from "$lib/sessionKind.svelte";
 import { pendingMove, recordMove } from "$lib/sessionMoves.svelte";
-import { carryOver, startedFor } from "$lib/conductor.svelte";
+import { carryOver, putAwayLeft, startedFor } from "$lib/conductor.svelte";
 import { handleOf, reattach } from "$lib/integrated.svelte";
 import {
   activeSession,
@@ -31,7 +31,9 @@ import {
  * it. An integrated one is, as any other is: the core goes on running it
  * through a reload, and a window that dropped its row would leave an agent
  * running that no row shows. It comes back under the session that started
- * it, which the caller's own record still says.
+ * it, which the caller's own record still says. After a restart there is
+ * nothing to take up, and its row is put away without being started, as
+ * the caller's list offers it, unless it was the one on screen.
  *
  * A row comes back unread if it was unread at the quit, with the line under
  * its name, as the sessions keep it by id; the one the restore puts on
@@ -202,8 +204,14 @@ export function reopen(
     if (entry.moves !== undefined) recordMove(row.key, entry.moves);
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
-    // row waits to be resumed like any other.
-    if (row.kind === "integrated" && entry.handle) void reattach(row.key, entry.handle, entry.spoken ?? true);
+    // row waits to be resumed like any other, but for a session another
+    // started, whose starter brings it back when it is wanted.
+    const theirs = startedFor(row.key) !== null && entry.id !== active;
+    if (row.kind === "integrated" && entry.handle)
+      void reattach(row.key, entry.handle, entry.spoken ?? true).then((up) => {
+        if (!up && theirs) putAwayLeft(row.key);
+      });
+    else if (theirs) putAwayLeft(row.key);
   };
   // The session on screen at the quit, when its project is the one in front
   // and nothing else is on screen; otherwise the project's most recent, as

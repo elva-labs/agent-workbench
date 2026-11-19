@@ -276,6 +276,124 @@ export function stopStarted(key: string): void {
   if (owner !== null) forget(owner, id);
 }
 
+/**
+ * A session another session started is put away by the workbench once its
+ * work is over, so finished rows do not pile up under their starter and no
+ * agent has to tidy them. Its work is over when it is running, ended its
+ * turn itself with nothing left running and no error, its starter has
+ * been told so, and nothing of it is open: it asks nothing, no message
+ * waits for it and none is being typed into it, its starter holds no call
+ * that names it, and the user neither has it on screen nor has words in
+ * it. After `PUT_AWAY_AFTER` of that, unbroken, its row closes and goes
+ * among the earlier sessions, as a stopped one does, but it stays on its
+ * starter's list, and a line its starter sends it resumes it. A row of a
+ * session another started that is left from before a restart goes the
+ * same way, without being started, unless it was on screen at the quit.
+ */
+
+/** How long a started session stays once its work is over: long enough
+    for its starter to answer what it reported while it still runs, short
+    enough that finished rows do not pile up. */
+export const PUT_AWAY_AFTER = 5 * 60_000;
+
+/** The rows on their way to being put away, by key. */
+const puttingAway = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Closes a started session's row and files it with the earlier sessions,
+    keeping it on its starter's list: the starter did not say it was done
+    with it. The list says the workbench put it away, or for a row left
+    from before a restart, that it has not run since. */
+function putAway(key: string, done: boolean) {
+  const session = byKey(key);
+  if (session === null) return;
+  const { project, id } = session;
+  const owner = startedFor(key);
+  keepName(session);
+  close(key);
+  if (id === null) return;
+  disown(project, id);
+  const entry = owner === null ? null : remembered(owner, id);
+  if (entry === null) return;
+  if (done) entry.left = "done";
+  else delete entry.left;
+  saveStarted();
+}
+
+/** Puts away a started session's row left from before a restart, which
+    has nothing running behind it, without starting it. */
+export function putAwayLeft(key: string) {
+  const session = byKey(key);
+  if (session === null || session.status !== "dormant" || startedFor(key) === null) return;
+  putAway(key, false);
+}
+
+/** Whether a started session's work is over, as far as the rows say: see
+    above. What no row says, a call naming it, is asked as it goes. */
+function overWith(session: Session): boolean {
+  if (session.id === null || startedFor(session.key) === null) return false;
+  if (session.status !== "running" || session.working || session.needs !== null) return false;
+  if (reopeningRow(session.key) || sessions.active === session.key) return false;
+  const mark = stops.get(session.key);
+  if (mark === undefined || !mark.worked || mark.rest !== "quiet" || mark.told !== "quiet") return false;
+  if (restWay(session).way !== "done") return false;
+  if (session.kind === "integrated")
+    return handleOf(session.key) !== null && !userWriting(session.key) && !userWaiting(session.key);
+  return session.ptyId !== null && !drafting(session.key) && !typingInto(session.key);
+}
+
+/** Whether a call of the starter's that is not done names a session: a
+    wait on it alone, a read of it, or a line or a resume on its way. */
+function calledFor(id: string): boolean {
+  const names = (given: unknown) => {
+    const start = typeof given === "string" ? given.trim() : "";
+    return start === id || (start.length >= ID_START && id.startsWith(start));
+  };
+  for (const request of calling.values())
+    if (names(request.arguments.session) || names(request.arguments.work)) return true;
+  for (const list of Object.values(conductor.later))
+    if (list.some((one) => one.outcome === null && one.same.split("\n").some(names))) return true;
+  return false;
+}
+
+/** Sets each row whose work is over on its way to being put away, and
+    calls back the ones where something of it opened again. */
+function planPutAways() {
+  void heard.version;
+  const due = new Set(sessions.all.filter(overWith).map((session) => session.key));
+  for (const [key, timer] of puttingAway)
+    if (!due.has(key)) {
+      clearTimeout(timer);
+      puttingAway.delete(key);
+    }
+  for (const key of due)
+    if (!puttingAway.has(key)) puttingAway.set(key, setTimeout(() => putAwayDue(key), PUT_AWAY_AFTER));
+}
+
+/** A row's time is up: it goes if its work is still over, and waits again
+    while a call names it. */
+function putAwayDue(key: string) {
+  puttingAway.delete(key);
+  const session = byKey(key);
+  if (session === null || !overWith(session)) return;
+  if (calledFor(session.id!)) {
+    puttingAway.set(key, setTimeout(() => putAwayDue(key), PUT_AWAY_AFTER));
+    return;
+  }
+  putAway(key, true);
+}
+
+/** Puts away at once the rows among these whose work is over, to make room
+    for a start: they were on their way out. */
+function makeRoom(rows: Session[]) {
+  for (const row of rows)
+    if (overWith(row) && !calledFor(row.id!)) {
+      const timer = puttingAway.get(row.key);
+      if (timer !== undefined) clearTimeout(timer);
+      puttingAway.delete(row.key);
+      putAway(row.key, true);
+    }
+}
+
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The question on screen: which call it holds, who asked, and what for. */
@@ -379,10 +497,12 @@ export interface Started {
       from before there were accounts has none, which reads as null. */
   account?: string | null;
   /** Why its row went, when it went in this window: the user closed it
-      while it ran or waited to start, or it had ended. None for a session
-      whose row is open, or that has had none since the app last started. A
-      version that does not know it reads the record without it. */
-  left?: "closed" | "ended";
+      while it ran or waited to start, it had ended, or the workbench put it
+      away once its work was over. None for a session whose row is open, or
+      that has had none since the app last started. A version that does not
+      know it reads the record without it, or a value it does not know as
+      none. */
+  left?: "closed" | "ended" | "done";
   /** It was started in its caller's own project without the user being
       asked, so it takes no command but /compact from its caller. A version
       that does not know it reads the record without it. */
@@ -778,6 +898,7 @@ function runningFor(caller: string, step: string): { sessions: Session[]; held: 
 
 /** Why a work step has no room for another session, when it has none. */
 function noRoom(caller: string, step: WorkStep): string | null {
+  makeRoom(runningFor(caller, step.name).sessions);
   const { sessions: running, held } = runningFor(caller, step.name);
   if (running.length + held < step.parallel) return null;
   const at = step.parallel === 1 ? "one session" : `${step.parallel} sessions at most`;
@@ -787,7 +908,7 @@ function noRoom(caller: string, step: WorkStep): string | null {
     running.map(namedAs),
     "and",
   );
-  return `The step ${quoted(step.name)} runs ${at} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Stop one once its work is taken up and nothing more is wanted from it, before starting another.`;
+  return `The step ${quoted(step.name)} runs ${at} at once, and ${running.length === 1 ? `session ${ids} is` : `sessions ${ids} are`} running for it. Wait for one to finish, or stop one whose work is not wanted, before starting another.`;
 }
 
 function place(caller: string, id: string, at: Place) {
@@ -1804,11 +1925,14 @@ export function watchStops(): () => void {
     $effect(planWakes);
     $effect(forgetWoken);
     $effect(withdrawGone);
+    $effect(planPutAways);
   });
   return () => {
     stop();
     for (const timer of wakes.values()) clearTimeout(timer);
     wakes.clear();
+    for (const timer of puttingAway.values()) clearTimeout(timer);
+    puttingAway.clear();
   };
 }
 
@@ -2267,7 +2391,10 @@ function describeGone(owner: string, entry: Started): string {
   parts.push(entry.agent);
   const at = placed(owner, entry.id);
   if (at !== null) parts.push(placeText(at));
-  parts.push(goneState(entry), `resume it with start, naming session ${idText(entry.id)}`);
+  parts.push(
+    goneState(entry),
+    backOnALine(entry) ? "a line you send it resumes it" : `resume it with start, naming session ${idText(entry.id)}`,
+  );
   return parts.join("  ");
 }
 
@@ -2275,6 +2402,7 @@ function describeGone(owner: string, entry: Started): string {
 function goneState(entry: Started): string {
   if (entry.left === "closed") return "closed by the user";
   if (entry.left === "ended") return "ended";
+  if (entry.left === "done") return "put away by the workbench once its work was over";
   return "not running since the workbench was restarted";
 }
 
@@ -2886,9 +3014,11 @@ const ONE_LEVEL =
     agent the workbench did not start has a cap of its own, and the user is
     asked about each start it makes, being told what asks. */
 function roomFor(request: Placed): Answered | null {
-  if (startedBy(callerOf(request)).filter(isLive).length >= CAP)
+  const running = () => startedBy(callerOf(request)).filter(isLive);
+  if (running().length >= CAP) makeRoom(running());
+  if (running().length >= CAP)
     return refused(
-      `You have ${CAP} sessions running already, which is as many as one session may have. Stop one before starting another.`,
+      `You have ${CAP} sessions running already, which is as many as one session may have. Wait for one to finish, or stop one whose work is not wanted, before starting another.`,
     );
   if (request.session === null) return null;
   const calling = callingSession(request);
@@ -3061,6 +3191,18 @@ async function resumeSession(
   }
 }
 
+/** Resumes a session the caller started that has no row, with a line the
+    caller sent it as what it goes on with, as a start naming it would. */
+async function bringBack(request: Placed, entry: Started, line: string): Promise<Answered> {
+  const why = goneWhy(entry);
+  const resumed = await resumeSession(
+    { ...request, tool: "start", arguments: { session: entry.id, prompt: line } },
+    entry.id,
+  );
+  if (resumed.error !== null || resumed.content === null) return resumed;
+  return { ...resumed, content: `Session ${idText(entry.id)} was not running: ${why}. Your line resumed it. ${resumed.content}` };
+}
+
 /** Whether a worktree is still one of the project's. */
 async function treeStands(project: string, worktree: string): Promise<boolean> {
   try {
@@ -3100,7 +3242,9 @@ async function sendText(request: Placed): Promise<Answered> {
   const session = byId(id);
   if (session === null) {
     const entry = remembered(callerOf(request), id);
-    return refused(entry === null ? `The workbench has no session ${id}.` : notRunning(entry));
+    if (entry === null) return refused(`The workbench has no session ${id}.`);
+    if (!backOnALine(entry)) return refused(notRunning(entry));
+    return bringBack(request, entry, line);
   }
   if (!mine(request, session)) return notMine(id);
   // A session being reopened the other way takes the line once its next
@@ -3359,6 +3503,9 @@ async function holdWait(
   // The calling session's row: a wait held for a session that is no longer
   // running has no one to hear it.
   const callerAt = callingSession(request)?.key ?? null;
+  // A wait over all of them has nothing to hear of a row the workbench put
+  // away: its rest was told before its work counted as over.
+  const overAll = text(request, "session") === null;
   let reported: string | null = null;
   /** The calls answered early whose outcome the answer tells. */
   let toldCalls: string[] = [];
@@ -3406,12 +3553,18 @@ async function holdWait(
       // has not been told of comes first, whatever order they are in.
       let busy = false;
       let again: { key: string; text: string } | null = null;
+      let away = 0;
       for (const watchedKey of names.keys()) {
         // A row that went while another row of the same session came up,
         // as when it was resumed in place, is that session going on.
         const session = byKey(watchedKey) ?? rowAgain(owner, ids.get(watchedKey) ?? null);
         if (session === null) {
-          settle(closedText(owner, ids.get(watchedKey) ?? null, names.get(watchedKey) ?? watchedKey));
+          const id = ids.get(watchedKey) ?? null;
+          if (overAll && id !== null && remembered(owner, id)?.left === "done") {
+            away += 1;
+            continue;
+          }
+          settle(closedText(owner, id, names.get(watchedKey) ?? watchedKey));
           return;
         }
         const key = session.key;
@@ -3444,7 +3597,7 @@ async function holdWait(
       if (!busy && again !== null) {
         reported = again.key;
         settle(again.text);
-      }
+      } else if (away > 0 && away === names.size) settle(ALL_PUT_AWAY);
     },
     Math.max(seconds * 1000 - WAIT_EARLY, seconds * 500),
     null,
@@ -3560,9 +3713,14 @@ function restText(session: Session, rest: RestWay = restWay(session)): string {
 }
 
 /** What a wait adds, on a line of its own, for a session that ended its
-    turn itself with nothing left running: what to do once it is done with. */
+    turn itself with nothing left running: what becomes of it. */
 export const STOP_WHEN_DONE =
-  "Once its work is taken up and nothing more is wanted from it, stop it; keep it if you may ask it again soon.";
+  "The workbench puts it away once it has rested five minutes with nothing open; a line you send it after that resumes it.";
+
+/** What a wait over all of a caller's sessions answers once every one it
+    watched was put away. */
+export const ALL_PUT_AWAY =
+  "None of the sessions you started is running: the workbench put away the ones whose work was over. The sessions tool lists them; a line you send one resumes it.";
 
 /** What a wait answers for a session at rest: what a note or a wake says
     of it, and for one that ended its turn itself with nothing left
@@ -3631,20 +3789,34 @@ function stateWords(session: Session): string {
 function goneWhy(entry: Started): string {
   if (entry.left === "closed") return "the user closed it";
   if (entry.left === "ended") return "it ended";
+  if (entry.left === "done") return "the workbench put it away once its work was over";
   return "it has not run since the workbench was restarted";
+}
+
+/** Whether a line the caller sends a session that has no row resumes it:
+    one the workbench put away, or one not run since a restart. One the
+    user closed or that ended is resumed only by a start that names it. */
+const backOnALine = (entry: Started) => entry.left !== "closed" && entry.left !== "ended";
+
+/** How a session the caller started that has no row comes back. */
+function wayBack(entry: Started): string {
+  const id = idText(entry.id);
+  return backOnALine(entry)
+    ? `A line you send it resumes it, as start naming session ${id} does.`
+    : `Resume it with start, naming session ${id}.`;
 }
 
 /** What a call naming a session the caller started, which has no row, is
     answered: it is not running, why, and how to bring it back. */
 function notRunning(entry: Started): string {
-  const id = idText(entry.id);
-  return `Session ${id} is not running: ${goneWhy(entry)}. Resume it with start, naming session ${id}.`;
+  return `Session ${idText(entry.id)} is not running: ${goneWhy(entry)}. ${wayBack(entry)}`;
 }
 
 /** What a wait says of a session it watched whose row went: closed, by the
     user where the caller's list says so, and how to bring it back. */
 function closedText(owner: string, id: string | null, name: string): string {
   const entry = id === null ? null : remembered(owner, id);
+  if (entry?.left === "done") return `Session ${name} was put away once its work was over. ${wayBack(entry)}`;
   if (entry?.left !== "closed") return `Session ${name} was closed.`;
   return `Session ${name} was closed by the user. Resume it with start, naming session ${idText(entry.id)}.`;
 }

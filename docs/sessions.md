@@ -194,8 +194,9 @@ starts when it is selected. Bringing a project forward selects its most
 recent session, so that one starts too; asking for a new session in it does
 not, as the project's header describes above. A session closed by hand
 before the quit stays closed, a session whose project did not open again is
-left out, and a session another session started stays with its starter; see
-[orchestrator](orchestrator.md). A session left open in the `orchestrator`
+left out, and a session another session started stays with its starter,
+which brings it back when it is wanted, rather than coming back as a row;
+see [orchestrator](orchestrator.md#when-the-work-is-over). A session left open in the `orchestrator`
 folder of an earlier version comes back too, and lists that folder again;
 see [orchestrator](orchestrator.md).
 

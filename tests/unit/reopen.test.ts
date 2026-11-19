@@ -214,6 +214,28 @@ describe("coming back", () => {
     }
   });
 
+  it("puts away a session another started without starting it, and keeps it on its starter's list", async () => {
+    const kid = { id: "kid", project: B, worktree: null, agent: "claude-code" as const, name: "Fix it" };
+    conductor.started.lead = [kid, { ...kid, id: "shown" }, { ...kid, id: "taken" }];
+    onRecord(
+      [
+        entry(A, "lead"),
+        { ...entry(B, "kid"), kind: "integrated" },
+        { ...entry(B, "shown"), kind: "integrated" },
+        { ...entry(B, "taken"), kind: "integrated", handle: "h-taken" },
+      ],
+      "shown",
+    );
+    stop = reopen();
+    // A run the core no longer has is only known once it is asked for.
+    await vi.waitFor(() => expect(forProject(B).map((session) => session.id)).toEqual(["shown"]));
+    expect(forProject(A).map((session) => session.id)).toEqual(["lead"]);
+    expect(spawned.map((options) => options.session)).not.toContain("kid");
+    expect(spawned.map((options) => options.session)).not.toContain("taken");
+    expect(conductor.started.lead.map((entry) => entry.id)).toEqual(["kid", "shown", "taken"]);
+    expect(conductor.started.lead.every((entry) => entry.left === undefined)).toBe(true);
+  });
+
   it("puts the one that was on screen back on screen", () => {
     onRecord([entry(A, "one"), entry(A, "two")], "one");
     stop = reopen();

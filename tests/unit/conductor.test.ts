@@ -59,6 +59,8 @@ import {
   OUTSIDE,
   UNKNOWN,
   carryOver,
+  ALL_PUT_AWAY,
+  PUT_AWAY_AFTER,
 } from "$lib/conductor.svelte";
 import {
   byKey,
@@ -3510,7 +3512,7 @@ describe("what a caller started, between runs", () => {
     restarted();
     await handle(call("sessions", {}, { session: "caller-1" }));
     expect(last().content).toBe(
-      `sid-1  ${BOUNDED}  ${A}  claude-code  not running since the workbench was restarted  resume it with start, naming session sid-1`,
+      `sid-1  ${BOUNDED}  ${A}  claude-code  not running since the workbench was restarted  a line you send it resumes it`,
     );
   });
 
@@ -3523,7 +3525,7 @@ describe("what a caller started, between runs", () => {
     expect(lines[0]).toContain('sid-1  "Cache flake"  ');
     expect(lines[0]).toContain(`worktree ${A}/.worktrees/cache-flake`);
     expect(lines[0]).toContain("not running since the workbench was restarted");
-    expect(lines[0]).toContain("naming session sid-1");
+    expect(lines[0]).toContain("a line you send it resumes it");
     expect(lines[1]).toContain('sid-2  "sid-2"  ');
 
     await handle(call("sessions", { project: B }, { session: "caller-1" }));
@@ -3904,7 +3906,7 @@ describe("starting in a workflow's shape", () => {
     // While its id is not known, the work is named by its name.
     byKey(work.key)!.id = null;
     expect(await refusedWith({ step: "Work" })).toBe(
-      `The step "Work" runs one session at once, and session ${BOUNDED} is running for it. Stop one once its work is taken up and nothing more is wanted from it, before starting another.`,
+      `The step "Work" runs one session at once, and session ${BOUNDED} is running for it. Wait for one to finish, or stop one whose work is not wanted, before starting another.`,
     );
     byKey(work.key)!.id = "w1";
     for (const round of [1, 2]) {
@@ -3925,7 +3927,7 @@ describe("starting in a workflow's shape", () => {
     orchestrating();
     await begun({ step: "Work" }, "w1");
     expect(await refusedWith({ step: "Work" })).toBe(
-      'The step "Work" runs one session at once, and session w1 is running for it. Stop one once its work is taken up and nothing more is wanted from it, before starting another.',
+      'The step "Work" runs one session at once, and session w1 is running for it. Wait for one to finish, or stop one whose work is not wanted, before starting another.',
     );
     // Once that one has ended, the step has room again.
     ended({ id: "pty-w1", code: 0, clean: true });
@@ -4809,7 +4811,7 @@ describe("starting in a workflow's shape", () => {
     if (review.kind === "review") review.backTo = "work";
     byKey(orch.key)!.workflow = recased;
     expect(await refusedWith({ step: "work" })).toBe(
-      'The step "work" runs one session at once, and session w1 is running for it. Stop one once its work is taken up and nothing more is wanted from it, before starting another.',
+      'The step "work" runs one session at once, and session w1 is running for it. Wait for one to finish, or stop one whose work is not wanted, before starting another.',
     );
     const asked = handle(from({ step: "review", work: "w1" }));
     await settle();
@@ -5152,7 +5154,7 @@ describe("sessions told apart by their tokens", () => {
     cameUp(back.key, "pty-back", "codex-orch");
     await handle(call("sessions", {}, { session: token }));
     expect(last().content).toContain("kid-1");
-    expect(last().content).toContain("resume it with start, naming session kid-1");
+    expect(last().content).toContain("a line you send it resumes it");
     const row = await resumed(call("start", { session: "kid-1", prompt: "Go on" }, { session: token }), "pty-kid-2");
     expect(last().error).toBeNull();
     expect(startedFor(row.key)).toBe(tok(token));
@@ -6550,5 +6552,126 @@ describe("a call that waits on the user", () => {
       `${REPORTS_HEAD} Your start of "Fix the flake" in ${B} did not go ahead: The user did not allow the session to be started.`,
     );
     expect(conductor.later).toEqual({});
+  });
+});
+
+describe("a session whose work is over", () => {
+  /** A session the caller started that worked and came to rest. */
+  async function rested(ptyId = "pty-1", id = "sid-1") {
+    const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }), ptyId, id);
+    // The user is looking at another session.
+    sessions.active = null;
+    row.working = true;
+    flushSync();
+    row.working = false;
+    flushSync();
+    return row;
+  }
+
+  /** One that came to rest, and whose starter was told so by a wait. */
+  async function told(ptyId = "pty-1", id = "sid-1") {
+    const row = await rested(ptyId, id);
+    await handle(call("wait", { session: id }));
+    expect(last().content).toBe(done(`Session ${id} stopped working. It has left no line.`));
+    return row;
+  }
+
+  it("is put away once it has rested with nothing open, and stays on its starter's list", async () => {
+    const row = await told();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+    expect(byKey(row.key)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(byKey(row.key)).toBeNull();
+    expect(killed).toContain("pty-1");
+    await handle(call("sessions"));
+    expect(last().content).toContain("sid-1");
+    expect(last().content).toContain("put away by the workbench once its work was over  a line you send it resumes it");
+    await handle(call("read", { session: "sid-1" }));
+    expect(last().content).toBe(
+      "Session sid-1 is not running: the workbench put it away once its work was over. A line you send it resumes it, as start naming session sid-1 does.",
+    );
+  });
+
+  it("stays while its starter has not heard, while it is on screen, and while a wait names it", async () => {
+    const row = await rested();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    sessions.active = row.key;
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    sessions.active = null;
+    flushSync();
+    const waiting = handle(call("wait", { session: "sid-1", seconds: 900 }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER + 1000);
+    expect(byKey(row.key)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(900_000 - PUT_AWAY_AFTER - 2000);
+    await waiting;
+    expect(last().content).toMatch(/^Nothing happened within 900 seconds/);
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+  });
+
+  it("starts over when it works again", async () => {
+    const row = await told();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+    row.working = true;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).not.toBeNull();
+  });
+
+  it("is brought back by a line its starter sends it", async () => {
+    const row = await told();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+    const back = await resumed(call("send", { session: "sid-1", text: "Fix the docs too" }), "pty-1b");
+    expect(back.id).toBe("sid-1");
+    expect(back.prompt).toBe(`Fix the docs too ${OUTCOME_ASK}`);
+    expect(last().content).toMatch(
+      /^Session sid-1 was not running: the workbench put it away once its work was over\. Your line resumed it\. Resumed session sid-1 /,
+    );
+    await handle(call("sessions"));
+    expect(last().content).not.toContain("put away");
+  });
+
+  it("leaves a wait over all of them to the ones still at work", async () => {
+    const one = await told("pty-1", "sid-1");
+    const two = await startAllowed(call("start", { project: A, prompt: "Fix that" }), "pty-2", "sid-2");
+    sessions.active = null;
+    two.working = true;
+    flushSync();
+    const waiting = handle(call("wait", { seconds: 1800 }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(one.key)).toBeNull();
+    two.working = false;
+    flushSync();
+    await waiting;
+    expect(last().content).toBe(done("Session sid-2 stopped working. It has left no line."));
+    // Once every one it watched is put away, there is nothing to wait for.
+    const again = handle(call("wait", { seconds: 1800 }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    await again;
+    expect(byKey(two.key)).toBeNull();
+    expect(last().content).toBe(ALL_PUT_AWAY);
+  });
+
+  it("makes room at once for a start past the cap", async () => {
+    const rows = [];
+    for (let at = 1; at <= CAP; at += 1) {
+      const row = own(A, `pty-${at}`, `sid-${at}`);
+      sessions.active = null;
+      row.working = true;
+      flushSync();
+      row.working = false;
+      flushSync();
+      rows.push(row);
+    }
+    // Listing them tells their rests.
+    await handle(call("sessions"));
+    await startAllowed(call("start", { project: A, prompt: "One more" }), "pty-9", "sid-9");
+    expect(last().content).toContain("Started session sid-9");
+    for (const row of rows) expect(byKey(row.key)).toBeNull();
   });
 });
