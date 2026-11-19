@@ -74,6 +74,7 @@ import {
   isViewed,
   keysStillIn,
   label,
+  modelLabel as sessionModelLabel,
   onClosed,
   onGiven,
   onDirected,
@@ -2721,13 +2722,16 @@ async function startFitted(
   // that started it, and that is where its questions are answered. The row
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
+  const chosen = fit === null ? text(request, "model") : fit.model;
+  const below = chosen === null && fit?.place.kind !== "review" ? modelBelow(callingSession(request), agent) : null;
+  const model = chosen ?? below;
   const session = create(
     project,
     null,
     agent,
     startIn,
     `${oneLine(prompt)} ${OUTCOME_ASK}`,
-    fit === null ? text(request, "model") : fit.model,
+    model,
     account,
     null,
   );
@@ -2789,17 +2793,50 @@ async function startFitted(
       : called !== null && called !== oneLine(name!)
         ? ` Its name is cut to ${NAME_MOST} characters: ${quotedName(called)}.`
         : "";
+  const runsOn =
+    model === null
+      ? ` It runs on ${agentLabel(agent)}'s default model.`
+      : below !== null
+        ? ` It runs on ${sessionModelLabel(model)}, one model below yours, since the start named none: name a model to choose another.`
+        : ` It runs on ${sessionModelLabel(model)}.`;
   if (fit === null)
     return said(
-      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${begins}${notCalled} ${KEEP_WAITING}`,
+      `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${runsOn}${begins}${notCalled} ${KEEP_WAITING}`,
     );
   // A work session that began a piece is the piece's name from here.
   const at: Place = { ...fit.place, piece: fit.place.piece ?? id };
   conductor.places[session.key] = at;
   place(caller, id, at);
   return said(
-    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${begins}${notCalled} ${KEEP_WAITING}`,
+    `Started session ${idText(id)} for ${placeText(at)} in ${where}${underWords(named)}. It has the prompt.${runsOn}${begins}${notCalled} ${KEEP_WAITING}`,
   );
+}
+
+/** Claude's models, most capable first, by the family a model's name
+    begins with, and the alias the next one down is started by. */
+const TIERS = ["fable", "opus", "sonnet", "haiku"];
+
+/** The family of a Claude model's name, `claude-opus-5-5[1m]` or `opus`
+    alike, or null for a name of none of them. */
+function familyOf(model: string): string | null {
+  const family = model.toLowerCase().replace(/^claude-/, "").replace(/\[.*\]$/, "").split("-")[0];
+  return TIERS.includes(family) ? family : null;
+}
+
+/**
+ * The model a session is started on when neither the start nor its step
+ * names one: one below its starter's, by the alias that follows the newest
+ * of that family, where the starter runs Claude Code on a model above
+ * Sonnet and the session runs Claude Code too. Most work handed out needs
+ * less than the session directing it, and every turn costs by the model.
+ * Null otherwise, for the agent's own default: a starter on Sonnet or
+ * below, one whose model the window does not know, and any other agent.
+ */
+function modelBelow(starter: Session | null, agent: AgentId): string | null {
+  if (starter === null || starter.agent !== "claude-code" || agent !== "claude-code" || starter.model === null)
+    return null;
+  const at = TIERS.indexOf(familyOf(starter.model) ?? "");
+  return at >= 0 && at < TIERS.indexOf("sonnet") ? TIERS[at + 1] : null;
 }
 
 /**

@@ -696,7 +696,7 @@ describe("starting a session", () => {
     );
     expect(Array.from(row.title!)).toHaveLength(NAME_MOST);
     expect(last().content).toBe(
-      `Started session sid-new in ${A}. It has the prompt. Its name is cut to ${NAME_MOST} characters: ${BOUNDED}. ${KEEP_WAITING}`,
+      `Started session sid-new in ${A}. It has the prompt. It runs on Claude Code's default model. Its name is cut to ${NAME_MOST} characters: ${BOUNDED}. ${KEEP_WAITING}`,
     );
     // The same name again is the first one's, and the refusal says it the
     // same way.
@@ -707,7 +707,7 @@ describe("starting a session", () => {
     );
     expect(again.title).toBeNull();
     expect(last().content).toBe(
-      `Started session sid-2 in ${A}. It has the prompt. It is not called ${BOUNDED}: another session is called that, so the session is named by its prompt. ${KEEP_WAITING}`,
+      `Started session sid-2 in ${A}. It has the prompt. It runs on Claude Code's default model. It is not called ${BOUNDED}: another session is called that, so the session is named by its prompt. ${KEEP_WAITING}`,
     );
   });
 
@@ -1554,7 +1554,7 @@ describe("a start in the caller's own project", () => {
     live(A, "pty-caller", "caller-1");
     heard("caller-1");
     const row = await unasked({ project: A }, "sid-1");
-    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. It begins in Default mode. ${KEEP_WAITING}`);
+    expect(last().content).toBe(`Started session sid-1 in ${A}. It has the prompt. It runs on Claude Code's default model. It begins in Default mode. ${KEEP_WAITING}`);
     expect(startedFor(row.key)).toBe(tok("caller-1"));
     const tree = await unasked({ project: A, worktree: true, name: "Fix it" }, "sid-2");
     expect(tree.startIn).toBe(`${A}/.worktrees/fix-it`);
@@ -1562,6 +1562,28 @@ describe("a start in the caller's own project", () => {
     // Nothing standing was given: another project is still asked about.
     expect(allowedProjects(tok("caller-1"))).toEqual([]);
     expect((await asked({ project: B })).project).toBe(B);
+  });
+
+  it("starts on the model below the caller's when nothing names one, and says what it runs on", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    heard("caller-1");
+    caller.model = "claude-fable-5-2";
+    expect((await unasked({ project: A }, "sid-1")).model).toBe("opus");
+    expect(last().content).toContain(
+      "It runs on Opus, one model below yours, since the start named none: name a model to choose another.",
+    );
+    caller.model = "opus[1m]";
+    expect((await unasked({ project: A }, "sid-2")).model).toBe("sonnet");
+    // Sonnet and below, and a model the window does not know, leave it to
+    // the agent.
+    caller.model = "claude-sonnet-5-5";
+    expect((await unasked({ project: A }, "sid-3")).model).toBeNull();
+    caller.model = null;
+    expect((await unasked({ project: A }, "sid-4")).model).toBeNull();
+    // A model the start names is the one.
+    caller.model = "fable";
+    expect((await unasked({ project: A, agent: "claude-code", model: "haiku" }, "sid-5")).model).toBe("haiku");
+    expect(last().content).toContain("It runs on Haiku.");
   });
 
   it("caps the context of a session it starts, and leaves the caller's own to the agent", async () => {
@@ -1725,7 +1747,7 @@ describe("a start in the caller's own project, held to what the caller may do", 
     expect(await asks({ project: A })).toBe(true);
     const row = await startAllowed(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }), "pty-1", "sid-1");
     expect(row.modeGiven).toBe("acceptEdits");
-    expect(last().content).toContain("It has the prompt. It begins in Accept edits mode.");
+    expect(last().content).toContain("It has the prompt. It runs on Claude Code's default model. It begins in Accept edits mode.");
   });
 
   it("goes ahead for a Claude Code terminal caller once its hooks have said its mode, over the one it was started in", async () => {
@@ -3959,6 +3981,15 @@ describe("starting in a workflow's shape", () => {
     expect(last().error).toBeNull();
     return row;
   }
+
+  it("starts a work step that names no model one below the orchestrator's, and leaves a review's to the agent", async () => {
+    const workflow = defaultWorkflow();
+    for (const step of workflow.steps) step.models = [];
+    orchestrating(workflow);
+    expect((await begun({ step: "Work" }, "w1")).model).toBe("opus");
+    expect((await begun({ step: "Review", work: "w1" }, "r1")).model).toBeNull();
+    expect(last().content).toContain("It runs on Claude Code's default model.");
+  });
 
   it("carries a piece on from a work session it stopped, named whole or by the start of its id", async () => {
     orchestrating();

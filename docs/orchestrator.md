@@ -206,11 +206,20 @@ of work when it starts it rather than sending a model command afterwards.
 A model's name belongs to one agent, so a start that names a model names
 the agent too, and one that leaves the agent out is refused rather than
 given the project's last.
+A start that names no model, for a step that names none either, runs one
+model below its starter's when both run Claude Code and the starter's
+model is above Sonnet: Opus under Fable, Sonnet under Opus. Most work
+handed out needs less than the session directing it, and each turn costs
+by its model. A review step's session is the exception and runs on the
+agent's default, since judging work is where a weaker model costs most. A
+starter on Sonnet or below, or whose model the window has not heard,
+leaves the model to the agent. The start's answer says which model the
+session runs on.
 
-A session another started compacts its conversation once its context
+A session another started also compacts its conversation once its context
 reaches 150,000 tokens, through Claude Code's own setting for when it
 compacts, since every turn reads the whole context. The user's own
-sessions keep the agent's default. There is no setting for it.
+sessions keep the agent's default. There is no setting for either.
 
 A start can name an account, by the name it has in the settings, or
 Default, in any case, for the agents' own login, for work the user asked
