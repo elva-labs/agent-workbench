@@ -3066,4 +3066,45 @@ test.describe("the conversation's width", () => {
     expect(at.overflow).toBe(0);
     expect(at.composer).toBeLessThan(at.pane);
   });
+
+  test("holds the cards of a turn to the prose's measure in a wide pane", async ({ page }) => {
+    await page.setViewportSize({ width: 2400, height: 900 });
+    await installFakeCore(page, { open: [PROJECT] });
+    await page.goto("/");
+    await page.getByTestId("start-other").click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    await page.getByTestId("new-session").click();
+    await expect(page.locator(`${AGENT} .xterm`)).toBeVisible();
+    await page.getByTestId("session-row").filter({ hasText: "session 1" }).click();
+    await expect(page.getByTestId("conversation")).toBeVisible();
+    const long = "word ".repeat(80).trim();
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Go.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify(long)}, done: true });
+       f.tool("${H}", "Bash", { command: "ls" }, "a\\nb", { kind: "command" });
+       f.emit("${H}", { type: "text", block: "b", parent: null, text: "Next.", done: true });
+       f.tool("${H}", "mcp__agent-workbench__start", { prompt: "x" }, "Started session session-1 in demo. It has the prompt. Call wait to hear how it goes.", { kind: "mcp" });
+       f.question("${H}", [{ header: "Stage", question: "Which stage?", options: [{ label: "dev", description: "shared" }], multiple: false }]);`,
+    );
+    await page.getByTestId("question-option").first().focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId("asked")).toBeVisible();
+    await page.getByTestId("work-line").first().click();
+    await expect(page.getByTestId("work-steps")).toBeVisible();
+    const right = async (id: string, within?: string) => {
+      const box = (await (within ? page.getByTestId(within).getByTestId(id) : page.getByTestId(id)).first().boundingBox())!;
+      return box.x + box.width;
+    };
+    const paragraph = await right("agent-text");
+    const text = (await page.getByTestId("agent-text").first().locator("p").first().boundingBox())!;
+    const edge = text.x + text.width;
+    expect(paragraph).toBeGreaterThan(0);
+    for (const id of ["started-sessions", "asked", "step-head"]) expect(await right(id)).toBeLessThanOrEqual(edge + 1);
+    const line = (await page.getByTestId("work-line").first().boundingBox())!;
+    expect(line.x + line.width).toBeLessThanOrEqual(edge + 1);
+    // The pane itself is wider, so the bound is the measure and not the pane.
+    expect((await page.getByTestId("agent-run").first().boundingBox())!.width).toBeGreaterThan(text.width + 200);
+  });
 });

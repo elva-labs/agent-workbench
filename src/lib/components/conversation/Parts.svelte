@@ -101,6 +101,7 @@
   }
 
   .plan {
+    max-width: var(--conv-measure);
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) + 3px);
     padding: 8px 12px 9px;
@@ -177,11 +178,12 @@
     padding: 6px 10px;
     border-radius: var(--radius);
     background: var(--surface-2);
-    font-size: var(--conv-small);
+    max-width: var(--conv-measure);
   }
 
   .asked p {
     margin: 0;
+    font-size: var(--conv-small);
   }
 
   .label {

@@ -1600,7 +1600,7 @@
   }
 
   .you.from .bubble {
-    max-width: none;
+    max-width: var(--conv-measure);
     padding: 0;
     border-radius: 0;
     background: none;
