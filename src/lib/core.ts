@@ -397,6 +397,9 @@ export type IntegratedEventBody =
         name: string | null;
         description: string | null;
         efforts: string[];
+        /** The model it stands for, where the agent says, as Claude
+            Code does for an alias and for its default. */
+        resolved?: string;
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];

@@ -117,6 +117,7 @@ import {
 } from "$lib/integrated.svelte";
 import { lastRun, nameSessionsBy } from "$lib/thread";
 import { logUsage } from "$lib/usageLog";
+import { defaultModelOf } from "$lib/lastChosen.svelte";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
@@ -2774,7 +2775,7 @@ async function startFitted(
   // appears folded under its project, and going to it is a click.
   const looking = sessions.active;
   const chosen = fit === null ? text(request, "model") : fit.model;
-  const below = chosen === null && fit?.place.kind !== "review" ? modelBelow(callingSession(request), agent) : null;
+  const below = chosen === null && fit?.place.kind !== "review" ? modelBelow(callingSession(request), agent, account) : null;
   const model = chosen ?? below;
   const session = create(
     project,
@@ -2882,14 +2883,21 @@ function familyOf(model: string): string | null {
  * of that family, where the starter runs Claude Code on a model above
  * Sonnet and the session runs Claude Code too. Most work handed out needs
  * less than the session directing it, and every turn costs by the model.
- * Null otherwise, for the agent's own default: a starter on Sonnet or
- * below, one whose model the window does not know, and any other agent.
+ * The starter's model is the one its agent reports, which only a
+ * conversation does: a terminal's may have changed since it started. Null
+ * otherwise, for the agent's own default: a starter on Sonnet or below, a
+ * terminal starter, one whose model the window does not know, any other
+ * agent, and where the model below would be above the default the account
+ * runs on, as far as the window has heard.
  */
-function modelBelow(starter: Session | null, agent: AgentId): string | null {
-  if (starter === null || starter.agent !== "claude-code" || agent !== "claude-code" || starter.model === null)
-    return null;
+function modelBelow(starter: Session | null, agent: AgentId, account: string | null): string | null {
+  if (starter === null || starter.kind !== "integrated" || starter.model === null) return null;
+  if (starter.agent !== "claude-code" || agent !== "claude-code") return null;
   const at = TIERS.indexOf(familyOf(starter.model) ?? "");
-  return at >= 0 && at < TIERS.indexOf("sonnet") ? TIERS[at + 1] : null;
+  if (at < 0 || at >= TIERS.indexOf("sonnet")) return null;
+  const fallback = defaultModelOf(agent, account);
+  const floor = fallback === null ? -1 : TIERS.indexOf(familyOf(fallback) ?? "");
+  return floor > at + 1 ? null : TIERS[at + 1];
 }
 
 /**

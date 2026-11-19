@@ -403,6 +403,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         session.agent,
         session.account,
         body.models.map((model) => model.value),
+        body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);

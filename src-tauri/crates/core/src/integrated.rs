@@ -422,6 +422,10 @@ pub struct ModelInfo {
     pub description: Option<String>,
     /// The efforts it takes, none for a model that takes no effort.
     pub efforts: Vec<String>,
+    /// The model it stands for, where the agent says, as Claude Code does
+    /// for an alias and for its default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
 }
 
 /// A mode the session can run in: how much the agent may do without asking.

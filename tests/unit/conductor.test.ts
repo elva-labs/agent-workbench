@@ -113,6 +113,7 @@ import Started from "$lib/components/conversation/Started.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetFolder } from "$lib/orchestratorFolder.svelte";
 import { resetStartAsk, startAsk } from "$lib/startAsk.svelte";
+import { heardOffers, resetLastChosen } from "$lib/lastChosen.svelte";
 import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts } from "$lib/workflows.svelte";
 import { instructionLines } from "$lib/workflowInstructions";
 import { BOUNDED, BOUNDED_TYPED, FORGED } from "../forgedName";
@@ -355,6 +356,7 @@ beforeEach(() => {
   resetWorkflows();
   resetStartAsk();
   resetAccounts();
+  resetLastChosen();
   vi.useFakeTimers();
   unwatch = watchStops();
   resetWorkspace();
@@ -1567,23 +1569,34 @@ describe("a start in the caller's own project", () => {
   it("starts on the model below the caller's when nothing names one, and says what it runs on", async () => {
     const caller = live(A, "pty-caller", "caller-1");
     heard("caller-1");
+    // A terminal's model may have changed since it started, so only one
+    // its agent reports, a conversation's, is gone below.
     caller.model = "claude-fable-5-2";
-    expect((await unasked({ project: A }, "sid-1")).model).toBe("opus");
+    expect((await unasked({ project: A }, "sid-0")).model).toBeNull();
+    caller.kind = "integrated";
+    const begun = (id: string, args: Record<string, unknown> = {}) =>
+      startAllowed(call("start", { project: A, prompt: "Fix it", ...args }, { session: "caller-1" }), `pty-${id}`, id);
+    expect((await begun("sid-1")).model).toBe("opus");
     expect(last().content).toContain(
       "It runs on Opus, one model below yours, since the start named none: name a model to choose another.",
     );
     caller.model = "opus[1m]";
-    expect((await unasked({ project: A }, "sid-2")).model).toBe("sonnet");
+    expect((await begun("sid-2")).model).toBe("sonnet");
     // Sonnet and below, and a model the window does not know, leave it to
     // the agent.
     caller.model = "claude-sonnet-5-5";
-    expect((await unasked({ project: A }, "sid-3")).model).toBeNull();
+    expect((await begun("sid-3")).model).toBeNull();
     caller.model = null;
-    expect((await unasked({ project: A }, "sid-4")).model).toBeNull();
+    expect((await begun("sid-4")).model).toBeNull();
     // A model the start names is the one.
     caller.model = "fable";
-    expect((await unasked({ project: A, agent: "claude-code", model: "haiku" }, "sid-5")).model).toBe("haiku");
+    expect((await begun("sid-5", { agent: "claude-code", model: "haiku" })).model).toBe("haiku");
     expect(last().content).toContain("It runs on Haiku.");
+    // Never above the default the account runs on, where the agent said.
+    heardOffers("claude-code", null, ["default", "opus", "sonnet"], "claude-sonnet-5-5");
+    expect((await begun("sid-6")).model).toBeNull();
+    heardOffers("claude-code", null, ["default", "opus", "sonnet"], "claude-opus-5-5");
+    expect((await begun("sid-7")).model).toBe("opus");
   });
 
   it("caps the context of a session it starts, and leaves the caller's own to the agent", async () => {
@@ -4049,7 +4062,7 @@ describe("starting in a workflow's shape", () => {
   it("starts a work step that names no model one below the orchestrator's, and leaves a review's to the agent", async () => {
     const workflow = defaultWorkflow();
     for (const step of workflow.steps) step.models = [];
-    orchestrating(workflow);
+    orchestrating(workflow).kind = "integrated";
     expect((await begun({ step: "Work" }, "w1")).model).toBe("opus");
     expect((await begun({ step: "Review", work: "w1" }, "r1")).model).toBeNull();
     expect(last().content).toContain("It runs on Claude Code's default model.");
