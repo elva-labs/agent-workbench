@@ -90,6 +90,18 @@ async function whole(page: Page, testid: string): Promise<boolean> {
   }, testid);
 }
 
+/** Whether the word in passing is drawn whole, read together with its text
+    in one turn of the page, since it goes by itself. Null once it has gone. */
+async function wholeFlash(page: Page): Promise<boolean | null> {
+  return page.evaluate(() => {
+    const node = document.querySelector<HTMLElement>("[data-testid='flash-readout']");
+    if (node === null || (node.textContent ?? "") === "") return null;
+    const foot = document.querySelector<HTMLElement>("[data-testid='status-bar']")!.getBoundingClientRect();
+    const box = node.getBoundingClientRect();
+    return box.width > 0 && box.left >= foot.left && box.right <= foot.right && node.scrollWidth <= node.clientWidth + 1;
+  });
+}
+
 /** Sets the window's width and waits for the bar to be measured at it,
     which happens before the frame after next is drawn. */
 async function settled(page: Page, width: number) {
@@ -453,8 +465,11 @@ test.describe("a narrow window", () => {
       // nor is a word in passing.
       expect(await whole(page, "state-readout"), `state at ${width}`).toBe(true);
       expect(await whole(page, "waiting-readout"), `waiting at ${width}`).toBe(true);
-      if ((await page.getByTestId("flash-readout").textContent()) !== "")
-        expect(await whole(page, "flash-readout"), `flash at ${width}`).toBe(true);
+      // The word goes by itself, so it is said again at each width and
+      // read in the same turn as its text.
+      await page.keyboard.press("ControlOrMeta+=");
+      await expect(page.getByTestId("flash-readout")).not.toHaveText("");
+      expect(await wholeFlash(page), `flash at ${width}`).not.toBe(false);
     }
     // Every step was taken on the way down.
     expect(seen).toEqual(STEPS.map((_, at) => STEPS.slice(0, at).map(([step]) => step).join(" ")).concat(STEPS.map(([step]) => step).join(" ")));
@@ -517,10 +532,13 @@ test.describe("a narrow window", () => {
     const before = await Promise.all(
       ["focus-readout", "model-readout", "account-group"].map(async (id) => (await page.getByTestId(id).boundingBox())!.x),
     );
+    // The word goes by itself after a moment: the page's clock stands
+    // still until the checks are done, so it is there for all of them.
+    await page.clock.install();
     await page.keyboard.press("ControlOrMeta+=");
     const word = page.getByTestId("flash-readout");
     await expect(word).not.toHaveText("");
-    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    await page.clock.runFor(100);
     await expect(bar(page)).toHaveAttribute("data-fit", "");
     const after = await Promise.all(
       ["focus-readout", "model-readout", "account-group"].map(async (id) => (await page.getByTestId(id).boundingBox())!.x),
@@ -528,11 +546,23 @@ test.describe("a narrow window", () => {
     expect(after).toEqual(before);
     // There is no room for it, so it covers the end of the figures, whole
     // and on the bar's own background.
-    expect(await whole(page, "flash-readout")).toBe(true);
-    const box = (await word.boundingBox())!;
-    const figures = (await page.getByTestId("limits-readout").boundingBox())!;
-    expect(box.x).toBeLessThan(figures.x + figures.width);
+    // Read in one turn of the page, since the word goes by itself.
+    const covers = await page.evaluate(() => {
+      const word = document.querySelector<HTMLElement>("[data-testid='flash-readout']")!;
+      const figures = document.querySelector("[data-testid='limits-readout']")!.getBoundingClientRect();
+      const foot = document.querySelector("[data-testid='status-bar']")!.getBoundingClientRect();
+      const box = word.getBoundingClientRect();
+      return {
+        text: word.textContent,
+        whole: box.width > 0 && box.left >= foot.left && box.right <= foot.right && word.scrollWidth <= word.clientWidth + 1,
+        over: box.x < figures.x + figures.width,
+      };
+    });
+    expect(covers.text).not.toBe("");
+    expect(covers.whole).toBe(true);
+    expect(covers.over).toBe(true);
     expect(await style(word, "background-color")).toBe(await style(bar(page), "background-color"));
+    await page.clock.runFor(2000);
     await expect(word).toHaveText("");
     await expect(bar(page)).toHaveAttribute("data-fit", "");
   });
