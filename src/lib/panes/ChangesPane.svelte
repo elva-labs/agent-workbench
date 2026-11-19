@@ -35,7 +35,6 @@
     clearQuery,
     closeViewer,
     files,
-    listed,
     openAt,
     refresh,
     search,
@@ -129,7 +128,6 @@
     saveLayout,
   } from "$lib/layout.svelte";
 
-  let entries = $derived(listed());
   let reviewing = $derived(layout.mode === "reviewing");
   let editing = $derived(layout.mode === "editing");
   /** While editing, the tree's column beside the editor, unless the window
@@ -702,10 +700,7 @@
   let board = $derived(boardOf(activeSession()));
   let started = $derived(board === null ? [] : startedBy(board.token));
   let asking = $derived(started.filter(isAsking).length);
-  let paneMeta = $derived.by(() => {
-    if (editing) return worktree === null ? undefined : `worktree ${worktree}`;
-    return worktree === null ? `${entries.length} files` : `worktree ${worktree} · ${entries.length} files`;
-  });
+  let paneMeta = $derived(worktree === null ? undefined : `worktree ${worktree}`);
   /** While editing the pane is named for the project, heading the tree's
       column, and the editor's tabs head the column beside it. */
   let paneTitle = $derived.by(() => {

@@ -79,11 +79,11 @@ in `.git` is. A save that cannot be made says why over that file's editor.
 
 A file can be started before it has a name, with <kbd>Cmd</kbd><kbd>N</kbd>,
 New File in the File menu, New untitled file in the command palette, or a
-double-click on the tab row where no tab is. From agent mode the window
-flips to the editor first. The file opens empty in a tab of its own after
-the one in front, with the keyboard in it, called Untitled, then Untitled 2
-and so on, the lowest number no open untitled file has. Its foot says it is
-plain text and not saved yet.
+double-click on the tab row where no tab is or in the empty middle pane. From
+agent mode the window flips to the editor first. The file opens empty in a
+tab of its own after the one in front, with the keyboard in it, called
+Untitled, then Untitled 2 and so on, the lowest number no open untitled file
+has. Its foot says it is plain text and not saved yet.
 
 Nothing is written until it is saved, and nothing outside the editor sees
 it: no tree lists it, nothing watches it, and with it in front the viewer's

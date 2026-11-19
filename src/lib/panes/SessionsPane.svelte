@@ -39,7 +39,6 @@
     modelLabel,
     moreLabel,
     outsideFor,
-    activeSession,
     sessions,
     since,
     disown,
@@ -693,12 +692,6 @@
     if (outcome.type === "close") outcome.then();
   }
 
-  /** The account the session on screen runs under, for the foot, which
-      is there only once there are accounts to tell apart. */
-  let footAccount = $derived(
-    hasAccounts() && activeSession() !== null ? accountLabel(activeSession()?.account ?? null) : null,
-  );
-
   /** The sessions whose started sessions are folded into dots on their
       own row rather than hanging under it. Open is how a parent starts,
       and nothing about it is remembered. */
@@ -791,35 +784,37 @@
 
   /** What stands under a project's name: its sessions with something
       running behind them, in the order they last changed, then the quiet
-      rows, latest first, the tail of them folded once there are more than
-      a few. Past sessions are listed under the project on screen alone. */
-  function bodyOf(path: string): { entries: Entry[]; hidden: Entry[] } {
+      rows: the ones left open at the last quit, latest first, and after
+      all of them its past sessions, latest first, however lately those
+      changed. Once there are more than a few quiet rows, the tail of them
+      stands behind a fold that counts them, and is drawn under it while
+      it is open. Past sessions are listed under the project on screen
+      alone. */
+  function bodyOf(path: string): { entries: Entry[]; tail: Entry[] } {
     const own = byChange(ownFor(path)).map(
       (session): Entry => ({ kind: "session", id: `session:${session.key}`, session, at: lastChanged(session) }),
     );
-    const quiet: Entry[] = [
-      ...own.filter((entry) => !running(entry)),
-      ...(screenProject === path ? historyFor(path) : []).map(
-        (transcript): Entry => ({ kind: "past", id: `past:${transcript.id}`, transcript, at: transcript.modified * 1000 }),
-      ),
-    ].sort((a, b) => b.at - a.at);
+    const past = (screenProject === path ? historyFor(path) : [])
+      .map((transcript): Entry => ({ kind: "past", id: `past:${transcript.id}`, transcript, at: transcript.modified * 1000 }))
+      .sort((a, b) => b.at - a.at);
+    const quiet = [...own.filter((entry) => !running(entry)), ...past];
     const wanted = [...own.filter(running), ...quiet];
     const byId = new Map(wanted.map((entry) => [entry.id, entry]));
     const order = held(shownRows.get(path) ?? [], [...byId.keys()]);
     shownRows.set(path, order);
-    const all = opened[`more:${path}`] || quiet.length <= QUIET_SHOWN + 1;
+    const folds = quiet.length > QUIET_SHOWN + 1;
     const entries: Entry[] = [];
-    const hidden: Entry[] = [];
+    const tail: Entry[] = [];
     let shown = 0;
     for (const id of order) {
       const entry = byId.get(id)!;
       if (running(entry)) entries.push(entry);
-      else if (all || shown < QUIET_SHOWN) {
+      else if (!folds || shown < QUIET_SHOWN) {
         entries.push(entry);
         shown += 1;
-      } else hidden.push(entry);
+      } else tail.push(entry);
     }
-    return { entries, hidden };
+    return { entries, tail };
   }
 
   type Body = ReturnType<typeof bodyOf>;
@@ -839,13 +834,13 @@
     const keep = (path: string) => {
       const fresh = bodyOf(path);
       const entries = fresh.entries.map(reuse(was));
-      const hidden = fresh.hidden.map(reuse(was));
+      const tail = fresh.tail.map(reuse(was));
       const prev = shownBodies.get(path);
       out.set(
         path,
-        prev !== undefined && sameList(prev.entries, entries) && sameList(prev.hidden, hidden)
+        prev !== undefined && sameList(prev.entries, entries) && sameList(prev.tail, tail)
           ? prev
-          : { entries, hidden },
+          : { entries, tail },
       );
     };
     for (const project of split.active) keep(project.path);
@@ -870,7 +865,7 @@
     };
   }
 
-  const NO_BODY: ReturnType<typeof bodyOf> = { entries: [], hidden: [] };
+  const NO_BODY: ReturnType<typeof bodyOf> = { entries: [], tail: [] };
 
   function toggle(id: string) {
     opened[id] = !opened[id];
@@ -1077,27 +1072,31 @@
   }
 
   /** A project's rows in the order drawn: its sessions, each with the
-      sessions it started under it, the quiet rows and the fold of the
-      rest of them, and under the project on screen the way to a new
-      session and to its earlier ones. */
+      sessions it started under it, the quiet rows, the fold of the rest
+      of them and, while it is open, those rows under it, and under the
+      project on screen the way to a new session and to its earlier ones. */
   function body(path: string): Row[] {
     const out: Row[] = [];
-    const { entries, hidden } = bodies.get(path) ?? NO_BODY;
+    const { entries, tail } = bodies.get(path) ?? NO_BODY;
     out.push(...starting(path));
-    for (const entry of entries) {
+    const walkEntry = (entry: Entry) => {
       if (entry.kind === "past") {
         out.push({ id: entry.id, run: () => resume(path, entry.transcript) });
-        continue;
+        return;
       }
       const session = entry.session;
       out.push({ id: entry.id, run: () => choose(session.key) });
-      if (collapsed[session.key]) continue;
+      if (collapsed[session.key]) return;
       for (const kid of childrenOf(session)) {
         out.push({ id: `session:${kid.key}`, run: () => choose(kid.key) });
       }
-    }
+    };
+    entries.forEach(walkEntry);
     const more = `more:${path}`;
-    if (hidden.length > 0) out.push({ id: more, run: () => toggle(more) });
+    if (tail.length > 0) {
+      out.push({ id: more, run: () => toggle(more) });
+      if (opened[more]) tail.forEach(walkEntry);
+    }
     if (screenProject !== path) return out;
     if (outsideFor(path).length > 0) {
       out.push({ id: `earlier:${path}`, run: () => openResume(path) });
@@ -1531,26 +1530,6 @@
       the column holds the window's buttons. */
   let wide = $derived(foldedWidth() > FOLDED);
 
-  /** The list scrolls under the foot: only then does a rule part them. */
-  let tree = $state<HTMLDivElement | null>(null);
-  let under = $state(false);
-  function measureUnder() {
-    if (tree === null) return;
-    under = tree.scrollTop + tree.clientHeight < tree.scrollHeight - 1;
-  }
-  $effect(() => {
-    if (tree === null) return;
-    const observer = new ResizeObserver(measureUnder);
-    observer.observe(tree);
-    for (const child of tree.children) observer.observe(child);
-    const mutations = new MutationObserver(measureUnder);
-    mutations.observe(tree, { childList: true, subtree: true });
-    measureUnder();
-    return () => {
-      observer.disconnect();
-      mutations.disconnect();
-    };
-  });
   /** Reviewing folds the pane, and so does editing in a window that keeps
       the editor's room, and the column peeks it over the pane beside it;
       a window too narrow for it otherwise has nothing to open it into. */
@@ -2144,33 +2123,37 @@
 <!-- What stands under a project's name, in the order the keyboard walks
      it. Each row is drawn in a slot of its own, which is what fades and
      what moves: a row that goes leaves the ones below it to close the gap
-     rather than jump into it. -->
+     rather than jump into it. The fold stays where it is while open, its
+     chevron down, with the rows it holds under it. -->
 {#snippet projectBody(path: string)}
-  {@const { entries, hidden } = bodies.get(path) ?? NO_BODY}
+  {@const { entries, tail } = bodies.get(path) ?? NO_BODY}
+  {@const open = opened[`more:${path}`] === true}
   {@render newSession(path)}
   {#each entries as entry (entry.id)}
     <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
-      {#if entry.kind === "session"}
-        {@render sessionRow(entry.session)}
-        {@render subagents(entry.session, false, false, childrenOf(entry.session).length > 0 && !collapsed[entry.session.key])}
-        {@render rail(entry.session)}
-      {:else}
-        {@render pastRow(path, entry.transcript)}
-      {/if}
+      {@render entryRows(path, entry)}
     </div>
   {/each}
-  {#if hidden.length > 0}
+  {#if tail.length > 0}
     <button
       class="fold tail"
       class:cursor={current === `more:${path}`}
       tabindex="-1"
       onclick={() => toggle(`more:${path}`)}
+      aria-expanded={open}
       data-row="more:{path}"
       data-testid="quiet-more"
     >
-      {@render chevron(false)}
-      <span class="fold-text">{moreLabel(hidden.length, Math.min(...hidden.map((entry) => entry.at)), now)}</span>
+      {@render chevron(open)}
+      <span class="fold-text">{moreLabel(tail.length, Math.min(...tail.map((entry) => entry.at)), now)}</span>
     </button>
+    {#if open}
+      {#each tail as entry (entry.id)}
+        <div class="row-slot" animate:flip={rowMove()} in:rowFade|local out:rowFade|local>
+          {@render entryRows(path, entry)}
+        </div>
+      {/each}
+    {/if}
   {/if}
 
   {#if screenProject === path}
@@ -2195,6 +2178,18 @@
         <span class="fold-text">{earlier} earlier {earlier === 1 ? "session" : "sessions"}…</span>
       </button>
     {/if}
+  {/if}
+{/snippet}
+
+<!-- One entry under a project: a session with its subagents and the
+     sessions it started, or a past session. -->
+{#snippet entryRows(path: string, entry: Entry)}
+  {#if entry.kind === "session"}
+    {@render sessionRow(entry.session)}
+    {@render subagents(entry.session, false, false, childrenOf(entry.session).length > 0 && !collapsed[entry.session.key])}
+    {@render rail(entry.session)}
+  {:else}
+    {@render pastRow(path, entry.transcript)}
   {/if}
 {/snippet}
 
@@ -2464,7 +2459,7 @@
       data-testid="new-session"><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg></button
     >
   </div>
-  <div class="tree" bind:this={tree} onscroll={measureUnder}>
+  <div class="tree">
     {#if workspace.open.length === 0}
       <div class="empty" data-testid="no-project">
         <p>Open a folder to work in. A session starts there, and the changes pane watches it.</p>
@@ -2549,27 +2544,6 @@
         </div>
       {/if}
   </div>
-  <!-- Whose login the session on screen runs under, once there are
-       accounts to tell apart, and the way to the settings beside it. -->
-  {#if footAccount !== null}
-    <div class="foot" class:under>
-      <span class="avatar" aria-hidden="true">{footAccount.slice(0, 1).toUpperCase()}</span>
-      <span class="who" data-testid="pane-account">{footAccount}</span>
-      <button
-        class="gear"
-        tabindex="-1"
-        onclick={() => openSettings()}
-        aria-label="Settings"
-        title="Settings ({describe(chordFor('settings'))})"
-        data-testid="pane-settings"
-        ><svg class="glyph" viewBox="0 0 16 16" aria-hidden="true"
-          ><circle cx="8" cy="8" r="2.2" /><path
-            d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1"
-          /></svg
-        ></button
-      >
-    </div>
-  {/if}
   </div>
   <!-- Subagents as they start, said once each, outside the rows, which
        are inert while the pane is folded. -->
@@ -2658,7 +2632,6 @@
   .nav.folded .flag,
   .nav.folded .fold,
   .nav.folded .add-here,
-  .nav.folded .foot,
   .nav.folded .empty,
   .nav.folded .inactive,
   .nav.folded .choice,
@@ -3064,63 +3037,6 @@
     cursor: default;
   }
 
-  /* The foot: the account the session on screen runs under, and the
-     settings. */
-  .foot {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 37px;
-    padding: 6px 14px;
-    border-top: 1px solid transparent;
-    font-family: var(--chrome);
-    font-size: var(--label-size);
-    color: var(--ink-2);
-  }
-
-  .foot.under {
-    border-top-color: var(--head-rule);
-  }
-
-  .avatar {
-    flex: none;
-    width: 20px;
-    height: 20px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    background: var(--accent-soft);
-    color: var(--accent);
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .who {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .gear {
-    flex: none;
-    margin-left: auto;
-    padding: 4px;
-    display: grid;
-    place-items: center;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: none;
-    color: var(--ink-3);
-    cursor: pointer;
-  }
-
-  .gear:hover {
-    background: var(--surface-2);
-    color: var(--ink);
-  }
-
   /* The cursor is a bar at the pane's left edge, clear of any text: every
      row spans the pane's width, so the bar sits in the same place whatever
      the row's own indent. It shows while the keyboard is in the pane, and
@@ -3380,9 +3296,10 @@
     cursor: default;
   }
 
-  /* The name starts where a session's does, past the dot's column. */
+  /* The name starts where a session's does: past the dot's column, which
+     is 10px wider than the dot, and the row's gap after it. */
   .past .dot {
-    margin-right: 3px;
+    margin-right: 10px;
   }
 
   .session.on {

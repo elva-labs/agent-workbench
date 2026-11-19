@@ -62,10 +62,6 @@ The `orchestrator` folder an earlier version kept sessions in is listed among
 the projects while it holds past sessions, with no button for a new session
 and Close project alone in its menu; see [orchestrator](orchestrator.md).
 
-Once there are accounts to tell apart, the foot of the pane names the one
-the session on screen runs under, with a button that opens the settings
-beside it. Without accounts there is no foot.
-
 A row's own button takes the place of its time while the pointer is on the
 row, so it never covers a word of the name. On a live row it is ×, which
 stops the session and leaves it under the project's own past; on a past
@@ -141,7 +137,8 @@ Inactive but never moves it. When each project was last used is kept in the
 window's own storage, and a project's record goes when it is closed. The
 choice of order is kept there too, and Inactive is listed in the same order.
 The sessions inside a project are in the order they last changed, the latest
-first.
+first, with one exception: its past sessions come after every session still
+open, however lately they changed.
 
 While the pointer is over the pane, or the keyboard is walking its rows,
 the order holds still: what is under the pointer or the cursor stays where
@@ -245,9 +242,12 @@ from the last quit with nothing running behind it takes one line too, its
 name and its time, the time its transcript was last written, unless it
 came back unread with a line, as [after a restart](#after-a-restart)
 says. Those rows come after the running
-ones, and once a project has more than three of them the first two stand
-and the rest fold into one row that counts them, such as `8 more from this
-week`, which opens in place. No row says which agent it runs.
+ones, and the project's past sessions after them. Once a project has more
+than three rows with nothing running, the first two stand and the rest fold
+into one row that counts them, such as `8 more from this week`. Opened, that
+row stays where it is with the rows it holds under it, and closes them away
+again. Every row's name starts at the same place, past its dot. No row says
+which agent it runs.
 
 A row says what its agent is doing. Codex's turn-start, completion and
 interruption events are read from its session log every half second. A new
@@ -278,12 +278,12 @@ full screen draws the bullets already there again and counts as work,
 and a turn with less than three seconds of output is not seen at all.
 With hooks on, every turn is reported, one the agent starts by itself
 included, and output decides neither. The dot says
-it on the row, with the words on hover and for a screen reader; the agent
-pane's header spells the state out. A session that goes quiet, ends, or
+it on the row, with the words on hover and for a screen reader; the status
+bar spells the state out. A session that goes quiet, ends, or
 rings for attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
-while a session asks for a permission, `waiting for you` in the agent pane,
-a count in the status bar, and the same count on the app's icon. Having it on
+while a session asks for a permission, `waiting for you` in the status bar
+and a count at its end, and the same count on the app's icon. Having it on
 screen in a focused window reads it. A session read stays read until the
 agent does something new: a turn that ends, a permission it asks for, a
 line it leaves, its ending, or a bell while it works. A notice that only
@@ -588,18 +588,17 @@ does not hold, so a terminal never starts looser than the mode last chosen
 on the chip. Bypassing permissions, or a mode a session cannot switch to,
 is never passed on; the agent's settings decide then.
 
-The agent pane's header names the session, its project and the branch the
-folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. The header, the row's dot and
-the row's words decide it the same way, from the session's own events: a
+The agent pane's header names the session. The status bar names its
+folder, the branch the folder has checked out, and what the session is
+doing: working, idle, asking the user or waiting for a permission, as
+[the status bar](layout.md#the-status-bar) describes. The bar, the row's
+dot and the row's words decide it the same way, from the session's own events: a
 turn that only waits on the sessions it started is working, and a session
 at rest while sessions it started work reads `a session working` or `2
 sessions working`, with its dot breathing. At rest, a session reads `idle`
 where the app knows its turn ended, an integrated one or a terminal one
 whose hooks report its turns, and `running` where its activity is
-guessed. Short of room the project and
-the branch give way before what the session is doing, and each goes with
-its icon once it would show no more than a letter or two. A session another session
+guessed. A session another session
 started is named by the name its start gave, cut to 60 characters, or by
 the first line of its prompt; a name that reads as You or Workbench, in any
 case or with anything unseen around it, is never taken, since the thread

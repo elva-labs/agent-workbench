@@ -906,8 +906,8 @@ when the work passes, and where and how often it sends the work back, and
 Escape puts it away wherever the keyboard is, without reaching the agent.
 
 Where the header is short of room, a tag's workflow name is cut short and
-then left out, then the header's status, and the place, or the chip's
-words, stay whole until both have gone; only then are they cut short, and
+then left out, and the place, or the chip's words, stay whole until it has
+gone; only then are they cut short, and
 they go at a letter or two. The chip's pips stay until the title has given
 way, and the words take no room once gone (see [layout](layout.md)). A
 start the workflow refuses its

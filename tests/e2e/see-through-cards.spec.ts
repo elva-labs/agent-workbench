@@ -160,7 +160,7 @@ function script(page: Page, body: string) {
     pane, and the terminal panel with two shells side by side. */
 async function working(page: Page) {
   await page.getByTestId("start-agent").click();
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
   await expect(page.locator(`${AGENT} .xterm-screen`)).toBeVisible();
   await page.locator(TREE).getByText("mod.rs", { exact: true }).click();
   await expect(page.getByTestId("viewer")).toHaveAttribute("data-view", "diff");
@@ -343,7 +343,7 @@ test("with no share on the cards stamps nothing and leaves the agent's card soli
   await expect(page.locator(":root")).toHaveAttribute("data-background", /.*/);
   await expect(page.locator(":root")).not.toHaveAttribute("data-cards", /.*/);
   await page.getByTestId("start-agent").click();
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
   const card = await page.locator(`${AGENT} > .body`).evaluate((body) => {
     const style = getComputedStyle(body);
     const wrap = getComputedStyle(body.querySelector(".wrap")!);
