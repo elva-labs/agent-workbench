@@ -143,6 +143,11 @@ the focus and those two remain. What the session is doing is said here and
 by the dot on its row, and the window's mode by the switch in [the
 corner](#the-corner), so the bar does not say it.
 
+The state is plain text, so a screen reader reads it when it walks to the
+bar. A hidden polite region says it aloud only when the session starts asking,
+`asks you` or `waits for permission`, once for each time; working and idle
+changes are not said.
+
 In the modern look the bar lies on the ground with no rule of its own, so
 its row is the whole band of ground from the cards' foot to the window's,
 and its words stand in the middle of that band. In the terminal look, and

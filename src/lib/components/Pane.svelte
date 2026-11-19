@@ -416,11 +416,11 @@
 
   /* Beside a head, short of room, the parts give way in turn: what the
      head holds beyond what it keeps (a workflow's name), then the meta,
-     then what the head keeps (the
-     place in the workflow, the words of a run's chip), and the title
-     last. The room the head keeps beyond its text, a run chip's pips,
-     stays until the title has gone. The head starts from what
-     it keeps and has the room left over; the meta keeps its own width; and
+     then what the head keeps (the place in the workflow, the words of a
+     run's chip), and the title last. The room the head keeps beyond its
+     text, a run chip's pips, stays until the title has gone. The head
+     starts from what it keeps and has the room left over; the meta keeps
+     its own width; and
      the shrink factors are so far apart that each gives way to nothing
      before the one before it has gone. */
   header:not(.columns) > .head {
