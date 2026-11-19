@@ -104,7 +104,7 @@ test("the settings say what new sessions start on, and go back to the agent's ow
   await page.keyboard.press(`${MOD}+,`);
   await page.getByTestId("settings-tab-sessions").click();
   const row = page.locator("[data-testid='chosen'][data-agent='claude-code']");
-  await expect(row.getByTestId("chosen-line")).toHaveText("Opus · High · Accept edits");
+  await expect(row.getByTestId("chosen-line")).toHaveText("Opus · High in conversations · Accept edits");
   await row.getByTestId("chosen-forget").click();
   await expect(row.getByTestId("chosen-line")).toHaveText("Its own defaults");
   await expect(row.getByTestId("chosen-forget")).toHaveCount(0);

@@ -314,7 +314,12 @@
     const kept = chosenFor(agent);
     const parts = [
       kept.model === undefined ? null : modelLabel(agent, kept.model),
-      kept.effort === undefined ? null : effortName(kept.effort),
+      // A terminal takes no effort from the workbench.
+      kept.effort === undefined
+        ? null
+        : kindFor(agent) === "terminal"
+          ? `${effortName(kept.effort)} in conversations`
+          : effortName(kept.effort),
       kept.mode === undefined ? null : modeName(agent, kept.mode),
     ].filter((part) => part !== null);
     return parts.length === 0 ? "Its own defaults" : parts.join(" · ");
@@ -741,10 +746,12 @@
             <UnreadEntries field="lastChosen" />
             <p class="note">
               A new session you start begins on the model, the effort and the mode you last chose for
-              its agent on a conversation's chips, or switched to in a Claude Code terminal. Plan,
-              Bypass permissions and Full access are not carried over. A terminal session takes the
-              model and the mode. A session another one starts begins as its starter says, and a
-              workflow sets the model of its sessions.
+              its agent on a conversation's chips. A Claude Code terminal's switch to a mode that lets
+              the agent do no more without asking is kept too; a mode that lets it do more is kept only
+              from a chip. Plan, Bypass permissions and Full
+              access are not carried over. A terminal session takes the model and the mode. A session
+              another one starts begins as its starter says, and a workflow sets the model of its
+              sessions.
             </p>
             <div data-testid="chosen-list">
               {#each installed().length > 0 ? installed() : AGENTS as id (id)}

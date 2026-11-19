@@ -23,6 +23,9 @@ export interface Choice {
   off?: boolean;
 }
 
+/** Claude Code's entry for its own default model. */
+const DEFAULT_MODEL = "default";
+
 /** The model the session runs on, as the agent offers it where it does. */
 function inUse(conversation: Conversation): string | null {
   const current = conversation.settings.model;
@@ -138,7 +141,11 @@ export function choose(
   const agent = byKey(key)?.agent;
   const keep = () => {
     if (agent === undefined || linkOf(key)?.configureError != null) return;
-    if (setting !== "model" && conversation.settings[setting] !== value) return;
+    // Kept only once the agent runs on it. The agent's default model keeps
+    // none, which needs no proof.
+    if (setting === "model") {
+      if (value !== DEFAULT_MODEL && inUse(conversation) !== value && conversation.settings.model !== value) return;
+    } else if (conversation.settings[setting] !== value) return;
     keepChoice(agent, setting, value);
   };
   if (setting === "model") {

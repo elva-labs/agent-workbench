@@ -222,14 +222,24 @@ start already takes for them; a terminal takes no effort from the
 workbench.
 
 What is kept is the user's own choice: a model, an effort or a mode picked
-on a conversation's chips once the agent took it, and for Claude Code in a
-terminal a mode its hooks report it switched to after the first mode they
-reported for its run. The mode a run began in, the agent's own default, a
-mode an agent fell back to, the model a workflow sets and what a session
-another started was given are not choices and change nothing. Plan,
-bypassing permissions and Codex's full access are never kept: a new
+on a conversation's chips once the agent runs on it. Only the window makes
+those picks, so only they can keep a mode that lets the agent do more
+without asking. A Claude Code terminal's hooks report its mode, and a
+switch they report after the first mode they reported for its run is kept
+only where it lets the agent do no more than the mode kept now, Default
+standing in for none kept: what the hooks report can be written by any of
+the user's processes, so it can narrow what new sessions begin in and
+never widen it. The mode a run began in, the agent's own default, a mode
+an agent fell back to, the model a workflow sets and what a session
+another started was given are not choices and change nothing.
+
+Plan, bypassing permissions and Codex's full access are never kept: a new
 session does not begin unable to edit, or unguarded, because of where the
-last one stood, and choosing one leaves the mode kept before. Claude
+last one stood, and choosing one leaves the mode kept before. The rule
+holds where the choices are used as well as where they are made: the core
+refuses such a mode in the settings file, the window takes none from the
+file, and a start names none, so a file that names one, written by hand,
+by an agent's shell or by a later version, starts nothing in it. Claude
 Code's default model, chosen on the chip, keeps no model, and the settings
 let go of everything kept for an agent, as
 [settings](settings.md#sessions) describes. The choices are kept for the
