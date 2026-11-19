@@ -278,18 +278,24 @@ export async function end(child: ChildProcess) {
     it runs. Every launch has a home of its own, so these are that
     launch's and no one else's. */
 export function processesUnder(home: string): number[] {
-  const found: number[] = [];
-  for (const entry of readdirSync("/proc")) {
-    if (!/^\d+$/.test(entry) || Number(entry) === process.pid) continue;
-    try {
-      const environment = readFileSync(`/proc/${entry}/environ`, "latin1");
-      if (environment.split("\0").includes(`HOME=${home}`))
-        found.push(Number(entry));
-    } catch {
-      // Gone already, or not ours to read.
-    }
+  // A system with no /proc has none to find, and a launch that failed
+  // there keeps its own error rather than this one.
+  if (!existsSync("/proc")) return [];
+  return readdirSync("/proc")
+    .filter((entry) => /^\d+$/.test(entry) && Number(entry) !== process.pid)
+    .map(Number)
+    .filter((pid) => runsUnder(pid, home));
+}
+
+/** Whether process `pid` runs with `home` as its HOME. One that is gone,
+    or not ours to read, does not. */
+function runsUnder(pid: number, home: string): boolean {
+  try {
+    const environment = readFileSync(`/proc/${pid}/environ`, "latin1");
+    return environment.split("\0").includes(`HOME=${home}`);
+  } catch {
+    return false;
   }
-  return found;
 }
 
 /** Ends whatever still runs under `home` and waits until it has gone.
@@ -303,6 +309,9 @@ export async function endUnder(home: string) {
     const left = processesUnder(home);
     if (left.length === 0) return;
     for (const pid of left) {
+      // A process that ended since the listing may have given its pid to
+      // another, so each is asked again just before it is signalled.
+      if (!runsUnder(pid, home)) continue;
       try {
         process.kill(pid, signal);
       } catch {
