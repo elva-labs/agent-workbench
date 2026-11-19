@@ -241,7 +241,7 @@ describe("the workbench's wait and notify in a run", () => {
     expect(drawnPart(call({ name: WAIT, tool: "mcp" }))).toBe(false);
     expect(drawnPart(call({ name: NOTIFY, tool: "mcp" }))).toBe(false);
     expect(drawnPart(call({ name: "mcp__chord__note", tool: "mcp" }))).toBe(false);
-    expect(drawnPart(call({ name: "mcp__chord__notes", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call({ name: "mcp__chord__notes", tool: "mcp" }))).toBe(false);
     expect(drawnPart(call({ name: "mcp__chord__send", tool: "mcp" }))).toBe(true);
     expect(drawnPart(call({ name: "mcp__other__wait", tool: "mcp" }))).toBe(true);
     // A transcript written before the rename names the server the old way.
@@ -263,6 +263,98 @@ describe("the workbench's wait and notify in a run", () => {
     expect(nowDoing(running(), [answer, call({ name: NOTIFY, tool: "mcp", done: false })])).toBe("Working");
     const done: Part[] = [answer, call({ name: WAIT, tool: "mcp" }), call({ name: NOTIFY, tool: "mcp" }), call({ name: WAIT, tool: "mcp" })];
     expect(shape(done)).toEqual(["text"]);
+  });
+
+  it("leave a message followed by any mix of wait, notify, note and notes in full", () => {
+    const answer = text({ text: "The whole answer." });
+    const mixed: Part[] = ["note", "notify", "notes", "wait"].map((tool) => call({ name: `mcp__chord__${tool}`, tool: "mcp" }));
+    expect(shape([answer, ...mixed])).toEqual(["text"]);
+    expect(shape([answer, call({ name: "mcp__chord__note", tool: "mcp" }), call({ name: WAIT, tool: "mcp", done: false })])).toEqual(["text"]);
+  });
+
+  it("keep the last message of a stretch whole after real calls, wherever it sits in the turn", () => {
+    const start = call({ name: "mcp__chord__start", tool: "mcp", call: "start" });
+    const parts: Part[] = [
+      call({ name: "Bash", call: "one" }),
+      start,
+      text({ block: "long", text: "A long answer." }),
+      call({ name: WAIT, tool: "mcp" }),
+      call({ name: "mcp__chord__notes", tool: "mcp" }),
+    ];
+    expect(shape(parts)).toEqual(["work:Bash+mcp__chord__start", "text"]);
+  });
+
+  it("keep the text before each wait of a turn the user wrote into", () => {
+    const c = new Conversation(() => 0);
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "go", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "toolStarted", call: "s-1", parent: null, name: "mcp__chord__start", kind: "mcp" },
+      { type: "toolFinished", call: "s-1", parent: null, output: "Started s-2.", error: false, truncated: false, changes: [] },
+      { type: "text", block: "b-1", parent: null, text: "First answer.", done: true },
+      { type: "toolStarted", call: "w-1", parent: null, name: WAIT, kind: "mcp" },
+      { type: "message", message: "m-2", state: "taken", error: null, text: "and?", images: [] },
+      { type: "toolFinished", call: "w-1", parent: null, output: "", error: false, truncated: false, changes: [] },
+      { type: "text", block: "b-2", parent: null, text: "Second answer.", done: true },
+      { type: "toolStarted", call: "w-2", parent: null, name: WAIT, kind: "mcp" },
+    ];
+    for (const event of events) c.apply(event);
+    const shown = c.entries.flatMap((entry) => (entry.kind === "agent" ? segments(entry.parts) : []));
+    const texts = shown.flatMap((segment) => (segment.kind === "text" ? [segment.part.text] : []));
+    expect(texts).toEqual(["First answer.", "Second answer."]);
+  });
+
+  it("show a long answer written while the user sends another message, after calls in a turn that went on", () => {
+    const c = new Conversation(() => 0);
+    const tool = (id: string, name: string, kind: "command" | "mcp") =>
+      [
+        { type: "toolStarted", call: id, parent: null, name, kind },
+        { type: "toolFinished", call: id, parent: null, output: "ok", error: false, truncated: false, changes: [] },
+      ] as IntegratedEventBody[];
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "go", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "toolStarted", call: "w-1", parent: null, name: WAIT, kind: "mcp" },
+      { type: "message", message: "m-2", state: "taken", error: null, text: "also", images: [] },
+      { type: "toolFinished", call: "w-1", parent: null, output: "", error: false, truncated: false, changes: [] },
+      ...tool("b-1", "Bash", "command"),
+      { type: "text", block: "short", parent: null, text: "Short.", done: true },
+      ...tool("b-2", "Bash", "command"),
+      { type: "text", block: "long", parent: null, text: "The long ", done: false },
+      { type: "message", message: "m-3", state: "queued", error: null, text: "more", images: [] },
+      { type: "text", block: "long", parent: null, text: "answer.", done: false },
+      { type: "text", block: "long", parent: null, text: "The long answer.", done: true },
+      { type: "toolStarted", call: "w-2", parent: null, name: WAIT, kind: "mcp" },
+      { type: "message", message: "m-3", state: "taken", error: null, text: "more", images: [] },
+    ];
+    for (const event of events) c.apply(event);
+    const texts = c.entries.flatMap((entry) => (entry.kind === "agent" ? segments(entry.parts) : [])).flatMap((segment) => (segment.kind === "text" ? [segment.part.text] : []));
+    expect(texts).toEqual(["Short.", "The long answer."]);
+  });
+
+  it("show the text after a taken message in a history read, as the transcript's events come", () => {
+    const c = new Conversation(() => 0);
+    const wait = (id: string): IntegratedEventBody[] => [
+      { type: "toolStarted", call: id, parent: null, name: WAIT, kind: "mcp" },
+      { type: "toolFinished", call: id, parent: null, output: "", error: false, truncated: false, changes: [] },
+    ];
+    const items: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "go", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "text", block: "t#1", parent: null, text: "First.", done: true },
+      ...wait("w-1"),
+      { type: "message", message: "m-2", state: "taken", error: null, text: "also", images: [] },
+      { type: "toolStarted", call: "s-1", parent: null, name: "mcp__chord__start", kind: "mcp" },
+      { type: "toolFinished", call: "s-1", parent: null, output: "Started s-2.", error: false, truncated: false, changes: [] },
+      { type: "thinking", block: "u#0", parent: null, text: "hmm", done: true },
+      ...wait("w-2"),
+      { type: "message", message: "m-3", state: "taken", error: null, text: "more", images: [] },
+      { type: "text", block: "v#1", parent: null, text: "The long answer.", done: true },
+      { type: "turnEnded", outcome: "done", error: null, totalCostUsd: null, durationMs: null, usage: null },
+    ];
+    c.lay({ items: items.map((event, at) => ({ at: at + 1, event })), cut: false }, null);
+    const texts = c.entries.flatMap((entry) => (entry.kind === "agent" ? segments(entry.parts) : [])).flatMap((segment) => (segment.kind === "text" ? [segment.part.text] : []));
+    expect(texts).toEqual(["First.", "The long answer."]);
   });
 
   it("do not join the work before and after a message, nor count in it", () => {

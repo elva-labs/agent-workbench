@@ -43,15 +43,15 @@ macro_rules! instructions_head {
 /// last call, written again there when a call had to follow it.
 macro_rules! turn_in_a_terminal {
     () => {
-        "What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait or notify; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. "
+        "What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait, notify or note; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. "
     };
 }
 
 /// How a turn ends in the workbench's conversation, which draws an agent's
-/// text whole and draws no wait or notify call.
+/// text whole and draws no wait, notify, note or notes call.
 macro_rules! turn_in_a_conversation {
     () => {
-        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait and notify calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. "
+        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait, notify, note and notes calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. "
     };
 }
 
