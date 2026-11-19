@@ -66,11 +66,11 @@ const row = (page: Page, project: string) =>
  */
 async function orchestrate(page: Page) {
   await page.getByTestId("start-agent").click();
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
 
   // The starter is a session like any other, from its project's own +.
   await row(page, LEAD).getByTestId("project-new-session").click();
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
   // The pointer leaves the pane, so the order settles with the project
   // used last at the top.
   await page.mouse.move(900, 450);
@@ -644,7 +644,7 @@ test.describe("the orchestrator folder", () => {
     // nothing told, its own id, and a token of its own.
     const past = page.getByTestId("past-session").filter({ hasText: "Plan the release" });
     await past.click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     const spawned = await page.evaluate(
       () =>
         (
@@ -837,7 +837,7 @@ test.describe("a started session in a project of its own", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await row(page, PROJECT).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await push(page, {
       id: "o-1",
       tool: "start",
@@ -871,7 +871,7 @@ test.describe("a started session in a project of its own", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await row(page, PROJECT).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await push(page, {
       id: "o-1",
       tool: "start",
@@ -902,7 +902,7 @@ test.describe("a started session in a project of its own", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await row(page, PROJECT).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await push(page, {
       id: "o-1",
       tool: "start",
@@ -940,7 +940,7 @@ test.describe("a started session in a project of its own", () => {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await row(page, PROJECT).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await push(page, {
       id: "o-1",
       tool: "start",
@@ -991,7 +991,7 @@ for (const width of [300, 240, 180]) {
     // With accounts there is a choice to make, which starts on the
     // project's own.
     await page.getByTestId("agent-option").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     const start = async (id: string, project: string, name: string, account?: string) => {
       await push(page, {
         id,
@@ -1056,7 +1056,7 @@ for (const width of [300, 240, 180]) {
     await page.goto("/");
     await expect(page.locator(AGENT)).toBeVisible();
     await row(page, LEAD).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     for (const [id, name] of [
       ["o-1", "Startup history scan"],
       ["o-2", "Palette check"],

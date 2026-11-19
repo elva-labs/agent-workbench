@@ -3,14 +3,12 @@
   import HooksNotice from "$lib/components/HooksNotice.svelte";
   import WorkflowTagButton from "$lib/components/WorkflowTagButton.svelte";
   import RunChip from "$lib/components/RunChip.svelte";
-  import { letters } from "$lib/giveWay";
   import { onMount, tick, untrack } from "svelte";
   import "@xterm/xterm/css/xterm.css";
 
   import Pane from "$lib/components/Pane.svelte";
   import TerminalView from "$lib/components/TerminalView.svelte";
   import ConversationView from "$lib/components/conversation/ConversationView.svelte";
-  import Icon from "$lib/components/conversation/Icon.svelte";
   import { core, type AgentId } from "$lib/core";
   import {
     AGENTS,
@@ -43,11 +41,10 @@
   import { referenced } from "$lib/show.svelte";
   import type { SessionKind } from "$lib/sessionKind.svelte";
   import type { Session } from "$lib/sessions.svelte";
-  import { handleOf, launch as launchIntegrated, linkFor, linkOf, unspoken } from "$lib/integrated.svelte";
-  import { stateWord } from "$lib/orchestrator.svelte";
+  import { handleOf, launch as launchIntegrated, linkOf, unspoken } from "$lib/integrated.svelte";
   import { accountOf } from "$lib/accounts.svelte";
   import { conductor, dismissRefusal, runStanding, workflowTag } from "$lib/conductor.svelte";
-  import { projectLabel, workspace } from "$lib/workspace.svelte";
+  import { workspace } from "$lib/workspace.svelte";
   import { startsIn } from "$lib/orchestratorFolder.svelte";
   import { touch } from "$lib/projects.svelte";
   import { sizeOf } from "$lib/zoom.svelte";
@@ -77,7 +74,7 @@
   const leaving = (session: Session) =>
     session.kind === "terminal" && session.status === "running" && reopeningRow(session.key);
 
-  // An integrated session's header names it, its project and its branch.
+  // An integrated session's header names it.
   let title = $derived(
     current === null
       ? "Agent"
@@ -85,40 +82,6 @@
         ? shown(label(current))
         : `Agent · ${agentLabel(current.agent)}`,
   );
-
-  /** What the header says of the session, as its row says it: for an
-      integrated one waiting on the user before it can run, what it waits
-      for, and while it asks, whether it asks a question or a permission. */
-  let meta = $derived.by(() => {
-    if (current !== null && current.kind === "integrated") {
-      const link = linkFor(current.key);
-      if (link.untrusted) return "asks to trust the folder";
-      if (link.conversation.notLoggedIn) return "not signed in";
-      if (current.status === "running" && current.needs === "permission")
-        return link.conversation.open[0]?.asked.type === "questionAsked" ? "asks you" : "waits for permission";
-    }
-    return stateWord(current);
-  });
-
-  let branch = $state<string | null>(null);
-  $effect(() => {
-    if (current === null || current.kind !== "integrated") return;
-    const dir = current.worktree ?? current.startIn ?? current.project;
-    // Read again when a turn ends, since the agent may have switched it.
-    void current.working;
-    let stale = false;
-    core()
-      .projectInfo(dir)
-      .then((info) => {
-        if (!stale) branch = info.branch ?? null;
-      })
-      .catch(() => {
-        if (!stale) branch = null;
-      });
-    return () => {
-      stale = true;
-    };
-  });
 
   /** The workflow the session on screen is part of, and its place in it. */
   let tag = $derived(current === null ? null : workflowTag(current));
@@ -260,21 +223,9 @@
   {:else if tag !== null && current?.workflow === null}
     <WorkflowTagButton {tag} />
   {/if}
-  {#if current !== null && integrated}
-    <span class="crumb" title={current.project} data-testid="conversation-project"
-      ><Icon name="folder" size={13} /><span class="crumb-text" use:letters={projectLabel(current.project)}
-        >{projectLabel(current.project)}</span
-      ></span
-    >
-    {#if branch !== null}
-      <span class="crumb" data-testid="conversation-branch"
-        ><Icon name="branch" size={13} /><span class="crumb-text" use:letters={branch}>{branch}</span></span
-      >
-    {/if}
-  {/if}
 {/snippet}
 
-<Pane id="agent" {title} {meta} head={tag !== null || integrated ? head : undefined}>
+<Pane id="agent" {title} head={tag !== null ? head : undefined}>
   <div class="wrap" bind:this={wrap}>
     {#if refusal !== null && current !== null}
       <!-- What the workflow refused the agent, said to the user too. -->
@@ -388,44 +339,6 @@
     min-height: 0;
     padding: var(--term-air);
     background: var(--clear-surface);
-  }
-
-  /* The session's project and branch give way before the workflow tag
-     beside them, cut short and then gone with their icon at a letter or
-     two. */
-  .crumb {
-    flex: 0 1000000 auto;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    min-width: 0;
-    overflow: hidden;
-    white-space: nowrap;
-    font-family: var(--chrome);
-    font-size: var(--meta-size);
-    letter-spacing: var(--label-track);
-    text-transform: var(--label-case);
-    color: var(--ink-2);
-  }
-
-  .crumb + .crumb {
-    margin-left: 6px;
-  }
-
-  .crumb-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .crumb:has(:global(.crumb-text.cut)) {
-    visibility: hidden;
-  }
-
-  /* Gone before a run's chip is cut short, so once it is they leave no
-     gap beside it either. */
-  :global(.head:has([data-short])) .crumb {
-    display: none;
   }
 
   /* Sits over the terminal rather than replacing it: the buffer of a stopped

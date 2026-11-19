@@ -470,7 +470,7 @@ const startHere = (page: Page) =>
     is none: nothing starts by itself any more. */
 const running = async (page: Page) => {
   if ((await spawnCount(page)) === 0) await startHere(page);
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
 };
 const rows = (page: Page) => page.locator("[data-testid='session-row']");
 /** The row of the session with this name, wherever the order puts it: the
@@ -541,7 +541,7 @@ test.describe("one project", () => {
     expect(await spawnCount(page)).toBe(0);
 
     await page.getByTestId("start-agent").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await expect(page.getByTestId("agent-status")).toHaveCount(0);
     expect(await spawnCount(page)).toBe(1);
     expect((await spawns(page))[0].project).toBe(ONE);
@@ -951,7 +951,7 @@ test.describe("several sessions in one project", () => {
   }) => {
     await page.reload();
     await expect(rows(page)).toHaveCount(2);
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     expect((await spawns(page)).map((spawn) => spawn.session)).toEqual([
       "session-2",
     ]);
@@ -997,7 +997,7 @@ test.describe("several sessions in one project", () => {
   }) => {
     await page.reload();
     await expect(rows(page)).toHaveCount(2);
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     const live = rows(page).filter({ has: page.locator(".dot.live") });
     const left = rows(page).filter({ has: page.locator(".dot.dormant") });
     // Measured once the rows have finished coming in, not while they move.
@@ -1041,7 +1041,7 @@ test.describe("several sessions in one project", () => {
     await expect(rows(page)).toHaveCount(1);
     await page.reload();
     await expect(rows(page)).toHaveCount(1);
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     expect((await spawns(page)).map((spawn) => spawn.session)).toEqual([
       "session-2",
     ]);
@@ -2825,7 +2825,7 @@ test.describe("a new session from the palette", () => {
     await open(page, { open: [ONE, TWO], codex: "/usr/local/bin/codex", noWorkflows: true });
     await startHere(page);
     await page.getByTestId("agent-option").first().click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await page.keyboard.press(COMMANDS);
     await page.keyboard.type("new session");
     await page.keyboard.press("Enter");
@@ -2907,7 +2907,7 @@ test.describe("zoom", () => {
     await expect.poll(async () => (await grid(page, key)).size).toBe(14);
     // Still starting: the pty had not been spawned when the zoom happened.
     expect(await spawnCount(page)).toBe(0);
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     const final = await grid(page, key);
     await expect.poll(() => page.evaluate(() => window.__fake.resizes.length)).toBe(1);
     // Long enough for a second resize to show up; the test asserts none did.

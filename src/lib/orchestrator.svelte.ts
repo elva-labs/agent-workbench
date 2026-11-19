@@ -22,7 +22,7 @@ import {
   treesMadeBy,
   typeLine,
 } from "$lib/conductor.svelte";
-import { handleOf, send as sendIntegrated } from "$lib/integrated.svelte";
+import { handleOf, linkFor, send as sendIntegrated } from "$lib/integrated.svelte";
 import { lastSegment } from "$lib/paths";
 import { isLive, label, lastChanged, sessions, since, statusLabel, type Session } from "$lib/sessions.svelte";
 import { shown } from "$lib/unseen";
@@ -117,8 +117,8 @@ export function conducting(session: Session): boolean {
 }
 
 /** What a session is doing, in the words every place that says it uses:
-    the agent pane's header, a row's words and its dot's hover, a started
-    session's line. It decides as the dot does, so a session at rest while
+    the status bar, a row's words and its dot's hover, a started session's
+    line. It decides as the dot does, so a session at rest while
     sessions it started work says how many of them do rather than idle. */
 export function stateWord(session: Session | null): string {
   if (session !== null && session.status === "running" && session.workflowLost === null && !session.working && conducting(session)) {
@@ -126,6 +126,21 @@ export function stateWord(session: Session | null): string {
     return count === 1 ? "a session working" : `${count} sessions working`;
   }
   return statusLabel(session);
+}
+
+/** What the status bar says the session on screen is doing: its state
+    word, or for an integrated session waiting on the user before it can
+    run, what it waits for, and while it asks, whether it asks a question
+    or a permission. */
+export function sessionState(session: Session | null): string {
+  if (session !== null && session.kind === "integrated") {
+    const link = linkFor(session.key);
+    if (link.untrusted) return "asks to trust the folder";
+    if (link.conversation.notLoggedIn) return "not signed in";
+    if (session.status === "running" && session.needs === "permission")
+      return link.conversation.open[0]?.asked.type === "questionAsked" ? "asks you" : "waits for permission";
+  }
+  return stateWord(session);
 }
 
 /** The line under an orchestrator's name: what it has out, and how much of

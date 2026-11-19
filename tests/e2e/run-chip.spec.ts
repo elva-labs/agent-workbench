@@ -92,9 +92,9 @@ async function begin(page: Page, workflow = PLAN_WORK_REVIEW) {
 }
 
 /** Narrows the agent pane step by step, checking the header gives way in
-    turn: the status, then the chip's words with the gap before them and
-    anything beside them in the head, and the title last, the pips always
-    inside the pane. */
+    turn: the chip's words with the gap before them and anything beside
+    them in the head, and the title last, the pips always inside the
+    pane. */
 async function narrows(page: Page) {
   const state = () =>
     page.evaluate((AGENT) => {
@@ -102,7 +102,6 @@ async function narrows(page: Page) {
       const title = header.querySelector<HTMLElement>(".title")!;
       const words = header.querySelector<HTMLElement>("[data-testid='run-words']")!;
       const pips = header.querySelector<HTMLElement>("[data-testid='run-pips']")!;
-      const meta = header.querySelector<HTMLElement>(".meta");
       const drawn = (el: HTMLElement | null) =>
         el !== null && getComputedStyle(el).visibility !== "hidden" && el.getBoundingClientRect().width > 0.5;
       const head = header.closest("section")!.getBoundingClientRect();
@@ -115,7 +114,6 @@ async function narrows(page: Page) {
         wordsDrawn: drawn(words),
         wordsCut: words.scrollWidth > words.clientWidth + 0.5,
         wordsWidth: words.getBoundingClientRect().width,
-        metaDrawn: drawn(meta),
         pipsInside: pipsBox.width > 20 && pipsBox.right <= head.right - 8,
       };
     }, AGENT);
@@ -132,7 +130,6 @@ async function narrows(page: Page) {
     await expect.poll(async () => (await page.locator(AGENT).boundingBox())!.width).toBeLessThan(width + 1);
     const at = await state();
     expect(at.pipsInside, `at ${width}`).toBe(true);
-    if (at.wordsCut || !at.wordsDrawn) expect(at.metaDrawn, `at ${width}`).toBe(false);
     // Gone, the words take no room from the title.
     if (at.titleCut) expect(at.wordsWidth, `at ${width}`).toBeLessThan(0.5);
     if (at.titleCut) expect(at.wordsDrawn, `at ${width}`).toBe(false);
@@ -442,14 +439,14 @@ test.describe("an integrated orchestrator's thread", () => {
     await expect(words(page)).toHaveText("Work, round 2 of 4");
   });
 
-  test("gives way in its header beside the project and branch, the title last", async ({ page }) => {
+  test("gives way in an integrated session's header, the title last", async ({ page }) => {
     await installFakeCore(page, {
       open: [PROJECT],
       settings: { ...settingsWith(PLAN_WORK_REVIEW), integrated: ["claude-code"] },
     });
     await page.goto("/");
     await page.getByTestId("start-agent").click();
-    await expect(page.getByTestId("conversation-branch")).toHaveText("main");
+    await expect(page.getByTestId("branch-readout")).toHaveText("main");
     // The header's chip comes with the first message.
     await page.getByTestId("composer-input").fill("Fix the flaky cache test");
     await page.keyboard.press("Enter");

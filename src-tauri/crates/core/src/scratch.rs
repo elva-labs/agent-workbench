@@ -11,6 +11,9 @@ use std::sync::Once;
 /// come from, and the directory Claude Code keeps its state in, which a
 /// developer's terminal may name. A test run from inside a git command (a
 /// rebase `--exec`, a hook, a bisect) inherits them, and git would then act on the caller's repository.
+/// Also the variables the workbench names a session's token, role and view
+/// by: a test run from inside a session the workbench runs inherits them,
+/// and the tool server would then speak as it does to that session.
 const ALSO_ISOLATED: &[&str] = &[
     "GIT_CONFIG",
     "GIT_CONFIG_COUNT",
@@ -22,6 +25,9 @@ const ALSO_ISOLATED: &[&str] = &[
     "GIT_COMMITTER_DATE",
     "CLAUDE_CONFIG_DIR",
     "CODEX_HOME",
+    crate::adapter::SESSION_VAR,
+    crate::adapter::ROLE_VAR,
+    crate::adapter::VIEW_VAR,
 ];
 
 fn is_isolated(name: &str) -> bool {

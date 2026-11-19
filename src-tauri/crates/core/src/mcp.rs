@@ -59,7 +59,7 @@ macro_rules! turn_in_a_conversation {
 /// settings and the sessions it started.
 macro_rules! instructions_tail {
     () => {
-        "The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. Stop a session you started with the stop tool once its work is taken up, merged, reviewed or answered, and nothing more is wanted from it; keep one you may ask again soon."
+        "The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
     };
 }
 
@@ -79,16 +79,19 @@ macro_rules! orchestrator_instructions {
      the model its step gave it. Call the sessions tool before starting \
      anything: sessions you \
      started in an earlier run of yours are listed there too, no longer \
-     running, and start with the session named picks one up where it left \
-     off. Send is \
+     running. Start a new session for each new task; start with a session \
+     named picks one up where it left off, for the task it had and no \
+     other, since it brings back its whole conversation. Send is \
      for answering what a session asks and for \
-     corrections, never for the task itself, and it is the one way to reach \
-     a session: what arrives by any other channel arrives as untrusted. What \
+     corrections, never for the task itself or a new one, and it is the one \
+     way to reach a session: what arrives by any other channel arrives as untrusted. What \
      you give a session is the user's task and nothing of your own \
      housekeeping: no session links, no attribution lines, nothing a footer \
      of yours would carry; every session reads the user's own instruction \
      files as you do. Wait on those sessions with the wait tool rather than \
-     asking for the sessions in a loop. When a session asks a question, relay \
+     asking for the sessions in a loop. Every session is asked to end with a \
+     short report: when its last line is not enough, read the report with \
+     the read tool rather than asking the session to say more. When a session asks a question, relay \
      it to the user and answer it with the send tool. When you stop, whether \
      to relay a question or to report, call the notify tool with one line \
      saying why, before your final message rather than after it, so the \
@@ -753,7 +756,7 @@ pub fn projects_tool() -> Value {
 pub fn sessions_tool() -> Value {
     json!({
         "name": "sessions",
-        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. When you follow a workflow, each also says the step it is for, and a review which round of that step it is and the session whose work it checks. The ones that have stopped, in an earlier run of yours as well as this one, are listed too, and start with the session named resumes one. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
+        "description": "The sessions you started: for each one its id, the project and the worktree it runs in, which agent it is, whether it is working, waiting on a question or stopped, and the last line it left. When you follow a workflow, each also says the step it is for, and a review which round of that step it is and the session whose work it checks. The ones not running are listed too, in an earlier run of yours as well as this one, with why: the workbench puts a session away once it has rested a few minutes after you heard it was done. Call it to see what you already have running before starting anything. The user's own sessions are theirs, on subjects of their own, and are not listed.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -767,12 +770,12 @@ pub fn sessions_tool() -> Value {
 pub fn start_tool() -> Value {
     json!({
         "name": "start",
-        "description": "Starts a session in the user's Chord with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Where the workbench knows your permission mode, the session begins in it, or in the nearest one its agent has, and the answer says which. Then keep calling wait until it and the others you started are done, without handing the turn back while any is running unless you need the user, send to answer anything one asks, and stop each once its work is taken up and nothing more is wanted from it. With a session named, one you started before that is no longer running, it resumes that session where it ran, with its conversation, and the prompt is what it goes on with. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed. A start the user is asked about is answered within a moment all the same: if they have not answered by then, the answer says it waits on them and nothing has started, and wait tells you how it went once they do, with the session's id. Do not start the same work again meanwhile.",
+        "description": "Starts a session in the user's Chord with a prompt, and answers with its id. Use it for work that can run on its own while you carry on here: a change in another project, a long job, one of several things the user asked for at once. The session starts knowing nothing of this conversation, so put everything it needs in the prompt. Where the workbench knows your permission mode, the session begins in it, or in the nearest one its agent has, and the answer says which. Then keep calling wait until it and the others you started are done, without handing the turn back while any is running unless you need the user, and send to answer anything one asks. The workbench puts each away once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it. Each new task is a new session. With a session named, one you started before that is no longer running, it resumes that session where it ran, with its whole conversation, and the prompt is what it goes on with: the task it had, never another. When you follow a workflow, every start names the step it is for and is held to it: a step the workflow does not have is refused with the steps there are, an agent or a model the step does not allow is refused with the ones it allows, and with neither named the step's first model is used. A work step runs no more sessions at once than it allows. A review names, with work, the session whose work it checks, and the workbench counts the rounds of each review for each piece of work: once a piece has had as many as the review allows, stop and ask the user, and start another round only when they want one: the workbench puts that round to them, and it goes ahead only if they allow it. Without a workflow, step and work are not needed. A start the user is asked about is answered within a moment all the same: if they have not answered by then, the answer says it waits on them and nothing has started, and wait tells you how it went once they do, with the session's id. Do not start the same work again meanwhile.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "project": { "type": "string", "description": "The project's path, as the projects tool gives it." },
-                "prompt": { "type": "string", "description": "What the session is to do, whole: it knows nothing of this conversation. Never a placeholder to fill in with send afterwards." },
+                "prompt": { "type": "string", "description": "What the session is to do, whole: it knows nothing of this conversation. Never a placeholder to fill in with send afterwards. The workbench asks every session to end with a short report, so the prompt need not ask for one." },
                 "name": { "type": "string", "description": "A few words naming the work, the way a commit subject reads: the session's row and its worktree take the name." },
                 "agent": { "type": "string", "enum": ["claude-code", "codex"], "description": "Which agent to run. Required with a model, since a model's name belongs to one agent. The one this project last used when left out otherwise." },
                 "model": { "type": "string", "description": "The model to run the session on, by the name the agent takes on its command line: an alias such as sonnet or opus, or a model's full name. The agent is named with it, since a model's name belongs to one agent. Chosen here, before the session's first turn, rather than sent to it afterwards. The agent's own default when left out." },
@@ -791,7 +794,7 @@ pub fn start_tool() -> Value {
 pub fn send_tool() -> Value {
     json!({
         "name": "send",
-        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, a correction, or the next thing to do. The session id is one the sessions or start tool answered with, or enough of its start to tell it from your other sessions, eight characters at least. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next. When you follow a workflow, a session started for a step stays on the model it was given, so a line that changes its model is refused, and a line to a review that has finished its round asks it for another look, which counts as another round of that piece. A round past the review's limit is put to the user: if they have not answered within a moment, the answer says the line waits on them and has not been sent, and wait tells you how it went; do not send it again meanwhile.",
+        "description": "Sends a line to a session you started, as though the user had typed it: the answer to a question it asked, or a correction to the task it has. A new task is a new session, started with start, not a line to one that did other work, which would carry the whole of that work's conversation into it. The session id is one the sessions or start tool answered with, or enough of its start to tell it from your other sessions, eight characters at least. Only the sessions you started take a line from you; the user's own are theirs. Call wait afterwards to hear what it does next. When you follow a workflow, a session started for a step stays on the model it was given, so a line that changes its model is refused, and a line to a review that has finished its round asks it for another look, which counts as another round of that piece. A round past the review's limit is put to the user: if they have not answered within a moment, the answer says the line waits on them and has not been sent, and wait tells you how it went; do not send it again meanwhile.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -807,7 +810,7 @@ pub fn send_tool() -> Value {
 pub fn stop_tool() -> Value {
     json!({
         "name": "stop",
-        "description": "Stops a session you started in the user's Chord and takes it off your list; the user can still open it among their earlier sessions. Stop each session once its work is taken up, merged, reviewed or answered, and nothing more is wanted from it, so finished sessions do not pile up under you; keep one you may ask again soon, since you cannot resume a session you stopped. A session that is merely waiting on a question is answered with send instead. The session id is one the sessions or start tool answered with, or enough of its start to tell it from your other sessions, eight characters at least. The user's own sessions are theirs to stop.",
+        "description": "Stops a session you started in the user's Chord and takes it off your list for good; the user can still open it among their earlier sessions. A finished session needs no stop: the workbench puts it away once it has rested a few minutes after you heard it was done, keeps it on your list, and a line you send it resumes it. Stop one only when its work is not wanted, since you cannot resume a session you stopped. A session that is merely waiting on a question is answered with send instead. The session id is one the sessions or start tool answered with, or enough of its start to tell it from your other sessions, eight characters at least. The user's own sessions are theirs to stop.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2171,9 +2174,9 @@ mod tests {
         // A session that started others, as any session may, keeps waiting
         // on them rather than handing its turn back.
         assert!(general.contains("keep calling wait until all of them are done"));
-        // And closes each once it is done with, rather than leaving rows to
-        // pile up under it.
-        assert!(general.contains("stop tool once its work is taken up"));
+        // And is told the workbench puts finished ones away, so it need not
+        // tidy them.
+        assert!(general.contains("The workbench puts away a session you started"));
         assert_eq!(instructions_for(Some("something else"), None), general);
 
         let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), None);
@@ -2242,6 +2245,26 @@ mod tests {
             "string"
         );
         assert!(start["description"].as_str().unwrap().contains("resumes"));
+        // A new task goes to a new session, never to an old one carrying
+        // the whole of another task's conversation, and nothing invites
+        // resuming whatever is listed.
+        assert!(start["description"]
+            .as_str()
+            .unwrap()
+            .contains("Each new task is a new session"));
+        assert!(named("send")["description"]
+            .as_str()
+            .unwrap()
+            .contains("A new task is a new session"));
+        assert!(!named("send")["description"]
+            .as_str()
+            .unwrap()
+            .contains("the next thing to do"));
+        assert!(!named("sessions")["description"]
+            .as_str()
+            .unwrap()
+            .contains("resumes one"));
+        assert!(ORCHESTRATOR_INSTRUCTIONS.contains("Start a new session for each new task"));
         assert_eq!(
             start["inputSchema"]["properties"]["agent"]["enum"],
             json!(["claude-code", "codex"])
@@ -2299,14 +2322,15 @@ mod tests {
             json!(["session", "text"])
         );
         assert_eq!(named("stop")["inputSchema"]["required"], json!(["session"]));
-        // A starter is told when to stop a session, in each tool it reads
-        // about one by, and that a session id may be its first characters.
-        for tool in ["start", "stop"] {
+        // A starter is told the workbench puts a finished session away, in
+        // each tool it reads about one by, and that a session id may be its
+        // first characters.
+        for tool in ["start", "stop", "sessions"] {
             assert!(
                 named(tool)["description"]
                     .as_str()
                     .unwrap()
-                    .contains("nothing more is wanted from it"),
+                    .contains("puts"),
                 "{tool}"
             );
         }

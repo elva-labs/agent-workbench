@@ -114,8 +114,7 @@ export function keeps(node: HTMLElement) {
       part.toggleAttribute("data-short", free < letters);
     }
     // Read once the parts are short or not: what has given way whole by
-    // then, such as a project and branch beside a short chip, leaves no
-    // room between the parts either.
+    // then leaves no room between the parts either.
     const shown = all.filter((part) => getComputedStyle(part).display !== "none");
     node.style.setProperty("--least", least > 0 ? `${Math.ceil(least + between(node, shown))}px` : "0px");
   }
