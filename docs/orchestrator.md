@@ -17,9 +17,11 @@ follows a workflow is its orchestrator, and is told to direct work rather
 than do it, to start a session per piece in the project it belongs to, on a
 worktree of its own when pieces touch the same files, to wait on them
 rather than ask after them in a loop, to put the user's whole task in the
-prompt it starts a session with and none of its own housekeeping, and to
-leave a line on its own row when it stops, whether to relay a question or
-to report, as well as the workflow's own steps. A fresh install has a
+prompt it starts a session with and none of its own housekeeping, to start
+a new session for each new task rather than resume or send to one that did
+other work, to read a session's report rather than ask it to say more, and
+to leave a line on its own row when it stops, whether to relay a question
+or to report, as well as the workflow's own steps. A fresh install has a
 workflow for exactly that, Direct: one step of work, on any model, with as
 many sessions at once as a session may run (see
 [settings](settings.md#workflows)). Its steps add what any workflow's do:
@@ -588,7 +590,12 @@ two rows never share a token.
 
 A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
-all say how it went.
+all say how it went, and to end with a short report that someone with none
+of its context could go on from: what it did and where, what state the
+files and the branch are in, and what is left or open. The tools' own words
+say that a new task is a new session, and that resuming a session or
+sending it a line is for the task it already has, since either carries its
+whole conversation into the work.
 
 The tools act on the sessions the caller started and on no others. A
 session you started yourself is yours, on a subject of your own: another
