@@ -48,29 +48,11 @@ pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> io::Result<(
 }
 
 /// Copies the program at `source` to `destination` as an executable,
-/// replacing what is there.
+/// replacing what is there. The source is read here, since only the
+/// writing has to happen in another process, and nothing but the shell is
+/// needed for it.
 pub fn copy(source: &Path, destination: &Path) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let status = std::process::Command::new("/bin/cp")
-            .arg(source)
-            .arg(destination)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .status()?;
-        if !status.success() {
-            return Err(io::Error::other(format!(
-                "could not copy {} to {}: cp ended with {status}",
-                source.display(),
-                destination.display()
-            )));
-        }
-        runnable(destination)
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::copy(source, destination).map(|_| ())
-    }
+    write(destination, std::fs::read(source)?)
 }
 
 /// Lets everyone run the file and its owner alone change it. Setting the
