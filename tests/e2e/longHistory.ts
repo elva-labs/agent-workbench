@@ -46,7 +46,9 @@ export function longHistory({ start, turns = 334 }: { start: number; turns?: num
           ? ["", "- " + words(60), "- " + words(80), "- " + words(50)].join("\n")
           : kind < 0.35
             ? "```ts\nconst value = " + Math.floor(random() * 100) + ";\nexport function run() {\n  return value * 2;\n}\n```"
-            : `${words(Math.min(left, 300))}.`;
+            : kind < 0.42
+              ? "```\nHi,\n\n- " + words(70) + "\n  - " + words(40) + "\n\nThanks\n```"
+              : `${words(Math.min(left, 300))}.`;
       parts.push(part);
       left -= part.length;
     }

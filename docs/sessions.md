@@ -708,6 +708,13 @@ keyboard where they were, and nothing moves when a Copy appears. The text reache
 the page, the same on macOS, Linux and Windows. Selecting text and the Edit
 menu's Copy work as they do anywhere else.
 
+A fenced block that holds words, one with no language or marked text,
+Markdown, message, email or comment, wraps at the block's width, at word
+boundaries, and a line that starts with spaces or a list marker keeps its
+continuation lines under its words. Copy still gives the lines as written.
+A block in any other language, a diff included, keeps its lines and scrolls
+sideways, since wrapped code misleads.
+
 The conversation can be searched with find, which looks in all of it
 whether the thread draws it yet or not: the messages, what the agent wrote
 as it reads rendered rather than as its Markdown, plans, questions and

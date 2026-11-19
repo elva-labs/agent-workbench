@@ -212,11 +212,37 @@ said.image = ({ href, title, text }) => {
   return `<a href="${escapeAttribute(href)}" rel="noopener noreferrer">${escapeText(text || href)}</a>`;
 };
 
+/** The languages a fenced block names when it holds words rather than
+    code: such a block is a drafted message, a comment or a description
+    for the reader to copy. A block with no language is one too, since
+    agents leave the language off exactly when it is prose. Any other
+    language is code, whose lines are kept as written. */
+const PROSE = new Set(["text", "txt", "plain", "plaintext", "markdown", "md", "message", "email", "comment", "prose"]);
+
+/** A line's hanging indent in characters: its leading whitespace and a
+    list marker after it, so a continuation line starts under the words. */
+function hang(line: string): number {
+  const lead = /^[ \t]*/.exec(line)![0];
+  const width = lead.replace(/\t/g, "        ").length;
+  const marker = /^(?:[-*+]|\d{1,3}[.)]|>)[ \t]+/.exec(line.slice(lead.length));
+  return width + (marker ? marker[0].length : 0);
+}
+
 /** Every code block the agent wrote, at the top or in a list or a quote,
-    stands in a box of its own that the conversation puts its Copy in. */
+    stands in a box of its own that the conversation puts its Copy in. A
+    block of prose wraps at the box's width, each line a block of its own
+    that hangs its continuation lines under its words; the text of the
+    box is still the lines as written, line breaks included. */
 const drawCode = said.code;
 said.code = function (this: typeof said, token) {
-  return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
+  const lang = (token.lang ?? "").trim().split(/\s+/)[0].toLowerCase();
+  if (lang !== "" && !PROSE.has(lang)) return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
+  const named = lang === "" ? "" : ` class="language-${escapeAttribute(lang)}"`;
+  const lines = token.text
+    .split("\n")
+    .map((line) => `<span class="line" style="--hang:${hang(line)}ch">${escapeAttribute(line)}\n</span>`)
+    .join("");
+  return `<div class="code" data-copy-host="code" data-wrap><pre><code${named}>${lines}</code></pre></div>\n`;
 };
 
 /** Raw HTML in a document is shown as the text it is, never drawn. Text is

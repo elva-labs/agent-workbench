@@ -220,6 +220,23 @@
     white-space: pre;
   }
 
+  /* A block of prose wraps at the block's width, at word boundaries; each
+     line hangs its continuation under its own indent and list marker. */
+  .md :global(.code[data-wrap] pre) {
+    overflow-x: hidden;
+  }
+
+  .md :global(.code[data-wrap] pre code) {
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  .md :global(.code[data-wrap] .line) {
+    display: block;
+    padding-left: var(--hang);
+    text-indent: calc(-1 * var(--hang));
+  }
+
   .md :global(blockquote) {
     padding-left: 12px;
     border-left: 3px solid var(--rule-strong);

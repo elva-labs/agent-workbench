@@ -2711,6 +2711,40 @@ test.describe("copying from the conversation", () => {
     ]);
   });
 
+  test("wraps a block of prose at its width, hangs its lists, and leaves code to scroll", async ({ page }) => {
+    await openIntegrated(page);
+    const long = "word ".repeat(60).trim();
+    const prose = `Hi team,\n\n- first ${long}\n  - nested ${long}\n\nThanks`;
+    const code = `const line = "${long}";`;
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Draft it.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify("```\n" + prose + "\n```\n\n```ts\n" + code + "\n```")}, done: true });
+       f.endTurn("${H}");`,
+    );
+    const blocks = page.locator("[data-testid='markdown'] div.code");
+    await expect(blocks).toHaveCount(2);
+    const wrapped = blocks.nth(0).locator("pre");
+    const kept = blocks.nth(1).locator("pre");
+    const overflow = (pre: typeof wrapped) => pre.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(await overflow(wrapped)).toBeLessThanOrEqual(0);
+    expect(await overflow(kept)).toBeGreaterThan(0);
+    // A list item's continuation lines start under its words.
+    const item = blocks.nth(0).locator(".line", { hasText: "- first" });
+    expect((await item.boundingBox())!.height).toBeGreaterThan(40);
+    const hung = await item.evaluate((el) => {
+      const style = getComputedStyle(el);
+      return parseFloat(style.paddingLeft) + parseFloat(style.textIndent);
+    });
+    expect(hung).toBeCloseTo(0, 1);
+    expect(parseFloat(await item.evaluate((el) => getComputedStyle(el).paddingLeft))).toBeGreaterThan(0);
+    // Copy gives the lines as written.
+    await blocks.nth(0).hover();
+    await blocks.nth(0).getByTestId("copy-code").click();
+    expect((await copied(page)).at(-1)).toBe(prose);
+  });
+
   test("shows a Copy only over what it copies, and turns to Copied for a moment", async ({ page }) => {
     await withEverything(page);
     const message = page.getByTestId("copy-message");
