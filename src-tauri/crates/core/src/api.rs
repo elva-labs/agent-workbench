@@ -2129,13 +2129,7 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("claude"), b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(bin.join("claude"), std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-        }
+        crate::executable::write(bin.join("claude"), b"#!/bin/sh\n").unwrap();
         let daemon = hook::daemon_path(&home);
         std::fs::create_dir_all(daemon.parent().unwrap()).unwrap();
         std::fs::write(&daemon, b"").unwrap();
@@ -2313,13 +2307,7 @@ mod tests {
         let bin = home.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         for agent in ["claude", "codex"] {
-            std::fs::write(bin.join(agent), b"#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(bin.join(agent), std::fs::Permissions::from_mode(0o755))
-                    .unwrap();
-            }
+            crate::executable::write(bin.join(agent), b"#!/bin/sh\n").unwrap();
         }
         let vars = HashMap::from([("PATH".to_string(), bin.to_string_lossy().to_string())]);
         let config = claude.to_string_lossy().to_string();

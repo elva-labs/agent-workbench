@@ -1986,12 +1986,7 @@ fn a_completed_item_too_long_to_read_finishes_its_call_as_cut_short() {
 fn the_command_runs_the_app_server_under_the_account_s_home() {
     let dir = crate::scratch::Scratch::new("codex-command");
     let codex = dir.join(if cfg!(windows) { "codex.exe" } else { "codex" });
-    std::fs::write(&codex, b"#!/bin/sh\n").unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
+    crate::executable::write(&codex, b"#!/bin/sh\n").unwrap();
     let vars = HashMap::from([
         ("PATH".to_string(), dir.to_string_lossy().to_string()),
         ("WORKBENCH_SESSION".to_string(), "the-parent".to_string()),

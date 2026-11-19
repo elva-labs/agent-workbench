@@ -751,12 +751,7 @@ mod tests {
     fn fake_claude(label: &str) -> Scratch {
         let dir = Scratch::new(label);
         let bin = dir.join("claude");
-        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::executable::write(&bin, b"#!/bin/sh\n").unwrap();
         dir
     }
 
@@ -777,12 +772,7 @@ mod tests {
 
         let dir = Scratch::new("adapter-codex");
         let bin = dir.join("codex");
-        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::executable::write(&bin, b"#!/bin/sh\n").unwrap();
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
@@ -826,12 +816,7 @@ mod tests {
         let dir = Scratch::new("adapter-prompt");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
@@ -882,12 +867,7 @@ mod tests {
         let dir = Scratch::new("adapter-account");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let own = Path::new("/home/ada/.claude-work");
@@ -930,12 +910,7 @@ mod tests {
         let dir = Scratch::new("adapter-model");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
@@ -1008,12 +983,7 @@ mod tests {
         let dir = Scratch::new("adapter-mode");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let with = |mode| LaunchCtx {
@@ -1085,12 +1055,7 @@ mod tests {
         let dir = Scratch::new("adapter-workflow");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, "#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let server = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
@@ -1518,12 +1483,7 @@ mod tests {
     fn names_the_session_to_its_tools_by_the_workbench_s_token() {
         let dir = fake_claude("adapter-session");
         let codex = dir.join("codex");
-        std::fs::write(&codex, b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&codex, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::executable::write(&codex, b"#!/bin/sh\n").unwrap();
         let vars = vars_with_path(&dir);
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
@@ -1684,7 +1644,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn refuses_a_workflow_on_a_codex_too_old_to_name_its_session() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = Scratch::new("adapter-codex-version");
         let bin = dir.join("codex");
         let vars = vars_with_path(&dir);
@@ -1707,8 +1666,7 @@ mod tests {
             afresh: false,
         };
         let says = |text: &str| {
-            std::fs::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+            crate::executable::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
         };
         says("codex-cli 0.46.0");
         assert_eq!(
@@ -1744,12 +1702,7 @@ mod tests {
         let dir = Scratch::new("adapter-role");
         for name in ["claude", "codex"] {
             let bin = dir.join(name);
-            std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-            }
+            crate::executable::write(&bin, b"#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
         let role = |orchestrator: bool, adapter: &dyn AgentAdapter| {

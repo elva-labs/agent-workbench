@@ -382,12 +382,7 @@ mod tests {
     fn finds_a_program_on_the_given_path() {
         let dir = Scratch::new("path-test");
         let bin = dir.join("pretend-agent");
-        std::fs::write(&bin, b"#!/bin/sh\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::executable::write(&bin, b"#!/bin/sh\n").unwrap();
 
         let vars = HashMap::from([("PATH".to_string(), dir.to_string_lossy().to_string())]);
         assert_eq!(find_on_path(&vars, "pretend-agent"), Some(bin.clone()));
