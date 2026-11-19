@@ -1278,7 +1278,7 @@ async fn usage_log(
         },
         move |core, rest| {
             let project = PathBuf::from(rest);
-            let read = transcript.as_ref().map(|of| workbench_core::api::UsageTranscript {
+            let read = transcript.as_ref().map(|of| chord_core::api::UsageTranscript {
                 project: &project,
                 cwd: of.cwd.as_deref().map(Path::new),
                 session: &of.session,

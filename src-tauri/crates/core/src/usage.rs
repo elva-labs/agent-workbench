@@ -13,7 +13,7 @@ use serde_json::{json, Map, Value};
 
 /// The log's folder in the workbench's directory in the user's home.
 pub fn folder(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("usage")
+    crate::home::dir(home).join("usage")
 }
 
 /// The size from which a session's log is moved aside to one older file,

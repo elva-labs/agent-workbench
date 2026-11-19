@@ -589,7 +589,7 @@ fn a_session_given_a_context_to_compact_at_passes_it_to_the_agent() {
     let h = start_with("compact-at", &format!("{READY}\ndrain"), |launch| {
         launch.compact_at = Some(150_000);
         launch.tool_server = Some(Box::leak(
-            PathBuf::from("/opt/workbench/agent-workbench-remote").into_boxed_path(),
+            PathBuf::from("/opt/workbench/chord-remote").into_boxed_path(),
         ));
     });
     h.until_type("ready");
