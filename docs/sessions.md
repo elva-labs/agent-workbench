@@ -1313,7 +1313,8 @@ warning. It is kept where the session's project is, in the usage folder
 of the workbench's directory in the user's home, one file per session
 named by the session's token, readable by the user alone, with one JSON
 object per line. A file that reaches two megabytes is moved aside to one
-older file, which it replaces.
+older file, which it replaces. A file not written for thirty days is
+removed when the next session's log begins.
 
 Each line has its time, the kind of event, the conversation's id, the
 agent, whether the session runs in a terminal or as a conversation, its
@@ -1321,11 +1322,12 @@ model where known, and the account's five-hour figure as last reported,
 with when it last moved, so the figure before and after any event can be
 read off the lines around it. The events are:
 
-- **turn**: a turn ended. For a conversation, the tokens the agent
-  reported for it, how it ended and the context's size. For Claude Code in
-  a terminal, the core reads the turn from its transcript: the fresh input,
-  the cache reads, the cache writes by their lifetime, the output, the
-  number of requests, and the context the last one left.
+- **turn**: a turn ended, by the agent or by an error. For a
+  conversation, the tokens the agent reported for it, how it ended and the
+  context's size. For Claude Code in a terminal, the core reads the turn
+  from its transcript: the fresh input, the cache reads, the cache writes
+  by their lifetime, the output, the number of requests, and the context
+  the last one left. A compaction within the turn counts as part of it.
 - **resume**: a conversation was taken up again, whole or from its notes,
   with its context and how long it had rested where its transcript says.
 - **wake**: the workbench woke a starter, with how many reports went in

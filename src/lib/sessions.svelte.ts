@@ -3398,6 +3398,7 @@ export function exact(
       newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
+      logUsage(session, "turn", { outcome: "failed" });
       break;
     case "delegated": {
       // The turn ended, and the next starts when the subagents report:

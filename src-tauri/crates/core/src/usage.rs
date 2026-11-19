@@ -2,7 +2,7 @@
 //! workbench saves tokens by: each turn's tokens and the context's size,
 //! and the account's five-hour figure at each resume, wake and start. It
 //! is kept in the workbench's directory, one file per session token, one
-//! JSON object per line, and nothing shows it. The window says what
+//! JSON object per line, for some weeks, and nothing shows it. The window says what
 //! happened; for a turn of a Claude Code session in a terminal the core
 //! reads the turn's tokens from its transcript.
 
@@ -19,6 +19,11 @@ pub fn folder(home: &Path) -> PathBuf {
 /// The size from which a session's log is moved aside to one older file,
 /// which it replaces, so a log never holds more than twice this.
 pub const MOST: u64 = 2 * 1024 * 1024;
+
+/// How long a session's log is kept after it was last written: a log
+/// untouched for this long is removed when another session's log begins,
+/// so the folder holds the sessions of the last weeks and no more.
+pub const KEPT: std::time::Duration = std::time::Duration::from_secs(30 * 24 * 60 * 60);
 
 /// How much of a transcript's end is read for its last turn.
 const TAIL: u64 = 4 * 1024 * 1024;
@@ -50,8 +55,12 @@ pub fn append(home: &Path, token: &str, entry: Map<String, Value>, now: u64) -> 
     builder
         .create(&dir)
         .map_err(|e| format!("the usage log could not be kept in {}: {e}", dir.display()))?;
-    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() >= MOST) {
-        let _ = std::fs::rename(&path, path.with_extension("1.jsonl"));
+    match std::fs::metadata(&path) {
+        Ok(meta) if meta.len() >= MOST => {
+            let _ = std::fs::rename(&path, path.with_extension("1.jsonl"));
+        }
+        Ok(_) => {}
+        Err(_) => remove_stale(&dir),
     }
     let mut line = Map::new();
     line.insert("at".into(), json!(now));
@@ -69,6 +78,27 @@ pub fn append(home: &Path, token: &str, entry: Map<String, Value>, now: u64) -> 
         .open(&path)
         .and_then(|mut out| out.write_all(text.as_bytes()))
         .map_err(|e| format!("the usage log could not be written: {e}"))
+}
+
+/// Removes the logs in the folder last written more than `KEPT` ago. One
+/// that cannot be read or removed is left.
+fn remove_stale(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let now = std::time::SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age > KEPT);
+        if stale && path.extension().is_some_and(|ext| ext == "jsonl") {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 /// The tokens of a Claude Code conversation's last turn, from its
@@ -100,7 +130,11 @@ pub fn last_turn(transcript: &Path) -> Option<Value> {
             && entry["message"]["content"]
                 .as_array()
                 .is_none_or(|parts| parts.iter().all(|part| part["type"] != "tool_result"));
-        if said && entry["isMeta"].as_bool() != Some(true) {
+        // The summary a compaction leaves is written as the user's, and the
+        // turn goes on after it.
+        let own = entry["isMeta"].as_bool() != Some(true)
+            && entry["isCompactSummary"].as_bool() != Some(true);
+        if said && own {
             turn = Some([0; 6]);
             continue;
         }
@@ -227,6 +261,31 @@ mod tests {
     }
 
     #[test]
+    fn removes_logs_untouched_for_weeks_as_a_new_one_begins() {
+        let home = home();
+        std::fs::create_dir_all(folder(&home)).unwrap();
+        let old = folder(&home).join("old.jsonl");
+        let recent = folder(&home).join("recent.jsonl");
+        for path in [&old, &recent] {
+            std::fs::write(path, "{}\n").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - KEPT - std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        // A line in a log that is there already removes nothing.
+        append(&home, "recent", entry(json!({"kind": "turn"})), 1).unwrap();
+        assert!(old.exists());
+        append(&home, "new", entry(json!({"kind": "start"})), 2).unwrap();
+        assert!(!old.exists());
+        assert!(recent.exists());
+        assert!(folder(&home).join("new.jsonl").exists());
+    }
+
+    #[test]
     fn sums_the_last_turns_requests_from_a_transcript() {
         let home = home();
         let path = home.join("t.jsonl");
@@ -244,6 +303,8 @@ mod tests {
             json!({"type": "assistant", "requestId": "r1", "message": {"usage": usage(2, 100, 50, 0, 10)}}),
             json!({"type": "assistant", "isSidechain": true, "requestId": "s", "message": {"usage": usage(7, 7, 7, 7, 7)}}),
             json!({"type": "user", "message": {"content": [{"type": "tool_result"}]}}),
+            // A compaction partway through the turn.
+            json!({"type": "user", "isCompactSummary": true, "message": {"content": "Summary"}}),
             json!({"type": "assistant", "requestId": "r2", "message": {"usage": usage(1, 150, 0, 5, 20)}}),
         ];
         let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
