@@ -99,25 +99,26 @@ function runs(bytes) {
   return Buffer.from(out);
 }
 
-/** An .icns: 16 and 32 px in the classic RGB and mask chunks, which every
-    macOS reads, and the larger sizes and every Retina size as PNGs. */
+/** An .icns with PNGs for the larger and Retina sizes and classic RGB
+    and mask chunks for 16 and 32 px. The largest image comes first for
+    readers such as 1Password that use the first available image. */
 async function icns(source) {
   const chunks = [];
-  for (const [rgb, mask, size] of [["is32", "s8mk", 16], ["il32", "l8mk", 32]]) {
-    const { rgba } = await draw(source(size), size);
-    const channel = (offset) => rgba.filter((_, index) => index % 4 === offset);
-    chunks.push(chunk(rgb, Buffer.concat([runs(channel(0)), runs(channel(1)), runs(channel(2))])));
-    chunks.push(chunk(mask, Buffer.from(channel(3))));
-  }
   const types = [
-    ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024],
-    ["ic11", 32], ["ic12", 64], ["ic13", 256], ["ic14", 512],
+    ["ic10", 1024], ["ic09", 512], ["ic14", 512], ["ic08", 256],
+    ["ic13", 256], ["ic07", 128], ["ic12", 64], ["ic11", 32],
   ];
   for (const [type, size] of types) {
     // A Retina size is drawn as its point size would be, at twice the
     // pixels: 16@2x from the source for 16 points, not from the one for 32.
     const points = ["ic11", "ic12", "ic13", "ic14"].includes(type) ? size / 2 : size;
     chunks.push(chunk(type, await png(source(points, size), size)));
+  }
+  for (const [rgb, mask, size] of [["il32", "l8mk", 32], ["is32", "s8mk", 16]]) {
+    const { rgba } = await draw(source(size), size);
+    const channel = (offset) => rgba.filter((_, index) => index % 4 === offset);
+    chunks.push(chunk(rgb, Buffer.concat([runs(channel(0)), runs(channel(1)), runs(channel(2))])));
+    chunks.push(chunk(mask, Buffer.from(channel(3))));
   }
   return chunk("icns", Buffer.concat(chunks));
 }
