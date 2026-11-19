@@ -19,8 +19,10 @@ import {
   chosenFor,
   forget,
   heardOffers,
+  lastChosen,
   lastChosenSettings,
   modelToStart,
+  narrowTo,
   resetLastChosen,
 } from "$lib/lastChosen.svelte";
 import { carriedOver } from "$lib/modeFit";
@@ -81,6 +83,40 @@ describe("what new sessions of an agent start on", () => {
     expect(modelToStart("claude-code", null)).toBe("opus");
     // The choice stays for the accounts that offer it.
     expect(chosenFor("claude-code").model).toBe("opus");
+  });
+
+  it("takes no Plan, bypassing permissions or full access from the settings, whoever wrote them", () => {
+    adoptLastChosen({
+      "claude-code": { model: "opus", mode: "bypassPermissions" },
+      codex: { mode: "full-access", effort: "high" },
+      later: { mode: "auto" },
+    });
+    expect(chosenFor("claude-code")).toEqual({ model: "opus" });
+    expect(chosenFor("codex")).toEqual({ effort: "high" });
+    adoptLastChosen({ "claude-code": { mode: "plan" } });
+    expect(anyChosen("claude-code")).toBe(false);
+  });
+
+  it("lets a terminal's report narrow the kept mode, never widen it", () => {
+    // A forged pair of lines: Default, then Auto. Nothing kept stands for
+    // Default, so Auto is not kept.
+    narrowTo("claude-code", "default");
+    narrowTo("claude-code", "auto");
+    expect(chosenFor("claude-code").mode).toBe("default");
+    resetLastChosen();
+    narrowTo("claude-code", "auto");
+    narrowTo("claude-code", "acceptEdits");
+    expect(anyChosen("claude-code")).toBe(false);
+    // From what a chip kept, a narrower report is taken and a wider one not.
+    choose("claude-code", "mode", "auto");
+    narrowTo("claude-code", "acceptEdits");
+    expect(chosenFor("claude-code").mode).toBe("acceptEdits");
+    narrowTo("claude-code", "auto");
+    narrowTo("claude-code", "bypassPermissions");
+    expect(chosenFor("claude-code").mode).toBe("acceptEdits");
+    narrowTo("claude-code", "plan");
+    expect(chosenFor("claude-code").mode).toBe("acceptEdits");
+    expect(lastChosen.byAgent["claude-code"]).toEqual({ mode: "acceptEdits" });
   });
 
   it("takes from the settings only what reads", () => {

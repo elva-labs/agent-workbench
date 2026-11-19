@@ -219,6 +219,18 @@ pub struct Chosen {
 const MOST_CHOSEN: usize = 16;
 const LONGEST_CHOSEN: usize = 100;
 
+/// Whether a new session of the agent begins in a mode the user last
+/// chose: one that can edit and still asks somewhere. Plan cannot edit,
+/// bypassing permissions and Codex's full access ask nothing, and a mode
+/// or an agent not named here is not known well enough to begin in.
+fn carried_over(agent: &str, mode: &str) -> bool {
+    match agent {
+        "claude-code" => matches!(mode, "default" | "dontAsk" | "acceptEdits" | "auto"),
+        "codex" => matches!(mode, "read-only" | "auto"),
+        _ => false,
+    }
+}
+
 /// The choices a value holds, or why it will not do: a table by agent of
 /// a model, an effort and a mode, each a short line of text.
 fn last_chosen(value: &Value) -> Result<BTreeMap<String, Chosen>, String> {
@@ -249,12 +261,20 @@ fn last_chosen(value: &Value) -> Result<BTreeMap<String, Chosen>, String> {
         let entry = entry.as_object().ok_or(SHAPE)?;
         let none = Value::Null;
         let field = |name: &str| line(entry.get(name).unwrap_or(&none));
+        let mode = field("mode")?;
+        if let Some(mode) = &mode {
+            if !carried_over(agent, mode) {
+                return Err(format!(
+                    "{mode:?} is not a mode a new {agent} session begins in"
+                ));
+            }
+        }
         chosen.insert(
             agent.clone(),
             Chosen {
                 model: field("model")?,
                 effort: field("effort")?,
-                mode: field("mode")?,
+                mode,
             },
         );
     }
@@ -3093,6 +3113,27 @@ mod tests {
         );
         assert!(apply(&next, &json!({ "lastChosen": { "codex": { "model": 5 } } })).is_err());
         assert!(apply(&next, &json!({ "lastChosen": ["opus"] })).is_err());
+        // A mode a new session is not begun in is refused, whoever wrote it.
+        for (agent, mode) in [
+            ("claude-code", "plan"),
+            ("claude-code", "bypassPermissions"),
+            ("codex", "full-access"),
+            ("later", "auto"),
+        ] {
+            assert!(
+                apply(&next, &json!({ "lastChosen": { agent: { "mode": mode } } })).is_err(),
+                "{agent} {mode}"
+            );
+        }
+        let refused =
+            parse(r#"{ "lastChosen": { "claude-code": { "mode": "bypassPermissions" } } }"#)
+                .unwrap();
+        assert!(refused.last_chosen.is_empty());
+        assert!(apply(
+            &next,
+            &json!({ "lastChosen": { "codex": { "mode": "read-only" } } })
+        )
+        .is_ok());
         assert!(apply(
             &next,
             &json!({ "lastChosen": { "codex": { "mode": "a\nb" } } })

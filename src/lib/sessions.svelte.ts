@@ -32,7 +32,8 @@ import { claim, resetExits } from "$lib/exits";
 import { canIntegrate, kindFor, type SessionKind } from "$lib/sessionKind.svelte";
 import { isInstalled } from "$lib/hook.svelte";
 import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
-import { choose as keepChoice, chosenFor, modelToStart } from "$lib/lastChosen.svelte";
+import { chosenFor, modelToStart, narrowTo } from "$lib/lastChosen.svelte";
+import { carriedOver } from "$lib/modeFit";
 import { starterOf } from "$lib/senders.svelte";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
@@ -221,7 +222,9 @@ export function carriedFor(session: Session): Carried | null {
   return {
     model: session.workflow === null && session.model !== null && session.model === kept.model ? session.model : null,
     effort: kept.effort ?? null,
-    mode: kept.mode ?? null,
+    // Checked again here: a mode a new session is not begun in starts
+    // nothing, wherever it came from.
+    mode: kept.mode !== undefined && carriedOver(session.agent, kept.mode) ? kept.mode : null,
   };
 }
 
@@ -3179,10 +3182,10 @@ export function exact(
   interrupts.delete(session.key);
   if (typeof more.mode === "string" && more.mode !== "") {
     // A mode the terminal switched to once its run had said the one it
-    // began in is the user's choice for the agent's next sessions. The
-    // mode it began in, whether its settings', one it fell back to or one
-    // its starter gave it, is not.
-    if (session.modeSeen !== null && session.modeSeen !== more.mode) keepChoice(session.agent, "mode", more.mode);
+    // began in narrows what the agent's next sessions begin in, and never
+    // widens it. The mode it began in, whether its settings', one it fell
+    // back to or one its starter gave it, is no switch at all.
+    if (session.modeSeen !== null && session.modeSeen !== more.mode) narrowTo(session.agent, more.mode);
     session.modeSeen = more.mode;
   }
   answered.delete(session.key);

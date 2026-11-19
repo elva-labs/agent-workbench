@@ -44,7 +44,8 @@ export function modeName(agent: AgentId, mode: string): string {
 }
 
 function standing(agent: AgentId, mode: string): number | null {
-  return Object.hasOwn(STANDING[agent], mode) ? STANDING[agent][mode] : null;
+  const scale = Object.hasOwn(STANDING, agent) ? STANDING[agent] : null;
+  return scale !== null && Object.hasOwn(scale, mode) ? scale[mode] : null;
 }
 
 /**
@@ -78,6 +79,14 @@ export function nextNarrower(agent: AgentId, mode: string): string | null {
 export function carriedOver(agent: AgentId, mode: string): boolean {
   const at = standing(agent, mode);
   return at !== null && at > 0 && at < 5;
+}
+
+/** Whether `mode` lets a session of the agent go no further than `than`
+    does. False for a mode off the scale. */
+export function noWider(agent: AgentId, mode: string, than: string): boolean {
+  const at = standing(agent, mode);
+  const most = standing(agent, than);
+  return at !== null && most !== null && at <= most;
 }
 
 /** The narrower of two modes of one agent; either where the other is

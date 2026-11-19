@@ -52,7 +52,7 @@ import {
   wake,
 } from "$lib/sessions.svelte";
 import { modeOf, resetModes } from "$lib/sessionModes";
-import { adoptLastChosen, anyChosen, chosenFor, resetLastChosen } from "$lib/lastChosen.svelte";
+import { adoptLastChosen, anyChosen, chosenFor, lastChosen, resetLastChosen } from "$lib/lastChosen.svelte";
 import { choose } from "$lib/settingChoices";
 import { create as createShell, forOwner, reset as resetShells } from "$lib/terminals.svelte";
 import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
@@ -2048,6 +2048,40 @@ describe("what a new session starts on from the user's last choices", () => {
     expect(after.model).toBeNull();
   });
 
+  it("starts nothing in a stored Plan, bypassing permissions or full access, integrated or in a terminal", async () => {
+    // Written to the store past every check, as a later version or a hand
+    // might write the file.
+    for (const [agent, mode] of [
+      ["claude-code", "bypassPermissions"],
+      ["claude-code", "plan"],
+      ["codex", "full-access"],
+    ] as const) {
+      lastChosen.byAgent = { [agent]: { mode } };
+      const row = create(PROJECT, null, agent, null, null, null, null, undefined, "integrated");
+      expect(conversationOf(row.key).settings.mode).toBeNull();
+      await launch(row.key);
+      expect(lastStart().mode).toBeUndefined();
+      const term = create(PROJECT, null, agent, null, null, null, null, undefined, "terminal");
+      await launchTerminal(term.key, 80, 24, () => {});
+      expect(pty.spawned.at(-1)!.mode).toBeUndefined();
+    }
+  });
+
+  it("keeps no model pick the agent did not switch to", async () => {
+    const first = await started();
+    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const configureNow = seam.integratedConfigure;
+    // The agent answers, still on the model it ran on.
+    seam.integratedConfigure = async () => conversationOf(first.key).settings;
+    choose(first.key, conversationOf(first.key), "model", "haiku");
+    await settled();
+    await settled();
+    expect(chosenFor("claude-code").model).toBeUndefined();
+    seam.integratedConfigure = configureNow;
+    choose(first.key, conversationOf(first.key), "model", "haiku");
+    await vi.waitFor(() => expect(chosenFor("claude-code").model).toBe("haiku"));
+  });
+
   it("gives nothing kept to a session another started, a resumed one, or a workflow's model", async () => {
     adoptLastChosen({ "claude-code": { model: "sonnet", effort: "low", mode: "acceptEdits" } });
     const given = create(PROJECT, null, "claude-code", null, "Fix it", "haiku", null, undefined, "integrated");
@@ -2070,13 +2104,16 @@ describe("what a new session starts on from the user's last choices", () => {
     await launchTerminal(row.key, 80, 24, () => {});
     expect(pty.spawned.at(-1)).toMatchObject({ model: "sonnet", mode: "acceptEdits" });
     startedTerminal(row.key, "pty-1", "conversation-t");
-    // The mode it says it began in is not a choice; a switch after is.
-    exact("conversation-t", "prompt", null, false, { mode: "default" });
+    // The mode it says it began in is not a choice. A switch after it is
+    // kept only where it narrows what is kept, since any process can
+    // write what the hooks report.
+    exact("conversation-t", "prompt", null, false, { mode: "auto" });
     expect(chosenFor("claude-code").mode).toBe("acceptEdits");
-    exact("conversation-t", "stop", null, false, { mode: "auto" });
-    expect(chosenFor("claude-code").mode).toBe("auto");
-    exact("conversation-t", "prompt", null, false, { mode: "plan" });
-    expect(chosenFor("claude-code").mode).toBe("auto");
+    exact("conversation-t", "stop", null, false, { mode: "default" });
+    expect(chosenFor("claude-code").mode).toBe("default");
+    exact("conversation-t", "prompt", null, false, { mode: "auto" });
+    exact("conversation-t", "stop", null, false, { mode: "plan" });
+    expect(chosenFor("claude-code").mode).toBe("default");
     // One resumed goes on as its conversation did.
     const back = create(PROJECT, "old-2", "claude-code", null, null, null, null, undefined, "terminal");
     await launchTerminal(back.key, 80, 24, () => {});

@@ -20,7 +20,7 @@
 
 import type { AgentId, Settings } from "$lib/core";
 import { persist } from "$lib/persist";
-import { carriedOver } from "$lib/modeFit";
+import { carriedOver, noWider } from "$lib/modeFit";
 
 /** What is kept for one agent; each left out where nothing was chosen. */
 export interface Chosen {
@@ -65,7 +65,9 @@ export function adoptLastChosen(value: unknown) {
       const kept: Chosen = {};
       for (const setting of ["model", "effort", "mode"] as const) {
         const one = (entry as Record<string, unknown>)[setting];
-        if (readable(one)) kept[setting] = one;
+        // A mode a new session is not begun in starts nothing, whoever
+        // wrote it to the file.
+        if (readable(one) && (setting !== "mode" || carriedOver(agent as AgentId, one))) kept[setting] = one;
       }
       if (Object.keys(kept).length > 0) byAgent[agent] = kept;
     }
@@ -102,6 +104,20 @@ export function choose(agent: AgentId, setting: Setting, value: string) {
   else next[setting] = value;
   if (next.model === was.model && next.effort === was.effort && next.mode === was.mode) return;
   store(agent, next);
+}
+
+/** What stands in for no mode kept, when a report is weighed against it:
+    the mode that asks before anything changes. */
+const ASKS: Record<AgentId, string> = { "claude-code": "default", codex: "read-only" };
+
+/** A Claude Code terminal's hooks say it switched to `mode`. Any process of
+    the user's can write what the hooks report, so such a switch is kept
+    only where it goes no further than what is kept now, Default standing
+    in for nothing kept: a report can narrow what new sessions begin in,
+    never widen it. A wider mode is kept only from a chip. */
+export function narrowTo(agent: AgentId, mode: string) {
+  const now = chosenFor(agent).mode ?? ASKS[agent];
+  if (noWider(agent, mode, now)) choose(agent, "mode", mode);
 }
 
 /** New sessions of the agent start on its own defaults again. */
