@@ -78,6 +78,7 @@
     layout,
     peekSessions,
     peekable,
+    sessionsDrawnOpen,
     sessionsShown,
     sessionsVisible,
     setProjectSort,
@@ -1458,8 +1459,13 @@
   /** Folded to its narrow column: the rows keep their places, and the pane
       is one button that opens it. Peeked over the agent, it is open. In
       compact mode it is never folded: it is drawn open over the panes, or
-      not at all. */
+      not at all. The keyboard follows it from the moment it changes. */
   let folded = $derived(!compact.on && !sessionsShown());
+
+  /** Whether the pane is drawn folded: `folded`, except while a change of
+      shape waits for its column to move, when the pane keeps the look of
+      the width its column still has. */
+  let drawnFolded = $derived(!compact.on && !sessionsDrawnOpen());
 
   /** Picking a project brings it forward. In compact mode that is done with
       the pane, which goes back with the keyboard, as picking a session
@@ -2223,7 +2229,7 @@
      the menu with the ways to open a project and the settings. Both are on
      the cursor path, and the arrows walk a menu's items while it is open. -->
 {#snippet titleTools()}
-  <div class="tools" class:folded inert={folded}>
+  <div class="tools" class:folded={drawnFolded} inert={folded}>
     <button
       class="sort"
       class:cursor={current === "sort"}
@@ -2303,6 +2309,7 @@
   {#if folded}
     <button
       class="unfold"
+      class:waiting={!drawnFolded}
       onpointerdown={(e) => e.preventDefault()}
       onclick={unfold}
       disabled={!unfoldable}
@@ -2317,7 +2324,7 @@
          unsaved edits, or whose shells are busy, asks first, here where it
          was closed; so does reopening a session the other way in the
          middle of a turn. -->
-    <div class="closing" class:folded inert={folded} bind:this={closingStrip}>
+    <div class="closing" class:folded={drawnFolded} inert={folded} bind:this={closingStrip}>
       {#if reopenQuestion !== null}
         <ConfirmStrip
           question={reopenQuestion.question}
@@ -2354,7 +2361,7 @@
   {/if}
 
   {#if reopenError !== null}
-    <div class="error-row" class:folded inert={folded}>
+    <div class="error-row" class:folded={drawnFolded} inert={folded}>
       <p class="error" data-testid="reopen-error">{reopenError}</p>
       <button
         class="dismiss"
@@ -2368,7 +2375,7 @@
   {/if}
 
   {#if workspace.error}
-    <div class="error-row" class:folded inert={folded}>
+    <div class="error-row" class:folded={drawnFolded} inert={folded}>
       <p class="error" data-testid="project-error">{workspace.error}</p>
       <button
         class="dismiss"
@@ -2387,7 +2394,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="nav"
-    class:folded
+    class:folded={drawnFolded}
     class:wide
     inert={folded}
     tabindex="0"
@@ -2550,7 +2557,8 @@
     color: var(--accent);
   }
 
-  .unfold:disabled .unfold-mark {
+  .unfold:disabled .unfold-mark,
+  .unfold.waiting .unfold-mark {
     visibility: hidden;
   }
 

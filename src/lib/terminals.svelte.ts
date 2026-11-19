@@ -158,6 +158,13 @@ export function shownShells(): Shell[] {
   return shownFor(ownerOnScreen());
 }
 
+/** Whether showing the panel now starts a shell: someone is on screen with
+    none to list. As the window starts, it waits for the sessions that were
+    open to be back, so the shell goes to the one on screen. */
+export function opensWithShell(): boolean {
+  return ownerOnScreen() !== null && shownShells().length === 0;
+}
+
 /** A shell named with whose it is, for where it is not on screen or not
     the owner's own: the session it belongs to, and the project too when
     that is not the one in front; or the project, for the project's own. */

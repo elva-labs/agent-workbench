@@ -10,8 +10,9 @@
     layout,
     focusPane,
     besideSessions,
+    sessionsTrack,
     rightmost,
-    sessionsShown,
+    sessionsDrawnOpen,
     type PaneId,
   } from "$lib/layout.svelte";
 
@@ -49,7 +50,7 @@
   const mac = isMac();
   let beside = $derived(id === besideSessions());
   let inset = $derived(
-    mac && !layout.fullScreen && (id === "sessions" ? compact.on || sessionsShown() : beside),
+    mac && !layout.fullScreen && (id === "sessions" ? compact.on || sessionsDrawnOpen() : beside),
   );
   // Elsewhere the window is undecorated and the app draws the controls
   // itself, at the end of the rightmost header, where the platform has them.
@@ -94,6 +95,7 @@
       class:lone={!head && !meta}
       class:columns={titleWidth !== null}
       style:--title-w={titleWidth}
+      style:--sessions-col={inset && beside ? sessionsTrack() : null}
       style:--controls-w={controls ? `${WINDOW_CONTROLS}px` : null}
       data-tauri-drag-region
     >

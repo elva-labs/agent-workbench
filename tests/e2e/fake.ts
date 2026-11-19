@@ -112,6 +112,28 @@ export async function foldedWidth(page: Page): Promise<number> {
     .evaluate((frame) => parseFloat(getComputedStyle(frame).getPropertyValue("--folded")));
 }
 
+/** Waits until the columns and the terminal panel are at rest: none waits
+    to move or is on its way, so each has the size the layout asks for, and
+    the grid reads the same two frames apart, so a new window size has been
+    taken in too. A test that measures the panes after a change reads them
+    after this, once the change has been asked for. */
+export async function columnsAtRest(page: Page) {
+  await expect(page.getByTestId("shell")).not.toHaveAttribute("data-moving");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          new Promise<boolean>((resolve) => {
+            const shell = document.querySelector("[data-testid='shell']")!;
+            const read = () => getComputedStyle(shell).gridTemplateColumns;
+            const first = read();
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
+          }),
+      ),
+    )
+    .toBe(true);
+}
+
 /** Waits until the window's background is drawn at rest: every gradient
     at full size and decoded, so its pixels no longer change on their own.
     A test that compares a background's pixels reads them after this. The

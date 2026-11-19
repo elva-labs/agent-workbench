@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, WITH_WORKFLOW, foldedWidth, installFakeCore } from "./fake";
+import { PROJECT, WITH_WORKFLOW, columnsAtRest, foldedWidth, installFakeCore } from "./fake";
 
 /**
  * Editor mode: the file tree and an editor in the middle, the agent on the
@@ -19,28 +19,11 @@ async function box(page: Page, selector: string) {
   return found;
 }
 
-/** Waits for the grid to hold still: two frames apart, it reads the same. */
-async function settled(page: Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<boolean>((resolve) => {
-            const shell = document.querySelector("[data-testid='shell']")!;
-            const read = () => getComputedStyle(shell).gridTemplateColumns;
-            const first = read();
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
-          }),
-      ),
-    )
-    .toBe(true);
-}
-
 async function flip(page: Page) {
   const was = await page.getByTestId("shell").getAttribute("data-mode");
   await page.keyboard.press(`${MOD}+Shift+E`);
   await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
-  await settled(page);
+  await columnsAtRest(page);
 }
 
 /** What the right pane's default widths add where the app draws the
@@ -108,18 +91,18 @@ test.describe("the editing shape", () => {
     await open(page, 1440);
     await flip(page);
     await page.setViewportSize({ width: 1200, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator("[data-testid='tree-column']")).toBeHidden();
     await expect(page.locator(AGENT)).toBeVisible();
     expect((await box(page, "[data-testid='editor-column']")).width).toBeGreaterThanOrEqual(640);
 
     await page.setViewportSize({ width: 1000, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(AGENT)).toBeHidden();
     await expect(page.locator("[data-testid='editor-column']")).toBeVisible();
 
     await page.setViewportSize({ width: 1728, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(AGENT)).toBeVisible();
     await expect(page.locator("[data-testid='tree-column']")).toBeVisible();
   });
@@ -158,7 +141,7 @@ async function switchStandsStill(page: Page) {
   const before = await box(page, "[data-testid='corner']");
   expect(Math.abs(before.x + before.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
   await page.getByTestId("mode-editor").click();
-  await settled(page);
+  await columnsAtRest(page);
   await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   const after = await box(page, `${AGENT} [data-testid='corner']`);
   expect(Math.abs(after.x + after.width - (before.x + before.width))).toBeLessThanOrEqual(1);
@@ -182,7 +165,7 @@ test.describe("the switch", () => {
     await expect(page.getByTestId("mode-agent")).toHaveAttribute("aria-checked", "true");
 
     await page.getByTestId("mode-editor").click();
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     await expect(page.getByTestId("mode-editor")).toHaveAttribute("aria-checked", "true");
     const after = await box(page, "[data-testid='corner']");
@@ -193,7 +176,7 @@ test.describe("the switch", () => {
     await expect(page.locator(`${AGENT} [data-testid='corner']`)).toBeVisible();
 
     await page.getByTestId("mode-agent").click();
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "working");
     await expect(page.locator(`${FILES} [data-testid='corner']`)).toBeVisible();
   });
@@ -213,7 +196,7 @@ test.describe("the switch", () => {
     await page.keyboard.press(`${MOD}+Shift+P`);
     await page.keyboard.type("editor mode");
     await page.keyboard.press("Enter");
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
   });
 });
@@ -224,7 +207,7 @@ test.describe("the right pane", () => {
     await flip(page);
     const shown = await box(page, `${AGENT} [data-testid='corner']`);
     await page.getByTestId("toggle-right").click();
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(AGENT)).toBeHidden();
     // The corner moves to the files pane's header, at the same edge: where
     // the window's own buttons begin, or the header's end.
@@ -233,14 +216,14 @@ test.describe("the right pane", () => {
     expect(Math.abs(corner.x + corner.width - (await cornerEdge(page, FILES)))).toBeLessThanOrEqual(1);
 
     await page.keyboard.press(`${MOD}+\\`);
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(AGENT)).toBeVisible();
   });
 
   test("is the changes pane in agent mode", async ({ page }) => {
     await open(page, 1728);
     await page.getByTestId("toggle-right").click();
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(FILES)).toBeHidden();
     await expect(page.locator(`${AGENT} [data-testid='corner']`)).toBeVisible();
   });
@@ -302,13 +285,13 @@ for (const linux of [false, true]) {
     test("reads its name whole at the default widths, in both modes", async ({ page }) => {
       expect((await headerParts(page, FILES)).title).toBe(true);
       await page.getByTestId("mode-editor").click();
-      await settled(page);
+      await columnsAtRest(page);
       expect((await headerParts(page, AGENT)).title).toBe(true);
     });
 
     test("cuts its name short before the corner as the agent narrows, never under it", async ({ page }) => {
       await page.getByTestId("mode-editor").click();
-      await settled(page);
+      await columnsAtRest(page);
       const splitter = page.getByRole("separator", { name: "Resize the agent" });
       let cut = false;
       let width = (await box(page, AGENT)).width;
@@ -341,7 +324,7 @@ test.describe("the right pane's default widths, as Linux", () => {
     expect(Math.round((await box(page, FILES)).width)).toBeGreaterThanOrEqual(399);
     expect(Math.round((await box(page, FILES)).width)).toBeLessThanOrEqual(402);
     await page.getByTestId("mode-editor").click();
-    await settled(page);
+    await columnsAtRest(page);
     expect(Math.round((await box(page, AGENT)).width)).toBeGreaterThanOrEqual(479);
     expect(Math.round((await box(page, AGENT)).width)).toBeLessThanOrEqual(482);
 
@@ -359,7 +342,7 @@ test.describe("the right pane's default widths, as Linux", () => {
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
     expect(Math.round((await box(page, AGENT)).width)).toBe(dragged);
     await splitter.dblclick();
-    await settled(page);
+    await columnsAtRest(page);
     expect(Math.round((await box(page, AGENT)).width)).toBeLessThanOrEqual(482);
   });
 });
@@ -386,7 +369,7 @@ for (const linux of [false, true]) {
       await page.mouse.down();
       await page.mouse.move(handle.x + handle.width / 2 + 400, handle.y + 200, { steps: 4 });
       await page.mouse.up();
-      await settled(page);
+      await columnsAtRest(page);
       expect(Math.round((await box(page, FILES)).width)).toBeLessThanOrEqual(260 + (await controlsRoom(page)) + 2);
       await switchWorks(page);
     });
@@ -404,27 +387,27 @@ for (const linux of [false, true]) {
       if (linux) await asLinux(page);
       await open(page, 1728);
       await page.getByTestId("mode-editor").click();
-      await settled(page);
+      await columnsAtRest(page);
       const chosen = Math.round((await box(page, "[data-testid='tree-column']")).width);
       // A window that narrows the tree but keeps it: the agent beside it is
       // wider by the platform's step.
       const squeezing = 1340 + (await controlsRoom(page));
       await page.setViewportSize({ width: squeezing, height: 900 });
-      await settled(page);
+      await columnsAtRest(page);
       expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBeLessThan(chosen);
       await page.setViewportSize({ width: 1728, height: 900 });
-      await settled(page);
+      await columnsAtRest(page);
       expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBe(chosen);
       // Squeezed, saved and started again in a window with room: the width
       // chosen, not the squeeze.
       await page.setViewportSize({ width: squeezing, height: 900 });
-      await settled(page);
+      await columnsAtRest(page);
       await page.getByTestId("toggle-right").click();
       await page.getByTestId("toggle-right").click();
       await page.setViewportSize({ width: 1728, height: 900 });
       await page.reload();
       await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
-      await settled(page);
+      await columnsAtRest(page);
       expect(Math.round((await box(page, "[data-testid='tree-column']")).width)).toBe(chosen);
     });
   });
@@ -532,7 +515,7 @@ for (const linux of [false, true]) {
         const was = await page.getByTestId("shell").getAttribute("data-mode");
         await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
         await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
-        await settled(page);
+        await columnsAtRest(page);
       };
       await page.getByTestId("start-agent").click();
       const cols = () =>
@@ -1239,7 +1222,7 @@ test.describe("saving from the tree, and what the views say", () => {
       await treeRow(page, name).dblclick();
     }
     await page.setViewportSize({ width: 1440, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await tab(page, "README.md").click();
     const strip = await box(page, "[data-testid='tab-row'] [role='tablist']");
     const front = await box(page, "[data-testid='editor-tab'][data-path='README.md']");
@@ -1249,7 +1232,7 @@ test.describe("saving from the tree, and what the views say", () => {
 
   test("says the right pane has no room in a window too narrow for it", async ({ page }) => {
     await page.setViewportSize({ width: 1000, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await expect(page.locator(AGENT)).toBeHidden();
     await page.getByTestId("toggle-right").click();
     await expect(page.getByTestId("flash-readout")).toContainText("too narrow");
@@ -1601,7 +1584,7 @@ test.describe("the tab in front as the row narrows", () => {
     }
     await tab(page, "README.md").click();
     await page.setViewportSize({ width: 1200, height: 900 });
-    await settled(page);
+    await columnsAtRest(page);
     await expect
       .poll(async () => {
         const strip = await box(page, "[data-testid='tab-row'] [role='tablist']");
@@ -1870,7 +1853,7 @@ for (const linux of [false, true]) {
         const was = await page.getByTestId("shell").getAttribute("data-mode");
         await page.getByTestId(was === "working" ? "mode-editor" : "mode-agent").click();
         await expect(page.getByTestId("shell")).not.toHaveAttribute("data-mode", was ?? "");
-        await settled(page);
+        await columnsAtRest(page);
       };
       await integrated(
         page,
@@ -2125,15 +2108,15 @@ for (const linux of [false, true]) {
 
           for (const width of [1200, 1100, 1000, 900]) {
             await page.setViewportSize({ width, height: 900 });
-            await settled(page);
+            await columnsAtRest(page);
             await check(`agent mode at ${width}`);
           }
 
           await page.setViewportSize({ width: 1440, height: 900 });
-          await settled(page);
+          await columnsAtRest(page);
           await page.getByTestId("mode-editor").click();
           await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "editing");
-          await settled(page);
+          await columnsAtRest(page);
           await check("editor mode at 1440");
         });
       }
