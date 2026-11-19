@@ -213,9 +213,17 @@ pub struct Tab {
 }
 
 /// What gets emitted to the frontend after a change to the tabs.
+///
+/// Snapshots reach the window by more than one path, events sent from
+/// whichever thread saw the change and the answers to its own commands,
+/// and those can arrive in another order than they were taken in. Each
+/// carries the revision it was taken at, which counts up with every
+/// snapshot, so the window keeps the newest and drops one that arrives
+/// after it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    pub revision: u64,
     /// Every tab of every owner, in opening order.
     pub tabs: Vec<Tab>,
     /// The owner on screen, whose front tab is the active one.
@@ -252,6 +260,8 @@ pub struct Tabs {
     /// load that will fail as finished before the check has found why, and
     /// a tab that looked settled in between would read as having arrived.
     checking: std::collections::HashMap<TabId, String>,
+    /// The revision the last snapshot was taken at.
+    revision: u64,
 }
 
 impl Default for Tabs {
@@ -270,6 +280,7 @@ impl Tabs {
             targets: std::collections::HashMap::new(),
             uncommitted: std::collections::HashSet::new(),
             checking: std::collections::HashMap::new(),
+            revision: 0,
         }
     }
 
@@ -507,9 +518,10 @@ impl Tabs {
         true
     }
 
-    /// The tabs as the window is told of them: one whose check is still
-    /// out on the address it shows reads as loading.
-    pub fn snapshot(&self) -> Snapshot {
+    /// The tabs as the window is told of them, at the next revision: one
+    /// whose check is still out on the address it shows reads as loading.
+    pub fn snapshot(&mut self) -> Snapshot {
+        self.revision += 1;
         let tabs = self
             .tabs
             .iter()
@@ -523,6 +535,7 @@ impl Tabs {
             })
             .collect();
         Snapshot {
+            revision: self.revision,
             tabs,
             owner: self.shown.clone(),
             active: self.active(),
@@ -795,7 +808,7 @@ mod tests {
 
     #[test]
     fn a_tab_reads_as_loading_until_its_check_answers() {
-        let loading = |tabs: &Tabs, id: TabId| {
+        let loading = |tabs: &mut Tabs, id: TabId| {
             tabs.snapshot()
                 .tabs
                 .iter()
@@ -813,22 +826,22 @@ mod tests {
         // WebKitGTK reports the doomed load over before the check has found
         // the host missing.
         tabs.navigation_finished(id, "about:blank".to_string());
-        assert!(loading(&tabs, id));
+        assert!(loading(&mut tabs, id));
         assert!(tabs.navigation_failed(
             id,
             "https://nowhere.invalid/",
             "nowhere.invalid could not be found".to_string()
         ));
-        assert!(!loading(&tabs, id));
+        assert!(!loading(&mut tabs, id));
 
         // A host that answers ends the wait as soon as the page has.
         tabs.navigate_to(id, "https://a.example/".to_string());
         tabs.check_started(id, "https://a.example/");
         tabs.navigation_started(id, "https://a.example/".to_string());
         tabs.navigation_finished(id, "https://a.example/".to_string());
-        assert!(loading(&tabs, id));
+        assert!(loading(&mut tabs, id));
         assert!(tabs.check_passed(id, "https://a.example/"));
-        assert!(!loading(&tabs, id));
+        assert!(!loading(&mut tabs, id));
 
         // A check on an address the tab has left says nothing of it.
         tabs.navigate_to(id, "https://b.example/".to_string());
@@ -1004,6 +1017,19 @@ mod tests {
             vec![a, b]
         );
         assert_eq!(snapshot.active, Some(a));
+    }
+
+    #[test]
+    fn every_snapshot_is_taken_at_a_later_revision() {
+        let mut tabs = shown();
+        let id = tabs.open(None, Opener::User, me());
+        let before = tabs.snapshot();
+        let same = tabs.snapshot();
+        tabs.titled(id, "Page A".to_string());
+        let after = tabs.snapshot();
+        assert!(before.revision < same.revision);
+        assert!(same.revision < after.revision);
+        assert_eq!(after.tabs[0].title, "Page A");
     }
 
     #[test]

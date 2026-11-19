@@ -1223,6 +1223,9 @@ export interface BrowserTab {
 
 /** The embedded browser's tabs, every owner's, and which one is active. */
 export interface BrowserSnapshot {
+  /** Counts up with every snapshot the core takes, so one that arrives
+      after a newer one can be told apart and dropped. */
+  revision: number;
   tabs: BrowserTab[];
   /** The owner whose tabs are on screen. */
   owner: BrowserOwner | null;
@@ -2567,10 +2570,10 @@ const detachedCore: Core = {
     throw new Error("no core");
   },
   async browserFocus() {
-    return { tabs: [], owner: null, active: null };
+    return { revision: 0, tabs: [], owner: null, active: null };
   },
   async browserCloseOwner() {
-    return { tabs: [], owner: null, active: null };
+    return { revision: 0, tabs: [], owner: null, active: null };
   },
   async browserClose() {
     throw new Error("no core");
@@ -2596,7 +2599,7 @@ const detachedCore: Core = {
   async browserPlace() {},
   async browserHide() {},
   async browserTabs() {
-    return { tabs: [], owner: null, active: null };
+    return { revision: 0, tabs: [], owner: null, active: null };
   },
   async onBrowserTabs() {
     return () => {};
