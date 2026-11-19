@@ -3019,7 +3019,7 @@ test.describe("the conversation's width", () => {
         `f.send("${H}", crypto.randomUUID(), "Keep the cache between runs. ".repeat(12));
          f.startTurn("${H}");
          f.tool("${H}", "Bash", { command: "cargo test" }, "test result: ok. " + "6 passed; ".repeat(30), { kind: "command" });
-         f.emit("${H}", { type: "text", block: "a", parent: null, text: "${"The cache lives in memory now. ".repeat(20)}\\n\\n\`\`\`\\n${"let x = 1; ".repeat(40)}\\n\`\`\`", done: true });
+         f.emit("${H}", { type: "text", block: "a", parent: null, text: "${"The cache lives in memory now. ".repeat(20)}\\n\\n\`\`\`ts\\n${"let x = 1; ".repeat(40)}\\n\`\`\`", done: true });
          f.endTurn("${H}");`,
       );
       await page.getByTestId("work-line").click();
@@ -3106,5 +3106,26 @@ test.describe("the conversation's width", () => {
     expect(line.x + line.width).toBeLessThanOrEqual(edge + 1);
     // The pane itself is wider, so the bound is the measure and not the pane.
     expect((await page.getByTestId("agent-run").first().boundingBox())!.width).toBeGreaterThan(text.width + 200);
+  });
+
+  test("gives a heading the same room after a block in the next part as in the same part", async ({ page }) => {
+    await openIntegrated(page);
+    const block = "```ts\nconst a = 1;\n```";
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Go.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify(block + "\n\n## One\n\nBody.\n\n" + block)}, done: true });
+       f.emit("${H}", { type: "text", block: "b", parent: null, text: "## Two\\n\\nBody.", done: true });
+       f.endTurn("${H}");`,
+    );
+    const gap = (before: ReturnType<Page["locator"]>, after: ReturnType<Page["locator"]>) =>
+      Promise.all([before.boundingBox(), after.boundingBox()]).then(([above, below]) => below!.y - (above!.y + above!.height));
+    const markdown = page.locator("[data-testid='markdown']");
+    await expect(markdown).toHaveCount(2);
+    const within = await gap(markdown.nth(0).locator("div.code").first(), markdown.nth(0).locator("h2"));
+    const across = await gap(markdown.nth(0).locator("div.code").last(), markdown.nth(1).locator("h2"));
+    expect(within).toBeGreaterThan(10);
+    expect(Math.abs(across - within)).toBeLessThanOrEqual(1);
   });
 });

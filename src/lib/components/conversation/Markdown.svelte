@@ -138,14 +138,6 @@
     cursor: text;
   }
 
-  .md > :global(:first-child) {
-    margin-top: 0;
-  }
-
-  .md > :global(:last-child) {
-    margin-bottom: 0;
-  }
-
   .md :global(p),
   .md :global(ul),
   .md :global(ol),
@@ -241,6 +233,17 @@
     display: block;
     padding-left: var(--hang);
     text-indent: calc(-1 * var(--hang));
+  }
+
+  /* Declared after every block's own margins, so a message starts and ends
+     flush: a rule that comes first loses to the margin of a block, a
+     heading or a table. */
+  .md > :global(:first-child) {
+    margin-top: 0;
+  }
+
+  .md > :global(:last-child) {
+    margin-bottom: 0;
   }
 
   .md :global(blockquote) {
