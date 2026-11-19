@@ -283,6 +283,21 @@ export function sessionsShown() {
   return sessionsVisible() || layout.sessionsPeek;
 }
 
+/** Set for a column or the terminal panel while a change of shape waits
+    for the frame that mounts what it brings before it moves: until the
+    sessions column moves, the pane is drawn as it was. */
+export const shaping = $state({ sessions: false, changes: false, terminal: false });
+
+/** Whether the sessions pane is drawn open: `sessionsShown`, or while a
+    change of shape waits to move, what its column is still set to. It is
+    for drawing only: focus, the tab order, what is inert and the palette
+    follow `sessionsShown`, which differs from it for as long as the change
+    waits. */
+export function sessionsDrawnOpen() {
+  if (shaping.sessions) return sessionsOpen.target === 1 || layout.sessionsPeek;
+  return sessionsShown();
+}
+
 /** Whether the folded sessions pane peeks rather than opens: in compact
     mode, where it has no column to open into; while reviewing, where the
     fold is the shape's and opening the pane for real would close the
@@ -335,9 +350,53 @@ function cameFrom(): PaneId {
  */
 export const sessionsOpen = new Tween(1);
 
+/** The sessions column's width in whole pixels, the splitter beside it
+    left out, `open` of the way from folded to open. */
+function sessionsWidth(open: number): number {
+  return Math.round(folded() + (layout.sessions - folded()) * open);
+}
+
+/** The sessions column's width as the grid takes it, folded or open or on
+    its way in whole pixels, the splitter beside it included. In compact
+    mode the pane is not in the layout, and the column is only the edge
+    before the panes. */
+export function sessionsTrack(): string {
+  return compact.on
+    ? `${COMPACT_EDGE[theme.look]}px`
+    : `calc(${sessionsWidth(sessionsOpen.current)}px + var(--splitter-w))`;
+}
+
 /** The changes column's width in pixels, following `changesWidth` and eased
     by the page between the working and reviewing widths. */
 export const changesSpan = new Tween<number>(defaultChanges());
+
+/** The changes column's width in whole pixels, at rest or on its way. */
+export function changesColumn(): number {
+  return Math.round(changesSpan.current);
+}
+
+/** While the changes column is on its way to a new width, how much wider
+    than the column its contents are laid out: the width it is going to,
+    less the one it has. The contents are laid out once, at the width they
+    end at, from the moment the change is asked for, and the column cuts
+    them off or stands short of them, so the tree's rows are not laid out
+    again at every width on the way. Zero at rest, and while editing, where
+    the column takes the room the others leave. */
+export function changesHeld(): number {
+  if (layout.mode === "editing" || !agentVisible()) return 0;
+  return Math.round(changesWidth()) - changesColumn();
+}
+
+/** The same for the agent while the columns either side of it move: the
+    width it ends at less the one it has, so a conversation wraps once, as
+    the columns set off, rather than at every width on the way. While
+    editing the agent's column has a width of its own. */
+export function agentHeld(): number {
+  if (layout.mode === "editing" || !agentVisible()) return 0;
+  const sessions = compact.on ? 0 : sessionsWidth(sessionsOpen.current) - sessionsWidth(sessionsOpen.target);
+  const changes = changesVisible() ? changesColumn() - Math.round(changesSpan.target) : 0;
+  return sessions + changes;
+}
 
 /** How far the terminal panel is up, from 0 to 1, following
     `terminalVisible` and eased by the page. */
@@ -354,6 +413,14 @@ const columnsMoving = $derived(
     than one a frame. */
 export function sliding() {
   return columnsMoving;
+}
+
+/** A column or the terminal panel waits to move or is on its way. Once it
+    is false, every column and the panel are at the sizes the layout asks
+    for. The shell carries it as data-moving, which a test that measures the
+    panes after a change waits to see gone. */
+export function moving() {
+  return columnsMoving || shaping.sessions || shaping.changes || shaping.terminal;
 }
 
 /** The changes pane is there: on the right by its toggle while working

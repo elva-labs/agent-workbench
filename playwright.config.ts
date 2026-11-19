@@ -16,6 +16,9 @@ const origin = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The dev server compiles the app on the first page that asks for it;
+  // this asks once, before any test runs.
+  globalSetup: "./tests/e2e/warm.ts",
   fullyParallel: true,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
