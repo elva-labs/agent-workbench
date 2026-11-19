@@ -265,26 +265,25 @@ test.describe("the right pane", () => {
   });
 });
 
-/** Whether a header's name and status are each drawn whole, and how wide
-    the status is drawn. The text's own width is read from a range over it,
-    which a clipped line does not shorten. */
+/** Whether a header's name is drawn whole, and where it and the corner
+    stand. The text's own width is read from a range over it, which a
+    clipped line does not shorten. */
 async function headerParts(page: Page, pane: string) {
   return page.evaluate((pane) => {
     const header = document.querySelector(`${pane} > header`)!;
-    const part = (selector: string) => {
-      const el = header.querySelector<HTMLElement>(selector);
-      if (el === null) return { whole: true, width: 0 };
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      const box = el.getBoundingClientRect().width;
-      return { whole: range.getBoundingClientRect().width <= box + 0.01, width: box };
+    const title = header.querySelector<HTMLElement>(":scope > .title, .cell .title")!;
+    const range = document.createRange();
+    range.selectNodeContents(title);
+    const box = title.getBoundingClientRect();
+    const corner = header.querySelector<HTMLElement>("[data-testid='corner']")?.getBoundingClientRect() ?? null;
+    const edge = header.getBoundingClientRect();
+    return {
+      title: range.getBoundingClientRect().width <= box.width + 0.01,
+      titleRight: box.right,
+      cornerLeft: corner?.left ?? null,
+      cornerRight: corner?.right ?? null,
+      headerRight: edge.right,
     };
-    const title = part(":scope > .title, .cell .title");
-    const meta = part(":scope > .meta, .cell .meta");
-    const status = header.querySelector<HTMLElement>(":scope > .meta, .cell .meta");
-    const shown = status !== null && getComputedStyle(status).visibility !== "hidden";
-    const em = status === null ? 0 : parseFloat(getComputedStyle(status).fontSize);
-    return { title: title.whole, meta: meta.whole, metaWidth: meta.width, metaShown: shown, em };
   }, pane);
 }
 
@@ -295,43 +294,30 @@ for (const linux of [false, true]) {
       if (linux) await asLinux(page);
       await open(page, 1728);
       await page.getByTestId("start-agent").click();
-      await expect(page.locator(AGENT)).toContainText("running");
+      await expect(page.getByTestId("state-readout")).toHaveText("running");
     });
 
     // Where the app draws the window's buttons the pane is wider by half
-    // their room, and its status gives way for the rest: the name reads
-    // whole, and the status as the fonts allow.
-    test("reads its name whole at the default widths, in both modes, and its status where the window's buttons are the system's", async ({
-      page,
-    }) => {
-      const buttons = (await controlsRoom(page)) > 0;
-      const reads = async (pane: string) => {
-        const parts = await headerParts(page, pane);
-        expect(parts.title).toBe(true);
-        if (!buttons) expect(parts.meta).toBe(true);
-        if (parts.metaShown && !parts.meta) expect(parts.metaWidth).toBeGreaterThanOrEqual(3 * parts.em - 0.5);
-      };
-      await reads(FILES);
+    // their room, so the name reads whole beside the corner and them.
+    test("reads its name whole at the default widths, in both modes", async ({ page }) => {
+      expect((await headerParts(page, FILES)).title).toBe(true);
       await page.getByTestId("mode-editor").click();
       await settled(page);
-      await reads(AGENT);
+      expect((await headerParts(page, AGENT)).title).toBe(true);
     });
 
-    test("gives up its status before its name as the agent narrows", async ({ page }) => {
+    test("cuts its name short before the corner as the agent narrows, never under it", async ({ page }) => {
       await page.getByTestId("mode-editor").click();
       await settled(page);
       const splitter = page.getByRole("separator", { name: "Resize the agent" });
-      let statusGave = false;
-      let statusWent = false;
+      let cut = false;
       let width = (await box(page, AGENT)).width;
       for (let step = 0; step < 50; step += 1) {
         const parts = await headerParts(page, AGENT);
-        // The name never narrows while the status still has room, and a
-        // status cut short still shows a few letters, or is not drawn.
-        if (!parts.title) expect(parts.metaWidth).toBeLessThan(0.5);
-        if (parts.metaShown && !parts.meta) expect(parts.metaWidth).toBeGreaterThanOrEqual(3 * parts.em - 0.5);
-        if (parts.title && !parts.meta) statusGave = true;
-        if (parts.title && !parts.metaShown) statusWent = true;
+        expect(parts.cornerLeft).not.toBeNull();
+        expect(parts.titleRight).toBeLessThanOrEqual(parts.cornerLeft! + 0.5);
+        expect(parts.cornerRight).toBeLessThanOrEqual(parts.headerRight + 0.5);
+        if (!parts.title) cut = true;
         const handle = (await splitter.boundingBox())!;
         await page.mouse.move(handle.x + handle.width / 2, handle.y + 200);
         await page.mouse.down();
@@ -341,10 +327,9 @@ for (const linux of [false, true]) {
         if (now >= width) break;
         width = now;
       }
-      expect(statusGave).toBe(true);
-      // Down to the agent's least width the status gets as short as a
-      // letter or two only where the window's buttons take their room.
-      if ((await controlsRoom(page)) > 0) expect(statusWent).toBe(true);
+      // Down to the agent's least width the name is cut short only where
+      // the window's buttons take their room.
+      if ((await controlsRoom(page)) === 0) expect(cut).toBe(false);
     });
   });
 }
@@ -643,7 +628,7 @@ test.describe("the editor and its tabs", () => {
 
   test("keeps each session's tabs", async ({ page }) => {
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await expect(tab(page, "README.md")).toBeVisible();
 
@@ -1130,7 +1115,7 @@ test.describe("questions before anything unsaved goes", () => {
 
   test("asks before a session with unsaved tabs is closed, in the sessions pane", async ({ page }) => {
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.locator("[data-testid='session-row']").first().hover();
@@ -1145,7 +1130,7 @@ test.describe("questions before anything unsaved goes", () => {
 
   test("asks before Close project in the project's menu, and Cancel keeps it", async ({ page }) => {
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     const head = page.locator(`${SESSIONS} [data-row="project:${PROJECT}"]`);
@@ -1571,7 +1556,7 @@ test.describe("the session question in a peek", () => {
     await flip(page);
     await page.getByTestId("unfold-sessions").click();
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.getByTestId("unfold-sessions").click();
@@ -1632,7 +1617,7 @@ test.describe("the session question from the keyboard", () => {
     await open(page, 1728);
     await flip(page);
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.keyboard.press(`${MOD}+1`);
@@ -1663,7 +1648,7 @@ test.describe("the question's three buttons", () => {
     await open(page, 2000);
     await flip(page);
     await page.getByTestId("new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.keyboard.press(`${MOD}+1`);
@@ -1719,7 +1704,7 @@ test.describe("the question's three buttons", () => {
       await expect(at.locator(AGENT)).toBeVisible();
       if ((await at.getByTestId("shell").getAttribute("data-mode")) !== "editing") await flip(at);
       await at.getByTestId("new-session").click();
-      await expect(at.locator(AGENT)).toContainText("running");
+      await expect(at.getByTestId("state-readout")).toHaveText("running");
       await treeRow(at, "README.md").dblclick();
       await typeAtEnd(at, "mine");
       await at.keyboard.press(`${MOD}+1`);
@@ -1799,7 +1784,7 @@ test.describe("closing what the pane folds away or hangs under another", () => {
     await expect(page.locator(AGENT)).toBeVisible();
     // A second project's own session 1, which starts a session 1 in demo.
     await page.locator(`${SESSIONS} [data-row="project:${LEAD}"]`).getByTestId("project-new-session").click();
-    await expect(page.locator(AGENT)).toContainText("running");
+    await expect(page.getByTestId("state-readout")).toHaveText("running");
     await page.evaluate(
       (project) =>
         (window as unknown as { __conductRequest: (call: unknown) => void }).__conductRequest({
@@ -2069,7 +2054,6 @@ function headerOrder(page: Page) {
     const pips = header.querySelector<HTMLElement>("[data-testid='run-pips']");
     const pane = header.closest("section")!.getBoundingClientRect();
     const flow = header.querySelector<HTMLElement>("[data-testid='workflow-tag-flow']");
-    const meta = header.querySelector<HTMLElement>(".meta");
     const title = header.querySelector<HTMLElement>(".title")!;
     const tagBox = tag?.getBoundingClientRect();
     const roleBox = role?.getBoundingClientRect();
@@ -2078,13 +2062,6 @@ function headerOrder(page: Page) {
       name: {
         on: flow !== null && tagBox !== undefined && drawn(tag) && flow.getBoundingClientRect().top < tagBox.bottom - 1,
       },
-      crumbs: [...header.querySelectorAll<HTMLElement>(".crumb")].map((crumb) => ({
-        drawn: drawn(crumb),
-        cut: cut(crumb.querySelector<HTMLElement>(".crumb-text")),
-        // The room its text has, in letters of its own type.
-        letters: crumb.querySelector<HTMLElement>(".crumb-text")!.clientWidth / parseFloat(getComputedStyle(crumb).fontSize),
-      })),
-      status: { drawn: drawn(meta), cut: cut(meta) },
       // The chip's pips stand, inside the pane, whatever the room.
       pips: pips === null ? null : drawn(pips) && pips.getBoundingClientRect().right <= pane.right,
       role:
@@ -2102,83 +2079,54 @@ for (const linux of [false, true]) {
   const platform = linux ? "as Linux" : "as the platform it runs on";
   for (const look of ["modern", "terminal"]) {
     test.describe(`the agent's header short of room, ${look} look, ${platform}`, () => {
-      for (const kind of ["orchestrator", "integrated", "integrated orchestrator"] as const) {
-        const tagged = kind !== "integrated";
-        const crumbed = kind !== "orchestrator";
-        const what = {
-          orchestrator: "a run's chip",
-          integrated: "a project and a branch",
-          "integrated orchestrator": "a run's chip, a project and a branch",
-        }[kind];
-        test(`gives way in turn with ${what}, the title last`, async ({ page }) => {
+      for (const kind of ["orchestrator", "integrated orchestrator"] as const) {
+        const integratedKind = kind === "integrated orchestrator";
+        test(`gives way in turn with a run's chip in ${kind === "orchestrator" ? "a terminal session" : "a conversation"}, the title last`, async ({ page }) => {
           if (linux) await asLinux(page);
           await installFakeCore(page, {
             open: [PROJECT],
             settings: {
-              ...(tagged ? WITH_WORKFLOW : {}),
-              ...(crumbed ? { integrated: ["claude-code"] } : {}),
+              ...WITH_WORKFLOW,
+              ...(integratedKind ? { integrated: ["claude-code"] } : {}),
               look,
             },
           });
           await page.setViewportSize({ width: 1440, height: 900 });
           await page.goto("/");
           await page.getByTestId("start-agent").click();
-          if (crumbed) await expect(page.getByTestId("conversation-branch")).toHaveText("main");
-          if (tagged && crumbed) {
+          if (integratedKind) {
             // An integrated orchestrator's header has the run's chip from
             // its first message on. The message's line is the row's own
             // label, so it names the row as before, and its turn is over,
-            // so the header holds the same title and status as it did
-            // without one.
+            // so the header holds the same title as it did without one.
             await page.getByTestId("composer-input").fill("session 1");
             await page.keyboard.press("Enter");
             await expect(page.getByTestId("user-message")).toHaveCount(1);
             await integrated(page, `f.startTurn("int-1"); f.endTurn("int-1");`);
             await expect(page.locator(`${AGENT} header .title`)).toHaveText("session 1");
-            await expect(page.locator(`${AGENT} header .meta`)).toHaveText("idle");
+            await expect(page.getByTestId("state-readout")).toHaveText("idle");
           }
-          if (tagged) await expect(page.getByTestId("run-words")).toHaveText("Build and review");
+          await expect(page.getByTestId("run-words")).toHaveText("Build and review");
 
           const check = async (where: string) => {
             const at = await headerOrder(page);
-            const crumbsGone = at.crumbs.every((crumb) => !crumb.drawn);
-            // A crumb shows a few letters with its icon, or is not drawn.
-            for (const crumb of at.crumbs) if (crumb.drawn && crumb.cut) expect(crumb.letters, where).toBeGreaterThanOrEqual(2.5);
-            // The name and the crumbs go before the status is cut short.
-            if (at.status.cut || !at.status.drawn) {
-              expect(at.name.on, where).toBe(false);
-              expect(crumbsGone, where).toBe(true);
-            }
-            // The status goes before the role is cut short.
-            if (at.role !== null && (at.role.cut || !at.role.drawn)) {
-              expect(at.status.drawn, where).toBe(false);
-              expect(at.name.on, where).toBe(false);
-            }
+            // The workflow's name goes before the role is cut short.
+            if (at.role !== null && (at.role.cut || !at.role.drawn)) expect(at.name.on, where).toBe(false);
             if (at.pips !== null) expect(at.pips, where).toBe(true);
             // The title is cut short only once the rest has gone.
-            if (at.title.cut) {
-              expect(at.status.drawn, where).toBe(false);
-              expect(at.role?.drawn ?? false, where).toBe(false);
-            }
+            if (at.title.cut) expect(at.role?.drawn ?? false, where).toBe(false);
             return at;
           };
 
           // Where everything fits, everything shows whole.
           const wide = await check("agent mode at 1440");
           expect(wide.title.cut).toBe(false);
-          expect(wide.status).toEqual({ drawn: true, cut: false });
-          if (tagged) expect(wide.role).toEqual({ drawn: true, cut: false });
-          if (crumbed) expect(wide.crumbs.every((crumb) => crumb.drawn && !crumb.cut)).toBe(true);
+          expect(wide.role).toEqual({ drawn: true, cut: false });
 
           for (const width of [1200, 1100, 1000, 900]) {
             await page.setViewportSize({ width, height: 900 });
             await settled(page);
-            const at = await check(`agent mode at ${width}`);
-            // In agent mode the agent is never narrower than its least
-            // width, and the status has room there beside a project and a
-            // branch. A run's chip is wider, and its words and the status
-            // give way in their turn.
-            if (kind === "integrated") expect(at.status, `agent mode at ${width}`).toEqual({ drawn: true, cut: false });
+            await check(`agent mode at ${width}`);
           }
 
           await page.setViewportSize({ width: 1440, height: 900 });

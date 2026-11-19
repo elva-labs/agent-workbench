@@ -373,6 +373,12 @@
     padding-right: calc(var(--controls-w) + var(--pane-pad) - var(--frame-pad) - var(--pane-edge));
   }
 
+  /* Where no window controls come after it, the corner ends on the card's
+     right edge, so the switch stands in line with the card under it. */
+  :global(:root[data-look="modern"]) header.cornered:not(.controlled) {
+    padding-right: 0;
+  }
+
   .title,
   .meta {
     font-family: var(--chrome);
@@ -409,8 +415,8 @@
   }
 
   /* Beside a head, short of room, the parts give way in turn: what the
-     head holds beyond what it keeps (a workflow's name, a session's
-     project and branch), then the meta, then what the head keeps (the
+     head holds beyond what it keeps (a workflow's name), then the meta,
+     then what the head keeps (the
      place in the workflow, the words of a run's chip), and the title
      last. The room the head keeps beyond its text, a run chip's pips,
      stays until the title has gone. The head starts from what

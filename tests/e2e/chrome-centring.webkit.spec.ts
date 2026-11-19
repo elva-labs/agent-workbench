@@ -4,12 +4,12 @@ import { PROJECT, installFakeCore } from "./fake";
 /**
  * The words of the window's chrome stand in the middle of their row, in
  * WebKit, which is the app's own webview on macOS: the status bar's in the
- * row the eye takes for the bar, and the pane headers' titles and quiet
- * words in their header. A run of text stands in the middle when its
+ * row the eye takes for the bar, and the pane headers' titles in their
+ * header. A run of text stands in the middle when its
  * capitals, from the baseline up by the face's cap height, are as far from
  * the row's top as from its foot, give or take a pixel. In Chromium the
  * terminal look's fallback face sits a little lower in every header, so
- * there the agent header's words are held to the changes title's line,
+ * there the agent header's title is held to the changes title's line,
  * and the pixel only in WebKit.
  */
 
@@ -99,14 +99,11 @@ for (const look of ["modern", "terminal"])
         within(await offsets(page, "[data-testid='status-bar'] :is([data-testid$='-readout'], .lb, .pc)", "[data-testid='status-bar']"));
       });
 
-      test("stands the agent pane's title, its state, project and branch on the changes title's line", async ({
-        page,
-        browserName,
-      }) => {
+      test("stands the agent pane's title on the changes title's line", async ({ page, browserName }) => {
         await open(page, look, background);
         const head = "section[data-pane='agent'] > header";
-        await expect(page.locator(`${head} .meta`)).toHaveText("idle");
-        const runs = await offsets(page, `${head} :is(.title, .meta, .crumb-text)`, head);
+        await expect(page.getByTestId("state-readout")).toHaveText("idle");
+        const runs = await offsets(page, `${head} .title`, head);
         const changes = await offsets(page, "section[data-pane='changes'] > header .title", "section[data-pane='changes'] > header");
         const line = Object.values(changes)[0];
         expect(Object.keys(runs).length).toBeGreaterThan(0);

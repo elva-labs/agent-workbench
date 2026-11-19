@@ -2,6 +2,7 @@
   import { tick, untrack } from "svelte";
   import { accountLabel, hasAccounts } from "$lib/accounts.svelte";
   import { agentLabel } from "$lib/agent.svelte";
+  import { core } from "$lib/core";
   import { flash } from "$lib/flash.svelte";
   import { fits } from "$lib/giveWay";
   import { conversationOf, linkFor } from "$lib/integrated.svelte";
@@ -16,6 +17,7 @@
     topFigure,
     type Figure,
   } from "$lib/limits.svelte";
+  import { sessionState } from "$lib/orchestrator.svelte";
   import { hostOf } from "$lib/remote.svelte";
   import { activeSession, modelLabel, unreadCount } from "$lib/sessions.svelte";
   import {
@@ -27,17 +29,19 @@
     modelChoices,
     modelInUse,
   } from "$lib/settingChoices";
+  import { projectLabel } from "$lib/workspace.svelte";
   import ChoiceMenu from "./ChoiceMenu.svelte";
+  import Icon from "./conversation/Icon.svelte";
 
   /**
    * The window's foot. From the left: which pane has the keyboard; what
-   * the session on screen runs on, its model and its
-   * effort; the account it runs under with that account's allowance, the
-   * share used of each limit window the agent reported; and at the right
-   * end how many sessions wait for you and a word in passing, which keep
-   * their place whatever the figures do. What the session is doing is its
-   * header's to say, and the window's mode the corner's switch, so the bar
-   * says neither.
+   * the session on screen is doing, the folder it works in and its
+   * branch; what it runs on, its model and its effort; the account it
+   * runs under, once there is more than one, with that account's
+   * allowance, the share used of each limit window the agent reported;
+   * and at the right end how many sessions wait for you and a word in
+   * passing, which keep their place whatever the figures do. The window's
+   * mode is the corner's switch to say, so the bar does not.
    *
    * The model and the effort of an integrated session each open a menu of
    * what the agent offers, and the allowance opens a popover with every
@@ -50,16 +54,17 @@
    * follows a workflow, which the workflow sets.
    *
    * Short of room, the bar lets its parts go in order: the focus, then the
-   * word "account:", then every figure but the one nearest
-   * its end, then that figure's reset time. Only after that is the model or
-   * the account's name cut short; what waits for you never is. A word in
+   * folder, then the word "account:", then every figure but the one
+   * nearest its end, then the branch, then that figure's reset time. Only
+   * after that is the model or the account's name cut short; what the
+   * session is doing and what waits for you never are. A word in
    * passing takes no room: it stands in the space before what waits, and
    * where that space is too short it is drawn over the parts before it
    * while it shows, so nothing moves for it.
    */
 
   /** What gives way, first to last. */
-  const STEPS = ["chrome", "prefix", "fold", "reset"];
+  const STEPS = ["chrome", "folder", "prefix", "fold", "branch", "reset"];
   const POPOVER_WIDTH = 540;
   const MENU_WIDTH = 320;
   const EDGE = 8;
@@ -84,6 +89,35 @@
       integrated.status === "running" &&
       (linkFor(integrated.key).handle !== null || linkFor(integrated.key).restarting),
   );
+
+  /** What the session is doing, in the words its row and its dot use. */
+  let doing = $derived(session === null ? null : sessionState(session));
+  let folder = $derived(session === null ? null : projectLabel(session.project));
+  /** Where the session works, which is what its branch is read from. */
+  let dir = $derived(session === null ? null : (session.worktree ?? session.startIn ?? session.project));
+
+  /** The branch last read, with where it was read, so another session's
+      shows nothing until its own is read. */
+  let read = $state<{ dir: string; branch: string | null } | null>(null);
+  let branch = $derived(read !== null && read.dir === dir ? read.branch : null);
+  $effect(() => {
+    const from = dir;
+    // Read again when a turn ends, since the agent may have switched it.
+    void session?.working;
+    if (from === null) return;
+    let stale = false;
+    core()
+      .projectInfo(from)
+      .then((info) => {
+        if (!stale) read = { dir: from, branch: info.branch ?? null };
+      })
+      .catch(() => {
+        if (!stale) read = { dir: from, branch: null };
+      });
+    return () => {
+      stale = true;
+    };
+  });
 
   let model = $derived.by(() => {
     if (session === null) return null;
@@ -301,8 +335,22 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <footer class="status no-select" bind:this={bar} use:fits={STEPS} onkeydown={onBarKey} data-testid="status-bar">
   <span class="focus" data-testid="focus-readout">focus: {layout.focus}</span>
-  {#if session !== null && (model !== null || effort !== null || account !== null || figures.length > 0)}
+  {#if session !== null}
     <span class="div d1" aria-hidden="true"></span>
+    <span class="place" data-testid="session-place">
+      <span class="doing" data-testid="state-readout">{doing}</span>
+      <span class="where folder" title={session.project} data-testid="folder-readout"
+        ><Icon name="folder" size={12} /><span class="txt">{folder}</span></span
+      >
+      {#if branch !== null}
+        <span class="where branch" title="Branch {branch}" data-testid="branch-readout"
+          ><Icon name="branch" size={12} /><span class="txt">{branch}</span></span
+        >
+      {/if}
+    </span>
+    {#if model !== null || effort !== null || account !== null || figures.length > 0}
+      <span class="div" aria-hidden="true"></span>
+    {/if}
   {/if}
 
   {#if session !== null && (model !== null || effort !== null)}
@@ -570,6 +618,40 @@
     display: contents;
   }
 
+  /* ---- what the session is doing, and where ---- */
+
+  .place {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex: 0 1 auto;
+    min-width: 0;
+    color: var(--ink-2);
+  }
+
+  .doing {
+    flex: none;
+  }
+
+  .where {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .where :global(svg) {
+    flex: none;
+    color: var(--status-quiet);
+  }
+
+  .where .txt {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   /* ---- the session's model and effort ---- */
 
   .sess {
@@ -714,7 +796,15 @@
     display: none;
   }
 
+  .status:global([data-fit~="folder"]) .folder {
+    display: none;
+  }
+
   .status:global([data-fit~="prefix"]) .pre {
+    display: none;
+  }
+
+  .status:global([data-fit~="branch"]) .branch {
     display: none;
   }
 

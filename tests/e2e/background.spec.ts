@@ -56,7 +56,7 @@ test("tints the chrome with the palette's background and leaves the panes that h
   await open(page, { appearance: "light", backgrounds: { teal: LAGOON } });
   await backgroundAtRest(page);
   await page.getByTestId("start-agent").click();
-  await expect(page.locator(AGENT)).toContainText("running");
+  await expect(page.getByTestId("state-readout")).toHaveText("running");
 
   const side = await pixel(page, ...(await at(page, SESSIONS, 0.5, 0.8)));
   const header = await pixel(page, ...(await at(page, `${AGENT} > header`, 0.6, 0.5)));

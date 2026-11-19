@@ -277,12 +277,12 @@ full screen draws the bullets already there again and counts as work,
 and a turn with less than three seconds of output is not seen at all.
 With hooks on, every turn is reported, one the agent starts by itself
 included, and output decides neither. The dot says
-it on the row, with the words on hover and for a screen reader; the agent
-pane's header spells the state out. A session that goes quiet, ends, or
+it on the row, with the words on hover and for a screen reader; the status
+bar spells the state out. A session that goes quiet, ends, or
 rings for attention while nobody is looking at it is **unread**: the accent dot, the
 name a step stronger than a live session's that has been read, as it is
-while a session asks for a permission, `waiting for you` in the agent pane,
-a count in the status bar, and the same count on the app's icon. Having it on
+while a session asks for a permission, `waiting for you` in the status bar
+and a count at its end, and the same count on the app's icon. Having it on
 screen in a focused window reads it. A session read stays read until the
 agent does something new: a turn that ends, a permission it asks for, a
 line it leaves, its ending, or a bell while it works. A notice that only
@@ -587,18 +587,17 @@ does not hold, so a terminal never starts looser than the mode last chosen
 on the chip. Bypassing permissions, or a mode a session cannot switch to,
 is never passed on; the agent's settings decide then.
 
-The agent pane's header names the session, its project and the branch the
-folder has checked out, and what the session is doing: working, idle,
-asking the user or waiting for a permission. The header, the row's dot and
-the row's words decide it the same way, from the session's own events: a
+The agent pane's header names the session. The status bar names its
+folder, the branch the folder has checked out, and what the session is
+doing: working, idle, asking the user or waiting for a permission, as
+[the status bar](layout.md#the-status-bar) describes. The bar, the row's
+dot and the row's words decide it the same way, from the session's own events: a
 turn that only waits on the sessions it started is working, and a session
 at rest while sessions it started work reads `a session working` or `2
 sessions working`, with its dot breathing. At rest, a session reads `idle`
 where the app knows its turn ended, an integrated one or a terminal one
 whose hooks report its turns, and `running` where its activity is
-guessed. Short of room the project and
-the branch give way before what the session is doing, and each goes with
-its icon once it would show no more than a letter or two. A session another session
+guessed. A session another session
 started is named by the name its start gave, cut to 60 characters, or by
 the first line of its prompt; a name that reads as You or Workbench, in any
 case or with anything unseen around it, is never taken, since the thread

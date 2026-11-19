@@ -114,12 +114,25 @@ test.describe("the session on screen", () => {
       expect(await style(figure(page, kind), "color")).toBe(ink);
     }
     await expect(page.getByTestId("limits-age")).toHaveCount(0);
-    // In order: the focus, the model and effort, the account and its
-    // figures. The session's state is its header's to say, and the mode
-    // the corner's switch, so the bar says neither.
-    await expect(page.getByTestId("status-bar")).not.toContainText(/working|idle|reviewing|editing/);
+    // In order: the focus, what the session is doing and where, the model
+    // and effort, the account and its figures. The mode is the corner's
+    // switch to say, so the bar does not.
+    await expect(page.getByTestId("state-readout")).toHaveText("idle");
+    await expect(page.getByTestId("folder-readout")).toHaveText("demo");
+    await expect(page.getByTestId("folder-readout")).toHaveAttribute("title", PROJECT);
+    await expect(page.getByTestId("branch-readout")).toHaveText("main");
+    await expect(page.getByTestId("status-bar")).not.toContainText(/reviewing|editing/);
     const xs = await Promise.all(
-      ["focus-readout", "model-readout", "effort-readout", "account-readout", "limits-readout"].map(
+      [
+        "focus-readout",
+        "state-readout",
+        "folder-readout",
+        "branch-readout",
+        "model-readout",
+        "effort-readout",
+        "account-readout",
+        "limits-readout",
+      ].map(
         async (id) => (await page.getByTestId(id).boundingBox())!.x,
       ),
     );
@@ -377,19 +390,30 @@ test("with no session selected, says only the focus and what waits", async ({ pa
   await installFakeCore(page, { open: [PROJECT], settings: { accounts: WORK } });
   await page.goto("/");
   await expect(page.getByTestId("focus-readout")).toBeVisible();
-  for (const id of ["mode-readout", "model-readout", "effort-readout", "account-readout", "account-group", "limit-figure"])
+  for (const id of [
+    "state-readout",
+    "folder-readout",
+    "branch-readout",
+    "model-readout",
+    "effort-readout",
+    "account-readout",
+    "account-group",
+    "limit-figure",
+  ])
     await expect(page.getByTestId(id)).toHaveCount(0);
 });
 
 test.describe("a narrow window", () => {
   const STEPS: [string, string][] = [
     ["chrome", "focus-readout"],
+    ["folder", "folder-readout"],
     ["prefix", "account-readout"],
     ["fold", "limit-figure"],
+    ["branch", "branch-readout"],
     ["reset", "limit-figure"],
   ];
 
-  test("lets the focus go first, then the prefix, then folds the figures, then the reset time, and never cuts what waits", async ({
+  test("lets the focus go first, then the folder, the prefix, the figures but one, the branch and the reset time, and never cuts the state or what waits", async ({
     page,
   }) => {
     await open(page, { accounts: WORK });
@@ -418,18 +442,22 @@ test.describe("a narrow window", () => {
       if (!seen.includes(fit)) seen.push(fit);
       // What a step hides is hidden, and what it has not reached is drawn.
       await expect(page.getByTestId("focus-readout")).toBeVisible({ visible: !taken.includes("chrome") });
+      await expect(page.getByTestId("folder-readout")).toBeVisible({ visible: !taken.includes("folder") });
+      await expect(page.getByTestId("branch-readout")).toBeVisible({ visible: !taken.includes("branch") });
       await expect(page.locator(".pre")).toBeVisible({ visible: !taken.includes("prefix") });
       await expect(page.locator("[data-testid='limit-figure']:visible")).toHaveCount(taken.includes("fold") ? 1 : 3);
       // Folded, the figure that stays is the reached week.
       if (taken.includes("fold")) await expect(figure(page, "weekly")).toBeVisible();
       await expect(page.locator(".rs")).toBeVisible({ visible: !taken.includes("reset") });
-      // What waits for you is never cut, nor is a word in passing.
+      // What the session is doing and what waits for you are never cut,
+      // nor is a word in passing.
+      expect(await whole(page, "state-readout"), `state at ${width}`).toBe(true);
       expect(await whole(page, "waiting-readout"), `waiting at ${width}`).toBe(true);
       if ((await page.getByTestId("flash-readout").textContent()) !== "")
         expect(await whole(page, "flash-readout"), `flash at ${width}`).toBe(true);
     }
     // Every step was taken on the way down.
-    expect(seen).toEqual(["", "chrome", "chrome prefix", "chrome prefix fold", "chrome prefix fold reset"]);
+    expect(seen).toEqual(STEPS.map((_, at) => STEPS.slice(0, at).map(([step]) => step).join(" ")).concat(STEPS.map(([step]) => step).join(" ")));
     // The figure's own words go with it until the end: nothing is drawn
     // past the bar's edge.
     expect(await bar(page).evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
