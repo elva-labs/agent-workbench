@@ -42,6 +42,7 @@
   import { lineDiff } from "$lib/lineDiff";
   import { lastSegment } from "$lib/paths";
   import { selectedEntry } from "$lib/files.svelte";
+  import { newUntitled } from "$lib/fileOps.svelte";
   import { chordFor, describe } from "$lib/keys.svelte";
 
   let tab = $derived(activeTab());
@@ -100,9 +101,12 @@
     {/if}
   {:else if tab === null || buffer === null}
     {@render asking()}
-    <div class="empty" data-testid="editor-empty">
+    <!-- The double-click is a quicker way to the new untitled file chord,
+         which the keyboard has. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="empty" ondblclick={newUntitled} data-testid="editor-empty">
       <b>No file open</b>
-      <span>Pick one in the tree, or start a new one with <kbd>{describe(chordFor("file.untitled"))}</kbd> or a double-click on the tab row</span>
+      <span>Pick one in the tree, or start a new one with <kbd>{describe(chordFor("file.untitled"))}</kbd> or a double-click here</span>
     </div>
   {:else}
     {@render asking()}

@@ -82,7 +82,7 @@ test.describe("starting an untitled file", () => {
     const empty = page.getByTestId("editor-empty");
     await expect(empty).toContainText("No file open");
     await expect(empty).toContainText(/(⌘N|Ctrl\+N)/);
-    await expect(empty).toContainText("double-click on the tab row");
+    await expect(empty).toContainText("double-click here");
   });
 
   test("opens one on a double-click on the empty tab row, with the keyboard in it", async ({ page }) => {
@@ -101,6 +101,16 @@ test.describe("starting an untitled file", () => {
     // A double-click on a tab keeps it, and makes no new one.
     await tab(page, "Untitled").dblclick();
     await expect(page.getByTestId("editor-tab")).toHaveCount(2);
+    expect(await writes(page)).toEqual([]);
+  });
+
+  test("opens one on a double-click anywhere in the empty middle pane", async ({ page }) => {
+    const empty = (await page.getByTestId("editor-empty").boundingBox())!;
+    // Well away from the words, in a corner of the pane.
+    await page.mouse.dblclick(empty.x + 20, empty.y + empty.height - 20);
+    await expect(tab(page, "Untitled")).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByTestId("editor-tab")).toHaveCount(1);
+    await expect(page.locator(".cm-content")).toBeFocused();
     expect(await writes(page)).toEqual([]);
   });
 
