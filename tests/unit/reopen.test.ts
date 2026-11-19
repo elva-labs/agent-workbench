@@ -1,7 +1,8 @@
 import { flushSync } from "svelte";
 import type { SpawnOptions } from "$lib/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { conductor, resetConductor, startedFor } from "$lib/conductor.svelte";
+import { conductor, PUT_AWAY_AFTER, resetConductor, startedFor, watchStops } from "$lib/conductor.svelte";
+import { linkFor } from "$lib/integrated.svelte";
 import { reopen, settleWhen, startup } from "$lib/reopen.svelte";
 import {
   activeSession,
@@ -31,6 +32,12 @@ const host = vi.hoisted(() => ({
   release: (_ok: boolean) => {},
 }));
 
+/** What the core answers when a row asks for the integrated session under
+    its handle: by default it runs none, as after a restart. */
+const snapshots = vi.hoisted(() => ({
+  answer: (): Promise<never> => Promise.reject(new Error("no such session")),
+}));
+
 const spawned: SpawnOptions[] = [];
 
 vi.mock("$lib/core", () => ({
@@ -41,6 +48,7 @@ vi.mock("$lib/core", () => ({
     },
     kill: async () => {},
     setWindowTitle: async () => {},
+    integratedSnapshot: () => snapshots.answer(),
     projectInfo: async (path: string) => {
       if (path.startsWith("ssh://")) {
         const ok = await new Promise<boolean>((resolve) => (host.release = resolve));
@@ -62,6 +70,7 @@ const repo = (path: string) => ({ path, name: path, repository: path, isGit: tru
 let stop: () => void = () => {};
 
 beforeEach(() => {
+  snapshots.answer = () => Promise.reject(new Error("no such session"));
   // A session follows no workflow here unless a test gives it one.
   resetWorkflows();
   resetSessions();
@@ -234,6 +243,71 @@ describe("coming back", () => {
     expect(spawned.map((options) => options.session)).not.toContain("taken");
     expect(conductor.started.lead.map((entry) => entry.id)).toEqual(["kid", "shown", "taken"]);
     expect(conductor.started.lead.every((entry) => entry.left === undefined)).toBe(true);
+  });
+
+  it("keeps the row of a session another started while the core could not say whether it still runs it", async () => {
+    conductor.started.lead = [{ id: "kid", project: B, worktree: null, agent: "claude-code", name: "Fix it" }];
+    let asked = false;
+    snapshots.answer = () => {
+      asked = true;
+      return Promise.reject(new Error("the session's news did not go out in time"));
+    };
+    onRecord([entry(A, "lead"), { ...entry(B, "kid"), kind: "integrated", handle: "h-kid" }], "lead");
+    stop = reopen();
+    await vi.waitFor(() => expect(asked).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(forProject(B).map((session) => session.id)).toEqual(["kid"]);
+    expect(forProject(B)[0].status).toBe("dormant");
+  });
+
+  it("keeps the row of a session another started that comes back unread or with a draft, and puts it away once seen", async () => {
+    const kid = { id: "kid", project: B, worktree: null, agent: "claude-code" as const, name: "Fix it" };
+    conductor.started.lead = [kid, { ...kid, id: "drafted" }];
+    let gone: (error: Error) => void = () => {};
+    snapshots.answer = () => new Promise((_, reject) => (gone = reject));
+    localStorage.setItem(
+      "workbench.waiting",
+      JSON.stringify({ kid: { unread: true, note: "Fixed it", notice: null, at: Date.now() } }),
+    );
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({
+        open: [entry(A, "lead"), { ...entry(B, "kid"), kind: "integrated" }, { ...entry(B, "drafted"), kind: "integrated", handle: "h-drafted" }],
+        active: "lead",
+        waiting: true,
+      }),
+    );
+    loadRemembered();
+    const unwatch = watchStops();
+    try {
+      stop = reopen();
+      const drafted = forProject(B).find((session) => session.id === "drafted")!;
+      // The user writes in the row while the core is asked about it.
+      linkFor(drafted.key).draft = "and the docs";
+      gone(new Error("no such session"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync();
+      const kidRow = forProject(B).find((session) => session.id === "kid")!;
+      expect(kidRow.unread).toBe(true);
+      expect(forProject(B).map((session) => session.id)).toEqual(["kid", "drafted"]);
+      vi.useFakeTimers();
+      await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+      expect(forProject(B).map((session) => session.id)).toEqual(["kid", "drafted"]);
+      // Seen, and the draft sent away: each goes once it has stayed so.
+      kidRow.unread = false;
+      linkFor(drafted.key).draft = "";
+      flushSync();
+      await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+      expect(forProject(B)).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(forProject(B)).toHaveLength(0);
+      expect(spawned.map((options) => options.session)).not.toContain("kid");
+      expect(spawned.map((options) => options.session)).not.toContain("drafted");
+      expect(conductor.started.lead.map((entry) => entry.id)).toEqual(["kid", "drafted"]);
+    } finally {
+      unwatch();
+      vi.useRealTimers();
+    }
   });
 
   it("puts the one that was on screen back on screen", () => {

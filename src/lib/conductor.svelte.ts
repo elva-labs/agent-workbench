@@ -53,6 +53,7 @@ import {
 import { agentLabel } from "$lib/agent.svelte";
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
+import { keepMode } from "$lib/sessionModes";
 
 import { core, type ConductRequest, type ProjectInfo } from "$lib/core";
 import { HOLD } from "$lib/hold";
@@ -281,23 +282,31 @@ export function stopStarted(key: string): void {
  * work is over, so finished rows do not pile up under their starter and no
  * agent has to tidy them. Its work is over when it is running, ended its
  * turn itself with nothing left running and no error, its starter has
- * been told so, and nothing of it is open: it asks nothing, no message
- * waits for it and none is being typed into it, its starter holds no call
- * that names it, and the user neither has it on screen nor has words in
- * it. After `PUT_AWAY_AFTER` of that, unbroken, its row closes and goes
+ * been told so, and nothing of it is open: the user has read it, has it
+ * not on screen and has no words in it, it asks nothing, no message waits
+ * for it and none is being typed into it, and its starter holds no call
+ * that names it. After `PUT_AWAY_AFTER` of that, unbroken, and counted
+ * again from the end of each call that names it, its row closes and goes
  * among the earlier sessions, as a stopped one does, but it stays on its
- * starter's list, and a line its starter sends it resumes it. A row of a
- * session another started that is left from before a restart goes the
- * same way, without being started, unless it was on screen at the quit.
+ * starter's list, and a line its starter sends it resumes it. The time is
+ * kept by the window, so a reload counts it again from the start. A row of
+ * a session another started that is left from before a restart goes the
+ * same way, without being started, unless it was on screen at the quit;
+ * one that comes back unread or with words of the user's in it goes
+ * `PUT_AWAY_AFTER` after the user has seen it.
  */
 
-/** How long a started session stays once its work is over: long enough
-    for its starter to answer what it reported while it still runs, short
-    enough that finished rows do not pile up. */
+/** How long a started session stays at least once its work is over: long
+    enough for its starter to answer what it reported while it still runs,
+    short enough that finished rows do not pile up. */
 export const PUT_AWAY_AFTER = 5 * 60_000;
 
 /** The rows on their way to being put away, by key. */
 const puttingAway = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Rows of sessions another started, left from before a restart, that
+    stay until the user has seen them, by key. */
+const leftToSee = new SvelteSet<string>();
 
 /** Closes a started session's row and files it with the earlier sessions,
     keeping it on its starter's list: the starter did not say it was done
@@ -309,6 +318,11 @@ function putAway(key: string, done: boolean) {
   const { project, id } = session;
   const owner = startedFor(key);
   keepName(session);
+  // A line brings it back in the mode it ran in. An integrated run's is
+  // kept as its agent says it; a terminal closed under its agent may not
+  // have written its own down.
+  const mode = session.kind === "integrated" || session.status !== "running" ? null : (modeNow(session) ?? session.modeNamed);
+  if (id !== null && mode !== null) keepMode(id, mode, true);
   close(key);
   if (id === null) return;
   disown(project, id);
@@ -320,11 +334,32 @@ function putAway(key: string, done: boolean) {
 }
 
 /** Puts away a started session's row left from before a restart, which
-    has nothing running behind it, without starting it. */
+    has nothing running behind it, without starting it. One the user has
+    yet to see stays until they have. */
 export function putAwayLeft(key: string) {
   const session = byKey(key);
   if (session === null || session.status !== "dormant" || startedFor(key) === null) return;
-  putAway(key, false);
+  if (openToUser(session)) leftToSee.add(key);
+  else putAway(key, false);
+}
+
+/** Whether something of a row is the user's still: it is unread or on
+    screen, holds words they have not sent, or has a line being typed
+    into it. */
+function openToUser(session: Session): boolean {
+  const key = session.key;
+  return session.unread || sessions.active === key || drafting(key) || typingInto(key) || userWriting(key);
+}
+
+/** Whether a row left from before a restart that stayed for the user to
+    see is still left, and has been seen. */
+function seenLeft(session: Session): boolean {
+  return (
+    leftToSee.has(session.key) &&
+    session.status === "dormant" &&
+    startedFor(session.key) !== null &&
+    !openToUser(session)
+  );
 }
 
 /** Whether a started session's work is over, as far as the rows say: see
@@ -332,26 +367,30 @@ export function putAwayLeft(key: string) {
 function overWith(session: Session): boolean {
   if (session.id === null || startedFor(session.key) === null) return false;
   if (session.status !== "running" || session.working || session.needs !== null) return false;
-  if (reopeningRow(session.key) || sessions.active === session.key) return false;
+  if (reopeningRow(session.key) || openToUser(session)) return false;
   const mark = stops.get(session.key);
   if (mark === undefined || !mark.worked || mark.rest !== "quiet" || mark.told !== "quiet") return false;
   if (restWay(session).way !== "done") return false;
-  if (session.kind === "integrated")
-    return handleOf(session.key) !== null && !userWriting(session.key) && !userWaiting(session.key);
-  return session.ptyId !== null && !drafting(session.key) && !typingInto(session.key);
+  return session.kind === "integrated" ? handleOf(session.key) !== null : session.ptyId !== null;
+}
+
+/** Whether what a call was given names the session with this id, whole or
+    by the start of it. */
+function namedIn(given: Record<string, unknown>, id: string): boolean {
+  return namesId(given.session, id) || namesId(given.work, id);
+}
+
+function namesId(given: unknown, id: string): boolean {
+  const start = typeof given === "string" ? given.trim() : "";
+  return start === id || (start.length >= ID_START && id.startsWith(start));
 }
 
 /** Whether a call of the starter's that is not done names a session: a
     wait on it alone, a read of it, or a line or a resume on its way. */
 function calledFor(id: string): boolean {
-  const names = (given: unknown) => {
-    const start = typeof given === "string" ? given.trim() : "";
-    return start === id || (start.length >= ID_START && id.startsWith(start));
-  };
-  for (const request of calling.values())
-    if (names(request.arguments.session) || names(request.arguments.work)) return true;
+  for (const request of calling.values()) if (namedIn(request.arguments, id)) return true;
   for (const list of Object.values(conductor.later))
-    if (list.some((one) => one.outcome === null && one.same.split("\n").some(names))) return true;
+    if (list.some((one) => one.outcome === null && one.same.split("\n").some((line) => namesId(line, id)))) return true;
   return false;
 }
 
@@ -359,14 +398,21 @@ function calledFor(id: string): boolean {
     calls back the ones where something of it opened again. */
 function planPutAways() {
   void heard.version;
-  const due = new Set(sessions.all.filter(overWith).map((session) => session.key));
+  for (const key of [...leftToSee]) if (byKey(key)?.status !== "dormant") leftToSee.delete(key);
+  const due = new Set(
+    sessions.all.filter((session) => overWith(session) || seenLeft(session)).map((session) => session.key),
+  );
   for (const [key, timer] of puttingAway)
     if (!due.has(key)) {
       clearTimeout(timer);
       puttingAway.delete(key);
     }
-  for (const key of due)
-    if (!puttingAway.has(key)) puttingAway.set(key, setTimeout(() => putAwayDue(key), PUT_AWAY_AFTER));
+  for (const key of due) if (!puttingAway.has(key)) countFromNow(key);
+}
+
+function countFromNow(key: string) {
+  clearTimeout(puttingAway.get(key));
+  puttingAway.set(key, setTimeout(() => putAwayDue(key), PUT_AWAY_AFTER));
 }
 
 /** A row's time is up: it goes if its work is still over, and waits again
@@ -374,12 +420,28 @@ function planPutAways() {
 function putAwayDue(key: string) {
   puttingAway.delete(key);
   const session = byKey(key);
-  if (session === null || !overWith(session)) return;
+  if (session === null) return;
+  if (seenLeft(session)) {
+    leftToSee.delete(key);
+    putAway(key, false);
+    return;
+  }
+  if (!overWith(session)) return;
   if (calledFor(session.id!)) {
-    puttingAway.set(key, setTimeout(() => putAwayDue(key), PUT_AWAY_AFTER));
+    countFromNow(key);
     return;
   }
   putAway(key, true);
+}
+
+/** A call is done: each row on its way to being put away that the call
+    named counts its time again from now, so its starter has the whole of
+    it to follow the call up. */
+function callEnded(request: ConductRequest) {
+  for (const key of [...puttingAway.keys()]) {
+    const id = byKey(key)?.id ?? null;
+    if (id !== null && namedIn(request.arguments, id)) countFromNow(key);
+  }
 }
 
 /** Puts away at once the rows among these whose work is over, to make room
@@ -1465,6 +1527,7 @@ export async function handle(request: ConductRequest): Promise<void> {
     answered = refused(String(error));
   } finally {
     calling.delete(request.id);
+    callEnded(request);
   }
   // A start not done yet is said on the caller's row once it is.
   if (request.tool === "start" && answered.byUser !== true && answered.later !== true)
@@ -1933,6 +1996,7 @@ export function watchStops(): () => void {
     wakes.clear();
     for (const timer of puttingAway.values()) clearTimeout(timer);
     puttingAway.clear();
+    leftToSee.clear();
   };
 }
 
@@ -3191,14 +3255,25 @@ async function resumeSession(
   }
 }
 
+/** The sessions a line is bringing back, by id, until each is up or
+    could not be. */
+const comingBack = new Map<string, Promise<Answered>>();
+
 /** Resumes a session the caller started that has no row, with a line the
     caller sent it as what it goes on with, as a start naming it would. */
 async function bringBack(request: Placed, entry: Started, line: string): Promise<Answered> {
   const why = goneWhy(entry);
-  const resumed = await resumeSession(
+  const resuming = resumeSession(
     { ...request, tool: "start", arguments: { session: entry.id, prompt: line } },
     entry.id,
   );
+  comingBack.set(entry.id, resuming);
+  let resumed: Answered;
+  try {
+    resumed = await resuming;
+  } finally {
+    if (comingBack.get(entry.id) === resuming) comingBack.delete(entry.id);
+  }
   if (resumed.error !== null || resumed.content === null) return resumed;
   return { ...resumed, content: `Session ${idText(entry.id)} was not running: ${why}. Your line resumed it. ${resumed.content}` };
 }
@@ -3239,6 +3314,10 @@ async function sendText(request: Placed): Promise<Answered> {
   const line = text(request, "text");
   if (id === null) return refused("Sending needs a session to send to.");
   if (line === null) return refused("Sending needs the text to send.");
+  // A line that comes while another line brings the session back goes
+  // once it is up, as a line to a running session does.
+  const coming = comingBack.get(id);
+  if (coming !== undefined) await coming;
   const session = byId(id);
   if (session === null) {
     const entry = remembered(callerOf(request), id);
@@ -3715,7 +3794,7 @@ function restText(session: Session, rest: RestWay = restWay(session)): string {
 /** What a wait adds, on a line of its own, for a session that ended its
     turn itself with nothing left running: what becomes of it. */
 export const STOP_WHEN_DONE =
-  "The workbench puts it away once it has rested five minutes with nothing open; a line you send it after that resumes it.";
+  "The workbench puts it away once it has rested at least five minutes with nothing open; a line you send it after that resumes it.";
 
 /** What a wait over all of a caller's sessions answers once every one it
     watched was put away. */
@@ -4362,4 +4441,8 @@ export function resetConductor() {
   typing.clear();
   conductor.woken = {};
   conductor.wakesInRow = {};
+  for (const timer of puttingAway.values()) clearTimeout(timer);
+  puttingAway.clear();
+  leftToSee.clear();
+  comingBack.clear();
 }
