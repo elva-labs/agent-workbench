@@ -38,6 +38,16 @@ import { starterOf } from "$lib/senders.svelte";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
+import {
+  askWhole as wholeNext,
+  briefingFor,
+  identified as wentOnAs,
+  leftBy,
+  spoke,
+  superseded as wentOnFromIt,
+  takeUp as takeUpAgain,
+} from "$lib/goingOn.svelte";
+import { GOING_ON_WAIT } from "$lib/instructions";
 
 /**
  * Every session this window has, live or finished.
@@ -863,24 +873,35 @@ function pruneKept(project: string) {
     .map(([id]) => id);
   if (workflows.length === 0 && tokens.length === 0) return;
   // What else is kept for them is kept under their tokens, and for a
-  // session from before there were tokens under its id as well.
+  // session from before there were tokens under its id as well. A token a
+  // row or another kept id still holds is a live session's: one that went
+  // on from its notes keeps its token under the fresh conversation's id,
+  // and its old conversation's going is not its own.
   const ids = [...new Set([...workflows, ...tokens])];
+  const going = new Set(tokens);
+  const held = new Set([
+    ...sessions.all.flatMap((session) => [session.token, ...(session.id === null ? [] : [session.id])]),
+    ...Object.entries(sessions.tokens)
+      .filter(([id]) => !going.has(id))
+      .flatMap(([id, kept]) => [kept.token, id]),
+  ]);
   const callers = [
     ...new Set(ids.flatMap((id) => [sessions.tokens[id]?.token ?? id, id])),
-  ];
+  ].filter((caller) => !held.has(caller));
   for (const id of workflows) delete sessions.workflows[id];
   for (const id of tokens) delete sessions.tokens[id];
   if (workflows.length > 0) saveKept();
   if (tokens.length > 0) saveTokens();
-  forgotten(callers);
+  if (callers.length > 0) forgotten(callers, project);
 }
 
-let forgotten: (tokens: string[]) => void = () => {};
+let forgotten: (tokens: string[], project: string) => void = () => {};
 
 /** Hears the tokens of sessions gone from their project's history, whose
     kept workflow or token went with them, and their ids, under which a
-    session from before there were tokens kept what it ran. */
-export function onForgotten(handler: ((tokens: string[]) => void) | null) {
+    session from before there were tokens kept what it ran, with the
+    project they ran in. */
+export function onForgotten(handler: ((tokens: string[], project: string) => void) | null) {
   forgotten = handler ?? (() => {});
 }
 
@@ -1050,7 +1071,12 @@ function closed(project: string): HistoryEntry[] {
       .map((session) => session.id)
       .filter((id): id is string => id !== null),
   );
-  return known.filter((transcript) => !open.has(transcript.id));
+  // A conversation another went on from is that one's, which lists it,
+  // from the moment its row decides to go on.
+  const left = leftBy(sessions.all.map((session) => session.key));
+  return known.filter(
+    (transcript) => !open.has(transcript.id) && !left.has(transcript.id) && !wentOnFromIt(transcript.id),
+  );
 }
 
 /** Whether a past session is listed under its project: one this app ran,
@@ -1301,6 +1327,18 @@ export function identified(
   rememberWorkflow(session);
   replayActivity(sessionId);
   if (title !== null) named(session.key, title);
+}
+
+/** The name a row that goes on from its notes keeps: the one it has, or
+    the title its old conversation is listed under. None where it has
+    neither, and its first message names it then, as any row's does. */
+export function nameGoingOn(session: Session): string | null {
+  const own = session.title ?? givenName(session);
+  if (own !== null) return own;
+  const from = session.resumedFrom;
+  const listed = (sessions.history[session.project] ?? []).find((entry) => entry.id === from);
+  const title = listed?.title?.trim() ?? "";
+  return title === "" || reservedName(title) ? null : title;
 }
 
 /** Keeps the name a session's row goes by under its id, for when the row
@@ -2019,15 +2057,28 @@ export async function launch(
   session.modeSeen = null;
   const back = bringingBack.delete(key);
   try {
+    // A cold and large conversation goes on fresh from its notes, briefed
+    // in its first prompt, which says to wait for the user when there is
+    // nothing else to go on with. A conversation held at a point it went
+    // back to is resumed as it is.
+    const resume = session.resumedFrom === null || back ? session.resumedFrom : await takeUpAgain(session);
+    const briefing =
+      resume === null && session.resumedFrom !== null ? briefingFor(key, session.prompt !== null) : null;
+    // The row keeps the name it showed, which its old conversation gave.
+    if (briefing !== null) session.title ??= nameGoingOn(session);
+    const prompt =
+      briefing === null
+        ? (session.prompt ?? undefined)
+        : `${briefing}\n\n${session.prompt ?? GOING_ON_WAIT}`;
     const { ptyId, sessionId } = await core().spawn(
       {
         ...(back ? { bringBack: true } : {}),
         agent: session.agent,
         project: session.project,
         cwd: session.startIn ?? undefined,
-        session: session.resumedFrom ?? undefined,
+        session: resume ?? undefined,
         token: session.token,
-        prompt: session.prompt ?? undefined,
+        prompt,
         model: session.model ?? undefined,
         mode: mode ?? undefined,
         configDir: dirFor(session.account, session.agent),
@@ -2084,6 +2135,7 @@ export function started(
     keepToken(session);
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
+    wentOnAs(key, sessionId);
     rememberWorkflow(session);
     replayActivity(sessionId);
   }
@@ -2332,6 +2384,45 @@ export async function reopenOtherWay(key: string, bySetting = false): Promise<bo
     // What the user agreed to was for this reopen.
     bringingBack.delete(key);
   }
+  return stopped;
+}
+
+/**
+ * Starts a terminal row that went on from its notes on the whole of the
+ * conversation it went on from, as the user asked from its menu. Its run
+ * is quit as a reopen quits it, and the row waits as one left from the
+ * last quit does, starting at once when it is on screen: it resumes that
+ * conversation whole, read again in full. False when the run did not
+ * stop in time.
+ */
+export async function resumeWholeTerminal(key: string, from: string): Promise<boolean> {
+  const session = byKey(key);
+  if (session === null || session.kind !== "terminal") return false;
+  const restart = () => {
+    const row = byKey(key);
+    if (row === null) return;
+    wholeNext(key);
+    row.resumedFrom = from;
+    row.id = from;
+    row.prompt = null;
+    row.ptyId = null;
+    row.working = false;
+    row.needs = null;
+    row.engaged = false;
+    row.startedAt = null;
+    row.error = null;
+    row.exitCode = null;
+    row.status = "dormant";
+    runUp(key);
+    changed(row);
+  };
+  if (session.status !== "running") {
+    restart();
+    return true;
+  }
+  reopening.add(key);
+  const stopped = await stopRun(session, restart);
+  if (!stopped) runUp(key);
   return stopped;
 }
 
@@ -2739,6 +2830,7 @@ export function typed(ptyId: string, data: string) {
   if (REPORT.test(data) || REPLY.test(data)) return;
   if (data.includes("\r") || data.includes("\n")) {
     session.engaged = true;
+    spoke(session.key);
     stirred(session);
   }
   pressed.set(session.key, Date.now());
@@ -2780,6 +2872,7 @@ export function spokenTo(ptyId: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   session.engaged = true;
+  spoke(session.key);
   session.turnEnd = null;
   stirred(session);
 }

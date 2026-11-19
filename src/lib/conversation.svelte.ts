@@ -272,6 +272,9 @@ export class Conversation {
       with this key, or at the top while nothing before it is drawn, at
       this time. */
   began = $state<{ after: string | null; at: number } | null>(null);
+  /** This run went on fresh from the conversation's notes rather than
+      resuming it whole. */
+  wentOn = $state(false);
   /** How many messages this window has sent. */
   sentHere = $state(0);
   /** The folds of the thread that stand open, by `foldKey`. Kept with the

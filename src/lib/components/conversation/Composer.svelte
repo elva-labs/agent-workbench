@@ -4,7 +4,7 @@
   import type { Attached } from "$lib/integrated.svelte";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { compact, follow, interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { compact, follow, goOnIfCold, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import {
     choose,
@@ -665,6 +665,10 @@
   /** How many times going back had missed when the send was held: one
       held for going back that then missed does not go. */
   let heldMissed = 0;
+  /** Whether the send held now was judged for going on from its notes, by
+      its own asking or by a judging or restart already under way: it then
+      goes once it can without asking again. */
+  let heldJudged = false;
   /** A lone digit was about to go as a message while the agent waits on an
       answer: said, and sent only on a second Enter. */
   let digit = $state<string | null>(null);
@@ -672,7 +676,7 @@
   $effect(() => {
     if (reading === 0 && held && !link.restarting && link.goingBack === null) {
       held = false;
-      if (link.backMissed === heldMissed) untrack(submit);
+      if (link.backMissed === heldMissed) untrack(() => submit(true));
     }
   });
 
@@ -684,11 +688,19 @@
   /** Sends what is written, or holds it to send once the session can take
       it, as while it starts again or goes back; says whether a message
       goes. A command, such as compact, is no message. */
-  function submit(): boolean {
+  function submit(again = false): boolean {
+    const judged = again && heldJudged;
+    heldJudged = false;
     if (!ready || !hasWords || unlisted) return false;
+    // After a rest, a cold and large conversation goes on from its notes
+    // before the message goes: it counts as starting again meanwhile, so
+    // the message is held below and goes to whichever run is left, once.
+    if (!judged && reading === 0 && !link.restarting && link.goingBack === null)
+      void goOnIfCold(sessionKey, Date.now(), true);
     if (reading > 0 || link.restarting || link.goingBack !== null) {
       held = true;
       heldMissed = link.backMissed;
+      heldJudged = judged || link.restarting;
       return true;
     }
     const lone = link.draft.trim();
@@ -1506,7 +1518,7 @@
         <button
           class="round send"
           tabindex="0"
-          onclick={submit}
+          onclick={() => submit()}
           disabled={!ready || !hasWords || reading > 0 || unlisted}
           aria-label={running ? "Send, to wait for the agent" : "Send"}
           title={unlisted

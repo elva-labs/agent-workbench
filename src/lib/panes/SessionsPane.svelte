@@ -16,6 +16,7 @@
   import { closeOwner as closeShells } from "$lib/terminals.svelte";
   import {
     bringBack,
+    resumeWholeTerminal,
     byChange,
     byKey,
     close as closeSession,
@@ -70,6 +71,9 @@
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
+  import { hasNotes, openNotes } from "$lib/notes";
+  import { tokensText, wholeOf } from "$lib/goingOn.svelte";
+  import { resumeWhole } from "$lib/integrated.svelte";
   import { lastSegment } from "$lib/paths";
   import {
     FOLDED,
@@ -476,6 +480,9 @@
       open. */
   let sessionMenu = $state<{ key: string; up: boolean } | null>(null);
   let sessionMenuAt = $state(0);
+  /** The row whose menu offers its notes: one that keeps any, found as
+      the menu opens. */
+  let sessionMenuNotes = $state<string | null>(null);
 
   let sessionItems = $derived.by((): MenuItem[] => {
     if (sessionMenu === null) return [];
@@ -483,6 +490,7 @@
     if (session === null) return [];
     const other = otherWayFor(session);
     const live = isLive(session);
+    const wentOnNow = wholeOf(session);
     return [
       session.unread
         ? {
@@ -513,6 +521,34 @@
               run: () => void reopenAsking(session, other),
             },
           ]),
+      ...(wentOnNow === null
+        ? []
+        : [
+            {
+              id: "session-menu-whole",
+              label:
+                wentOnNow.context === null
+                  ? "Resume whole conversation"
+                  : `Resume whole, reads ${tokensText(wentOnNow.context)}`,
+              title: "Go on with the whole earlier conversation read again, rather than from its notes",
+              disabled: session.working,
+              run: () =>
+                void (session.kind === "integrated"
+                  ? resumeWhole(session.key)
+                  : resumeWholeTerminal(session.key, wentOnNow.from)),
+            },
+          ]),
+      ...(sessionMenuNotes !== session.key
+        ? []
+        : [
+            {
+              id: "session-menu-notes",
+              label: "Show notes",
+              title: "Open the brief and notes this conversation keeps, in the viewer",
+              disabled: false,
+              run: () => void openNotes(session),
+            },
+          ]),
       {
         id: "session-menu-stop",
         label: live ? "Stop" : "Close",
@@ -536,6 +572,12 @@
     projectMenu = null;
     sessionMenu = { key, up };
     sessionMenuAt = 0;
+    sessionMenuNotes = null;
+    const session = byKey(key);
+    if (session !== null)
+      void hasNotes(session).then((kept) => {
+        if (kept && sessionMenu?.key === key) sessionMenuNotes = key;
+      });
     cursor = `session:${key}`;
     nav?.focus();
   }

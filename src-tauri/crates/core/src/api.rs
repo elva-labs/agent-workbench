@@ -615,12 +615,18 @@ impl Core {
                     Some(files.write(home, "json", &adapter::claude_server_config(daemon))?);
             }
         }
+        let through_cmd = cfg!(windows)
+            && adapter
+                .detect(vars)
+                .is_some_and(|binary| env::is_shell_script(&binary));
+        let prompt = prompt.filter(|prompt| !prompt.trim().is_empty());
+        let prompt = first_prompt(prompt, through_cmd, &mut files, self.home.as_deref())?;
         let ctx = LaunchCtx {
             project,
             env: vars,
             session: session_id.as_deref(),
             token,
-            prompt: prompt.filter(|prompt| !prompt.trim().is_empty()),
+            prompt: prompt.as_deref(),
             model: model.filter(|model| !model.trim().is_empty()),
             mode: mode.filter(|mode| !mode.trim().is_empty()),
             config_dir: expanded.as_deref(),
@@ -1005,6 +1011,48 @@ impl Core {
             }
             _ => Ok(None),
         }
+    }
+
+    /// How a session's conversation is taken up again: whole, or for a
+    /// Claude Code conversation that is cold and large, as a fresh one
+    /// from the briefing this answers with. Whole for any other agent, and
+    /// where no transcript of it is found.
+    pub fn taken_up(
+        &self,
+        agent: &str,
+        project: &Path,
+        cwd: Option<&Path>,
+        session: &str,
+        config_dir: Option<&str>,
+        token: &str,
+    ) -> Result<crate::going_on::GoingOn, String> {
+        let whole = crate::going_on::GoingOn {
+            context: None,
+            idle: None,
+            goes_on: false,
+            briefing: None,
+        };
+        let Some(home) = self.home.as_ref() else {
+            return Ok(whole);
+        };
+        if agent != "claude-code" {
+            return Ok(whole);
+        }
+        let environment = env::environment();
+        let dir = account::claude_dir(home, config_dir, &environment.vars);
+        let Some(path) = crate::claude_history::find(&dir, project, cwd, session) else {
+            return Ok(whole);
+        };
+        // A conversation held at a point it went back to is judged and
+        // briefed as it stands there.
+        let leaf = crate::claude_history::leaf(&path);
+        let held = self.held.at(session, leaf.as_deref());
+        Ok(crate::going_on::judge(
+            &path,
+            |since| crate::notes::briefing_since(home, token, since),
+            crate::notes::now() as u64 * 1000,
+            held.as_deref(),
+        ))
     }
 
     /// How an integrated session that runs was started.
@@ -1609,6 +1657,30 @@ impl Core {
         crate::selection::write(home, selection.as_ref())
     }
 
+    /// The core's home, where the notes are kept.
+    fn notes_home(&self) -> Result<&Path, String> {
+        self.home
+            .as_deref()
+            .ok_or_else(|| "this core keeps no notes: it has no home".to_string())
+    }
+
+    /// How much a session keeps in its notes, and with `page`, where their
+    /// readable copy was written for the viewer.
+    pub fn notes_kept(&self, token: &str, page: bool) -> Result<crate::notes::Kept, String> {
+        crate::notes::kept(self.notes_home()?, token, page)
+    }
+
+    /// The brief and the list of notes a fresh start of the session is
+    /// given, or none when nothing is kept.
+    pub fn notes_briefing(&self, token: &str) -> Result<Option<String>, String> {
+        Ok(crate::notes::briefing(self.notes_home()?, token))
+    }
+
+    /// Lets go of the notes of these sessions.
+    pub fn notes_forget(&self, tokens: &[String]) -> Result<(), String> {
+        crate::notes::forget(self.notes_home()?, tokens)
+    }
+
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {
         crate::show::read_media(path)
     }
@@ -1881,6 +1953,24 @@ fn new_session_id() -> String {
 #[derive(Default)]
 struct SessionFiles {
     paths: Vec<PathBuf>,
+}
+
+/// The first prompt as it goes on the command line: as given, or, where it
+/// goes through the command interpreter and would not arrive as given, a
+/// line naming the file of the session's own it is written to.
+fn first_prompt(
+    prompt: Option<&str>,
+    through_cmd: bool,
+    files: &mut SessionFiles,
+    home: Option<&Path>,
+) -> Result<Option<String>, String> {
+    match (prompt, home) {
+        (Some(text), Some(home)) if through_cmd && !adapter::safe_through_cmd(text) => {
+            let path = files.write(home, "md", text)?;
+            Ok(Some(adapter::prompt_in_file(&path)))
+        }
+        _ => Ok(prompt.map(str::to_string)),
+    }
 }
 
 impl SessionFiles {
@@ -2537,6 +2627,40 @@ mod tests {
         assert!(!own.with_extension("lock").exists());
         // Asked again, it answers with the same folder.
         assert_eq!(own_dir_locking(&home, unsupported).unwrap(), own);
+    }
+
+    /// Through the command interpreter, a briefing of thousands of
+    /// characters with line breaks and quotes would not arrive as given:
+    /// it goes in a file of the session's own, which the first prompt names.
+    #[test]
+    fn a_first_prompt_through_the_command_interpreter_goes_in_a_file() {
+        let home = Scratch::new("api-first-prompt");
+        let briefing = format!("{}\n\nUser:\nSay \"hi\" & go | wait", "word ".repeat(3000));
+        let mut files = SessionFiles::default();
+        let line = first_prompt(Some(&briefing), true, &mut files, Some(&home))
+            .unwrap()
+            .unwrap();
+        assert!(adapter::safe_through_cmd(&line), "{line}");
+        let path = files.paths[0].clone();
+        assert!(line.contains(&path.display().to_string()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), briefing);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // A short plain prompt, or one not going through it, goes as given.
+        let mut none = SessionFiles::default();
+        assert_eq!(
+            first_prompt(Some("Run the tests."), true, &mut none, Some(&home)).unwrap(),
+            Some("Run the tests.".to_string())
+        );
+        assert_eq!(
+            first_prompt(Some(&briefing), false, &mut none, Some(&home)).unwrap(),
+            Some(briefing.clone())
+        );
+        assert!(none.paths.is_empty());
     }
 
     #[cfg(unix)]

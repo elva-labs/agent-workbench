@@ -5,6 +5,7 @@ import {
   configure,
   conversationOf,
   follow,
+  goOnIfCold,
   handleOf,
   interrupt,
   lastWords,
@@ -24,6 +25,7 @@ import {
   trust,
   unspoken,
 } from "$lib/integrated.svelte";
+import { resetGoingOn } from "$lib/goingOn.svelte";
 import {
   byKey,
   close,
@@ -196,6 +198,7 @@ beforeEach(async () => {
   // follows as it starts.
   resetWorkflows();
   resetAccounts();
+  resetGoingOn();
   pty.spawned = [];
   pty.written = [];
   pty.killed = [];
@@ -206,6 +209,124 @@ beforeEach(async () => {
 afterEach(() => {
   stopListening();
   delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+});
+
+describe("a row at rest whose conversation went cold and large", () => {
+  /** A core whose judgement waits until `judged` is called with it, or
+      fails when it is called with an error; `asked` counts the asking. */
+  let asked = 0;
+  function judging() {
+    let judged: (answer: unknown) => void = () => {};
+    asked = 0;
+    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    core.goingOn = () => {
+      asked += 1;
+      return new Promise((resolve, reject) => (judged = (answer) => (answer instanceof Error ? reject(answer) : resolve(answer))));
+    };
+    return (answer: unknown) => judged(answer);
+  }
+  const COLD = { context: 400_000, idle: 7_200, goesOn: true, briefing: "BRIEFING" };
+  const WARM = { context: 400_000, idle: 600, goesOn: false, briefing: null };
+
+  it("lets a message to a warm row go on the one answer, asked once", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    // The user sends: the core is asked, and the message held meanwhile.
+    const going = goOnIfCold(key, Date.now(), true);
+    expect(linkFor(key).restarting).toBe(true);
+    // A second send while it is judged asks nothing more.
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+    judged(WARM);
+    expect(await going).toBe(false);
+    expect(linkFor(key).restarting).toBe(false);
+    // The held message is sent again at once and goes on that answer.
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+    expect(linkFor(key).restarting).toBe(false);
+    expect(asked).toBe(1);
+    expect(handleOf(key)).toBe(handle);
+    expect(fake.calls.filter((call) => call.method === "stop")).toHaveLength(0);
+    // Once the answer no longer stands, a later send is judged again.
+    const later = goOnIfCold(key, Date.now() + 31_000, true);
+    expect(asked).toBe(2);
+    judged(WARM);
+    expect(await later).toBe(false);
+  });
+
+  it("lets a message go once when the core cannot judge", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key, Date.now(), true);
+    judged(new Error("unreadable"));
+    expect(await going).toBe(false);
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+    expect(asked).toBe(1);
+    expect(handleOf(key)).toBe(handle);
+  });
+
+  it("asks once for a message to a cold row, which goes to the run that went on", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key, Date.now(), true);
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+    judged(COLD);
+    expect(await going).toBe(true);
+    expect(handleOf(key)).not.toBe(handle);
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+    expect(asked).toBe(1);
+  });
+
+  async function large() {
+    const row = await started();
+    fake.emit(row.handle, { type: "context", used: 400_000, size: 1_000_000 });
+    await settled();
+    return row;
+  }
+
+  it("holds what the user sends while the core judges, and goes on before it goes", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key);
+    // Counted as starting again, so the composer holds a message.
+    expect(linkFor(key).restarting).toBe(true);
+    judged(COLD);
+    expect(await going).toBe(true);
+    expect(linkFor(key).restarting).toBe(false);
+    expect(handleOf(key)).not.toBe(handle);
+    const starts = fake.calls.filter((call) => call.method === "start");
+    expect(starts.at(-1)).toMatchObject({ options: { session: undefined } });
+    // The fresh run is not judged again before its first message.
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+  });
+
+  it("leaves the run as it is when a message reached it while the core judged", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key);
+    send(key, "Carry on", [], "another-session");
+    judged(COLD);
+    expect(await going).toBe(false);
+    expect(handleOf(key)).toBe(handle);
+    expect(linkFor(key).restarting).toBe(false);
+    expect(fake.calls.filter((call) => call.method === "stop")).toHaveLength(0);
+  });
+
+  it("leaves a run with a wake-up of its own pending", async () => {
+    judging();
+    const { key, handle } = await large();
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "toolStarted", call: "w-1", parent: null, name: "ScheduleWakeup", kind: "other" });
+    fake.emit(handle, {
+      type: "turnEnded",
+      outcome: "done",
+      error: null,
+      totalCostUsd: null,
+      durationMs: 1,
+      usage: null,
+    });
+    await settled();
+    expect(await goOnIfCold(key, Date.now() + 3_600_000, true)).toBe(false);
+    expect(linkFor(key).restarting).toBe(false);
+  });
 });
 
 describe("an integrated session behind its row", () => {

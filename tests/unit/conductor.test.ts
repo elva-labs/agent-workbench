@@ -122,6 +122,8 @@ const answers: {
 }[] = [];
 const written: [string, string][] = [];
 const killed: string[] = [];
+/** The notes let go of, by project, as the core was asked. */
+const notesForgotten: { project: string; tokens: string[] }[] = [];
 const worktrees: [string, string][] = [];
 let worktreeFails: string | null = null;
 /** An answer the core will not leave, as for a prompt hook that stopped
@@ -165,6 +167,9 @@ vi.mock("$lib/core", () => ({
     },
     async kill(id: string) {
       killed.push(id);
+    },
+    async notesForget(project: string, tokens: string[]) {
+      notesForgotten.push({ project, tokens });
     },
     async projectInfo(path: string) {
       return { path, name: path, repository: path, isGit: true };
@@ -353,6 +358,7 @@ beforeEach(() => {
   answers.length = 0;
   written.length = 0;
   killed.length = 0;
+  notesForgotten.length = 0;
   worktrees.length = 0;
   worktreeFails = null;
   answerRefused = null;
@@ -1824,6 +1830,33 @@ describe("a session named by the start of its id", () => {
     await handle(call("stop", { session: "5f3c9a12" }));
     expect(last().content).toBe(`Stopped session ${ONE}. It is off your list now, and not offered to resume.`);
     expect(byKey(row.key)).toBeNull();
+    // Stopped for good, its notes go with it.
+    expect(notesForgotten).toEqual([{ project: A, tokens: [row.token] }]);
+  });
+
+  it("still names one that went on from its notes by its old id, its place and list entry moved", async () => {
+    const { going, identified, resetGoingOn } = await import("$lib/goingOn.svelte");
+    resetGoingOn();
+    const row = own(A, "pty-1", TWO);
+    const caller = callerKey(ME);
+    conductor.started[caller] = [{ id: ONE, project: A, worktree: null, agent: "claude-code", name: "Fix it" }];
+    conductor.runs[caller] = {
+      places: { [ONE]: { step: "Work", kind: "work", piece: ONE, round: null, work: null } },
+      rounds: {},
+      rested: [ONE],
+    };
+    going.runs[row.key] = { from: ONE, context: 400_000, briefing: null, spoken: false };
+    identified(row.key, TWO);
+    expect(conductor.started[caller].map((entry) => entry.id)).toEqual([TWO]);
+    expect(Object.keys(conductor.runs[caller].places)).toEqual([TWO]);
+    expect(conductor.runs[caller].places[TWO].piece).toBe(ONE);
+    expect(conductor.runs[caller].rested).toEqual([TWO]);
+    const sending = handle(call("send", { session: ONE, text: "go on" }));
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await sending;
+    expect(last().content).toBe(`Sent to session ${TWO}. Call wait to hear what it does next.`);
+    resetGoingOn();
+    localStorage.removeItem("workbench.wentOn");
   });
 
   it("resumes one of the caller's own by the start of its id", async () => {
@@ -5610,12 +5643,38 @@ describe("sessions told apart by their tokens", () => {
       places: { "kid-1": { step: "Work", kind: "work", piece: "kid-1", round: null, work: null } },
       rounds: {},
     };
+    conductor.started[token] = [{ id: "kid-1", project: B, worktree: null, agent: "claude-code", name: null }];
+    sessions.tokens["kid-1"] = { token: "kid-token", project: B };
     close(orch.key);
     past[A] = [{ id: "someone-else", title: "Another", modified: 1, size: 100, cwd: null }];
     await loadHistory(A);
+    // Its notes go, and those of the sessions it started, each where it ran.
+    expect(notesForgotten).toEqual([
+      { project: A, tokens: [token, "orch-id"] },
+      { project: B, tokens: ["kid-token"] },
+    ]);
     expect(conductor.runs[tok(token)]).toBeUndefined();
     expect(JSON.parse(localStorage.getItem("workbench.runs") ?? "{}")).not.toHaveProperty(token);
     expect(sessions.tokens["orch-id"]).toBeUndefined();
+  });
+
+  it("keeps the notes and workflow run of a live session that went on, once its old conversation is gone", async () => {
+    const row = create(A, null, "claude-code", null, null, null, null, null);
+    started(row.key, "pty-row", "old-id");
+    const token = row.token;
+    conductor.runs[tok(token)] = {
+      places: { "kid-1": { step: "Work", kind: "work", piece: "kid-1", round: null, work: null } },
+      rounds: {},
+    };
+    // It went on from its notes as a fresh conversation, under its token.
+    row.id = "new-id";
+    sessions.tokens["new-id"] = { token, project: A };
+    past[A] = [{ id: "new-id", title: "Fix it", modified: 1, size: 100, cwd: null }];
+    await loadHistory(A);
+    expect(sessions.tokens["old-id"]).toBeUndefined();
+    // Only what the old id alone named goes, never the shared token.
+    expect(notesForgotten.flatMap((forgotten) => forgotten.tokens)).not.toContain(token);
+    expect(conductor.runs[tok(token)]).toBeDefined();
   });
 
   it("lets go of what was moved, and of the id's copy, once the session is gone from its project's history", async () => {

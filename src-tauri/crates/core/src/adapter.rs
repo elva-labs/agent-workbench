@@ -501,6 +501,32 @@ fn codex_mode<'a>(ctx: &LaunchCtx<'a>) -> Result<Vec<&'a str>, String> {
     }
 }
 
+/// The most characters of a first prompt given on the command line where
+/// it goes through the command interpreter, whose whole line holds at most
+/// 8191.
+pub const CMD_PROMPT_MOST: usize = 2000;
+
+/// Whether a first prompt arrives as given on the command line through the
+/// command interpreter: short, on one line, and with no character the
+/// interpreter reads as its own syntax or expands.
+pub fn safe_through_cmd(prompt: &str) -> bool {
+    prompt.chars().count() <= CMD_PROMPT_MOST
+        && !prompt.chars().any(|c| {
+            matches!(
+                c,
+                '\r' | '\n' | '"' | '%' | '!' | '^' | '&' | '|' | '<' | '>'
+            )
+        })
+}
+
+/// The first prompt that names the file the whole of it was written to.
+pub fn prompt_in_file(path: &Path) -> String {
+    format!(
+        "Your first message is in the file {}, which the workbench wrote since it is too long to give here: read it whole and take it as this message.",
+        path.display()
+    )
+}
+
 /// The model flag and the prompt on the end of an agent's arguments. Both
 /// agents take `--model`, and both take the prompt after `--`: it is the
 /// agent's text, whatever it starts with, and never one of the agent's flags.

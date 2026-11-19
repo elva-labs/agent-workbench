@@ -59,10 +59,10 @@ export function segments(parts: Part[]): Segment[] {
 }
 
 /** The workbench's own calls the thread does not draw: a wait on the
-    sessions the agent started, and a line left on its row. Neither is work
-    the user reads, so neither has a step, a count or a line of its own,
+    sessions the agent started, a line left on its row, and a note kept of
+    the conversation. None is work the user reads, so none has a step, a count or a line of its own,
     and what the agent wrote before them stays the last thing in its run. */
-const UNDRAWN = new Set(["wait", "notify"]);
+const UNDRAWN = new Set(["wait", "notify", "note"]);
 
 /** Whether the thread draws a part of a run. */
 export function drawnPart(part: Part): boolean {
@@ -365,6 +365,10 @@ function workbenchPhrase(
         ? say("Leaving a note on its row", "Left a note on its row", "leave a note on its row")
         : name("Leaving a note on its row:", "Left a note on its row:", "leave a note on its row:", note);
     }
+    case "note":
+      return say("Keeping a note", "Kept a note", "keep a note");
+    case "notes":
+      return say("Reading its notes", "Read its notes", "read its notes");
     case "show":
       return say("Showing", "Showed", "show", file(field(input, "path")));
     case "diff":

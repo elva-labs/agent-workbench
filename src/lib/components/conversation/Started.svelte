@@ -58,6 +58,7 @@
 
 <style>
   .card {
+    max-width: var(--conv-measure);
     border: 1px solid var(--divider, var(--rule));
     border-radius: calc(var(--radius) + 3px);
     overflow: hidden;

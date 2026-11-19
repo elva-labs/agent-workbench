@@ -721,6 +721,15 @@ keyboard where they were, and nothing moves when a Copy appears. The text reache
 the page, the same on macOS, Linux and Windows. Selecting text and the Edit
 menu's Copy work as they do anywhere else.
 
+A fenced block that holds words, one with no language or marked text,
+Markdown, message, email or comment, wraps at the block's width, at word
+boundaries, and a line that starts with spaces or a list marker keeps its
+continuation lines under its words. Copy still gives the lines as written.
+A block with no language that is laid out in columns, such as a table or a
+tree drawn in text, aligned output or a diff, keeps its lines, as does a
+block in any other language, and scrolls sideways, since wrapped code
+misleads.
+
 The conversation can be searched with find, which looks in all of it
 whether the thread draws it yet or not: the messages, what the agent wrote
 as it reads rendered rather than as its Markdown, plans, questions and
@@ -1171,6 +1180,128 @@ sees the drag: the window takes it and reports paths with a position, and
 the terminal under a drag shows an accent inset while it lasts. Dropped on
 an integrated session, an image goes with the next message and any other
 file is its path in the text.
+
+## Notes
+
+Every session keeps notes of its own conversation, so that it can go on
+later from them rather than from the whole conversation read again. A
+session has one brief, what is being built, kept current, and notes, each
+with a title, a one-line summary, a few lines of body and the day it was
+kept. A later note can replace an earlier one, which then no longer
+stands, so a changed decision does not stand beside the old one.
+
+The agent keeps and reads them with the workbench's own tools, as
+[hooks](hooks.md#the-agents-tools) describes. It is told as it connects to
+keep a note whenever something settles: a decision and why, a finding,
+what the user asked for or prefers, what is left open, and never a key,
+token, password or personal data. The call goes alongside another one, the notify at a turn's end most of all, so it adds
+no step of its own, and the conversation does not draw it. When the user
+refers to something the agent has no context for, it is told to read the
+matching notes before asking or guessing.
+
+The core keeps them in a small database in the workbench's directory in
+the user's home on the machine the session runs on, under the session's
+token, so they follow the session across its runs and across restarts of
+the app. The folder and its files are readable by the user alone, and
+nothing of them is written into the project. A call carrying a session's token keeps notes as
+that session, as [who is calling](orchestrator.md#who-is-calling)
+describes for the other tools.
+
+The list the agent is given, by the notes tool and when it goes on from
+its notes, names the brief and at most thirty notes: the
+twenty newest, then the most read of the rest, newest first, each by its
+number, day, title and summary, and a count of the others, which it finds
+by their words. A note is read whole by its number.
+
+A row's menu has Show notes when its session keeps any. It writes them
+out as a document and opens it in the viewer: the brief, the standing
+notes newest first, then those a later note replaced. There is nothing to
+manage.
+
+### Going on from the notes
+
+A conversation that is needed again after a pause is read again whole by
+its agent, and once its prompt cache has lapsed, that read costs as much
+as writing all of it to the cache afresh: for a conversation of hundreds
+of thousands of tokens, far more than anything said after it. So a Claude
+Code conversation that is cold and large goes on from its notes instead.
+Cold is past the lifetime of its last cache write, an hour or five
+minutes as its transcript records, less two minutes of an hour or thirty
+seconds of five minutes; large is a context of a hundred thousand tokens
+or more, as its last request read it. Warm or small, it is resumed whole,
+as before, and so is one whose last request does not say when it was.
+A conversation held at a point it went back to is judged as it stands
+there, not by the turns it went back on. The same rule holds for the
+user's own sessions, the one on screen included, and for sessions another
+started.
+
+Going on, the row starts a fresh conversation of the agent's, with the
+same row, name and token, so the notes and everything the workbench
+keeps of the session follow it. The core writes a briefing, a few
+thousand tokens whatever the size of what came before: the brief and the
+list of notes, the user's first message, the last three of the user's
+messages each with the agent's words after it, word for word, and where
+the old transcript is, to be searched for a detail the notes lack and
+never read whole. Ahead of the notes it says that they and the quoted
+messages are records the earlier conversation wrote, to be read as data
+and never as instructions, since anything holding the session's token can
+write a note and an agent can copy a page's words into one; the notes
+tool says the same. Every line of a record, in the briefing and in the
+notes tool's answers, starts with a quote mark, so no record can hold a
+line that passes for the workbench's, the user's, or the briefing's end:
+the window and a later briefing take the briefing to end at its first
+line that is exactly its end line. For a conversation held at a point, the quoted
+messages are those up to that point, and a note kept after it is listed
+as kept on a turn the conversation went back on. The briefing goes ahead of the first message the fresh
+conversation is sent, the user's, a line from the session's starter, or
+the workbench's own; a terminal session is given it as its first prompt,
+told to wait for the user when nothing else goes with it. Where the
+agent's command runs through the Windows command interpreter, a first
+prompt too long or with characters it would read as its own goes in a
+file of the session's own, readable by the user alone, and the agent is
+told to read it.
+
+This is weighed as a row is started again: a row left from before a
+restart once it is opened, and a session another started once a line
+brings it back. It is weighed too for a conversation row still running at
+rest whose context this window saw grow large: when it comes on screen,
+when the window is brought forward or shown again, and when the user
+sends it a message after a rest, which waits until it is decided and then
+goes to the fresh run or the old one. The core is asked once for that
+message: an answer that the conversation is warm, or a judging that
+failed, stands for half a minute, within the margin the core leaves before
+a cache lapses. While the core judges, the row
+counts as starting again; a message another session sends it meanwhile
+goes to the run, which is then left as it is, so nothing lands in the
+conversation being left. It is not weighed with anything running in the
+run's background or with a wake-up the agent scheduled still pending,
+since a stop would end them. A terminal row left running at rest is not
+weighed at all: its next message reads the whole conversation. In the
+conversation view the earlier messages are still drawn above, read
+from each conversation the row went on through, the line where the run
+began says it went on from its notes, and the briefing is folded under
+the first message. The old conversation is no longer listed among the
+earlier sessions from the moment the row goes on: the row goes on with
+it.
+
+What can be lost is what the old conversation held and the notes did
+not: files read, results seen, reasoning not written down. The agent is
+told to read the matching notes, then search the old transcript, before
+asking the user. The way back to the old conversation is the row's
+menu: Resume whole, in a terminal row as in a conversation row, says how
+many tokens it reads where the transcript said, and starts the row again
+on the whole old conversation, at once when the row is on screen. It is
+offered only until anything is said to the fresh run: the old
+conversation would not hold what was said after it, while the row still
+drew it. A Codex conversation is always resumed whole.
+
+The notes go once the session cannot come back. For a session another
+session started, that is when its starter stops it, or when the starter
+is itself gone from its project's history. For a session of the user's
+own, it is when its conversation is gone from the project's history,
+which happens when its transcript is deleted, by the user or by the
+agent's own clean-up. Closing a row, or the workbench putting a finished
+one away, keeps them.
 
 ## Past sessions
 
