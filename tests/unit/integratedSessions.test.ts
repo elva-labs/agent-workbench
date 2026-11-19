@@ -377,6 +377,29 @@ describe("an integrated session behind its row", () => {
     expect(session.title).toBe("Fix the slow startup scan");
   });
 
+  it("names nothing after a slash command, and takes the first message that is not one", async () => {
+    const { session } = await started();
+    send(session.key, "/effort high");
+    expect(session.title).toBeNull();
+    expect(label(session)).toBe("session 1");
+    send(session.key, "  /model sonnet  ");
+    expect(session.title).toBeNull();
+    send(session.key, "/Users/ada/notes.md has the plan");
+    expect(session.title).toBe("/Users/ada/notes.md has the plan");
+  });
+
+  it("follows a rename the agent reports, which a later first message does not undo", async () => {
+    const { session, handle } = await started();
+    send(session.key, "/rename Shared ARM64 metal host");
+    fake.emit(handle, { type: "titled", title: "Shared ARM64 metal host" });
+    expect(label(session)).toBe("Shared ARM64 metal host");
+    expect(session.ownTitle).toBe(true);
+    send(session.key, "Now fix the build");
+    expect(label(session)).toBe("Shared ARM64 metal host");
+    fake.emit(handle, { type: "titled", title: "Container ephemerals" });
+    expect(label(session)).toBe("Container ephemerals");
+  });
+
   it("marks a message the core refused as not sent", async () => {
     const { session } = await started();
     const id = send(session.key, "   ");

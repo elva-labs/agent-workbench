@@ -10,6 +10,7 @@ import { keepMode, modeOf } from "$lib/sessionModes";
 import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
 import { heardOffers } from "$lib/lastChosen.svelte";
 import { modelLabel } from "$lib/models";
+import { readsAsCommand } from "$lib/slash";
 import { offeredModel } from "$lib/thread";
 import { heardLimits } from "$lib/limits.svelte";
 import { hostOf, pathOn } from "$lib/remote.svelte";
@@ -38,6 +39,7 @@ import {
   renewToken,
   loadHistory,
   named,
+  renamed,
   newTurnLine,
   lineComing,
   userWrote,
@@ -320,6 +322,7 @@ function isWork(body: IntegratedEventBody): boolean {
     case "ready":
     case "configured":
     case "commands":
+    case "titled":
     case "limits":
     case "context":
     case "notice":
@@ -396,6 +399,9 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
     case "configured":
       session.model = body.model;
       keepRunMode(session, link);
+      break;
+    case "titled":
+      renamed(key, body.title);
       break;
     case "limits":
       heardLimits(hostOf(session.project), session.account, body);
@@ -1141,7 +1147,8 @@ export function send(
   if (from !== null) sentBy(id, from);
   sentAt(id, Date.now());
   // Named by its first line, without the workbench's sentence after a
-  // started session's prompt. The workbench's own message names nothing.
+  // started session's prompt. The workbench's own message names nothing,
+  // and nor does a slash command: the row waits for a message that is not.
   if (session.title === null && givenName(session) === null && from !== WORKBENCH) {
     const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
@@ -1149,7 +1156,8 @@ export function send(
       ?.trim();
     // A first line that reads as another live session's name, or as "You",
     // leaves the row named by its number.
-    const title = line === undefined ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
+    const title =
+      line === undefined || readsAsCommand(line) ? null : line.length > 60 ? `${line.slice(0, 59)}…` : line;
     if (title !== null && !nameTaken(title, key) && !reservedName(title)) named(key, title);
   }
   core()
