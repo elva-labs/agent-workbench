@@ -205,11 +205,20 @@
         },
       });
     }
-    terminal.open(host);
-    host.style.setProperty("--term-selection", terminal.options.theme?.selectionBackground ?? null);
-
+    // The renderer is chosen before the terminal opens. Opened without one,
+    // xterm draws with its DOM renderer until the GPU one takes over, and
+    // the stylesheets that renderer puts into the page and takes out again
+    // restyle the whole window twice. A GPU renderer that could not start
+    // leaves the DOM renderer drawing, as when none was wanted.
     gpu = !softwareGl(glRenderer()) && !domRendererChosen();
     useRenderer();
+    terminal.open(host);
+    if (webgl !== null && host.querySelector("canvas") === null) {
+      gpu = false;
+      webgl.dispose();
+      webgl = null;
+    }
+    host.style.setProperty("--term-selection", terminal.options.theme?.selectionBackground ?? null);
 
     measure();
     queue = new WriteQueue((data) => terminal?.write(data));

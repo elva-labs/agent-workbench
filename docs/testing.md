@@ -23,6 +23,18 @@ and on what the user sees, bounding boxes, computed styles, visibility,
 rather than on state. A test that could pass while the window looked wrong
 belongs in the unit tier.
 
+The browser tier's dev server answers before it has compiled the app, which
+it does for the first page that asks. Before any test runs, the tier loads
+the app once and waits for its panes, so no test's first wait includes that
+compile.
+
+A change of shape may wait a frame or two before its columns set off, and
+frames can be far apart in a headless browser, so a test never takes a grid
+that holds still for a frame or two as one at rest. The panes' grid carries
+`data-moving` while a column or the terminal panel waits to move or is on its
+way; a test that measures the panes after a change waits for it to be gone,
+and for a new window size to have been taken in, before it reads them.
+
 One unit test reads the window configuration and checks the window cannot be
 made narrower than the panes need, since that constraint lives in two files.
 
@@ -64,6 +76,22 @@ away at a time.
 
 ```
 BG_DRAG=1 WORKBENCH_DEV_PORT=14537 npx playwright test tests/e2e/background-drag.webkit.spec.ts --project webkit --workers 1
+```
+
+## Measuring the panes' motions
+
+A second measurement runs only when `PANE_MOTION=1` is set, in WebKit, in the
+same day's workspace with a changes tree of three thousand files: it closes
+and opens the changes pane, opens and closes the viewer, folds and opens the
+sessions pane, opens the terminal panel for the first time and the second,
+and flips to Editor and back. For each it logs every frame from the key or
+click until the panes have stopped: how long after the one before it began,
+how long its work took, how long the page's own frame callbacks and resize
+observers took, and how many frames went by without one. Its comment lists
+the settings it can be run with to take one cost away at a time.
+
+```
+PANE_MOTION=1 WORKBENCH_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
 ```
 
 ## Running from a second checkout

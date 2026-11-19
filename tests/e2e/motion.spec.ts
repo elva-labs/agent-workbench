@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { foldedWidth, installFakeCore } from "./fake";
+import { PROJECT, foldedWidth, installFakeCore } from "./fake";
 
 /**
  * How the sessions pane folds and opens. Its column eases between its folded
@@ -262,5 +262,179 @@ test.describe("the sessions pane peeked over the agent", () => {
     await expect.poll(() => width(page, SESSIONS)).toBe(FOLDED);
     await expect(page.getByTestId("focus-readout")).toHaveText("focus: changes");
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
+  });
+});
+
+/**
+ * Every frame from just before `act` until what `expression` reads, worked
+ * out at the start of each frame, has held still for a quarter of a second
+ * after changing.
+ */
+async function framesOf<T>(page: Page, expression: string, act: () => Promise<void>): Promise<T[]> {
+  await page.evaluate((expression) => {
+    const read = new Function(`return (${expression});`) as () => unknown;
+    const recorder = window as unknown as { __frames?: Promise<unknown[]> };
+    recorder.__frames = new Promise((resolve) => {
+      const frames: unknown[] = [];
+      const deadline = performance.now() + 5000;
+      let changedAt = -1;
+      const sample = () => {
+        const now = read();
+        if (frames.length > 0 && JSON.stringify(now) !== JSON.stringify(frames.at(-1))) changedAt = performance.now();
+        frames.push(now);
+        if ((changedAt > 0 && performance.now() - changedAt > 250) || performance.now() > deadline) resolve(frames);
+        else requestAnimationFrame(sample);
+      };
+      sample();
+    });
+  }, expression);
+  await act();
+  return page.evaluate(() => (window as unknown as { __frames: Promise<T[]> }).__frames);
+}
+
+const width = (selector: string) =>
+  `document.querySelector("${selector}")?.getBoundingClientRect().width ?? null`;
+
+/** What the page has set on the columns and what they hold: the grid's
+    tracks, whether the sessions pane is drawn folded, the sessions column's
+    width less its splitter, the width the changes pane's contents are held
+    at, and the active conversation's offset. At rest nothing is held. */
+function columnsNow(page: Page) {
+  return page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>("[data-testid='shell']")!;
+    const slot = document.querySelector(".sessions-slot")!;
+    const splitter = parseFloat(getComputedStyle(shell).getPropertyValue("--splitter-w"));
+    return {
+      mode: shell.dataset.mode,
+      columns: shell.style.gridTemplateColumns,
+      folded: slot.classList.contains("folded"),
+      sessions: Math.round(slot.getBoundingClientRect().width - splitter),
+      split: document.querySelector<HTMLElement>("section[data-pane='changes'] .split")?.style.width ?? "",
+      right: document.querySelector<HTMLElement>("[data-testid='conversation'].active")?.style.right ?? "",
+    };
+  });
+}
+
+/** Waits until the columns have arrived at the reviewing shape: the
+    sessions column folded and nothing held. */
+async function reviewingAtRest(page: Page) {
+  await expect
+    .poll(() => columnsNow(page).then(({ mode, folded, sessions, split, right }) => ({ mode, folded, sessions, split, right })))
+    .toEqual({ mode: "reviewing", folded: true, sessions: FOLDED, split: "", right: "" });
+}
+
+test.describe("what is mounted as the panes move", () => {
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+  });
+
+  test("the viewer is mounted at the width it ends at before the changes column widens", async ({ page }) => {
+    const before = await page.locator("section[data-pane='changes']").evaluate((pane) => pane.getBoundingClientRect().width);
+    type Frame = { pane: number; viewer: number | null };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ pane: ${width("section[data-pane='changes']")}, viewer: ${width("[data-testid='viewer']")} })`,
+      () => page.locator("[data-testid='file-tree']").getByText("lib.rs", { exact: true }).click(),
+    );
+    const shown = frames.filter((frame) => frame.viewer !== null);
+    const last = frames.at(-1)!;
+    expect(last.pane).toBeGreaterThan(before + 100);
+    // Drawn whole before the column moves, and never laid out at another width.
+    expect(shown.some((frame) => frame.pane === before)).toBe(true);
+    expect(shown.some((frame) => frame.pane > before && frame.pane < last.pane)).toBe(true);
+    expect(new Set(shown.map((frame) => frame.viewer))).toEqual(new Set([last.viewer]));
+  });
+
+  test("closing the viewer lays the tree out once, at the width it ends at", async ({ page }) => {
+    FOLDED = await foldedWidth(page);
+    await page.locator("[data-testid='file-tree']").getByText("lib.rs", { exact: true }).click();
+    await expect(page.getByTestId("viewer")).toBeVisible();
+    await reviewingAtRest(page);
+    type Frame = { pane: number; tree: number; viewer: boolean };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ pane: ${width("section[data-pane='changes']")}, tree: ${width("[data-testid='file-tree']")}, viewer: document.querySelector("[data-testid='viewer']") !== null })`,
+      () => page.keyboard.press("Escape"),
+    );
+    const after = frames.filter((frame) => !frame.viewer);
+    const last = frames.at(-1)!;
+    expect(after.some((frame) => frame.pane > last.pane)).toBe(true);
+    expect(new Set(after.map((frame) => frame.tree))).toEqual(new Set([last.tree]));
+  });
+
+  test("a panel opened with no shell mounts its shell before it rises", async ({ page }) => {
+    type Frame = { height: number; shell: boolean };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ height: document.querySelector(".terminal-group").getBoundingClientRect().height, shell: document.querySelector(".terminal-group [data-testid='terminal']") !== null })`,
+      () => page.keyboard.press("ControlOrMeta+j"),
+    );
+    const rising = frames.findIndex((frame) => frame.height > 0);
+    expect(rising).toBeGreaterThan(0);
+    // The shell's first frame is drawn, and one more begins, before the
+    // panel moves: set off at once, it would rise in the frame after the
+    // shell came.
+    expect(frames.slice(0, rising).filter((frame) => frame.shell).length).toBeGreaterThanOrEqual(2);
+    expect(frames.slice(rising).every((frame) => frame.shell)).toBe(true);
+  });
+});
+
+// A motion asked for again before it ends, or before it starts: the newest
+// ask is the one the columns go to, and nothing is left held or drawn as it
+// was. The agent holds a conversation, which takes a hold of its own.
+test.describe("a motion interrupted", () => {
+  const CHANGES = "section[data-pane='changes']";
+  const file = (page: Page) => page.locator("[data-testid='file-tree']").getByText("lib.rs", { exact: true });
+
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"] } });
+    await page.goto("/");
+    FOLDED = await foldedWidth(page);
+    await page.getByTestId("start-agent").click();
+    await expect(page.locator("[data-testid='conversation'].active")).toBeVisible();
+  });
+
+  test("the viewer closed as soon as it opens leaves the columns where they were", async ({ page }) => {
+    const start = await columnsNow(page);
+    await file(page).click();
+    await page.keyboard.press("Escape");
+    await expect.poll(() => columnsNow(page)).toEqual(start);
+  });
+
+  test("the viewer closed partway through opening leaves the columns where they were", async ({ page }) => {
+    const start = await columnsNow(page);
+    const before = (await page.locator(CHANGES).boundingBox())!.width;
+    await file(page).click();
+    await expect.poll(() => page.locator(CHANGES).boundingBox().then((box) => box!.width)).toBeGreaterThan(before);
+    await page.keyboard.press("Escape");
+    await expect.poll(() => columnsNow(page)).toEqual(start);
+  });
+
+  test("a fold asked for while closing the viewer waits drops the waiting motion", async ({ page }) => {
+    await file(page).click();
+    await reviewingAtRest(page);
+    // Escape asks the columns back to the working shape, which waits two
+    // frames to start; the fold comes one frame later and starts at once.
+    // The page has had two more frames, enough for a waiting start that is
+    // not dropped to have set the sessions column open again.
+    await page.evaluate(async () => {
+      const frame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+      const target = document.activeElement ?? document.body;
+      const press = (key: string, code: string, mod: boolean) =>
+        target.dispatchEvent(
+          new KeyboardEvent("keydown", { key, code, metaKey: mod && mac, ctrlKey: mod && !mac, bubbles: true, cancelable: true }),
+        );
+      press("Escape", "Escape", false);
+      await frame();
+      press("b", "KeyB", true);
+      await frame();
+      await frame();
+    });
+    await expect
+      .poll(() => columnsNow(page).then(({ mode, folded, sessions, split, right }) => ({ mode, folded, sessions, split, right })))
+      .toEqual({ mode: "working", folded: true, sessions: FOLDED, split: "", right: "" });
   });
 });
