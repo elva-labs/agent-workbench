@@ -11,7 +11,7 @@ import { PROJECT, NO_WORKFLOW, WITH_WORKFLOW, installFakeCore } from "./fake";
  */
 
 const STOP_WHEN_DONE =
-  "Once its work is taken up and nothing more is wanted from it, stop it; keep it if you may ask it again soon.";
+  "The workbench puts it away once it has rested five minutes with nothing open; a line you send it after that resumes it.";
 
 const AGENT = "section[data-pane='agent']";
 const MOD = "ControlOrMeta";
@@ -448,7 +448,7 @@ test.describe("the conductor", () => {
     const listed = (await answerTo(page, "c-8"))!.content ?? "";
     expect(listed).toContain('session-2  "Cache flake"  ');
     expect(listed).toContain("not running since the workbench was restarted");
-    expect(listed).toContain("naming session session-2");
+    expect(listed).toContain("a line you send it resumes it");
 
     await push(page, {
       id: "c-9",
@@ -617,6 +617,39 @@ test.describe("what a starter is told", () => {
     expect((await answered(page, "w-5")).content).toBe(
       `Session session-3 stopped working. Its last line: "Done: deps bumped"\n${STOP_WHEN_DONE}`,
     );
+  });
+
+  test("puts a finished session's row away a few minutes after its starter heard, and a line brings it back", async ({
+    page,
+  }) => {
+    await started(page, "s-1", "Fix the cache", "session-2");
+    await page.clock.install();
+    const kid = page.getByTestId("started-session");
+    await expect(kid).toHaveCount(1);
+    // The user looks at the starter, not at the session it started.
+    await rows(page).first().click();
+    await hook(page, { sessionId: "session-2", kind: "prompt" });
+    await hook(page, { sessionId: "session-2", kind: "stop", note: "Done: cache fixed" });
+    await push(page, { id: "w-1", tool: "wait", arguments: { session: "session-2" }, session: "session-1" });
+    expect((await answered(page, "w-1")).content).toContain("stopped working");
+    await page.clock.runFor(4 * 60_000);
+    await expect(kid).toHaveCount(1);
+    await page.clock.runFor(60_000);
+    await expect(kid).toHaveCount(0);
+    await expect(rows(page).first()).toBeVisible();
+
+    await push(page, { id: "l-1", tool: "sessions", session: "session-1" });
+    expect((await answered(page, "l-1")).content).toMatch(
+      /^session-2 .* put away by the workbench once its work was over {2}a line you send it resumes it$/,
+    );
+    await push(page, {
+      id: "t-1",
+      tool: "send",
+      arguments: { session: "session-2", text: "Fix the docs too" },
+      session: "session-1",
+    });
+    expect((await answered(page, "t-1")).content).toContain("Your line resumed it. Resumed session session-2");
+    await expect(kid).toHaveCount(1);
   });
 
   // Recorded: the user closed started rows by hand; the listing still said

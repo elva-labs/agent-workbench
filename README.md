@@ -40,7 +40,8 @@ state at a glance, and projects on other machines over ssh.
   opens one per piece of work, in any open project and on a worktree of its
   own, waits on them and answers for them, and is woken when one of them
   stops while it is idle. The sessions it starts fold away
-  under their projects until one needs you. A workflow, turned on in the
+  under their projects until one needs you, and are put away by the app
+  once their work is over. A workflow, turned on in the
   settings or picked when starting, makes it direct the work rather than do
   it and holds it to steps, models and rounds of review; Direct, one of the
   two a fresh install has, has one step and no review. See
