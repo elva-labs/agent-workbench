@@ -220,8 +220,13 @@
     white-space: pre;
   }
 
-  /* A block of prose wraps at the block's width, at word boundaries; each
+  /* A block of prose wraps at the block's width, which stops at the measure
+     of the prose around it, at word boundaries; each
      line hangs its continuation under its own indent and list marker. */
+  .md :global(.code[data-wrap]) {
+    max-width: var(--conv-measure);
+  }
+
   .md :global(.code[data-wrap] pre) {
     overflow-x: hidden;
     tab-size: 8;

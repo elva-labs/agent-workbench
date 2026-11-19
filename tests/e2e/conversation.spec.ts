@@ -2723,7 +2723,7 @@ test.describe("copying from the conversation", () => {
       page,
       `f.send("${H}", crypto.randomUUID(), "Draft it.");
        f.startTurn("${H}");
-       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify("```\n" + prose + "\n```\n\n```ts\n" + code + "\n```")}, done: true });
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify(long + "\n\n```\n" + prose + "\n```\n\n```ts\n" + code + "\n```")}, done: true });
        f.endTurn("${H}");`,
     );
     const blocks = page.locator("[data-testid='markdown'] div.code");
@@ -2733,6 +2733,15 @@ test.describe("copying from the conversation", () => {
     const overflow = (pre: typeof wrapped) => pre.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(await overflow(wrapped)).toBeLessThanOrEqual(0);
     expect(await overflow(kept)).toBeGreaterThan(0);
+    // The wrapped box ends no further right than a paragraph does, in a
+    // wide pane; the block that keeps its lines takes the pane's width.
+    await page.setViewportSize({ width: 2400, height: 900 });
+    const paragraph = (await page.locator("[data-testid='markdown'] p").first().boundingBox())!;
+    await expect
+      .poll(async () => (await blocks.nth(0).boundingBox())!.x + (await blocks.nth(0).boundingBox())!.width)
+      .toBeLessThanOrEqual(paragraph.x + paragraph.width + 1);
+    await expect.poll(async () => (await blocks.nth(1).boundingBox())!.width).toBeGreaterThan((await blocks.nth(0).boundingBox())!.width);
+    await page.setViewportSize({ width: 1440, height: 900 });
     // A list item's continuation lines start under its words.
     const item = blocks.nth(0).locator(".line", { hasText: "- first" });
     expect((await item.boundingBox())!.height).toBeGreaterThan(40);
