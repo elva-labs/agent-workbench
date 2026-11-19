@@ -407,13 +407,28 @@ out.
 ## When it is idle
 
 A session that started others may hand its turn back while they still
-work. When one of them then stops working, asks for permission or ends, and
-the starter is idle, the workbench wakes it: it sends the starter what a
-wait would have answered, a line for each session in the same words, then
-the ones still at work by their ids, and the starter goes on as it would
-after a wait. Sessions that come to rest within three seconds of the first
-go in the same message. A starter under a workflow and one under none are
-woken alike, and there is no setting for it.
+work. When one of them then stops working or ends, and the starter is
+idle, the workbench wakes it: it sends the starter what a wait would have
+answered, a line for each session in the same words, then the ones still
+at work by their ids, and the starter goes on as it would after a wait. A
+session that asks for permission wakes no one, since only the user can
+answer it and the row shows the ask at once; it goes along in the next
+wake, wait or message to the starter. A starter under a workflow and one
+under none are woken alike, and there is no setting for it.
+
+Each wake is a turn that reads the starter's whole conversation, so the
+workbench gathers what comes to rest into as few wakes as it can. With
+nothing else the starter started at work, the wake goes three seconds after
+the last session came to rest. While others are still at work, it waits
+thirty seconds after the last for more to come along, and never more than
+two minutes after the first. A starter that has rested long enough for its
+prompt cache to lapse, an hour for Claude Code and ten minutes for Codex,
+would read its conversation again at full price, so its wake waits until
+none of its sessions is at work, or twenty minutes after the first came to
+rest. While a wake is held so, the pointer text on the row's not heard yet
+mark says when it goes. A message from the user carries everything
+unheard at once, and a wait answers as soon as a session it watches comes
+to rest, held by none of this.
 
 Idle means all of these at once. The starter is running, and its agent
 ended its last turn itself, as its hooks say for a session in a terminal

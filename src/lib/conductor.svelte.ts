@@ -142,9 +142,21 @@ export const START_WAIT = 30_000;
     answers sooner than halfway through its seconds. */
 export const WAIT_EARLY = 2000;
 /** How long after a session comes to rest the session that started it is
-    woken, when it is idle: the sessions that come to rest meanwhile go in
-    the same message. */
+    woken, when it is idle and nothing else it started is at work: the
+    sessions that come to rest meanwhile go in the same message. */
 export const WAKE_AFTER = 3000;
+/** While others it started are still at work, how long a starter's wake
+    waits after the last session came to rest, for more to go in the same
+    message, and the most it waits after the first. */
+export const GATHER = 30_000;
+export const GATHER_MOST = 120_000;
+/** How long a starter has rested when its prompt cache has lapsed, by
+    agent, so a wake reads its whole conversation again at full price: a
+    Claude Code conversation's cache lasts an hour, and Codex's is taken to
+    last ten minutes. A cold starter's wake waits until nothing it started
+    is at work, and at most COLD_MOST after the first came to rest. */
+export const COLD_AFTER: Record<AgentId, number> = { "claude-code": 58 * 60_000, codex: 10 * 60_000 };
+export const COLD_MOST = 20 * 60_000;
 /** How long the user's keys in a starter's terminal have been still
     before the workbench types into it. */
 export const WAKE_QUIET = 5000;
@@ -1884,6 +1896,8 @@ type Mark = {
   /** The turn the session is in, as last seen. */
   turn: number;
   seen: boolean;
+  /** When it came to rest as it is now, as the window saw it. */
+  restAt: number | null;
 };
 
 const stops = new Map<string, Mark>();
@@ -1909,8 +1923,9 @@ function observe(session: Session) {
   // stays as last seen until its next run is up.
   if (reopeningRow(key) && stops.has(key)) return;
   const mark =
-    stops.get(key) ?? { worked: false, rest: null, told: null, toldTurn: null, turn: 0, seen: false };
+    stops.get(key) ?? { worked: false, rest: null, told: null, toldTurn: null, turn: 0, seen: false, restAt: null };
   const before = unheardMark(stops.get(key));
+  const was = mark.rest;
   stops.set(key, mark);
   mark.turn = session.turns;
   // A session whose hooks report its turns has worked once it has begun
@@ -1931,6 +1946,7 @@ function observe(session: Session) {
     if (!session.exact || mark.told !== "quiet") mark.told = null;
   } else if (!mark.worked) mark.rest = null;
   else mark.rest = session.turnEnd === "cut" ? "cut" : "quiet";
+  if (mark.rest !== was) mark.restAt = mark.rest === null ? null : Date.now();
   if (mark.rest === null) mark.seen = true;
   if (unheardMark(mark) !== before) moved();
   // Kept with the run as well: a session that ends keeps what was last
@@ -2002,8 +2018,9 @@ export function watchStops(): () => void {
   });
   return () => {
     stop();
-    for (const timer of wakes.values()) clearTimeout(timer);
+    for (const wake of wakes.values()) clearTimeout(wake.timer);
     wakes.clear();
+    restingSince.clear();
     for (const timer of puttingAway.values()) clearTimeout(timer);
     puttingAway.clear();
     leftToSee.clear();
@@ -2139,7 +2156,10 @@ export function unheard(session: Session): Session[] {
  * comes to rest, and its starter is idle, the workbench sends the starter
  * what a wait would have answered, as its own message, and the starter
  * takes the work up from there. The sessions that come to rest within a
- * moment of each other go in one message.
+ * moment of each other go in one message, and while others it started are
+ * still at work the wake waits for them a while, longer for a starter
+ * whose prompt cache has lapsed. A session asking for permission is the
+ * user's to answer: it goes along in a wake and sets none off.
  *
  * Idle is narrow. The starter is running, ended its last turn itself, as
  * its hooks or its events say, and holds no wait; it is not asking for
@@ -2175,8 +2195,12 @@ export const WAKES_MAX = 5;
     took a completion, and what the wake carried is untold again. */
 export const WAKE_TAKEN = 30_000;
 
-/** The wakes on their way, by the starter's row key. */
-const wakes = new Map<string, ReturnType<typeof setTimeout>>();
+/** The wakes on their way, by the starter's row key, with when each goes,
+    and whether it waits for the user's keys in the starter's terminal to
+    be still. */
+const wakes = new Map<string, { timer: ReturnType<typeof setTimeout>; at: number; keys?: true }>();
+/** Since when each row has not been at work, as the window saw it. */
+const restingSince = new Map<string, number>();
 /** Starters whose wake is being typed or sent. */
 const waking = new Set<string>();
 /** Starters whose next turn is the one their wake began, with what gives
@@ -2210,28 +2234,77 @@ function wakeNews(starter: Session): Session[] {
   });
 }
 
+/** Whether a starter has rested long enough for its prompt cache to have
+    lapsed. */
+function cold(starter: Session, now: number): boolean {
+  return now - (restingSince.get(starter.key) ?? now) >= COLD_AFTER[starter.agent];
+}
+
+/**
+ * When an idle starter is woken, or null when nothing it has to hear wakes
+ * it: a session asking for permission is the user's to answer, so it goes
+ * along in a wake but sets none off. With nothing else it started at
+ * work, or a call answered later to hear, the wake goes a moment after the
+ * last came to rest. While others are at work it waits for them to come
+ * along: a warm starter a while after the last, within a bound after the
+ * first, and a cold one until they are done, within a longer bound, since
+ * each wake of a cold starter reads its whole conversation again. Never
+ * sooner than a moment after the starter came to rest itself.
+ */
+function wakeAt(starter: Session, now: number): number | null {
+  const news = wakeNews(starter).filter((kid) => stops.get(kid.key)?.rest !== "permission");
+  const calls = laterNews(starter.token).calls.length > 0;
+  if (news.length === 0 && !calls) return null;
+  const rests = news.map((kid) => stops.get(kid.key)?.restAt ?? now);
+  const first = rests.length === 0 ? now : Math.min(...rests);
+  const last = rests.length === 0 ? now : Math.max(...rests);
+  const soonest = (restingSince.get(starter.key) ?? now) + WAKE_AFTER;
+  const others = startedBy(starter.token).some(atWork);
+  const at =
+    calls || !others
+      ? last + WAKE_AFTER
+      : cold(starter, now)
+        ? first + COLD_MOST
+        : Math.min(last + GATHER, first + GATHER_MOST);
+  return Math.max(soonest, at);
+}
+
+/** How a starter's wake is held back for others to come along, while it
+    is: for a moment while it is warm, until the rest are done while it is
+    cold. Null when it is not held. */
+export function wakeHeld(session: Session): "gathering" | "cold" | null {
+  void heard.version;
+  const wake = wakes.get(session.key);
+  if (wake === undefined) return null;
+  const now = Date.now();
+  if (wake.at - now <= WAKE_AFTER || !startedBy(session.token).some(atWork)) return null;
+  return cold(session, now) ? "cold" : "gathering";
+}
+
 /** Sets a wake on its way for each starter that is idle with something to
-    hear, and calls back the ones whose starter is no longer so. */
+    hear, for when it goes, and calls back the ones whose starter is no
+    longer so. */
 function planWakes() {
   void heard.version;
-  const due = new Set(
-    sessions.all
-      .filter(
-        (starter) =>
-          idle(starter) &&
-          !spent(starter) &&
-          (wakeNews(starter).length > 0 || laterNews(starter.token).calls.length > 0),
-      )
-      .map((starter) => starter.key),
-  );
-  for (const [key, timer] of wakes)
-    if (!due.has(key)) {
-      clearTimeout(timer);
+  const now = Date.now();
+  for (const row of sessions.all)
+    if (row.working) restingSince.delete(row.key);
+    else if (!restingSince.has(row.key)) restingSince.set(row.key, now);
+  for (const key of restingSince.keys()) if (byKey(key) === null) restingSince.delete(key);
+  const due = new Map<string, number>();
+  for (const starter of sessions.all) {
+    if (!idle(starter) || spent(starter)) continue;
+    const at = wakeAt(starter, now);
+    if (at !== null) due.set(starter.key, at);
+  }
+  for (const [key, wake] of wakes)
+    if (!due.has(key) || (wake.keys !== true && due.get(key) !== wake.at)) {
+      clearTimeout(wake.timer);
       wakes.delete(key);
     }
-  for (const key of due)
+  for (const [key, at] of due)
     if (!wakes.has(key) && !waking.has(key))
-      wakes.set(key, setTimeout(() => void wakeUp(key), WAKE_AFTER));
+      wakes.set(key, { timer: setTimeout(() => void wakeUp(key), Math.max(0, at - now)), at });
 }
 
 /** A wake's time has come: it goes when the starter is still idle, later
@@ -2240,11 +2313,11 @@ async function wakeUp(key: string) {
   wakes.delete(key);
   const starter = byKey(key);
   if (starter === null || !idle(starter) || spent(starter)) return;
+  if (wakeAt(starter, Date.now()) === null) return;
   const news = wakeNews(starter);
-  if (news.length === 0 && laterNews(starter.token).calls.length === 0) return;
   const still = starter.kind === "terminal" ? keysStillIn(key, WAKE_QUIET) : 0;
   if (still > 0) {
-    wakes.set(key, setTimeout(() => void wakeUp(key), still));
+    wakes.set(key, { timer: setTimeout(() => void wakeUp(key), still), at: Date.now() + still, keys: true });
     return;
   }
   waking.add(key);
@@ -2378,11 +2451,13 @@ function forgetWoken() {
   for (const key of Object.keys(conductor.wakesInRow)) if (byKey(key) === null) delete conductor.wakesInRow[key];
 }
 
-/** Whether a wake is on its way to a starter: set to go, or being typed or
-    sent. */
+/** Whether a wake is on its way to a starter: set to go within a moment,
+    or being typed or sent. One held back for others to come along is not
+    yet: the starter may be moved meanwhile, and its next run takes it. */
 export function wakeComing(key: string): boolean {
   void heard.version;
-  return wakes.has(key) || waking.has(key) || wakeTurns.has(key);
+  const wake = wakes.get(key);
+  return (wake !== undefined && wake.at - Date.now() <= WAKE_AFTER) || waking.has(key) || wakeTurns.has(key);
 }
 
 /** Whether the workbench has stopped waking a starter, having woken it as
@@ -4492,8 +4567,9 @@ export function resetConductor() {
   conductor.later = {};
   cut.clear();
   conductor.listening = {};
-  for (const timer of wakes.values()) clearTimeout(timer);
+  for (const wake of wakes.values()) clearTimeout(wake.timer);
   wakes.clear();
+  restingSince.clear();
   waking.clear();
   for (const timer of wakeTurns.values()) if (timer !== null) clearTimeout(timer);
   wakeTurns.clear();

@@ -19,6 +19,11 @@ import {
   runsShell,
   WAIT_EARLY,
   WAKE_AFTER,
+  GATHER,
+  GATHER_MOST,
+  COLD_AFTER,
+  COLD_MOST,
+  wakeHeld,
   WAKE_QUIET,
   WAKE_TAKEN,
   WAKES_MAX,
@@ -2593,11 +2598,95 @@ describe("waking an idle starter", () => {
     exact("sid-2", "permission");
     flushSync();
     expect(two.needs).toBe("permission");
+    await vi.advanceTimersByTimeAsync(GATHER);
     await wakeGoes();
     expect(typedInto("pty-0")).toBe(
       `${REPORTS_HEAD} Session sid-1 stopped working. It has left no line. | Session sid-2 is asking for permission. It has left no line. | Still at work: sid-3. Call wait to hear from them.\r`,
     );
     expect(written.filter(([id, data]) => id === "pty-0" && data === "\r")).toHaveLength(1);
+  });
+
+  it("waits a while for others still at work, within a bound after the first", async () => {
+    const starter = idleStarter();
+    const kids = [1, 2, 3, 4, 5].map((n) => atWork(`pty-${n}`, `sid-${n}`));
+    atWork("pty-6", "sid-6");
+    stops(kids[0]);
+    await vi.advanceTimersByTimeAsync(GATHER - 5000);
+    expect(typedInto("pty-0")).toBe("");
+    expect(wakeHeld(starter)).toBe("gathering");
+    // Each that comes to rest meanwhile moves the wake on, never past the
+    // bound after the first.
+    for (const kid of kids.slice(1, -1)) {
+      stops(kid);
+      await vi.advanceTimersByTimeAsync(GATHER - 5000);
+    }
+    stops(kids.at(-1)!);
+    expect(typedInto("pty-0")).toBe("");
+    await vi.advanceTimersByTimeAsync(GATHER_MOST - (kids.length - 1) * (GATHER - 5000) - 1);
+    expect(typedInto("pty-0")).toBe("");
+    await wakeGoes();
+    expect(typedInto("pty-0").split(" | ")).toHaveLength(6);
+    expect(typedInto("pty-0")).toContain("Session sid-5 stopped working. It has left no line. | Still at work: sid-6.");
+  });
+
+  it("wakes a moment after the last of them comes to rest", async () => {
+    idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER / 2);
+    stops(two);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 stopped working. It has left no line. | Session sid-2 stopped working. It has left no line.\r`,
+    );
+  });
+
+  it("holds a cold starter's wake until the rest are done, or the longer bound", async () => {
+    const starter = idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    atWork("pty-3", "sid-3");
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER_MOST * 2);
+    expect(typedInto("pty-0")).toBe("");
+    expect(wakeHeld(starter)).toBe("cold");
+    stops(two);
+    await vi.advanceTimersByTimeAsync(COLD_MOST - GATHER_MOST * 2 - 1000);
+    expect(typedInto("pty-0")).toBe("");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Still at work: sid-3.");
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
+  it("wakes a cold starter a moment after the last of its sessions is done", async () => {
+    idleStarter();
+    const one = atWork("pty-1", "sid-1");
+    const two = atWork("pty-2", "sid-2");
+    await vi.advanceTimersByTimeAsync(COLD_AFTER["claude-code"]);
+    stops(one);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(typedInto("pty-0")).toBe("");
+    stops(two);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toContain("Session sid-2 stopped working.");
+  });
+
+  it("does not wake a starter for a session asking for permission, which goes along with the next wake", async () => {
+    const starter = idleStarter();
+    const asking = atWork("pty-1", "sid-1");
+    const other = atWork("pty-2", "sid-2");
+    exact("sid-1", "permission");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(COLD_MOST);
+    expect(typedInto("pty-0")).toBe("");
+    expect(unheard(starter)).toEqual([asking]);
+    stops(other);
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 is asking for permission. It has left no line. | Session sid-2 stopped working. It has left no line.\r`,
+    );
   });
 
   it("leaves a starter that is working, waiting or asking alone, and wakes it once its turn ends", async () => {
@@ -2834,6 +2923,7 @@ describe("waking an idle starter", () => {
       row.title = FORGED;
     }
     stops(one);
+    await vi.advanceTimersByTimeAsync(GATHER);
     await wakeGoes();
     const line = typedInto("pty-0");
     expect(line.split(" | ")).toHaveLength(2);
