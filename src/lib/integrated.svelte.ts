@@ -1195,6 +1195,11 @@ const LOOK_EVERY = 5 * 60_000;
     cache, five minutes, less the core's margin on it. */
 const REST_LEAST = 5 * 60_000 - 30_000;
 const looked = new Map<string, number>();
+/** How long the core's answer that a row is warm stands: the core judges
+    a conversation cold this long before its cache lapses at the least. */
+const WARM_STANDS = 30_000;
+/** When each row was last answered warm, or its judging failed. */
+const warmAt = new Map<string, number>();
 
 /** Whether the run has a wake-up of its own pending, which a stop would
     end: one its last turn scheduled, or a timed prompt no deletion
@@ -1267,6 +1272,9 @@ function restingLarge(key: string, now: number): { session: Session; link: Link 
 export async function goOnIfCold(key: string, now = Date.now(), sending = false): Promise<boolean> {
   const found = restingLarge(key, now);
   if (found === null || found.link.restarting) return false;
+  // A warm answer stands for a while, so the message held while it was
+  // given goes at once rather than being judged again.
+  if (now - (warmAt.get(key) ?? -Infinity) < WARM_STANDS) return false;
   // A run that went on and has not been sent its first message is new.
   if (wentOn(key)?.briefing != null) return false;
   const { session, link } = found;
@@ -1286,6 +1294,7 @@ export async function goOnIfCold(key: string, now = Date.now(), sending = false)
   const row = again?.session ?? null;
   if (resume !== null || row === null || link.handle !== handle || row.id !== id) {
     if (resume === null) forgetWent(key);
+    else warmAt.set(key, Date.now());
     link.restarting = false;
     return false;
   }
@@ -1943,5 +1952,7 @@ export function resetIntegrated(time: () => number = Date.now) {
   stopped.clear();
   notes.clear();
   toldBy.clear();
+  looked.clear();
+  warmAt.clear();
   clock = time;
 }

@@ -1245,7 +1245,10 @@ brings it back. It is weighed too for a conversation row still running at
 rest whose context this window saw grow large: when it comes on screen,
 when the window is brought forward or shown again, and when the user
 sends it a message after a rest, which waits until it is decided and then
-goes to the fresh run or the old one. While the core judges, the row
+goes to the fresh run or the old one. The core is asked once for that
+message: an answer that the conversation is warm, or a judging that
+failed, stands for half a minute, within the margin the core leaves before
+a cache lapses. While the core judges, the row
 counts as starting again; a message another session sends it meanwhile
 goes to the run, which is then left as it is, so nothing lands in the
 conversation being left. It is not weighed with anything running in the
