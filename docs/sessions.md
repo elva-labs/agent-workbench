@@ -62,10 +62,6 @@ The `orchestrator` folder an earlier version kept sessions in is listed among
 the projects while it holds past sessions, with no button for a new session
 and Close project alone in its menu; see [orchestrator](orchestrator.md).
 
-Once there are accounts to tell apart, the foot of the pane names the one
-the session on screen runs under, with a button that opens the settings
-beside it. Without accounts there is no foot.
-
 A row's own button takes the place of its time while the pointer is on the
 row, so it never covers a word of the name. On a live row it is ×, which
 stops the session and leaves it under the project's own past; on a past

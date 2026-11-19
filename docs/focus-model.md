@@ -472,7 +472,7 @@ inside. <kbd>↑</kbd> and <kbd>↓</kbd> move the cursor, <kbd>Home</kbd> and
 the cursor only shows while the keyboard is in the pane. A click puts the
 cursor on what was clicked; focusing the pane by key starts it over from the
 session you are in, else your project, or the selected file. Everything in
-the sessions pane but its foot is on that cursor, the order and menu
+the sessions pane is on that cursor, the order and menu
 buttons on its title row, the field that opens go to and the
 new-session button included, the menus' items walked with the arrows while
 one is open. <kbd>Delete</kbd> closes the project or session under the

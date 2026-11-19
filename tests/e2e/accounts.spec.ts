@@ -158,8 +158,6 @@ test.describe("starting a session under an account", () => {
     expect((await spawns(page))[0].agent).toBe("claude-code");
     expect((await spawns(page))[0].configDir).toBe("~/.claude-work");
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
-    // The foot says the same, beside the settings.
-    await expect(page.getByTestId("pane-account")).toHaveText("Work");
 
     // Switched in the account control, for this one session only.
     await page.getByTestId("project-new-session").click();
@@ -170,7 +168,6 @@ test.describe("starting a session under an account", () => {
     await expect.poll(() => spawns(page)).toHaveLength(2);
     expect((await spawns(page))[1].configDir).toBeUndefined();
     await expect(page.getByTestId("account-readout")).toHaveText("account: Default");
-    await expect(page.getByTestId("pane-account")).toHaveText("Default");
     await page.getByTestId("project-new-session").click();
     await expect(
       page.locator('[data-testid="account-option"][data-account="Work"]'),
