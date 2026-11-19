@@ -92,6 +92,10 @@
 
   /** What the session is doing, in the words its row and its dot use. */
   let doing = $derived(session === null ? null : sessionState(session));
+  /** What a screen reader is told as the session starts asking: only the
+      two states that wait on the user, so working and idle flips stay
+      quiet. The words hold while the state does, so nothing is said twice. */
+  let asked = $derived(doing === "asks you" || doing === "waits for permission" ? doing : "");
   let folder = $derived(session === null ? null : projectLabel(session.project));
   /** Where the session works, which is what its branch is read from. */
   let dir = $derived(session === null ? null : (session.worktree ?? session.startIn ?? session.project));
@@ -339,6 +343,7 @@
     <span class="div d1" aria-hidden="true"></span>
     <span class="place" data-testid="session-place">
       <span class="doing" data-testid="state-readout">{doing}</span>
+      <span class="sr" aria-live="polite" data-testid="state-said">{asked}</span>
       <span class="where folder" title={session.project} data-testid="folder-readout"
         ><Icon name="folder" size={12} /><span class="txt">{folder}</span></span
       >
@@ -631,6 +636,16 @@
 
   .doing {
     flex: none;
+  }
+
+  .sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
 
   .where {
