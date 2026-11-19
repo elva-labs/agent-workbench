@@ -436,6 +436,9 @@ test("walks the new shape at once, while its columns wait for frames", async ({ 
     });
   });
   await open(page);
+  // Until the app has drawn its first two frames a change of shape lands at
+  // once, with nothing to wait for; they are drawn before any are held.
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   const frames = (call: "hold" | "release") =>
     page.evaluate((call) => (window as unknown as { __frames: Record<string, () => void> }).__frames[call](), call);
   const column = () => page.locator("section[data-pane='sessions']").evaluate((pane) => pane.getBoundingClientRect().width);
@@ -447,6 +450,7 @@ test("walks the new shape at once, while its columns wait for frames", async ({ 
   await tree(page, "lib.rs").dispatchEvent("click");
   await expect(page.getByTestId("viewer")).toBeVisible();
   expect(await column()).toBe(wide);
+  await expect(page.getByTestId("shell")).toHaveAttribute("data-moving");
   await page.getByTestId("start-other").focus();
   expect(await walk(page, "Shift+Tab", 1)).toEqual(["unfold-sessions"]);
   await frames("release");
