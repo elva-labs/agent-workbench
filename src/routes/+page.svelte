@@ -2,6 +2,7 @@
   import { historyDue, readQuietNext } from "$lib/projects.svelte";
   import { onMount, tick, untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
+  import type { Tween } from "svelte/motion";
   import Splitter from "$lib/components/Splitter.svelte";
   import Junction from "$lib/components/Junction.svelte";
   import SessionsPane from "$lib/panes/SessionsPane.svelte";
@@ -120,6 +121,7 @@
   import { announce, clicked, seen } from "$lib/notify.svelte";
   import { heedAsks, openAsks } from "$lib/askNotices.svelte";
   import { PANE_MOTION, reduced } from "$lib/motion";
+  import { startup } from "$lib/reopen.svelte";
   import {
     activeShell,
     closeAsking as closeShell,
@@ -127,6 +129,7 @@
     cycle as cycleShell,
     ended as shellEnded,
     followOwner as followShells,
+    opensWithShell,
     ownerOnScreen as shellOwner,
     terminals,
   } from "$lib/terminals.svelte";
@@ -136,13 +139,13 @@
     DEFAULT,
     defaultChanges,
     minChanges,
-    COMPACT_EDGE,
     folded,
     MIN,
     MIN_REVIEW,
     agentVisible,
     applyLayout,
     browserFocused,
+    changesColumn,
     changesSpan,
     changesVisible,
     changesWidth,
@@ -158,9 +161,11 @@
     returnFocus,
     resizeEditAgent,
     saveLayout,
+    sessionsDrawnOpen,
     sessionsOpen,
-    sessionsShown,
+    sessionsTrack,
     sessionsVisible,
+    shaping,
     sliding,
     terminalOpen,
     terminalVisible,
@@ -494,6 +499,40 @@
     return settled && moved && !reduced() ? PANE_MOTION : 0;
   }
 
+  /** The latest ask of each column, so a motion still waiting to start is
+      dropped when another ask comes after it. */
+  const asks = new Map<Tween<number>, number>();
+
+  /** Sets a column or the terminal panel on its way. A change of shape
+      mounts and unmounts what the panes hold, the viewer among them, and
+      lays the tree out at its new width, and a panel opened with no shell
+      to list mounts a new one; that is done in the first frame after the
+      ask, and the motion starts once that frame is drawn, so none of its
+      steps are lost to the work. Anything else starts at once. */
+  function ease(
+    tween: Tween<number>,
+    to: number,
+    duration: number,
+    shaped: boolean,
+    waiting: (on: boolean) => void = () => {},
+  ) {
+    const ask = (asks.get(tween) ?? 0) + 1;
+    asks.set(tween, ask);
+    if (duration === 0 || !shaped) {
+      waiting(false);
+      void tween.set(to, { duration, easing: cubicOut });
+      return;
+    }
+    waiting(true);
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (asks.get(tween) !== ask) return;
+        waiting(false);
+        void tween.set(to, { duration, easing: cubicOut });
+      }),
+    );
+  }
+
   /** Whether a change of shape is a flip between agent and editor mode,
       which puts the panes in another order: no column eases into it, and
       the layout lands in one step. */
@@ -512,12 +551,11 @@
     const chosen = layout.sessionsChosen;
     const mode = layout.mode;
     untrack(() => {
-      const moved =
-        chosen !== sessionsWasChosen ||
-        (mode !== sessionsWasMode && !flipped(sessionsWasMode, mode));
+      const shaped = mode !== sessionsWasMode && !flipped(sessionsWasMode, mode);
+      const moved = chosen !== sessionsWasChosen || shaped;
       sessionsWasChosen = chosen;
       sessionsWasMode = mode;
-      void sessionsOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
+      ease(sessionsOpen, shown ? 1 : 0, easing(moved), shaped, (on) => (shaping.sessions = on));
     });
   });
 
@@ -532,7 +570,7 @@
     untrack(() => {
       const moved = mode !== changesWasMode && !flipped(changesWasMode, mode);
       changesWasMode = mode;
-      void changesSpan.set(width, { duration: easing(moved), easing: cubicOut });
+      ease(changesSpan, width, easing(moved), moved);
     });
   });
 
@@ -543,15 +581,6 @@
     editing && editTreeVisible()
       ? `max(${layout.sessions}px, calc(${folded() + layout.editTreeDrawn}px + var(--splitter-w) + var(--splitter-inner-w)))`
       : `${layout.sessions}px`,
-  );
-
-  /** The sessions column's width, folded or open or on its way, the splitter
-      beside it included. In compact mode the pane is not in the layout, and
-      the column is only the edge before the panes. */
-  let sessionsColumn = $derived(
-    compact.on
-      ? `${COMPACT_EDGE[theme.look]}px`
-      : `calc(${folded() + (layout.sessions - folded()) * sessionsOpen.current}px + var(--splitter-w))`,
   );
 
   // Turning compact mode on or off lays the window out again in one step,
@@ -576,7 +605,8 @@
     untrack(() => {
       const moved = shown !== terminalWasShown;
       terminalWasShown = shown;
-      void terminalOpen.set(shown ? 1 : 0, { duration: easing(moved), easing: cubicOut });
+      // A shell that comes with the panel mounts before the panel moves.
+      ease(terminalOpen, shown ? 1 : 0, easing(moved), moved && shown && startup.settled && opensWithShell());
     });
   });
 
@@ -584,7 +614,7 @@
     const cols: string[] = [];
     // The sessions pane and the splitter beside it share one column, folded
     // or open, and move together as it eases between the two.
-    cols.push(sessionsColumn);
+    cols.push(sessionsTrack());
     // Editing: the files pane takes the middle and the agent the right, at
     // a width of its own.
     if (editing) {
@@ -596,9 +626,11 @@
     if (changesVisible()) {
       if (agentVisible()) cols.push("var(--splitter-w)");
       // With the agent hidden the viewer is the only pane, so it takes the room
-      // rather than holding a fixed width against empty space.
+      // rather than holding a fixed width against empty space. On its way the
+      // column steps in whole pixels, which the pane's contents are held
+      // against.
       cols.push(
-        agentVisible() ? `${changesSpan.current}px` : "1fr",
+        agentVisible() ? `${changesColumn()}px` : "1fr",
       );
     }
     return cols.join(" ");
@@ -1008,7 +1040,6 @@
 <div
   class="frame"
   style:--controls-inset="{CONTROLS_INSET}px"
-  style:--sessions-col={sessionsColumn}
   style:--folded="{folded()}px"
 >
   <div class="stack" bind:clientHeight={stack}>
@@ -1025,7 +1056,7 @@
          splitter gives way to a plain edge: there is nothing to drag. -->
     <div
       class="sessions-slot"
-      class:folded={!compact.on && !sessionsShown()}
+      class:folded={!compact.on && !sessionsDrawnOpen()}
       class:peeking={layout.sessionsPeek && !compact.on}
       class:compact={compact.on}
       class:out={compact.on && !layout.sessionsPeek}

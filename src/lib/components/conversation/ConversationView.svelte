@@ -39,7 +39,7 @@
   import Thread from "./Thread.svelte";
   import Plain from "./Plain.svelte";
   import { tick, untrack } from "svelte";
-  import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
+  import { agentHeld, layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
 
   /**
    * What the agent pane draws for an integrated session in place of a
@@ -347,6 +347,7 @@
   class:tight={width > 0 && width <= 420}
   bind:this={view}
   bind:clientWidth={width}
+  style:right={active && agentHeld() !== 0 ? `${-agentHeld()}px` : null}
   data-testid="conversation"
   data-session={session.key}
 >

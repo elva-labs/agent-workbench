@@ -264,3 +264,91 @@ test.describe("the sessions pane peeked over the agent", () => {
     await expect(page.getByTestId("shell")).toHaveAttribute("data-mode", "reviewing");
   });
 });
+
+/**
+ * Every frame from just before `act` until what `expression` reads, worked
+ * out at the start of each frame, has held still for a quarter of a second
+ * after changing.
+ */
+async function framesOf<T>(page: Page, expression: string, act: () => Promise<void>): Promise<T[]> {
+  await page.evaluate((expression) => {
+    const read = new Function(`return (${expression});`) as () => unknown;
+    const recorder = window as unknown as { __frames?: Promise<unknown[]> };
+    recorder.__frames = new Promise((resolve) => {
+      const frames: unknown[] = [];
+      const deadline = performance.now() + 5000;
+      let changedAt = -1;
+      const sample = () => {
+        const now = read();
+        if (frames.length > 0 && JSON.stringify(now) !== JSON.stringify(frames.at(-1))) changedAt = performance.now();
+        frames.push(now);
+        if ((changedAt > 0 && performance.now() - changedAt > 250) || performance.now() > deadline) resolve(frames);
+        else requestAnimationFrame(sample);
+      };
+      sample();
+    });
+  }, expression);
+  await act();
+  return page.evaluate(() => (window as unknown as { __frames: Promise<T[]> }).__frames);
+}
+
+const width = (selector: string) =>
+  `document.querySelector("${selector}")?.getBoundingClientRect().width ?? null`;
+
+test.describe("what is mounted as the panes move", () => {
+  test.beforeEach(async ({ page }) => {
+    await installFakeCore(page);
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+  });
+
+  test("the viewer is mounted at the width it ends at before the changes column widens", async ({ page }) => {
+    const before = await page.locator("section[data-pane='changes']").evaluate((pane) => pane.getBoundingClientRect().width);
+    type Frame = { pane: number; viewer: number | null };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ pane: ${width("section[data-pane='changes']")}, viewer: ${width("[data-testid='viewer']")} })`,
+      () => page.locator("[data-testid='file-tree']").getByText("lib.rs", { exact: true }).click(),
+    );
+    const shown = frames.filter((frame) => frame.viewer !== null);
+    const last = frames.at(-1)!;
+    expect(last.pane).toBeGreaterThan(before + 100);
+    // Drawn whole before the column moves, and never laid out at another width.
+    expect(shown.some((frame) => frame.pane === before)).toBe(true);
+    expect(shown.some((frame) => frame.pane > before && frame.pane < last.pane)).toBe(true);
+    expect(new Set(shown.map((frame) => frame.viewer))).toEqual(new Set([last.viewer]));
+  });
+
+  test("closing the viewer lays the tree out once, at the width it ends at", async ({ page }) => {
+    await page.locator("[data-testid='file-tree']").getByText("lib.rs", { exact: true }).click();
+    await expect(page.getByTestId("viewer")).toBeVisible();
+    await expect(page.locator(SLOT)).toHaveClass(/folded/);
+    await page.waitForTimeout(400);
+    type Frame = { pane: number; tree: number; viewer: boolean };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ pane: ${width("section[data-pane='changes']")}, tree: ${width("[data-testid='file-tree']")}, viewer: document.querySelector("[data-testid='viewer']") !== null })`,
+      () => page.keyboard.press("Escape"),
+    );
+    const after = frames.filter((frame) => !frame.viewer);
+    const last = frames.at(-1)!;
+    expect(after.some((frame) => frame.pane > last.pane)).toBe(true);
+    expect(new Set(after.map((frame) => frame.tree))).toEqual(new Set([last.tree]));
+  });
+
+  test("a panel opened with no shell mounts its shell before it rises", async ({ page }) => {
+    type Frame = { height: number; shell: boolean };
+    const frames = await framesOf<Frame>(
+      page,
+      `({ height: document.querySelector(".terminal-group").getBoundingClientRect().height, shell: document.querySelector(".terminal-group [data-testid='terminal']") !== null })`,
+      () => page.keyboard.press("ControlOrMeta+j"),
+    );
+    const rising = frames.findIndex((frame) => frame.height > 0);
+    expect(rising).toBeGreaterThan(0);
+    // The shell's first frame is drawn, and one more begins, before the
+    // panel moves: set off at once, it would rise in the frame after the
+    // shell came.
+    expect(frames.slice(0, rising).filter((frame) => frame.shell).length).toBeGreaterThanOrEqual(2);
+    expect(frames.slice(rising).every((frame) => frame.shell)).toBe(true);
+  });
+});

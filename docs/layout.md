@@ -376,10 +376,21 @@ toggle rather than one per frame, and does not redraw at every width in
 between. While the column moves, the terminal's grid is either short of its
 pane's new edge or clipped by it.
 
+What the changes pane and a conversation hold is laid out once, at the width
+it ends at, as the motion sets off, and the column moving cuts it off or
+stands short of it in the same way. The file tree's rows and the
+conversation's lines are not laid out again at each width on the way, so the
+motion's frames do not grow with the size of the tree or the length of the
+conversation, and nothing moves when it arrives. Opening and closing the viewer
+mounts and unmounts the viewer first; the columns set off once the frame
+that does it is drawn, so that work never takes the motion's first steps.
+
 The terminal panel eases up and down the same way, and the panes above it
 give up and take back the height as it goes. The panel keeps its own height
 inside and is cut off at the window's foot while it moves, so it slides
-rather than squeezes, and its shells are measured once it arrives. In the
+rather than squeezes, and its shells are measured once it arrives. Opened
+with no shell to list, it mounts the new one first and rises once that frame
+is drawn, as smoothly as when its shells are already there. In the
 sessions pane a row that goes fades where it stands, and the rows below it
 close the gap rather than jump into it; a row that arrives fades in.
 

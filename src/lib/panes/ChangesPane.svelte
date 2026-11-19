@@ -120,6 +120,7 @@
     DEFAULT,
     MIN,
     applyLayout,
+    changesHeld,
     editTreeVisible,
     enterReview,
     focusPane,
@@ -1086,6 +1087,7 @@
     class:treeless={editing && !editTreeVisible()}
     class:full={fullView}
     style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
+    style:width={changesHeld() === 0 ? null : `calc(100% + ${changesHeld()}px)`}
   >
     <!-- The tree's column: the tree, and beneath it what the agent
          presented for the session on screen, a section of its own with a

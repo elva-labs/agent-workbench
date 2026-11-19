@@ -16,8 +16,13 @@ import {
   SPLITTER,
   INNER,
   CONTROLS_STEP,
+  agentHeld,
   agentVisible,
   applyLayout,
+  changesColumn,
+  changesHeld,
+  changesSpan,
+  changesWidth,
   defaultChanges,
   defaultEditAgent,
   minChanges,
@@ -43,8 +48,11 @@ import {
   rightmost,
   saveLayout,
   setProjectSort,
+  sessionsDrawnOpen,
+  sessionsOpen,
   sessionsShown,
   sessionsVisible,
+  shaping,
   terminalVisible,
   togglePane,
   toggleTerminal,
@@ -1239,5 +1247,55 @@ describe("the editing widths read across a restart", () => {
     loadLayout();
     expect(layout.editTreeDrawn).toBe(300);
     expect(layout.editAgentDrawn).toBe(500);
+  });
+});
+
+describe("what the moving panes hold", () => {
+  // The columns as the page sets them: at rest where the layout puts them.
+  async function rest() {
+    await sessionsOpen.set(sessionsVisible() ? 1 : 0, { duration: 0 });
+    await changesSpan.set(changesWidth(), { duration: 0 });
+  }
+
+  beforeEach(async () => {
+    applyLayout(1440 - FRAME_PADDING);
+    await rest();
+  });
+
+  afterEach(async () => {
+    shaping.sessions = false;
+    layout.mode = "working";
+    layout.sessionsForced = false;
+    await rest();
+  });
+
+  it("holds nothing at rest", () => {
+    expect(changesHeld()).toBe(0);
+    expect(agentHeld()).toBe(0);
+  });
+
+  it("lays the changes pane out at the width it ends at from the moment the viewer closes", async () => {
+    enterReview();
+    await rest();
+    const reviewing = changesColumn();
+    exitReview();
+    expect(changesHeld()).toBe(layout.changes - reviewing);
+    expect(changesHeld()).toBeLessThan(0);
+  });
+
+  it("lays the agent out at the width it ends at once the columns set off, and not before", async () => {
+    layout.sessionsChosen = false;
+    expect(agentHeld()).toBe(0);
+    void sessionsOpen.set(0, { duration: 1000 });
+    expect(agentHeld()).toBe(layout.sessions - folded());
+  });
+
+  it("draws the sessions pane as it was while a change of shape waits to move", () => {
+    enterReview();
+    expect(sessionsShown()).toBe(false);
+    shaping.sessions = true;
+    expect(sessionsDrawnOpen()).toBe(true);
+    shaping.sessions = false;
+    expect(sessionsDrawnOpen()).toBe(false);
   });
 });

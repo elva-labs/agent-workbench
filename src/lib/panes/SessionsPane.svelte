@@ -79,7 +79,7 @@
     layout,
     peekSessions,
     peekable,
-    sessionsShown,
+    sessionsDrawnOpen,
     sessionsVisible,
     setProjectSort,
     type PaneId,
@@ -1460,7 +1460,7 @@
       is one button that opens it. Peeked over the agent, it is open. In
       compact mode it is never folded: it is drawn open over the panes, or
       not at all. */
-  let folded = $derived(!compact.on && !sessionsShown());
+  let folded = $derived(!compact.on && !sessionsDrawnOpen());
 
   /** Picking a project brings it forward. In compact mode that is done with
       the pane, which goes back with the keyboard, as picking a session
