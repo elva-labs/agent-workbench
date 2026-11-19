@@ -66,6 +66,22 @@ away at a time.
 BG_DRAG=1 WORKBENCH_DEV_PORT=14537 npx playwright test tests/e2e/background-drag.webkit.spec.ts --project webkit --workers 1
 ```
 
+## Measuring the panes' motions
+
+A second measurement runs only when `PANE_MOTION=1` is set, in WebKit, in the
+same day's workspace with a changes tree of three thousand files: it closes
+and opens the changes pane, opens and closes the viewer, folds and opens the
+sessions pane, opens the terminal panel for the first time and the second,
+and flips to Editor and back. For each it logs every frame from the key or
+click until the panes have stopped: how long after the one before it began,
+how long its work took, how long the page's own frame callbacks and resize
+observers took, and how many frames went by without one. Its comment lists
+the settings it can be run with to take one cost away at a time.
+
+```
+PANE_MOTION=1 WORKBENCH_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
+```
+
 ## Running from a second checkout
 
 The browser tier starts the dev server on port 1420 and, outside CI, reuses
