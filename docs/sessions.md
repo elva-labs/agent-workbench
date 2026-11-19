@@ -141,7 +141,8 @@ Inactive but never moves it. When each project was last used is kept in the
 window's own storage, and a project's record goes when it is closed. The
 choice of order is kept there too, and Inactive is listed in the same order.
 The sessions inside a project are in the order they last changed, the latest
-first.
+first, with one exception: its past sessions come after every session still
+open, however lately they changed.
 
 While the pointer is over the pane, or the keyboard is walking its rows,
 the order holds still: what is under the pointer or the cursor stays where
@@ -244,9 +245,12 @@ from the last quit with nothing running behind it takes one line too, its
 name and its time, the time its transcript was last written, unless it
 came back unread with a line, as [after a restart](#after-a-restart)
 says. Those rows come after the running
-ones, and once a project has more than three of them the first two stand
-and the rest fold into one row that counts them, such as `8 more from this
-week`, which opens in place. No row says which agent it runs.
+ones, and the project's past sessions after them. Once a project has more
+than three rows with nothing running, the first two stand and the rest fold
+into one row that counts them, such as `8 more from this week`. Opened, that
+row stays where it is with the rows it holds under it, and closes them away
+again. Every row's name starts at the same place, past its dot. No row says
+which agent it runs.
 
 A row says what its agent is doing. Codex's turn-start, completion and
 interruption events are read from its session log every half second. A new

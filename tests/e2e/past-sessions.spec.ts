@@ -102,3 +102,91 @@ test("reads an inactive project's history on a slower clock", async ({ page }) =
   await focus();
   await expect.poll(reads).toContain(OLD);
 });
+
+// Under a project come the sessions running, the ones left open at the
+// last quit, and then the past ones, each kind latest first and every name
+// starting at one edge. The tail of the quiet rows waits behind a fold;
+// open, the fold stays where it was with those rows under it, and closes
+// them away again.
+test("lists the past sessions last, behind a fold that opens and closes", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  const HOUR = 60 * 60;
+  const rows: [string, number][] = [
+    ["in-front", 0],
+    ["left-1", 1],
+    ["past-1", 2],
+    ["left-2", 3],
+    ["past-2", 4],
+    ["left-3", 5],
+  ];
+  await installFakeCore(page, {
+    open: [PROJECT],
+    transcripts: rows.map(([id, hours]) => ({ id, modified: now - hours * HOUR, size: 100, title: id })),
+  });
+  await page.addInitScript(
+    ({ project, ids }) => {
+      if (localStorage.getItem("workbench.open") !== null) return;
+      localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ids }));
+      localStorage.setItem(
+        "workbench.open",
+        JSON.stringify({
+          open: ids
+            .filter((id: string) => !id.startsWith("past"))
+            .map((id: string) => ({ project, id, agent: "claude-code", startIn: null, model: null })),
+          active: "in-front",
+        }),
+      );
+    },
+    { project: PROJECT, ids: rows.map(([id]) => id) },
+  );
+  await page.goto("/");
+  await expect(page.locator(AGENT)).toContainText("running");
+
+  const fold = page.getByTestId("quiet-more");
+  await expect(fold).toHaveText("3 more from today");
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("past-session")).toHaveCount(0);
+
+  await fold.click();
+  await expect(fold).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByTestId("past-session")).toHaveCount(2);
+  // Read once the rows have finished coming in, not while they move.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document
+            .getAnimations()
+            .filter((motion) => motion.playState === "running" && motion.effect?.getTiming().iterations !== Infinity)
+            .length,
+      ),
+    )
+    .toBe(0);
+  const drawn = await page.evaluate(() =>
+    [...document.querySelectorAll("[data-row^='session:'], [data-row^='past:'], [data-row^='more:']")].map((row) => {
+      const name = row.querySelector(".label, .fold-text")!;
+      return {
+        name: name.textContent!.trim(),
+        left: name.getBoundingClientRect().left,
+        top: row.getBoundingClientRect().top,
+      };
+    }),
+  );
+  expect(drawn.map((row) => row.name)).toEqual([
+    "in-front",
+    "left-1",
+    "left-2",
+    "3 more from today",
+    "left-3",
+    "past-1",
+    "past-2",
+  ]);
+  for (let at = 1; at < drawn.length; at += 1) expect(drawn[at].top).toBeGreaterThan(drawn[at - 1].top);
+  const names = drawn.filter((row) => !row.name.endsWith("from today"));
+  for (const row of names) expect(row.left).toBeCloseTo(names[0].left, 0);
+
+  await fold.click();
+  await expect(fold).toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("past-session")).toHaveCount(0);
+  await expect(page.getByTestId("session-row")).toHaveCount(3);
+});

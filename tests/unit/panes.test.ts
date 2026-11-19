@@ -1160,7 +1160,8 @@ describe("SessionsPane", () => {
   });
 
   // More than a few rows with nothing running fold their tail into one row
-  // that counts them, on the cursor path like the rest.
+  // that counts them, on the cursor path like the rest. Open, it stays
+  // where it was with the rows it holds under it, and closes them again.
   it("folds the tail of the quiet rows into one row that counts them", async () => {
     workspace.open.push(repo("/repo", "repo"));
     workspace.active = "/repo";
@@ -1176,14 +1177,68 @@ describe("SessionsPane", () => {
     const labels = () => screen.getAllByTestId("session-row").map((row) => row.querySelector(".label")!.textContent);
     expect(labels()).toHaveLength(2);
 
+    const shown = labels();
+
     const nav = screen.getByTestId("sessions-nav");
     await waitFor(() => expect(document.activeElement).toBe(nav));
     await fireEvent.keyDown(nav, { key: "Home" });
     for (let i = 0; i < 7; i += 1) await fireEvent.keyDown(nav, { key: "ArrowDown" });
-    expect(screen.getByTestId("quiet-more")).toHaveClass("cursor");
+    const fold = screen.getByTestId("quiet-more");
+    expect(fold).toHaveClass("cursor");
+    expect(fold).toHaveAttribute("aria-expanded", "false");
     await fireEvent.keyDown(nav, { key: "Enter" });
-    expect(screen.queryByTestId("quiet-more")).toBeNull();
-    expect(labels()).toHaveLength(5);
+    expect(screen.getByTestId("quiet-more")).toBe(fold);
+    expect(fold).toHaveAttribute("aria-expanded", "true");
+    expect(fold).toHaveTextContent("3 more from this week");
+    // The rows it let out stand under it, the ones shown before above it,
+    // and the cursor walks on from it to the first of them.
+    const rows = [...document.querySelectorAll("[data-row^='session:'], [data-row^='more:']")];
+    expect(rows.map((row) => row.getAttribute("data-row")!.split(":")[0])).toEqual([
+      "session",
+      "session",
+      "more",
+      "session",
+      "session",
+      "session",
+    ]);
+    expect(labels().slice(0, 2)).toEqual(shown);
+    expect(new Set(labels())).toEqual(new Set(["t-1", "t-2", "t-3", "t-4", "t-5"]));
+    await fireEvent.keyDown(nav, { key: "ArrowDown" });
+    expect(rows[3]).toHaveClass("cursor");
+
+    await fireEvent.keyDown(nav, { key: "ArrowUp" });
+    await fireEvent.keyDown(nav, { key: "Enter" });
+    expect(fold).toHaveAttribute("aria-expanded", "false");
+    expect(labels()).toEqual(shown);
+  });
+
+  // A past session is over, so it stands after every row left open at
+  // the last quit, however lately it changed, and the fold takes it
+  // before any of those.
+  it("puts the past sessions after the rows left open", async () => {
+    workspace.open.push(repo("/repo", "repo"));
+    workspace.active = "/repo";
+    const hour = 3600;
+    const at = Math.floor(Date.now() / 1000);
+    const transcript = (id: string, hours: number) => ({ id, title: id, modified: at - hours * hour, size: 1 });
+    fake.transcripts = [
+      transcript("left-1", 1),
+      transcript("past-1", 2),
+      transcript("left-2", 3),
+      transcript("past-2", 4),
+      transcript("left-3", 5),
+    ];
+    for (const id of ["left-1", "left-2", "left-3"]) reopened("/repo", id, "claude-code", null, null, null);
+    localStorage.setItem("workbench.mine", JSON.stringify({ "/repo": ["left-1", "left-2", "left-3", "past-1", "past-2"] }));
+    loadRemembered();
+
+    render(SessionsPane);
+    await waitFor(() => expect(screen.getByTestId("quiet-more")).toHaveTextContent("3 more from today"));
+    await fireEvent.click(screen.getByTestId("quiet-more"));
+    const names = [...document.querySelectorAll("[data-row]")]
+      .filter((row) => /^(session|past|more):/.test(row.getAttribute("data-row")!))
+      .map((row) => row.querySelector(".label, .fold-text")!.textContent);
+    expect(names).toEqual(["left-1", "left-2", "3 more from today", "left-3", "past-1", "past-2"]);
   });
 
   // A live row's × sits over its end and stops the session, which leaves
