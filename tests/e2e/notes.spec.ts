@@ -57,7 +57,7 @@ test("a terminal row goes on from its notes in its first prompt, and its menu re
   });
   await page.addInitScript(
     ({ project, briefing }) => {
-      localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ["past-1"] }));
+      localStorage.setItem("chord.mine", JSON.stringify({ [project]: ["past-1"] }));
       (window as unknown as { __goingOn: unknown }).__goingOn = { context: 412_000, idle: 7200, goesOn: true, briefing };
     },
     { project: PROJECT, briefing },

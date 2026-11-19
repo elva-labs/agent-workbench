@@ -3,7 +3,7 @@
  *
  * A project's path says where it is: `ssh://user@host/path` is on that
  * machine, and the core routes everything by it. The dialog has two ways
- * in: a token pasted from `agent-workbench-remote connect` run on the
+ * in: a token pasted from `chord-remote connect` run on the
  * machine, which brings everything the desktop needs, or the name of a
  * host the user's own ssh setup already reaches. Either way the machine's
  * folders are then browsed and one is opened like any other.
@@ -99,7 +99,7 @@ export async function pair() {
     return;
   }
   if (!looksLikeToken(token)) {
-    remote.error = "That is not a token from agent-workbench-remote connect.";
+    remote.error = "That is not a token from chord-remote connect.";
     return;
   }
   remote.busy = true;
@@ -135,7 +135,7 @@ export async function connect() {
     // addresses move. A new token from it brings the new one.
     if (remote.hosts.saved.some((saved) => saved.target === target)) {
       remote.error +=
-        " If the machine's address has changed, run agent-workbench-remote connect there again and paste the new token.";
+        " If the machine's address has changed, run chord-remote connect there again and paste the new token.";
     }
   } finally {
     remote.busy = false;

@@ -4,7 +4,7 @@
   "version": "1.0.0-beta.6",
   "identifier": "com.elva-labs.agent-workbench",
   "build": {
-    "beforeDevCommand": "cargo build --manifest-path src-tauri/Cargo.toml -p workbench-core --bin agent-workbench-remote && npm run dev",
+    "beforeDevCommand": "cargo build --manifest-path src-tauri/Cargo.toml -p chord-core --bin chord-remote && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../build"

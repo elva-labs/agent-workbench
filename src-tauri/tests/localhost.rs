@@ -7,12 +7,12 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use agent_workbench_lib::ssh::Files;
+use chord_core::Connection;
+use chord_lib::ssh::Files;
 use serde_json::Value;
-use workbench_core::Connection;
 
 fn asked() -> bool {
-    std::env::var_os("WORKBENCH_SSH_LOCALHOST").is_some()
+    std::env::var_os("CHORD_SSH_LOCALHOST").is_some()
 }
 
 /// Takes the authorised line the test made out of this user's
@@ -33,12 +33,11 @@ impl Drop for Authorized {
 #[test]
 fn pairs_with_this_machine_by_token_and_runs_the_daemon_there() {
     if !asked() {
-        eprintln!("set WORKBENCH_SSH_LOCALHOST=1 to run this against sshd on localhost");
+        eprintln!("set CHORD_SSH_LOCALHOST=1 to run this against sshd on localhost");
         return;
     }
     let real_home = PathBuf::from(std::env::var("HOME").unwrap());
-    let daemon =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/agent-workbench-remote");
+    let daemon = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/debug/chord-remote");
     assert!(
         daemon.is_file(),
         "build the workspace first: {}",
@@ -49,18 +48,18 @@ fn pairs_with_this_machine_by_token_and_runs_the_daemon_there() {
         mark: daemon.to_string_lossy().to_string(),
     };
 
-    // The machine's side: what `agent-workbench-remote connect` does.
+    // The machine's side: what `chord-remote connect` does.
     let token =
-        workbench_core::pair::connect(&real_home, &daemon, Some("localhost".into()), 22).unwrap();
+        chord_core::pair::connect(&real_home, &daemon, Some("localhost".into()), 22).unwrap();
 
     // The desktop's side, with files of its own.
-    let home = workbench_core::scratch::Scratch::new("localhost-home");
+    let home = chord_core::scratch::Scratch::new("localhost-home");
     let files = Files::new(&home);
     let saved = files.pair(&token).unwrap();
     assert_eq!(saved.host, "localhost");
     let target = saved.target();
 
-    let mut command = agent_workbench_lib::remote::transport_for_test(&target, &files);
+    let mut command = chord_lib::remote::transport_for_test(&target, &files);
     let events = Arc::new(Mutex::new(Vec::<(String, Value)>::new()));
     let connection = Connection::open(
         &mut command,

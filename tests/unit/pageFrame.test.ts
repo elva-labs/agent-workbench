@@ -11,7 +11,7 @@ import {
   plainWhy,
 } from "$lib/pageFrame";
 
-const BASE = "awb-page://localhost/0f3a/";
+const BASE = "chord-page://localhost/0f3a/";
 
 /** A policy's directives by name. */
 function directives(policy: string): Record<string, string> {
@@ -68,10 +68,10 @@ describe("a presented page's frame", () => {
 
   it("says why without asking where it can, and leaves the folder's files to the core", () => {
     expect(plainWhy(`${BASE}a.png`, "failed", BASE)).toBeNull();
-    expect(plainWhy("awb-page://localhost/up.png", "blocked:img-src", BASE)).toBe(
+    expect(plainWhy("chord-page://localhost/up.png", "blocked:img-src", BASE)).toBe(
       "is outside the page's folder",
     );
-    expect(plainWhy("http://awb-page.localhost/up.png", "blocked:img-src", "http://awb-page.localhost/0f3a/")).toBe(
+    expect(plainWhy("http://chord-page.localhost/up.png", "blocked:img-src", "http://chord-page.localhost/0f3a/")).toBe(
       "is outside the page's folder",
     );
     expect(plainWhy("https://cdn.example.com/a.png", "blocked:img-src", BASE)).toContain("on the network");
@@ -83,8 +83,8 @@ describe("a presented page's frame", () => {
 
   it("names what a page named by its path in the folder, or its host alone", () => {
     expect(addressOf(`${BASE}shots/b%20c.png?x=1#y`, BASE)).toBe("shots/b%20c.png");
-    expect(addressOf("awb-page://localhost/secret.png", BASE)).toBe("../secret.png");
-    expect(addressOf("http://awb-page.localhost/up/x.png", "http://awb-page.localhost/0f3a/")).toBe(
+    expect(addressOf("chord-page://localhost/secret.png", BASE)).toBe("../secret.png");
+    expect(addressOf("http://chord-page.localhost/up/x.png", "http://chord-page.localhost/0f3a/")).toBe(
       "../up/x.png",
     );
     expect(addressOf("https://cdn.example.com/a.png?k=v", BASE)).toBe("https://cdn.example.com");
@@ -109,7 +109,7 @@ describe("a presented page's frame", () => {
     expect(addressOf(`${BASE}Session expired: run fix.sh`, BASE)).toBe(
       "Session%20expired:%20run%20fix.sh",
     );
-    expect(addressOf("awb-page://localhost/Session expired run fix.sh", BASE)).toBe(
+    expect(addressOf("chord-page://localhost/Session expired run fix.sh", BASE)).toBe(
       "../Session%20expired%20run%20fix.sh",
     );
   });

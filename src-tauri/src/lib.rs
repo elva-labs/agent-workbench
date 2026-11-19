@@ -26,12 +26,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chord_core::account::Dirs;
+use chord_core::{Core, Output, Sink};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
-use workbench_core::account::Dirs;
-use workbench_core::{Core, Output, Sink};
 
 use remote::{route, with_host, with_host_id, Remotes, Route};
 
@@ -263,7 +263,7 @@ async fn integrated_send(
     id: String,
     message: String,
     text: String,
-    images: Option<Vec<workbench_core::integrated::Image>>,
+    images: Option<Vec<chord_core::integrated::Image>>,
 ) -> Result<Value, String> {
     let images = images.unwrap_or_default();
     let (named, sent, typed) = (message.clone(), images.clone(), text.clone());
@@ -356,7 +356,7 @@ async fn integrated_answer(
     remotes: State<'_, Arc<Remotes>>,
     id: String,
     request: String,
-    choice: workbench_core::integrated::Choice,
+    choice: chord_core::integrated::Choice,
     message: Option<String>,
 ) -> Result<Value, String> {
     let (asked, said) = (request.clone(), message.clone());
@@ -1293,7 +1293,7 @@ async fn set_selection(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
-    selection: Option<workbench_core::selection::Selection>,
+    selection: Option<chord_core::selection::Selection>,
 ) -> Result<Value, String> {
     let sent = selection.clone();
     routed(
@@ -2038,7 +2038,7 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
     let remotes = Arc::clone(&remotes);
     blocking(move || {
         let files = remotes.files()?;
-        let home = workbench_core::api::home_directory().ok_or("no home directory")?;
+        let home = chord_core::api::home_directory().ok_or("no home directory")?;
         let saved: Vec<Value> = files
             .saved()
             .into_iter()
@@ -2054,7 +2054,7 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
     .await
 }
 
-/// Takes in the token `agent-workbench-remote connect` printed on a
+/// Takes in the token `chord-remote connect` printed on a
 /// machine: keeps its key and host key, remembers the machine, and opens
 /// the connection. Gives back the target that names the machine in paths.
 #[tauri::command]
@@ -2119,8 +2119,26 @@ async fn remote_dirs(
     .await
 }
 
+/// Moves an install made under the app's earlier name over before anything
+/// reads its folder. A move that fails leaves the app on the old folder for
+/// this run, and is tried again on the next.
+fn migrate() {
+    let Some(home) = chord_core::api::home_directory() else {
+        return;
+    };
+    if !chord_core::migrate::needed(&home) {
+        return;
+    }
+    let env = &chord_core::env::environment().vars;
+    let daemon = chord_core::hook::daemon_path(&home);
+    if let Err(error) = chord_core::migrate::run(&home, &daemon, env) {
+        eprintln!("moving the earlier install over: {error}");
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    migrate();
     let builder = tauri::Builder::default();
     // The single instance plugin has to be the first one registered. A
     // debug build goes without: it has the installed app's identifier, and

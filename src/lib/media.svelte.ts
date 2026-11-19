@@ -32,7 +32,7 @@ export interface MediaItem {
   at: number;
 }
 
-const KEY = "workbench.media";
+const KEY = "chord.media";
 /** Kept per owner: enough to find a screenshot from earlier, not a store. */
 const KEEP = 50;
 

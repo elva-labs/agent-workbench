@@ -23,7 +23,7 @@
  * The newest few hundred are kept.
  */
 
-const KEY = "workbench.modes";
+const KEY = "chord.modes";
 const MOST = 500;
 /** How a record a terminal run holds is marked where it is stored. */
 const HELD = "terminal";

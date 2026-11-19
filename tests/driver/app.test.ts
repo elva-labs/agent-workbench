@@ -164,7 +164,7 @@ async function sceneReport(driver: WebDriver, selector: string) {
       `at middle ${describe(mid)}`,
       `unfold-sessions ${document.querySelector("[data-testid='unfold-sessions']") !== null}`,
       `expanded ${before} then ${after} after a script click`,
-      `layout ${localStorage.getItem("workbench.layout")}`,
+      `layout ${localStorage.getItem("chord.layout")}`,
       `focus ${describe(document.activeElement)}`,
       `errors ${JSON.stringify((window as unknown as { __errors?: string[] }).__errors ?? "none kept")}`,
     ].join("; ");
@@ -320,9 +320,9 @@ describe("the real app", () => {
               ?.getAttribute("data-session");
             const terminal = (
               window as unknown as {
-                __WORKBENCH_TERMINALS__: Record<string, any>;
+                __CHORD_TERMINALS__: Record<string, any>;
               }
-            ).__WORKBENCH_TERMINALS__[id!];
+            ).__CHORD_TERMINALS__[id!];
             return {
               cols: terminal.cols,
               rows: terminal.rows,
@@ -1322,7 +1322,7 @@ describe("the real app", () => {
     // An account for the project, written into the machine's settings the
     // way an edit by hand would be: the window hears of it through the
     // watcher. Its Codex home is one nothing has made yet.
-    const file = join(home, ".agent-workbench", "settings.json");
+    const file = join(home, ".chord", "settings.json");
     const before = JSON.parse(readFileSync(file, "utf8"));
     const codexHome = join(home, ".codex-work");
     expect(existsSync(codexHome)).toBe(false);

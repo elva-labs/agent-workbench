@@ -169,7 +169,7 @@ describe("the setting", () => {
 
   it("does not take a kept sheet that breaks the rules", () => {
     localStorage.setItem(
-      "workbench.userStyles",
+      "chord.userStyles",
       JSON.stringify({ on: true, css: "@import 'https://x';" }),
     );
     loadUserStyles();

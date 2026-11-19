@@ -1,14 +1,14 @@
 //! Listing past sessions for many projects at once, over a generated
 //! directory: two accounts, each with a projects directory holding fifty
 //! transcripts per project, and a Codex index with fifty threads per project.
-//! Run with `--nocapture` to see the timings. `WORKBENCH_LISTING_BYTES` sets
-//! the size of a transcript, `WORKBENCH_LISTING_PROJECTS` how many projects.
+//! Run with `--nocapture` to see the timings. `CHORD_LISTING_BYTES` sets
+//! the size of a transcript, `CHORD_LISTING_PROJECTS` how many projects.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use workbench_core::scratch::Scratch;
-use workbench_core::{codex, transcripts};
+use chord_core::scratch::Scratch;
+use chord_core::{codex, transcripts};
 
 const ACCOUNTS: usize = 2;
 const PER_PROJECT: usize = 50;
@@ -78,8 +78,8 @@ fn write_codex(home: &Path, projects: usize) {
 
 #[test]
 fn listing_every_open_project() {
-    let projects = env_number("WORKBENCH_LISTING_PROJECTS", 40);
-    let bytes = env_number("WORKBENCH_LISTING_BYTES", 4 * 1024);
+    let projects = env_number("CHORD_LISTING_PROJECTS", 40);
+    let bytes = env_number("CHORD_LISTING_BYTES", 4 * 1024);
     let root = Scratch::new("listing-bench");
     let claude: Vec<PathBuf> = (0..ACCOUNTS)
         .map(|a| root.join(format!("claude-{a}")))

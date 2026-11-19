@@ -47,9 +47,9 @@ async function open(page: Page, used?: Record<string, number>) {
   });
   await page.addInitScript(
     ({ here, other }) => {
-      if (localStorage.getItem("workbench.open") !== null) return;
+      if (localStorage.getItem("chord.open") !== null) return;
       localStorage.setItem(
-        "workbench.open",
+        "chord.open",
         JSON.stringify({
           open: [
             { project: here, id: "on-screen", agent: "claude-code", startIn: null, model: null },

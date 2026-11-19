@@ -1,17 +1,17 @@
 [package]
-name = "workbench-core"
+name = "chord-core"
 version = "1.0.0-beta.6"
 license = "MIT"
 description = "Chord core: ptys, git, watching, transcripts and hooks, with no window attached"
 edition = "2021"
 
 [lib]
-name = "workbench_core"
+name = "chord_core"
 
 # The same core on another machine, spoken to over stdio.
 [[bin]]
-name = "agent-workbench-remote"
-path = "src/bin/agent-workbench-remote.rs"
+name = "chord-remote"
+path = "src/bin/chord-remote.rs"
 
 # Scratch folders for the tests of this crate and of the crates built on it.
 [features]
@@ -36,4 +36,4 @@ url = "2.5.8"
 libc = "0.2"
 
 [dev-dependencies]
-workbench-core = { path = ".", features = ["test-support"] }
+chord-core = { path = ".", features = ["test-support"] }

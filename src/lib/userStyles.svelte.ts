@@ -31,7 +31,7 @@ export const MOST_BYTES = 256 * 1024;
 
 /** The window's copy, for the first frame of a start: the sheet as it was
     last handed over, and whether it was on. */
-const KEY = "workbench.userStyles";
+const KEY = "chord.userStyles";
 
 function remember() {
   try {

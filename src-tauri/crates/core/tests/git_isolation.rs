@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use workbench_core::scratch::Scratch;
+use chord_core::scratch::Scratch;
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
@@ -80,7 +80,7 @@ fn git_variables_naming_another_repository_are_not_followed() {
     assert!(work.join(".git").exists());
 
     // The core's own git calls stay in the scratch repository too.
-    workbench_core::git::worktree_add(&work, "review").ok();
+    chord_core::git::worktree_add(&work, "review").ok();
 
     assert_eq!(fingerprint(&decoy.0), before);
 }

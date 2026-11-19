@@ -887,9 +887,9 @@ describe("history", () => {
   });
 
   it("survives a corrupt record of what is ours", () => {
-    localStorage.setItem("workbench.mine", "{not json");
+    localStorage.setItem("chord.mine", "{not json");
     expect(() => loadRemembered()).not.toThrow();
-    localStorage.setItem("workbench.mine", JSON.stringify({ [A]: ["ok", 7] }));
+    localStorage.setItem("chord.mine", JSON.stringify({ [A]: ["ok", 7] }));
     loadRemembered();
     expect(isMine(A, "ok")).toBe(true);
   });
@@ -1015,7 +1015,7 @@ describe("an agent that mints its own id", () => {
 
 describe("the token a session's tools name it by", () => {
   beforeEach(() => {
-    localStorage.removeItem("workbench.tokens");
+    localStorage.removeItem("chord.tokens");
   });
 
   const codexToo = () =>
@@ -1064,7 +1064,7 @@ describe("the token a session's tools name it by", () => {
     const back = create(A, "old-1");
     expect(back.token).not.toBe("old-1");
     expect(sessions.tokens["old-1"]).toEqual({ token: back.token, project: A });
-    expect(JSON.parse(localStorage.getItem("workbench.tokens")!)["old-1"].token).toBe(back.token);
+    expect(JSON.parse(localStorage.getItem("chord.tokens")!)["old-1"].token).toBe(back.token);
     await launch(back.key, 80, 24, () => {});
     expect(spawned.at(-1)).toMatchObject({ session: "old-1", token: back.token });
     expect(sessions.tokens["old-1"]?.token).toBe(back.token);
@@ -1076,7 +1076,7 @@ describe("the token a session's tools name it by", () => {
   });
 
   it("is never an agent's id, even one kept as a token by mistake", () => {
-    localStorage.setItem("workbench.tokens", JSON.stringify({ "old-2": { token: "old-2", project: A } }));
+    localStorage.setItem("chord.tokens", JSON.stringify({ "old-2": { token: "old-2", project: A } }));
     loadRemembered();
     const back = create(A, "old-2");
     expect(back.token).not.toBe("old-2");
@@ -3108,7 +3108,7 @@ describe("following a workflow", () => {
     expect(spawned.at(-1)).toMatchObject({ afresh: true });
     // The user's word is kept: resumed again, as after the window reloads,
     // it follows none without asking, and is still told afresh.
-    expect(JSON.parse(localStorage.getItem("workbench.workflows")!).old).toEqual({
+    expect(JSON.parse(localStorage.getItem("chord.workflows")!).old).toEqual({
       workflow: null,
       told: "1. Direct the work.",
       project: P,
@@ -3149,8 +3149,8 @@ describe("following a workflow", () => {
     expect(heard.map((tokens) => [...tokens].sort())).toEqual([
       ["gone", "old", "plain", "token-gone", "token-plain"],
     ]);
-    expect(JSON.parse(localStorage.getItem("workbench.workflows")!)).not.toHaveProperty("gone");
-    expect(Object.keys(JSON.parse(localStorage.getItem("workbench.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
+    expect(JSON.parse(localStorage.getItem("chord.workflows")!)).not.toHaveProperty("gone");
+    expect(Object.keys(JSON.parse(localStorage.getItem("chord.tokens")!)).sort()).toEqual(["elsewhere", "here"]);
   });
 
   it("lets go of nothing kept while one source of history cannot be read", async () => {

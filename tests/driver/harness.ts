@@ -41,16 +41,16 @@ export const DAEMON = resolve(
   ROOT,
   "src-tauri/target/debug",
   process.platform === "win32"
-    ? "agent-workbench-remote.exe"
-    : "agent-workbench-remote",
+    ? "chord-remote.exe"
+    : "chord-remote",
 );
 
 const BIN =
-  process.env.WORKBENCH_BIN ??
+  process.env.CHORD_BIN ??
   join(
     ROOT,
     "src-tauri/target/debug",
-    process.platform === "win32" ? "agent-workbench.exe" : "agent-workbench",
+    process.platform === "win32" ? "chord.exe" : "chord",
   );
 const DRIVER_PORT = 4444;
 
@@ -168,13 +168,13 @@ function environment(home: string, bin: string): NodeJS.ProcessEnv {
         ...process.env,
         HOME: home,
         PATH: `${bin};${process.env.PATH ?? ""}`,
-        WORKBENCH_REMOTE_COMMAND: `${DAEMON} serve`,
+        CHORD_REMOTE_COMMAND: `${DAEMON} serve`,
       }
     : {
         ...process.env,
         HOME: home,
         SHELL: join(bin, "login-shell"),
-        WORKBENCH_REMOTE_COMMAND: `${DAEMON} serve`,
+        CHORD_REMOTE_COMMAND: `${DAEMON} serve`,
         // WebKitGTK's compositor has no GPU to talk to under Xvfb.
         WEBKIT_DISABLE_COMPOSITING_MODE: "1",
         WEBKIT_DISABLE_DMABUF_RENDERER: "1",
@@ -326,7 +326,7 @@ export async function endUnder(home: string) {
 
 /** Where the app's core says it is there, under the home it runs with. */
 function heartbeat(home: string): string {
-  return join(home, ".agent-workbench", "answering");
+  return join(home, ".chord", "answering");
 }
 
 /** Waits for the app's heartbeat under `home`. The agent's tools reach the
@@ -590,7 +590,7 @@ async function attach(home: string, bin: string): Promise<App> {
   // its profile goes, and the runner's temp is on another drive.
   const profile = join(
     process.env.LOCALAPPDATA ?? tmpdir(),
-    "agent-workbench-driver",
+    "chord-driver",
     basename(home),
   );
   const switches = `--remote-debugging-port=${debugPort}`;
@@ -747,7 +747,7 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
     try {
       await driver.executeScript((paths: string[]) => {
         localStorage.setItem(
-          "workbench.workspace",
+          "chord.workspace",
           JSON.stringify({
             open: paths,
             active: paths[0] ?? null,
@@ -756,7 +756,7 @@ export async function openProjects(driver: WebDriver, paths: string[]) {
         // The DOM renderer for the terminals: WebKit names every GPU
         // "Apple GPU", and the software one behind a headless X server
         // paints a third WebGL terminal late or never.
-        localStorage.setItem("workbench.renderer", "dom");
+        localStorage.setItem("chord.renderer", "dom");
         // The page being left is marked, and the reload starts after the
         // script has answered. Until the new page commits, the old one
         // still answers the driver with everything it showed, the project
@@ -812,8 +812,8 @@ export async function waitForPaneText(
 export function screenText(driver: WebDriver, key?: string): Promise<string> {
   return driver.executeScript((key: string | undefined) => {
     const registry = (
-      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
-    ).__WORKBENCH_TERMINALS__;
+      window as unknown as { __CHORD_TERMINALS__?: Record<string, any> }
+    ).__CHORD_TERMINALS__;
     if (!registry) return "";
     const term = key ? registry[key] : Object.values(registry).at(-1);
     if (!term) return "";
@@ -843,8 +843,8 @@ export async function waitForText(
 function cursorLine(driver: WebDriver): Promise<string> {
   return driver.executeScript(() => {
     const registry = (
-      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
-    ).__WORKBENCH_TERMINALS__;
+      window as unknown as { __CHORD_TERMINALS__?: Record<string, any> }
+    ).__CHORD_TERMINALS__;
     const term = Object.values(registry ?? {}).at(-1);
     if (!term) return "";
     const active = term.buffer.active;
@@ -866,8 +866,8 @@ function cursorLine(driver: WebDriver): Promise<string> {
 export async function type(driver: WebDriver, text: string) {
   await driver.executeScript(() => {
     const registry = (
-      window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
-    ).__WORKBENCH_TERMINALS__;
+      window as unknown as { __CHORD_TERMINALS__?: Record<string, any> }
+    ).__CHORD_TERMINALS__;
     Object.values(registry ?? {})
       .at(-1)
       ?.focus();

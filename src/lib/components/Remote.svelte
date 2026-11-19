@@ -112,7 +112,7 @@
     <div class="body">
       {#if remote.step === "connect"}
         <p class="note">
-          On the machine, run <code>agent-workbench-remote connect</code> and paste what it
+          On the machine, run <code>chord-remote connect</code> and paste what it
           prints. It brings the key, the address and the user with it.
         </p>
         <form

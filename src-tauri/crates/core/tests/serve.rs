@@ -4,7 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use workbench_core::scratch::Scratch;
+use chord_core::scratch::Scratch;
 
 #[cfg(unix)]
 use serde_json::json;
@@ -15,7 +15,7 @@ use serde_json::Value;
 /// question reads the keys meant for the command. It runs in a home of its
 /// own, so nothing it keeps, its heartbeat among it, lands in the real one.
 fn daemon(home: &Path) -> std::process::Child {
-    Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+    Command::new(env!("CARGO_BIN_EXE_chord-remote"))
         .arg("serve")
         .env("SHELL", "/bin/sh")
         .env("HOME", home)
@@ -28,7 +28,7 @@ fn daemon(home: &Path) -> std::process::Child {
 
 #[test]
 fn prints_its_version() {
-    let output = Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+    let output = Command::new(env!("CARGO_BIN_EXE_chord-remote"))
         .arg("version")
         .output()
         .unwrap();
@@ -104,7 +104,7 @@ fn streams_a_shell_s_output_and_its_end() {
         };
         for output in outputs.drain(..) {
             assert_eq!(output["payload"]["id"], id);
-            let bytes = workbench_core::protocol::output_bytes("pty_output", &output["payload"])
+            let bytes = chord_core::protocol::output_bytes("pty_output", &output["payload"])
                 .unwrap()
                 .1;
             seen.push_str(&String::from_utf8_lossy(&bytes));
@@ -132,18 +132,18 @@ mod client {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    use chord_core::client::CLOSED;
+    use chord_core::Connection;
+    #[cfg(unix)]
+    use chord_core::Output;
     #[cfg(unix)]
     use serde_json::json;
     use serde_json::Value;
-    use workbench_core::client::CLOSED;
-    use workbench_core::Connection;
-    #[cfg(unix)]
-    use workbench_core::Output;
 
     /// The daemon behind a connection, in a home of its own, as above.
     fn connect(home: &Path, events: Arc<Mutex<Vec<(String, Value)>>>) -> Arc<Connection> {
         Connection::open(
-            Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+            Command::new(env!("CARGO_BIN_EXE_chord-remote"))
                 .arg("serve")
                 .env("SHELL", "/bin/sh")
                 .env("HOME", home),
@@ -157,7 +157,7 @@ mod client {
     #[test]
     fn calls_come_back_answered_in_any_order() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let home = chord_core::scratch::Scratch::new("serve-home");
         let connection = connect(&home, events);
         let ping = connection.call("ping", Value::Null).unwrap();
         assert_eq!(ping["version"], env!("CARGO_PKG_VERSION"));
@@ -173,7 +173,7 @@ mod client {
     #[test]
     fn a_remote_shell_s_bytes_reach_the_attached_output_and_its_end_is_an_event() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let home = chord_core::scratch::Scratch::new("serve-home");
         let connection = connect(&home, Arc::clone(&events));
         let id = connection
             .call(
@@ -227,9 +227,9 @@ mod client {
     #[cfg(unix)]
     #[test]
     fn an_integrated_session_runs_through_the_daemon() {
-        let dir = workbench_core::scratch::Scratch::new("serve-integrated");
+        let dir = chord_core::scratch::Scratch::new("serve-integrated");
         let claude = dir.join("claude");
-        workbench_core::executable::write(
+        chord_core::executable::write(
             &claude,
             r#"#!/bin/sh
 for request in initialize get_settings get_usage; do
@@ -256,7 +256,7 @@ while read -r line; do :; done
         let home = dir.join("home");
         std::fs::create_dir_all(&home).unwrap();
         let connection = Connection::open(
-            Command::new(env!("CARGO_BIN_EXE_agent-workbench-remote"))
+            Command::new(env!("CARGO_BIN_EXE_chord-remote"))
                 .arg("serve")
                 .env_remove("SHELL")
                 .env("HOME", &home)
@@ -352,7 +352,7 @@ while read -r line; do :; done
     #[test]
     fn the_far_end_going_away_fails_the_waiting_and_says_so() {
         let events = Arc::new(Mutex::new(Vec::new()));
-        let home = workbench_core::scratch::Scratch::new("serve-home");
+        let home = chord_core::scratch::Scratch::new("serve-home");
         let connection = connect(&home, Arc::clone(&events));
         assert!(connection.call("ping", Value::Null).is_ok());
         connection.close();

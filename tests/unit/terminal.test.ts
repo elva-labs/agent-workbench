@@ -340,11 +340,11 @@ describe("colorReply", () => {
 
 describe("domRendererChosen", () => {
   it("is what the window's storage says, and nothing when it says nothing", () => {
-    localStorage.removeItem("workbench.renderer");
+    localStorage.removeItem("chord.renderer");
     expect(domRendererChosen()).toBe(false);
-    localStorage.setItem("workbench.renderer", "dom");
+    localStorage.setItem("chord.renderer", "dom");
     expect(domRendererChosen()).toBe(true);
-    localStorage.removeItem("workbench.renderer");
+    localStorage.removeItem("chord.renderer");
   });
 });
 

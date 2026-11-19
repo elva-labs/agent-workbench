@@ -198,7 +198,7 @@ export const NEEDS_AGENT_WHILE_REVIEWING =
 /** Content height below which the terminal panel cannot fit under the panes. */
 export const NEEDS_TERMINAL = MIN.panes + SPLITTER + MIN.terminal;
 
-const KEY = "workbench.layout";
+const KEY = "chord.layout";
 
 export const layout = $state({
   sessions: DEFAULT.sessions as number,

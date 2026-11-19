@@ -4,7 +4,7 @@ import { BUILD_AND_REVIEW } from "./fake";
 /**
  * Sessions, driven by a fake core.
  *
- * `window.__WORKBENCH_CORE__` is the seam `src/lib/core.ts` already checks, so
+ * `window.__CHORD_CORE__` is the seam `src/lib/core.ts` already checks, so
  * these tests exercise the real terminals, the real write queue and the real
  * exit policy without emulating Tauri's IPC internals. The Rust side is covered
  * by `cargo test`, and the two meeting is covered by running the app.
@@ -134,8 +134,8 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
         return lines.join("\n").trim();
       };
       const registry = () =>
-        (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-          .__WORKBENCH_TERMINALS__ ?? {};
+        (window as unknown as { __CHORD_TERMINALS__?: Record<string, any> })
+          .__CHORD_TERMINALS__ ?? {};
 
       const fake: Window["__fake"] = {
         writes: [],
@@ -183,25 +183,25 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
 
       if (open.length > 0) {
         localStorage.setItem(
-          "workbench.workspace",
+          "chord.workspace",
           JSON.stringify({ open, active: open[0] }),
         );
       } else {
-        localStorage.removeItem("workbench.workspace");
+        localStorage.removeItem("chord.workspace");
       }
       // The projects on record were in use a moment ago, so none of them
       // starts folded under Inactive unless a test says when it was used.
-      if (localStorage.getItem("workbench.used") === null) {
+      if (localStorage.getItem("chord.used") === null) {
         localStorage.setItem(
-          "workbench.used",
+          "chord.used",
           JSON.stringify(Object.fromEntries(open.map((path) => [path, Date.now()]))),
         );
       }
 
       let ptyCount = 0;
       (
-        window as unknown as { __WORKBENCH_CORE__: unknown }
-      ).__WORKBENCH_CORE__ = {
+        window as unknown as { __CHORD_CORE__: unknown }
+      ).__CHORD_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
           path: agent === "codex" ? fake.codex : fake.binary,
@@ -258,7 +258,7 @@ async function installFakeCore(page: Page, options: FakeOptions = {}) {
           fake.writes.push(data);
           fake.writesTo.push({ ptyId: id, data });
         },
-        orchestratorDir: async () => "/home/ada/.agent-workbench/orchestrator",
+        orchestratorDir: async () => "/home/ada/.chord/orchestrator",
         resize: async (_id: string, cols: number, rows: number) => {
           fake.resizes.push({ cols, rows });
         },
@@ -447,8 +447,8 @@ const writtenTo = (page: Page, ptyId: string) =>
 /** The xterm instance a row draws with, read for the numbers a test checks. */
 const terminalOf = (page: Page, key: string) =>
   page.evaluate((key) => {
-    const terminal = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-      .__WORKBENCH_TERMINALS__?.[key];
+    const terminal = (window as unknown as { __CHORD_TERMINALS__?: Record<string, any> })
+      .__CHORD_TERMINALS__?.[key];
     return { cols: terminal.cols, rows: terminal.rows, size: terminal.options.fontSize };
   }, key);
 const spawns = (page: Page) => page.evaluate(() => window.__fake.spawns);
@@ -588,8 +588,8 @@ test.describe("one project", () => {
     await running(page);
     const cols = await page.evaluate(
       () =>
-        (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-          .__WORKBENCH_TERMINALS__?.["s1"]?.cols,
+        (window as unknown as { __CHORD_TERMINALS__?: Record<string, any> })
+          .__CHORD_TERMINALS__?.["s1"]?.cols,
     );
     const spawned = await spawns(page);
     expect(spawned[0].cols).toBe(cols);
@@ -616,8 +616,8 @@ test.describe("one project", () => {
     // edge: xterm's element carries the 8px inset.
     const cell = await page.evaluate(() => {
       const t = (
-        window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> }
-      ).__WORKBENCH_TERMINALS__?.["s1"];
+        window as unknown as { __CHORD_TERMINALS__?: Record<string, any> }
+      ).__CHORD_TERMINALS__?.["s1"];
       const size = t?._core._renderService.dimensions.css.cell;
       return size ? { w: size.width, h: size.height } : null;
     });
@@ -858,7 +858,7 @@ test.describe("one project", () => {
         const visible = document.querySelector(
           "[data-testid='terminal']:not(.hidden)",
         ) as HTMLElement;
-        const registry = (window as any).__WORKBENCH_TERMINALS__;
+        const registry = (window as any).__CHORD_TERMINALS__;
         return registry[visible.dataset.session!].options.theme.background;
       });
 
@@ -1380,7 +1380,7 @@ test.describe("several projects", () => {
     await page.evaluate(
       ([one, two]) =>
         localStorage.setItem(
-          "workbench.used",
+          "chord.used",
           JSON.stringify({ [one]: Date.now(), [two]: Date.now() - 10 * 24 * 3600 * 1000 }),
         ),
       [ONE, TWO],
@@ -1418,7 +1418,7 @@ test.describe("several projects", () => {
     await page.evaluate(
       ([one, two]) =>
         localStorage.setItem(
-          "workbench.used",
+          "chord.used",
           JSON.stringify({ [one]: Date.now() - 1000, [two]: Date.now() - 60_000 }),
         ),
       [ONE, TWO],
@@ -2239,7 +2239,7 @@ test.describe("the palettes", () => {
     });
 
     const savedSessionsChosen = (page: Page) =>
-      page.evaluate(() => JSON.parse(localStorage.getItem("workbench.layout") ?? "{}").sessionsChosen);
+      page.evaluate(() => JSON.parse(localStorage.getItem("chord.layout") ?? "{}").sessionsChosen);
 
     test("brings a project forward in a window too narrow for the sessions pane, leaving the pane as the user set it and the keyboard on New session", async ({
       page,

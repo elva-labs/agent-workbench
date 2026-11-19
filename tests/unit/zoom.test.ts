@@ -13,7 +13,7 @@ import {
   zoomed,
 } from "$lib/zoom.svelte";
 
-const KEY = "workbench.zoom";
+const KEY = "chord.zoom";
 
 beforeEach(() => {
   resetZoom();

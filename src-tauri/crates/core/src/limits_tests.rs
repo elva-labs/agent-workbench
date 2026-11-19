@@ -364,7 +364,7 @@ fn the_agents_are_read_in_a_folder_of_the_workbenchs_own_kept_to_the_user() {
     let home = Scratch::new("limits-folder");
     let limits = Limits::new(Some(&home));
     let folder = limits.folder().unwrap();
-    assert_eq!(folder, home.join(".agent-workbench").join("limits"));
+    assert_eq!(folder, home.join(".chord").join("limits"));
     assert_eq!(mode(&folder), 0o700);
     // One that is there already is kept to the user again.
     std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o777)).unwrap();
@@ -760,7 +760,7 @@ fn the_figures_that_moved_last_are_shown_whichever_came_first() {
 fn the_last_full_read_of_each_account_is_kept_across_a_restart() {
     let clock = Clock::new();
     let home = Scratch::new("limits-kept");
-    let file = home.join(".agent-workbench").join(LIMITS_FILE);
+    let file = home.join(".chord").join(LIMITS_FILE);
     let reads = AtomicUsize::new(0);
     {
         let limits = limits(&clock, Some(file.clone()));

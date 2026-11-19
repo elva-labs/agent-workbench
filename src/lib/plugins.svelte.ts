@@ -29,7 +29,7 @@ export const plugins = $state({
 /** How often the sources are checked while the app runs. */
 export const CHECK_EVERY = 24 * 60 * 60 * 1000;
 
-const TRUSTED_KEY = "workbench.plugins.trusted";
+const TRUSTED_KEY = "chord.plugins.trusted";
 
 export async function loadPlugins() {
   try {

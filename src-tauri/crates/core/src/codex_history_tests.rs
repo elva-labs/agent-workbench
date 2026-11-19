@@ -123,7 +123,7 @@ fn every_item_comes_back_as_the_event_a_live_session_sends_under_its_id() {
             "startedAtMs": 1_000_400, "completedAtMs": 1_000_450,
         }),
         json!({
-            "type": "mcpToolCall", "id": "mcp", "server": "agent_workbench", "tool": "show",
+            "type": "mcpToolCall", "id": "mcp", "server": "chord", "tool": "show",
             "arguments": { "path": "a.rs" }, "status": "completed", "error": null,
             "result": { "content": [{ "type": "text", "text": "shown" }] },
             "startedAtMs": 1_000_500, "completedAtMs": 1_000_510,
@@ -209,7 +209,7 @@ fn every_item_comes_back_as_the_event_a_live_session_sends_under_its_id() {
         other => panic!("{other:?}"),
     }
     assert!(
-        matches!(events[10], Event::ToolStarted { name, kind: ToolKind::Mcp, .. } if name == "mcp__agent_workbench__show")
+        matches!(events[10], Event::ToolStarted { name, kind: ToolKind::Mcp, .. } if name == "mcp__chord__show")
     );
     assert!(matches!(events[12], Event::ToolFinished { output, .. } if output == "shown"));
     assert!(matches!(

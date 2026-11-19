@@ -392,7 +392,7 @@ test.describe("an integrated orchestrator's thread", () => {
   async function started(page: Page, args: Record<string, unknown>) {
     await agent(
       page,
-      `window.__startCall = f.startTool("int-1", "mcp__agent-workbench__start", ${JSON.stringify({ project: PROJECT, ...args })}, { kind: "mcp" });`,
+      `window.__startCall = f.startTool("int-1", "mcp__chord__start", ${JSON.stringify({ project: PROJECT, ...args })}, { kind: "mcp" });`,
     );
     const content = await call(page, "start", { project: PROJECT, ...args }, ORCHESTRATOR);
     await agent(page, `f.finishTool("int-1", window.__startCall, ${JSON.stringify(content)});`);

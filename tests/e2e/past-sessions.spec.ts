@@ -26,7 +26,7 @@ async function withTwo(page: Page, settings: Record<string, unknown> = {}) {
   await page.addInitScript(
     ({ project }) => {
       localStorage.setItem(
-        "workbench.mine",
+        "chord.mine",
         JSON.stringify({ [project]: ["fresh-1", "stale-1"] }),
       );
     },
@@ -125,10 +125,10 @@ test("lists the past sessions last, behind a fold that opens and closes", async 
   });
   await page.addInitScript(
     ({ project, ids }) => {
-      if (localStorage.getItem("workbench.open") !== null) return;
-      localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ids }));
+      if (localStorage.getItem("chord.open") !== null) return;
+      localStorage.setItem("chord.mine", JSON.stringify({ [project]: ids }));
       localStorage.setItem(
-        "workbench.open",
+        "chord.open",
         JSON.stringify({
           open: ids
             .filter((id: string) => !id.startsWith("past"))

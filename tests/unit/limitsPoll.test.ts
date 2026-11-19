@@ -54,7 +54,7 @@ function install() {
   fresh = {};
   hold = null;
   failing = false;
-  (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+  (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
     accountLimits: async (options: AccountLimitsOptions) => {
       asked.push(options);
       if (hold !== null) await hold;

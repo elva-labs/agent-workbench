@@ -4,7 +4,7 @@ import { installFakeCore } from "./fake";
 /**
  * A project on another machine. The fake core plays two ways in: `lab`,
  * which the user's own ssh setup already reaches, and a token from a
- * machine's `agent-workbench-remote connect`.
+ * machine's `chord-remote connect`.
  */
 
 const SESSIONS = "section[data-pane='sessions']";
@@ -40,7 +40,7 @@ test.describe("a remote project", () => {
       "ada@lab.example",
     );
     const stored = await page.evaluate(() =>
-      localStorage.getItem("workbench.workspace"),
+      localStorage.getItem("chord.workspace"),
     );
     expect(stored).toContain("ssh://ada@lab.example/home/ada/dev/demo");
   });

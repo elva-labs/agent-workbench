@@ -253,7 +253,7 @@ export function softwareGl(renderer: string | null): boolean {
     machine, says nothing about the GPU. Under a headless X server the
     software rasteriser behind it presents a third context late or never,
     so a run that knows it is headless asks for the DOM renderer here. */
-export const RENDERER_KEY = "workbench.renderer";
+export const RENDERER_KEY = "chord.renderer";
 
 export function domRendererChosen(): boolean {
   try {

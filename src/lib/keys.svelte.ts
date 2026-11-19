@@ -187,7 +187,7 @@ export const PRESETS: Record<PresetName, Keymap> = presetsFor(isMac());
 
 export const PRESET_LABELS: Record<PresetName, string> = { default: "Default", vim: "Vim" };
 
-const KEY = "workbench.keys";
+const KEY = "chord.keys";
 
 export const keys = $state({
   /** The preset the table matches, or custom once a chord differs. */

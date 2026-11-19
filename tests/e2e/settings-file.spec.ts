@@ -29,7 +29,7 @@ test("paints the machine's settings, not the window's own copy", async ({
   });
   await page.addInitScript(() => {
     // A window copy that disagrees: the file is what counts.
-    localStorage.setItem("workbench.palette", "rose");
+    localStorage.setItem("chord.palette", "rose");
   });
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
@@ -51,10 +51,10 @@ test("hands the window's own copy over once, on a machine with no file", async (
   await page.addInitScript(() => {
     if (sessionStorage.getItem("seeded") !== null) return;
     sessionStorage.setItem("seeded", "1");
-    localStorage.setItem("workbench.palette", "indigo");
-    localStorage.setItem("workbench.mono", "jetbrains");
+    localStorage.setItem("chord.palette", "indigo");
+    localStorage.setItem("chord.mono", "jetbrains");
     localStorage.setItem(
-      "workbench.hooks",
+      "chord.hooks",
       JSON.stringify({ everywhere: false, overrides: { "/x": true } }),
     );
   });

@@ -161,12 +161,12 @@ test("changes the terminal font, which the open terminals take at once, and keep
       const registry =
         (
           window as unknown as {
-            __WORKBENCH_TERMINALS__?: Record<
+            __CHORD_TERMINALS__?: Record<
               string,
               { options: { fontFamily?: string } }
             >;
           }
-        ).__WORKBENCH_TERMINALS__ ?? {};
+        ).__CHORD_TERMINALS__ ?? {};
       return Object.values(registry)[0]?.options.fontFamily ?? null;
     });
   // A session, so there is a terminal to change under us.
@@ -281,10 +281,10 @@ test.describe("the hooks notice", () => {
       if (sessionStorage.getItem("notice-test") !== null) return;
       sessionStorage.setItem("notice-test", "1");
       const off = { everywhere: false, overrides: {} };
-      localStorage.setItem("workbench.hooks", JSON.stringify(off));
+      localStorage.setItem("chord.hooks", JSON.stringify(off));
       const settings = JSON.parse(localStorage.getItem(file) ?? "{}");
       localStorage.setItem(file, JSON.stringify({ ...settings, hooks: off }));
-      localStorage.removeItem("workbench.notices");
+      localStorage.removeItem("chord.notices");
     }, SETTINGS_FILE);
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
@@ -335,9 +335,9 @@ test.describe("the hooks notice", () => {
     // Nothing on the machine: no workspace, no hooks answer, no settings
     // file.
     await page.addInitScript((file) => {
-      localStorage.removeItem("workbench.workspace");
-      localStorage.removeItem("workbench.hooks");
-      localStorage.removeItem("workbench.notices");
+      localStorage.removeItem("chord.workspace");
+      localStorage.removeItem("chord.hooks");
+      localStorage.removeItem("chord.notices");
       localStorage.removeItem(file);
     }, SETTINGS_FILE);
     await page.reload();

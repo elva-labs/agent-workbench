@@ -293,7 +293,7 @@ test.describe("the window", () => {
     await page.keyboard.press("Meta+j");
     await expect(page.locator(TERMINAL)).toBeHidden();
     await page.evaluate(() =>
-      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+      (window as unknown as { __CHORD_CORE__: { windowControl: (a: string) => Promise<void> } }).__CHORD_CORE__.windowControl("close"),
     );
     await expect(ask).toContainText("busy shell");
     await page.getByTestId("close-window-confirm").click();
@@ -321,7 +321,7 @@ test.describe("the window", () => {
     await open(page, MAC);
     await startSession(page);
     await page.evaluate(() =>
-      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+      (window as unknown as { __CHORD_CORE__: { windowControl: (a: string) => Promise<void> } }).__CHORD_CORE__.windowControl("close"),
     );
     await expect(page.getByTestId("close-window")).toContainText("Close the window with 1 session running?");
     await page.keyboard.press("Escape");

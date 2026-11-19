@@ -182,7 +182,7 @@ describe("a session's kind", () => {
     const stop = reopen();
     flushSync();
     stop();
-    const record = JSON.parse(localStorage.getItem("workbench.open")!);
+    const record = JSON.parse(localStorage.getItem("chord.open")!);
     expect(record.open.map((entry: { kind: string }) => entry.kind)).toEqual([
       "integrated",
       "terminal",

@@ -7,7 +7,7 @@
 
 import { hook, loadHooks } from "$lib/hook.svelte";
 
-const KEY = "workbench.notices";
+const KEY = "chord.notices";
 
 export const notices = $state({
   /** The hooks notice was dismissed, or retired by hooks being turned on. */

@@ -17,9 +17,9 @@ import { hostOf } from "$lib/remote.svelte";
  * machine; the window keeps a copy, read before the core answers.
  */
 
-const KEY = "workbench.hooks";
+const KEY = "chord.hooks";
 /** Present once anything has been saved: the mark of a setup from before. */
-const WORKSPACE_KEY = "workbench.workspace";
+const WORKSPACE_KEY = "chord.workspace";
 
 export const hook = $state({
   /** The answer for every project without a word of its own. */

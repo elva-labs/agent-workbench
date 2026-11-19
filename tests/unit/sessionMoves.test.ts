@@ -111,7 +111,7 @@ beforeEach(async () => {
   answers.length = 0;
   fake = fakeIntegrated();
   const presses = new Map<string, number>();
-  (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+  (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
     integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) => fake.start(options),
     integratedSend: async (id: string, message: string, text: string) => fake.send(id, message, text),
     integratedStop: async (id: string) => fake.stop(id),
@@ -154,7 +154,7 @@ afterEach(() => {
   unwatch();
   stopListening();
   vi.useRealTimers();
-  delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+  delete (window as unknown as { __CHORD_CORE__?: unknown }).__CHORD_CORE__;
 });
 
 describe("switching how an agent's sessions run", () => {
@@ -256,7 +256,7 @@ describe("switching how an agent's sessions run", () => {
   });
 
   it("leaves a conversation held at a point it went back to, until a message is sent from there, and says so", async () => {
-    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     const asked: unknown[] = [];
     let held = true;
     seam.integratedHeld = async (options: unknown) => {
@@ -524,7 +524,7 @@ describe("switching how an agent's sessions run", () => {
   it("keeps a session's own way across a quit, and turns the rest to the setting", async () => {
     workspace.open.push({ path: PROJECT, name: "demo", repository: PROJECT, isGit: true });
     localStorage.setItem(
-      "workbench.open",
+      "chord.open",
       JSON.stringify({
         open: [
           { project: PROJECT, id: "conversation-1", agent: "claude-code", startIn: null, model: null, kind: "integrated", own: true },
@@ -539,7 +539,7 @@ describe("switching how an agent's sessions run", () => {
     const [own, follows] = ["conversation-1", "conversation-2"].map((id) => sessions.all.find((one) => one.id === id)!);
     expect(own).toMatchObject({ kind: "integrated", ownWay: true, status: "dormant" });
     expect(follows).toMatchObject({ kind: "terminal", ownWay: false, status: "dormant" });
-    const kept = JSON.parse(localStorage.getItem("workbench.open")!) as { open: { id: string; own?: boolean }[] };
+    const kept = JSON.parse(localStorage.getItem("chord.open")!) as { open: { id: string; own?: boolean }[] };
     expect(kept.open.map((entry) => [entry.id, entry.own])).toEqual([
       ["conversation-1", true],
       ["conversation-2", undefined],
@@ -557,7 +557,7 @@ describe("switching how an agent's sessions run", () => {
     setKind("claude-code", "terminal");
     flushSync();
     // At work, so not moved: on record as due to.
-    const kept = JSON.parse(localStorage.getItem("workbench.open")!) as { open: { id: string; kind: string; moves?: string }[] };
+    const kept = JSON.parse(localStorage.getItem("chord.open")!) as { open: { id: string; kind: string; moves?: string }[] };
     expect(kept.open).toMatchObject([{ id: row.id, kind: "integrated", moves: "terminal" }]);
     stop();
 

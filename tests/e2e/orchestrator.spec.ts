@@ -297,7 +297,7 @@ test.describe("the orchestrator", () => {
     // The projects have the hooks, so the user's next message tells the
     // starter as well as its next wait.
     await page.evaluate(() =>
-      localStorage.setItem("workbench.hooks", JSON.stringify({ everywhere: true, overrides: {} })),
+      localStorage.setItem("chord.hooks", JSON.stringify({ everywhere: true, overrides: {} })),
     );
     await page.reload();
     await expect(page.locator(AGENT)).toBeVisible();
@@ -597,8 +597,8 @@ test.describe("the orchestrator folder", () => {
   // a run of this one wrote the record over.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript((dir) => {
-      if (localStorage.getItem("workbench.mine") === null)
-        localStorage.setItem("workbench.mine", JSON.stringify({ [dir]: ["old-plan", "old-docs"] }));
+      if (localStorage.getItem("chord.mine") === null)
+        localStorage.setItem("chord.mine", JSON.stringify({ [dir]: ["old-plan", "old-docs"] }));
     }, ORCHESTRATOR_FOLDER);
   });
 
@@ -725,7 +725,7 @@ test.describe("the orchestrator folder", () => {
     await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
     await expect(page.getByTestId("project-head")).toHaveCount(2);
     await expect
-      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("workbench.workspace")!).open))
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("chord.workspace")!).open))
       .toEqual([PROJECT]);
 
     await push(page, { id: "h-projects", tool: "projects" });
@@ -797,15 +797,15 @@ test.describe("the orchestrator folder", () => {
     test(`comes back with a session left open there at the last quit${closed ? ", closed since" : ""}`, async ({ page }) => {
       await page.addInitScript(
         ({ dir, closed }) => {
-          if (localStorage.getItem("workbench.open") !== null) return;
+          if (localStorage.getItem("chord.open") !== null) return;
           localStorage.setItem(
-            "workbench.open",
+            "chord.open",
             JSON.stringify({
               open: [{ project: dir, id: "old-plan", agent: "claude-code", startIn: null, model: null }],
               active: "old-plan",
             }),
           );
-          if (closed) localStorage.setItem("workbench.orchestratorFolder", JSON.stringify({ closed: true }));
+          if (closed) localStorage.setItem("chord.orchestratorFolder", JSON.stringify({ closed: true }));
         },
         { dir: ORCHESTRATOR_FOLDER, closed },
       );
@@ -818,7 +818,30 @@ test.describe("the orchestrator folder", () => {
       await expect(folder(page).getByTestId("project-new-session")).toHaveCount(0);
     });
   }
+  // The same after an upgrade from a version under the earlier name: the
+  // window's storage is moved to Chord's keys before anything reads it,
+  // and the folder's old path says the new one.
+  test("comes back with a session left open there under the earlier name", async ({ page }) => {
+    await page.addInitScript((dir) => {
+      if (localStorage.getItem("chord.open") !== null) return;
+      localStorage.setItem(
+        "workbench.open",
+        JSON.stringify({
+          open: [{ project: dir, id: "old-plan", agent: "claude-code", startIn: null, model: null }],
+          active: "old-plan",
+        }),
+      );
+    }, ORCHESTRATOR_FOLDER.replace("/.chord/", "/.agent-workbench/"));
+    await installFakeCore(page, { settings: NO_WORKFLOW, orchestratorTranscripts: PAST, used: { [PROJECT]: 0 } });
+    await page.goto("/");
+    await expect(folder(page)).toBeVisible();
+    const section = page.locator("section.proj").filter({ has: folder(page) });
+    await expect(section.getByTestId("session-row")).toHaveCount(1);
+    await expect(section.getByTestId("session-row")).toContainText("was open, starts when selected");
+    expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => key.startsWith("workbench.")))).toEqual([]);
+  });
 });
+
 
 test.describe("a started session in a project of its own", () => {
   const OTHER = "/home/ada/dev/other";
@@ -971,7 +994,7 @@ for (const width of [300, 240, 180]) {
   test(`fits a started row into a pane ${width} pixels wide`, async ({ page }) => {
     const OTHER = "/home/ada/dev/other-project";
     await page.addInitScript((width) => {
-      localStorage.setItem("workbench.layout", JSON.stringify({ sessions: width }));
+      localStorage.setItem("chord.layout", JSON.stringify({ sessions: width }));
     }, width);
     // Rows that move or fade in are measured where they end up.
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -1049,7 +1072,7 @@ for (const width of [300, 240, 180]) {
 for (const width of [300, 240, 180]) {
   test(`lets a starter's count give way first in a pane ${width} pixels wide`, async ({ page }) => {
     await page.addInitScript((width) => {
-      localStorage.setItem("workbench.layout", JSON.stringify({ sessions: width }));
+      localStorage.setItem("chord.layout", JSON.stringify({ sessions: width }));
     }, width);
     await page.emulateMedia({ reducedMotion: "reduce" });
     await installFakeCore(page, { settings: NO_WORKFLOW, open: [PROJECT, LEAD] });

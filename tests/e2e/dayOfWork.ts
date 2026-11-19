@@ -52,7 +52,7 @@ export async function openDayOfWork(
   ];
   await installFakeCore(page, { open: PROJECTS, settings, transcripts, fixture });
   await page.addInitScript(
-    ({ project, ids }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ids })),
+    ({ project, ids }) => localStorage.setItem("chord.mine", JSON.stringify({ [project]: ids })),
     { project: PROJECT, ids: transcripts.map((transcript) => transcript.id) },
   );
   await page.goto("/");
@@ -66,7 +66,7 @@ export async function openDayOfWork(
 async function populate(page: Page, settings: Record<string, unknown>) {
   // Terminals in five of the projects, each full of coloured output.
   const terminals = () =>
-    page.evaluate(() => Object.keys((window as unknown as { __WORKBENCH_TERMINALS__?: object }).__WORKBENCH_TERMINALS__ ?? {}).length);
+    page.evaluate(() => Object.keys((window as unknown as { __CHORD_TERMINALS__?: object }).__CHORD_TERMINALS__ ?? {}).length);
   for (let at = 0; at < TERMINALS; at++) {
     await page.locator(`[data-row="project:${PROJECTS[at + 1]}"]`).getByTestId("project-new-session").click({ timeout: 30_000 });
     await expect.poll(terminals).toBe(at + 1);

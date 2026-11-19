@@ -329,7 +329,7 @@ describe("painting the background the palette keeps", () => {
     setPalette("rose");
     setBackground({ ...LAGOON, strength: 0.60049 });
     expect(theme.backgrounds).toEqual({ rose: { ...LAGOON, strength: 0.6 } });
-    expect(JSON.parse(localStorage.getItem("workbench.backgrounds")!)).toEqual(theme.backgrounds);
+    expect(JSON.parse(localStorage.getItem("chord.backgrounds")!)).toEqual(theme.backgrounds);
     setBackground(null);
     expect(theme.backgrounds).toEqual({});
     expect(document.documentElement.dataset.background).toBeUndefined();
@@ -464,7 +464,7 @@ describe("keeping the cards' share", () => {
     setCards(0.2049);
     expect(theme.cards).toEqual({ teal: 0.2 });
     expect(theme.backgrounds.teal).toEqual(LAGOON);
-    expect(JSON.parse(localStorage.getItem("workbench.cards")!)).toEqual({ teal: 0.2 });
+    expect(JSON.parse(localStorage.getItem("chord.cards")!)).toEqual({ teal: 0.2 });
     expect(themeSettings().cards).toEqual({ teal: 0.2 });
     expect(document.documentElement.dataset.cards).toBe("");
     expect(sheet()).toContain("--tint-card:");

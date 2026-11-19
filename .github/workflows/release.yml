@@ -105,9 +105,9 @@ jobs:
         with:
           workspaces: src-tauri
           key: daemon-${{ matrix.target }}
-      - run: cargo build --release -p workbench-core --bin agent-workbench-remote --target ${{ matrix.target }}
+      - run: cargo build --release -p chord-core --bin chord-remote --target ${{ matrix.target }}
         working-directory: src-tauri
-      - run: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote version
+      - run: src-tauri/target/${{ matrix.target }}/release/chord-remote version
         if: matrix.os != 'macos-latest' || matrix.target == 'aarch64-apple-darwin'
 
       # A release is signed or it is not made: a tag that finds no
@@ -145,13 +145,13 @@ jobs:
           rm "$RUNNER_TEMP/certificate.p12"
           identity="${IDENTITY:-$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')}"
           [[ -n "$identity" ]] || { echo "no Developer ID Application identity in MACOS_CERTIFICATE"; exit 1; }
-          daemon="src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote"
+          daemon="src-tauri/target/${{ matrix.target }}/release/chord-remote"
           codesign --force --options runtime --timestamp --sign "$identity" "$daemon"
           codesign --verify --verbose=2 "$daemon"
       - uses: actions/upload-artifact@v7
         with:
           name: daemon-${{ matrix.name }}
-          path: src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote
+          path: src-tauri/target/${{ matrix.target }}/release/chord-remote
           if-no-files-found: error
           retention-days: 14
       # On the release itself too, named for the machine kind, which is
@@ -161,8 +161,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          daemon="agent-workbench-remote-${{ matrix.name }}"
-          cp "src-tauri/target/${{ matrix.target }}/release/agent-workbench-remote" "$daemon"
+          daemon="chord-remote-${{ matrix.name }}"
+          cp "src-tauri/target/${{ matrix.target }}/release/chord-remote" "$daemon"
           for attempt in 1 2 3 4 5; do
             if gh release upload "${GITHUB_REF_NAME}" "$daemon" --clobber; then
               exit 0
@@ -245,8 +245,8 @@ jobs:
           for dir in daemons/daemon-*; do
             target=${dir#daemons/daemon-}
             mkdir -p "src-tauri/resources/remote/$target"
-            cp "$dir/agent-workbench-remote" "src-tauri/resources/remote/$target/"
-            chmod +x "src-tauri/resources/remote/$target/agent-workbench-remote"
+            cp "$dir/chord-remote" "src-tauri/resources/remote/$target/"
+            chmod +x "src-tauri/resources/remote/$target/chord-remote"
           done
           ls -l src-tauri/resources/remote/*
 
@@ -300,7 +300,7 @@ jobs:
           identity="${IDENTITY:-$(security find-identity -v -p codesigning "$keychain" | grep -o '"Developer ID Application: [^"]*"' | head -1 | tr -d '"')}"
           [[ -n "$identity" ]] || { echo "no Developer ID Application identity in MACOS_CERTIFICATE"; exit 1; }
           echo "MACOS_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
-          for daemon in src-tauri/resources/remote/darwin-*/agent-workbench-remote; do
+          for daemon in src-tauri/resources/remote/darwin-*/chord-remote; do
             codesign --force --options runtime --timestamp --sign "$identity" "$daemon"
             codesign --verify --verbose=2 "$daemon"
           done

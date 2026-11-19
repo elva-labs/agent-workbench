@@ -1,6 +1,6 @@
 //! Chord on another machine.
 //!
-//! `agent-workbench-remote serve` is the core with no window, spoken to over
+//! `chord-remote serve` is the core with no window, spoken to over
 //! stdin and stdout: one JSON object a line, requests in, answers and events
 //! out. The desktop app starts it over SSH and drives it exactly as it
 //! drives its own core; nothing on this side knows it is remote. Each
@@ -10,9 +10,9 @@
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 
+use chord_core::protocol::{dispatch, Message, Request};
+use chord_core::{Core, Output, Sink};
 use serde_json::Value;
-use workbench_core::protocol::{dispatch, Message, Request};
-use workbench_core::{Core, Output, Sink};
 
 /// Everything going out shares one writer and goes out whole: a line at a
 /// time, under a lock, flushed, so two threads never interleave.
@@ -106,20 +106,20 @@ fn connect(args: impl Iterator<Item = String>) {
             }
         }
     }
-    let Some(home) = workbench_core::api::home_directory() else {
+    let Some(home) = chord_core::api::home_directory() else {
         eprintln!("no home directory");
         std::process::exit(1);
     };
-    match workbench_core::pair::connect(&home, &workbench_core::pair::own_path(), host, port) {
+    match chord_core::pair::connect(&home, &chord_core::pair::own_path(), host, port) {
         Ok(token) => {
-            let addresses = workbench_core::pair::Pairing::decode(&token)
+            let addresses = chord_core::pair::Pairing::decode(&token)
                 .map(|pairing| pairing.addresses().join(", "))
                 .unwrap_or_default();
             println!("Paste this into Chord, under Remote:");
             println!();
             println!("{token}");
             println!();
-            println!("It reaches this machine at {addresses}, trying each in turn, on port {port}. It holds a key that can run this daemon here and nothing else. To take it back, remove the agent-workbench line from ~/.ssh/authorized_keys.");
+            println!("It reaches this machine at {addresses}, trying each in turn, on port {port}. It holds a key that can run this daemon here and nothing else. To take it back, remove the chord line from ~/.ssh/authorized_keys.");
         }
         Err(error) => {
             eprintln!("{error}");
@@ -128,13 +128,44 @@ fn connect(args: impl Iterator<Item = String>) {
     }
 }
 
+/// Moves an install made under the app's earlier name over, when there is
+/// one: the daemon's folder, the pairings and the agents' settings. Says so
+/// when asked to, on stdout, which `serve` keeps for the protocol.
+fn migrate(say: bool) {
+    let Some(home) = chord_core::api::home_directory() else {
+        return;
+    };
+    if !chord_core::migrate::needed(&home) {
+        if say {
+            println!("nothing to move");
+        }
+        return;
+    }
+    let env = &chord_core::env::environment().vars;
+    match chord_core::migrate::run(&home, &chord_core::pair::own_path(), env) {
+        Ok(Some(note)) if say => println!(
+            "moved the earlier install over; {} says what changed",
+            note.display()
+        ),
+        Ok(_) => {}
+        Err(error) => eprintln!("{error}"),
+    }
+}
+
 fn main() {
     let mut args = std::env::args().skip(1);
     match args.next().as_deref() {
-        Some("serve") => serve(),
-        Some("connect") => connect(args),
-        Some("mcp") => match workbench_core::api::home_directory() {
-            Some(home) => workbench_core::mcp::serve(&home),
+        Some("serve") => {
+            migrate(false);
+            serve()
+        }
+        Some("connect") => {
+            migrate(true);
+            connect(args)
+        }
+        Some("migrate") => migrate(true),
+        Some("mcp") => match chord_core::api::home_directory() {
+            Some(home) => chord_core::mcp::serve(&home),
             None => {
                 eprintln!("no home directory");
                 std::process::exit(1);
@@ -143,13 +174,13 @@ fn main() {
         // Run by a prompt hook, whose output the agent reads: with no home
         // there is nothing to say, and saying nothing lets the prompt go.
         Some("reports") => {
-            if let Some(home) = workbench_core::api::home_directory() {
-                workbench_core::mcp::prompt_hook(&home);
+            if let Some(home) = chord_core::api::home_directory() {
+                chord_core::mcp::prompt_hook(&home);
             }
         }
         Some("--version" | "version") => println!("{}", env!("CARGO_PKG_VERSION")),
         _ => {
-            eprintln!("usage: agent-workbench-remote serve | connect [--host <address>] [--port <n>] | mcp | reports | version");
+            eprintln!("usage: chord-remote serve | connect [--host <address>] [--port <n>] | migrate | mcp | reports | version");
             std::process::exit(2);
         }
     }

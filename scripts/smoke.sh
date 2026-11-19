@@ -14,7 +14,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 OUT="${1:-smoke.png}"
-BIN="src-tauri/target/debug/agent-workbench"
+BIN="src-tauri/target/debug/chord"
 PIDS=()
 
 cleanup() {

@@ -116,7 +116,7 @@ describe("the answer for every project", () => {
     loadHooks();
     expect(hook.everywhere).toBe(true);
 
-    localStorage.setItem("workbench.workspace", "{}");
+    localStorage.setItem("chord.workspace", "{}");
     loadHooks();
     expect(hook.everywhere).toBe(false);
   });

@@ -39,7 +39,7 @@ pub struct Presented {
 }
 
 pub fn selection_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("selection.json")
+    crate::home::dir(home).join("selection.json")
 }
 
 /// Records the selection, or that there is none.

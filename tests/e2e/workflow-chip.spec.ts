@@ -208,8 +208,8 @@ test("a message sent while the session starts again waits for the new run", asyn
   await open(page);
   // The core takes its time over the next start.
   await page.evaluate(() => {
-    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedStart: (options: unknown) => Promise<unknown> } })
-      .__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: { integratedStart: (options: unknown) => Promise<unknown> } })
+      .__CHORD_CORE__;
     const plain = core.integratedStart;
     const w = window as unknown as { __letStart?: () => void };
     core.integratedStart = (options) =>

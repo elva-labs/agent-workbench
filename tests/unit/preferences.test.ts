@@ -220,8 +220,8 @@ describe("followSettings", () => {
   });
 
   it("hands over the window's own copy once, when the machine has no file", async () => {
-    localStorage.setItem("workbench.palette", "indigo");
-    localStorage.setItem("workbench.look", "terminal");
+    localStorage.setItem("chord.palette", "indigo");
+    localStorage.setItem("chord.look", "terminal");
     loadTheme();
     loadHooks();
     setBindingQuietly();
@@ -238,7 +238,7 @@ describe("followSettings", () => {
   });
 
   it("hands over a copy with a stale value in it and takes what the core kept", async () => {
-    localStorage.setItem("workbench.palette", "indigo");
+    localStorage.setItem("chord.palette", "indigo");
     loadTheme();
     theme.mono = "gone-mono" as typeof theme.mono;
     await followSettings();
@@ -252,7 +252,7 @@ describe("followSettings", () => {
   });
 
   it("hands over hooks off for a setup from before the hooks choice", async () => {
-    localStorage.setItem("workbench.workspace", JSON.stringify({ open: [] }));
+    localStorage.setItem("chord.workspace", JSON.stringify({ open: [] }));
     loadHooks();
     await followSettings();
     expect(state.handOvers[0].hooks).toEqual({ everywhere: false, overrides: {} });
@@ -260,7 +260,7 @@ describe("followSettings", () => {
 
   it("leaves the window on its own copy when there is no core", async () => {
     state.noCore = true;
-    localStorage.setItem("workbench.palette", "mono");
+    localStorage.setItem("chord.palette", "mono");
     loadTheme();
     await followSettings();
     expect(theme.palette).toBe("mono");
@@ -361,7 +361,7 @@ describe("followSettings", () => {
   });
 
   it("keeps what it has when the core could not read the file, and takes the file once it is whole", async () => {
-    localStorage.setItem("workbench.palette", "indigo");
+    localStorage.setItem("chord.palette", "indigo");
     loadTheme();
     state.stored = { ...DEFAULTS, palette: "rose" };
     state.unreadable = true;
@@ -373,7 +373,7 @@ describe("followSettings", () => {
   });
 
   it("does not hand over its copy to a file that could not be read", async () => {
-    localStorage.setItem("workbench.palette", "indigo");
+    localStorage.setItem("chord.palette", "indigo");
     loadTheme();
     state.stored = null;
     state.unreadable = true;
@@ -707,5 +707,5 @@ describe("adopt", () => {
     the settings file would have it in its own storage. */
 function setBindingQuietly() {
   keys.bindings.review = { key: "g", shift: false, alt: false };
-  localStorage.setItem("workbench.keys", JSON.stringify({ bindings: keys.bindings }));
+  localStorage.setItem("chord.keys", JSON.stringify({ bindings: keys.bindings }));
 }

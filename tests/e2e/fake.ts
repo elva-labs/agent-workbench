@@ -84,7 +84,7 @@ export const DIRECT = {
 
 /** The `orchestrator` folder under the workbench's home, where the fake
     reports the past sessions a test gives it. */
-export const ORCHESTRATOR_FOLDER = "/home/ada/.agent-workbench/orchestrator";
+export const ORCHESTRATOR_FOLDER = "/home/ada/.chord/orchestrator";
 
 /** A settings file with no workflows at all, for tests of starting and
     directing sessions as a session with none does. */
@@ -212,18 +212,18 @@ export async function installFakeCore(
 
       if (open.length > 0) {
         localStorage.setItem(
-          "workbench.workspace",
+          "chord.workspace",
           JSON.stringify({ open, active: active ?? open[0] }),
         );
       } else {
-        localStorage.removeItem("workbench.workspace");
+        localStorage.removeItem("chord.workspace");
       }
       // The projects on record were in use a moment ago, so none of them
       // starts folded under Inactive unless a test says when it was used.
-      if (localStorage.getItem("workbench.used") === null) {
+      if (localStorage.getItem("chord.used") === null) {
         const ago = (path: string) => (used === null ? 0 : (used[path] ?? null));
         localStorage.setItem(
-          "workbench.used",
+          "chord.used",
           JSON.stringify(
             Object.fromEntries(
               open
@@ -242,9 +242,9 @@ export async function installFakeCore(
       // before the choice, which is told about hooks once: taken as read
       // here, unless a test or the app has said, so the word does not sit
       // over the agent pane in every test.
-      if (localStorage.getItem("workbench.notices") === null) {
+      if (localStorage.getItem("chord.notices") === null) {
         localStorage.setItem(
-          "workbench.notices",
+          "chord.notices",
           JSON.stringify({ hooks: "dismissed" }),
         );
       }
@@ -646,8 +646,8 @@ export async function installFakeCore(
       };
 
       (
-        window as unknown as { __WORKBENCH_CORE__: unknown }
-      ).__WORKBENCH_CORE__ = {
+        window as unknown as { __CHORD_CORE__: unknown }
+      ).__CHORD_CORE__ = {
         detect: async (agent: string) => ({
           id: agent,
           path: agents.includes(agent) ? `/usr/local/bin/${agent}` : null,
@@ -1241,7 +1241,7 @@ export async function installFakeCore(
         pageFilesBase: async (page: string) => {
           const w = window as unknown as { __drawings?: number };
           w.__drawings = (w.__drawings ?? 0) + 1;
-          return `http://awb-page.localhost/${btoa(page).replace(/[^a-z0-9]/gi, "")}-${w.__drawings}/`;
+          return `http://chord-page.localhost/${btoa(page).replace(/[^a-z0-9]/gi, "")}-${w.__drawings}/`;
         },
         // Why a page may not load a file, from `__pageRefusals` by the path
         // the page gave; any other is there.
@@ -1253,7 +1253,7 @@ export async function installFakeCore(
         },
 
         // Two ways in: `lab`, which the user's own ssh setup reaches, and a
-        // token from a machine's `agent-workbench-remote connect`.
+        // token from a machine's `chord-remote connect`.
         remoteHosts: async () => ({ configured: ["lab", "work"], saved: [] }),
         remoteConnect: async (target: string) => {
           if (!remotes.reachable.has(target)) {

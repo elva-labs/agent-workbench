@@ -7,7 +7,7 @@ import { label, sessions } from "$lib/sessions.svelte";
  * tool.
  */
 
-const KEY = "workbench.senders";
+const KEY = "chord.senders";
 /** How many messages from other sessions are remembered. */
 const KEEP = 1000;
 
@@ -152,7 +152,7 @@ export function resetSenders() {
   loadTimes();
 }
 
-const TIMES_KEY = "workbench.sent-at";
+const TIMES_KEY = "chord.sent-at";
 
 /** When this window sent each message, by its id, kept between runs: a
     message read back from the core after a reload carries no time of its

@@ -19,7 +19,7 @@ import { isLive, sessions, transcriptAt, type Session } from "$lib/sessions.svel
  * What the agents do keeps a project out of Inactive and never moves it.
  */
 
-const USED_KEY = "workbench.used";
+const USED_KEY = "chord.used";
 
 export const projects = $state({
   /** When each project was last brought forward, in milliseconds, by

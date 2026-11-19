@@ -44,7 +44,7 @@ async function toggle(page: Page): Promise<Frame[]> {
         const name = document.querySelector("section[data-pane='sessions'] .project-row .name")!;
         const left = document.querySelector(".shell")!.getBoundingClientRect().left;
         const w = window as unknown as {
-          __WORKBENCH_TERMINALS__?: Record<string, { cols: number }>;
+          __CHORD_TERMINALS__?: Record<string, { cols: number }>;
           __resizes?: unknown[];
         };
         frames.push({
@@ -53,7 +53,7 @@ async function toggle(page: Page): Promise<Frame[]> {
           agentLeft: agent.getBoundingClientRect().left - left,
           nameLeft: name.getBoundingClientRect().left,
           nameTop: name.getBoundingClientRect().top,
-          cols: w.__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+          cols: w.__CHORD_TERMINALS__?.["s1"]?.cols ?? 0,
           resizes: w.__resizes?.length ?? 0,
         });
         const widths = frames.map((f) => f.slotWidth);
@@ -120,8 +120,8 @@ test.describe("the sessions pane's motion", () => {
       .poll(() =>
         page.evaluate(
           () =>
-            (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
-              .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+            (window as unknown as { __CHORD_TERMINALS__?: Record<string, { cols: number }> })
+              .__CHORD_TERMINALS__?.["s1"]?.cols ?? 0,
         ),
       )
       .toBeGreaterThan(0);

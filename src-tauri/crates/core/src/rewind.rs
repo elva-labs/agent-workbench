@@ -56,7 +56,7 @@ impl Held {
     /// without a home.
     pub fn new(home: Option<&Path>) -> Self {
         Self {
-            file: home.map(|home| home.join(".agent-workbench").join(FILE)),
+            file: home.map(|home| crate::home::dir(home).join(FILE)),
             cuts: Mutex::new(None),
         }
     }
@@ -187,7 +187,7 @@ mod tests {
             again.at(&format!("s-{KEEP}"), Some("leaf")).as_deref(),
             Some("at")
         );
-        std::fs::write(home.join(".agent-workbench").join(FILE), "not json").unwrap();
+        std::fs::write(home.join(".chord").join(FILE), "not json").unwrap();
         assert_eq!(Held::new(Some(&home)).at("s-1", Some("leaf")), None);
         assert_eq!(Held::new(None).at("s-1", Some("leaf")), None);
     }

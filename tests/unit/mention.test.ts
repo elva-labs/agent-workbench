@@ -20,7 +20,7 @@ import { mentionedIn, mentionsOf, resetMentioned } from "$lib/mentioned.svelte";
 import type { Core } from "$lib/core";
 
 function setCore(fake: Partial<Core>) {
-  window.__WORKBENCH_CORE__ = fake as Core;
+  window.__CHORD_CORE__ = fake as Core;
 }
 
 describe("an @ being typed", () => {
@@ -248,7 +248,7 @@ describe("a file's size", () => {
 describe("the files for the menu", () => {
   beforeEach(() => reset());
   afterEach(() => {
-    delete window.__WORKBENCH_CORE__;
+    delete window.__CHORD_CORE__;
   });
 
   it("reads what changed and every file, leaving a deleted file out, and answers a query", async () => {
@@ -314,7 +314,7 @@ describe("the worker for a large listing", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     reset();
-    delete window.__WORKBENCH_CORE__;
+    delete window.__CHORD_CORE__;
   });
 
   it("keeps the listing here when the worker fails, and answers from it", async () => {
@@ -351,7 +351,7 @@ describe("the mentions kept with a message", () => {
     mentionedIn("m-2", []);
     expect(mentionsOf("m-1")).toEqual([{ start: 4, end: 13, path: "src/a.ts" }]);
     expect(mentionsOf("m-2")).toEqual([]);
-    expect(JSON.parse(localStorage.getItem("workbench.mentions")!)).toEqual({
+    expect(JSON.parse(localStorage.getItem("chord.mentions")!)).toEqual({
       "m-1": [{ start: 4, end: 13, path: "src/a.ts" }],
     });
   });

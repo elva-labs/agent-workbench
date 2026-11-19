@@ -2,9 +2,9 @@
 //! over a rectangle the frontend measures on the same window as the app's
 //! own page.
 //!
-//! The tabs themselves live in [`workbench_core::browser::Tabs`], kept here
+//! The tabs themselves live in [`chord_core::browser::Tabs`], kept here
 //! behind a mutex; a tab's webview is labelled with its
-//! [`workbench_core::browser::TabId::label`] and built, moved and closed by
+//! [`chord_core::browser::TabId::label`] and built, moved and closed by
 //! the commands below. Every command takes a [`tauri::Window`], never a
 //! [`tauri::WebviewWindow`]: once a window holds a second webview, Tauri no
 //! longer hands it out as the latter.
@@ -13,14 +13,14 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use chord_core::browser::{
+    connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Owner,
+    Snapshot, TabId, Tabs,
+};
 use tauri::webview::{NewWindowResponse, PageLoadEvent, WebviewBuilder};
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Position, Size, State, Url, Webview,
     WebviewUrl, Window, Wry,
-};
-use workbench_core::browser::{
-    connect_failure_message, navigation_target, normalize_url, ConnectFailure, Opener, Owner,
-    Snapshot, TabId, Tabs,
 };
 
 #[cfg(any(target_os = "macos", test))]

@@ -310,7 +310,7 @@ pub struct Answer {
 /// asks the window only while this is fresh, so with no such core here, or
 /// only one that does not answer the hook, the prompt goes on at once.
 pub fn heartbeat_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("answering")
+    crate::home::dir(home).join("answering")
 }
 
 /// How often the heartbeat is written, and how old it may be and still say
@@ -390,12 +390,12 @@ impl Deadlines {
 }
 
 pub fn requests_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("requests.jsonl")
+    crate::home::dir(home).join("requests.jsonl")
 }
 
 /// Where a call's answer is left for the tool server to pick up.
 pub fn answers_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("answers")
+    crate::home::dir(home).join("answers")
 }
 
 pub fn answer_path(home: &Path, id: &str) -> PathBuf {
@@ -829,7 +829,7 @@ mod tests {
         assert!(!answering(&home));
         // Written only where the workbench's directory already is.
         assert!(beat(&home).is_err());
-        std::fs::create_dir_all(home.join(".agent-workbench")).unwrap();
+        std::fs::create_dir_all(home.join(".chord")).unwrap();
         beat(&home).unwrap();
         assert!(answering(&home));
         assert_eq!(

@@ -16,4 +16,4 @@ vite.config.ts.timestamp-*
 /coverage
 
 # The daemon builds the release workflow bundles into the app.
-src-tauri/resources/remote/*/agent-workbench-remote
+src-tauri/resources/remote/*/chord-remote

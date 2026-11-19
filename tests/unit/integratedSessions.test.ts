@@ -82,7 +82,7 @@ let stopListening = () => {};
 /** The fake core behind the seam, its integrated sessions scripted. */
 async function install(options: FakeIntegratedOptions = {}) {
   fake = fakeIntegrated(options);
-  (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+  (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
     integratedStart: async (start: Parameters<FakeIntegrated["start"]>[0]) => fake.start(start),
     integratedTrust: async (trusted: Parameters<FakeIntegrated["trust"]>[0]) => fake.trust(trusted),
     integratedSend: async (id: string, message: string, text: string, images?: never[]) =>
@@ -208,7 +208,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   stopListening();
-  delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+  delete (window as unknown as { __CHORD_CORE__?: unknown }).__CHORD_CORE__;
 });
 
 describe("a row at rest whose conversation went cold and large", () => {
@@ -218,7 +218,7 @@ describe("a row at rest whose conversation went cold and large", () => {
   function judging() {
     let judged: (answer: unknown) => void = () => {};
     asked = 0;
-    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     core.goingOn = () => {
       asked += 1;
       return new Promise((resolve, reject) => (judged = (answer) => (answer instanceof Error ? reject(answer) : resolve(answer))));
@@ -781,7 +781,7 @@ describe("an integrated session behind its row", () => {
 
   it("stops an agent whose row was closed while it came up", async () => {
     // The core's answer to the start is held until the row has gone.
-    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     let answer: (() => void) | null = null;
     core.integratedStart = (options: Parameters<FakeIntegrated["start"]>[0]) =>
       new Promise((resolve) => (answer = () => resolve(fake.start(options))));
@@ -854,7 +854,7 @@ describe("an integrated session behind its row", () => {
 
   it("fails with the core's reason when the start fails otherwise", async () => {
     const session = create(PROJECT, null, "claude-code", null, null, null, null, undefined, "integrated");
-    (window as unknown as { __WORKBENCH_CORE__: { integratedStart: () => Promise<never> } }).__WORKBENCH_CORE__.integratedStart =
+    (window as unknown as { __CHORD_CORE__: { integratedStart: () => Promise<never> } }).__CHORD_CORE__.integratedStart =
       async () => {
         throw new Error("claude was not found on your PATH");
       };
@@ -1130,7 +1130,7 @@ describe("the workflow a session follows, kept for it", () => {
   });
   afterEach(() => {
     resetAgent();
-    localStorage.removeItem("workbench.workflows");
+    localStorage.removeItem("chord.workflows");
   });
 
   it("is the copy its last run started on, so a reload after a resume under an edited workflow follows the edit", async () => {
@@ -1280,8 +1280,8 @@ describe("a session the core still runs after a reload", () => {
     const before = await started();
     resetSessions();
     resetIntegrated();
-    const seam = (window as unknown as { __WORKBENCH_CORE__: { integratedSnapshot: (id: string) => Promise<unknown> } })
-      .__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: { integratedSnapshot: (id: string) => Promise<unknown> } })
+      .__CHORD_CORE__;
     seam.integratedSnapshot = async () => {
       throw "the session's news did not go out in time";
     };
@@ -1307,7 +1307,7 @@ describe("the mode a session starts in", () => {
   const starts = () => fake.calls.filter((call) => call.method === "start");
 
   beforeEach(async () => {
-    localStorage.removeItem("workbench.modes");
+    localStorage.removeItem("chord.modes");
     resetModes();
     stopListening();
     await install({ defaultMode: "auto" });
@@ -1395,7 +1395,7 @@ describe("an interrupt with no turn running", () => {
 
 describe("a session reopened the other way", () => {
   beforeEach(() => {
-    localStorage.removeItem("workbench.modes");
+    localStorage.removeItem("chord.modes");
     resetModes();
     resetShells();
     resetConductor();
@@ -1629,8 +1629,8 @@ describe("a session reopened the other way", () => {
   it("goes on in the mode chosen while it is being reopened, or asked just before and not answered", async () => {
     stopListening();
     await install({ defaultMode: "auto" });
-    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
-      .__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__CHORD_CORE__;
     const stopNow = seam.integratedStop;
     let release = () => {};
     seam.integratedStop = (async (handle: string) => {
@@ -1717,8 +1717,8 @@ describe("a session reopened the other way", () => {
     fake.startTurn(handle);
     fake.emit(handle, { type: "state", state: "working" });
     fake.emit(handle, { type: "text", block: "b-1", parent: null, text: "Halfway through the fix", done: true });
-    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, (...args: never[]) => unknown> })
-      .__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: Record<string, (...args: never[]) => unknown> })
+      .__CHORD_CORE__;
     const stopNow = seam.integratedStop;
     let release = () => {};
     seam.integratedStop = (async (id: string) => {
@@ -1841,16 +1841,16 @@ describe("a new conversation put under a workflow", () => {
   });
   afterEach(() => {
     resetAgent();
-    localStorage.removeItem("workbench.workflows");
-    localStorage.removeItem("workbench.tokens");
+    localStorage.removeItem("chord.workflows");
+    localStorage.removeItem("chord.tokens");
   });
 
   const starts = () => fake.calls.filter((call) => call.method === "start");
 
   /** Holds every start the core is asked for until the test lets it go. */
   function holdStarts() {
-    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedStart: (options: never) => unknown } })
-      .__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: { integratedStart: (options: never) => unknown } })
+      .__CHORD_CORE__;
     const plain = core.integratedStart;
     const waiting: (() => void)[] = [];
     core.integratedStart = (options: never) =>
@@ -2024,8 +2024,8 @@ describe("a new conversation put under a workflow", () => {
       test answers it, with what the core would answer or what it is told
       to answer. */
   function holdConfigures() {
-    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedConfigure: (id: string, change: never) => unknown } })
-      .__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: { integratedConfigure: (id: string, change: never) => unknown } })
+      .__CHORD_CORE__;
     const plain = core.integratedConfigure;
     const waiting: ((answer?: unknown) => void)[] = [];
     core.integratedConfigure = (id: string, change: never) =>
@@ -2126,7 +2126,7 @@ describe("a new conversation put under a workflow", () => {
 
   it("fails on its row with the core's reason when the new run will not start", async () => {
     const { key } = await started();
-    const core = (window as unknown as { __WORKBENCH_CORE__: { integratedStart: () => unknown } }).__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: { integratedStart: () => unknown } }).__CHORD_CORE__;
     core.integratedStart = async () => {
       throw new Error("no tool server to give the orchestrator its start tool");
     };
@@ -2227,7 +2227,7 @@ describe("what a new session starts on from the user's last choices", () => {
 
   it("keeps no model pick the agent did not switch to", async () => {
     const first = await started();
-    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     const configureNow = seam.integratedConfigure;
     // The agent answers, still on the model it ran on.
     seam.integratedConfigure = async () => conversationOf(first.key).settings;

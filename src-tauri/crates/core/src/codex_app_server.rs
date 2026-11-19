@@ -48,7 +48,7 @@ pub static CODEX_APP_SERVER: CodexAppServer = CodexAppServer;
 
 /// The name the workbench gives itself in the handshake. Codex files the
 /// threads it starts under it, as their originator.
-const CLIENT_NAME: &str = "agent-workbench";
+const CLIENT_NAME: &str = "chord";
 
 /// The agent's id, as a start names it, on the limits it reports.
 pub(crate) const AGENT: &str = "codex";

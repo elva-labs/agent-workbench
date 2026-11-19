@@ -98,11 +98,11 @@ describe("the sessions pane's width", () => {
     applyLayout(1440 - FRAME_PADDING);
     expect(layout.sessions).toBe(300);
 
-    localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 232 }));
+    localStorage.setItem("chord.layout", JSON.stringify({ sessions: 232 }));
     loadLayout();
     applyLayout(1440 - FRAME_PADDING);
     expect(layout.sessions).toBe(232);
-    localStorage.removeItem("workbench.layout");
+    localStorage.removeItem("chord.layout");
   });
 });
 
@@ -226,7 +226,7 @@ describe("responsive collapse", () => {
   it("never persists a forced collapse", () => {
     applyLayout(500);
     saveLayout();
-    const stored = JSON.parse(localStorage.getItem("workbench.layout")!);
+    const stored = JSON.parse(localStorage.getItem("chord.layout")!);
     expect(stored.sessionsChosen).toBe(true);
     expect(stored).not.toHaveProperty("sessionsForced");
   });
@@ -356,7 +356,7 @@ describe("review mode", () => {
     applyLayout(1600);
     enterReview();
     expect(
-      JSON.parse(localStorage.getItem("workbench.layout")!),
+      JSON.parse(localStorage.getItem("chord.layout")!),
     ).not.toHaveProperty("mode");
   });
 });
@@ -486,7 +486,7 @@ describe("persistence", () => {
 
   it("remembers how the projects are sorted, and reads only a sort it knows", () => {
     setProjectSort("name");
-    const saved = JSON.parse(localStorage.getItem("workbench.layout")!);
+    const saved = JSON.parse(localStorage.getItem("chord.layout")!);
     expect(saved.projectSort).toBe("name");
     expect(saved).not.toHaveProperty("sessionsView");
 
@@ -494,7 +494,7 @@ describe("persistence", () => {
     loadLayout();
     expect(layout.projectSort).toBe("name");
 
-    localStorage.setItem("workbench.layout", JSON.stringify({ projectSort: "sideways", sessionsView: "status" }));
+    localStorage.setItem("chord.layout", JSON.stringify({ projectSort: "sideways", sessionsView: "status" }));
     reset();
     loadLayout();
     expect(layout.projectSort).toBe("used");
@@ -504,14 +504,14 @@ describe("persistence", () => {
   it("remembers the fold of the sessions the session on screen started, open until folded", () => {
     layout.startedOpen = false;
     saveLayout();
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!).startedOpen).toBe(false);
+    expect(JSON.parse(localStorage.getItem("chord.layout")!).startedOpen).toBe(false);
 
     layout.startedOpen = true;
     loadLayout();
     expect(layout.startedOpen).toBe(false);
 
     // A layout kept by a version that had no such fold reads it open.
-    localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 300 }));
+    localStorage.setItem("chord.layout", JSON.stringify({ sessions: 300 }));
     layout.startedOpen = true;
     loadLayout();
     expect(layout.startedOpen).toBe(true);
@@ -521,7 +521,7 @@ describe("persistence", () => {
     layout.focus = "changes";
     saveLayout();
     expect(
-      JSON.parse(localStorage.getItem("workbench.layout")!),
+      JSON.parse(localStorage.getItem("chord.layout")!),
     ).not.toHaveProperty("focus");
   });
 
@@ -531,14 +531,14 @@ describe("persistence", () => {
   });
 
   it("survives a corrupt entry", () => {
-    localStorage.setItem("workbench.layout", "{not json");
+    localStorage.setItem("chord.layout", "{not json");
     loadLayout();
     expect(layout.sessions).toBe(DEFAULT.sessions);
   });
 
   it("ignores fields of the wrong type", () => {
     localStorage.setItem(
-      "workbench.layout",
+      "chord.layout",
       JSON.stringify({ sessions: "wide", changesChosen: "yes" }),
     );
     loadLayout();
@@ -589,7 +589,7 @@ describe("the tree column", () => {
     enterReview();
     layout.tree = 260;
     saveLayout();
-    expect(JSON.parse(localStorage.getItem("workbench.layout")!).tree).toBe(
+    expect(JSON.parse(localStorage.getItem("chord.layout")!).tree).toBe(
       260,
     );
   });
@@ -989,7 +989,7 @@ describe("editor mode across a restart", () => {
   it("never comes back with a fold the window forced", () => {
     applyLayout(1440);
     setEditing(true);
-    const stored = JSON.parse(localStorage.getItem("workbench.layout")!);
+    const stored = JSON.parse(localStorage.getItem("chord.layout")!);
     expect(stored.sessionsForced).toBeUndefined();
     expect(stored.editTreeForced).toBeUndefined();
     expect(stored.sessionsChosen).toBe(true);
@@ -1109,7 +1109,7 @@ describe("the right pane's default widths", () => {
   });
 
   it("read a layout saved without saying as dragged only where it holds other than the base default", () => {
-    localStorage.setItem("workbench.layout", JSON.stringify({ changes: DEFAULT.changes, editAgent: 380 }));
+    localStorage.setItem("chord.layout", JSON.stringify({ changes: DEFAULT.changes, editAgent: 380 }));
     asPlatform("Linux x86_64", () => {
       loadLayout();
       expect(layout.changes).toBe(DEFAULT.changes + CONTROLS_STEP);
@@ -1242,7 +1242,7 @@ describe("a width the window squeezes while editing", () => {
 describe("the editing widths read across a restart", () => {
   it("are drawn as read until the layout is laid out for the window", () => {
     localStorage.setItem(
-      "workbench.layout",
+      "chord.layout",
       JSON.stringify({ editing: true, editTree: 300, editAgent: 500, editAgentDragged: true }),
     );
     loadLayout();

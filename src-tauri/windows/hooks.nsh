@@ -41,10 +41,18 @@
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL
-  ; An Agent Workbench that is open is asked about first, as an open Chord
-  ; is, so the old uninstaller, run silently, never closes it unasked. The
-  ; two run the same executable.
+  ; An open Agent Workbench, or an open Chord from before its executable
+  ; took the name chord.exe, is asked about first, as an open Chord is, so
+  ; the old uninstaller, run silently, never closes it unasked and an
+  ; update never goes in under it.
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  !insertmacro CheckIfAppIsRunning "agent-workbench.exe" "${PRODUCTNAME}"
   !insertmacro CHORD_REMOVE_EARLIER HKCU
   !insertmacro CHORD_REMOVE_EARLIER HKLM
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  ; An update of a Chord whose executable had the earlier name leaves it
+  ; beside chord.exe; nothing runs it now.
+  Delete "$INSTDIR\agent-workbench.exe"
 !macroend

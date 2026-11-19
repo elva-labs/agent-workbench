@@ -134,7 +134,7 @@ describe("the line a stretch of work folds into", () => {
         call({ tool: "command", error: true }),
         call({ tool: "agent", name: "Task" }),
         call({ tool: "web", name: "WebFetch" }),
-        call({ tool: "mcp", name: "mcp__agent-workbench__start", result: "Started session s-1 in x." }),
+        call({ tool: "mcp", name: "mcp__chord__start", result: "Started session s-1 in x." }),
         call({ tool: "mcp", name: "mcp__github__issues" }),
         call({ tool: "other", name: "TodoWrite", plan: true }),
       ],
@@ -225,8 +225,8 @@ describe("a step's title", () => {
 });
 
 describe("the workbench's wait and notify in a run", () => {
-  const WAIT = "mcp__agent-workbench__wait";
-  const NOTIFY = "mcp__agent-workbench__notify";
+  const WAIT = "mcp__chord__wait";
+  const NOTIFY = "mcp__chord__notify";
   const shape = (parts: Part[]) =>
     segments(parts).map((segment) =>
       segment.kind === "work" ? `work:${segment.parts.map((part) => (part.kind === "tool" ? part.name : part.kind)).join("+")}` : segment.kind,
@@ -240,10 +240,12 @@ describe("the workbench's wait and notify in a run", () => {
   it("are not drawn, while every other call is, the workbench's others included", () => {
     expect(drawnPart(call({ name: WAIT, tool: "mcp" }))).toBe(false);
     expect(drawnPart(call({ name: NOTIFY, tool: "mcp" }))).toBe(false);
-    expect(drawnPart(call({ name: "mcp__agent-workbench__note", tool: "mcp" }))).toBe(false);
-    expect(drawnPart(call({ name: "mcp__agent-workbench__notes", tool: "mcp" }))).toBe(true);
-    expect(drawnPart(call({ name: "mcp__agent-workbench__send", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call({ name: "mcp__chord__note", tool: "mcp" }))).toBe(false);
+    expect(drawnPart(call({ name: "mcp__chord__notes", tool: "mcp" }))).toBe(true);
+    expect(drawnPart(call({ name: "mcp__chord__send", tool: "mcp" }))).toBe(true);
     expect(drawnPart(call({ name: "mcp__other__wait", tool: "mcp" }))).toBe(true);
+    // A transcript written before the rename names the server the old way.
+    expect(drawnPart(call({ name: "mcp__agent-workbench__wait", tool: "mcp" }))).toBe(false);
     expect(drawnPart(call())).toBe(true);
     expect(drawnPart(text())).toBe(true);
   });
@@ -372,11 +374,11 @@ describe("the sessions a run started", () => {
   it("are read off what the workbench's start answered", () => {
     expect(
       startedIds([
-        call({ tool: "mcp", name: "mcp__agent-workbench__start", result: "Started session abc-1 in demo. It has the prompt." }),
-        call({ tool: "mcp", name: "agent-workbench/start", result: "Started session abc-2 in demo. It has the prompt." }),
-        call({ tool: "mcp", name: "mcp__agent-workbench__start", error: true, result: "Started session no in x. " }),
+        call({ tool: "mcp", name: "mcp__chord__start", result: "Started session abc-1 in demo. It has the prompt." }),
+        call({ tool: "mcp", name: "chord/start", result: "Started session abc-2 in demo. It has the prompt." }),
+        call({ tool: "mcp", name: "mcp__chord__start", error: true, result: "Started session no in x. " }),
         call({ tool: "command", name: "Bash", result: "Started session not-a-start in x. " }),
-        call({ tool: "mcp", name: "mcp__agent-workbench__start", done: false }),
+        call({ tool: "mcp", name: "mcp__chord__start", done: false }),
       ]),
     ).toEqual(["abc-1", "abc-2"]);
   });
@@ -670,7 +672,7 @@ describe("the workbench's own tools in a step's title", () => {
   const rows: Record<string, string> = { "s-1": "Fix the flake", "s-2": "Tidy the docs" };
   let watching: string[] | null = null;
   const own = (tool: string, input: unknown, over: Partial<ToolCall> = {}) =>
-    phraseText(stepTitle(call({ tool: "mcp", name: `mcp__agent-workbench__${tool}`, input, ...over })));
+    phraseText(stepTitle(call({ tool: "mcp", name: `mcp__chord__${tool}`, input, ...over })));
 
   beforeEach(() => {
     watching = null;
@@ -759,9 +761,9 @@ describe("the workbench's own tools in a step's title", () => {
   });
 
   it("draws a name in the text's own type between quotes, and a count after the thing", () => {
-    const named = stepTitle(call({ tool: "mcp", name: "mcp__agent-workbench__send", input: { session: "s-1" } }));
+    const named = stepTitle(call({ tool: "mcp", name: "mcp__chord__send", input: { session: "s-1" } }));
     expect(named).toEqual({ lead: ["Wrote to"], object: "Fix the flake", quoted: true });
-    const files = stepTitle(call({ tool: "mcp", name: "mcp__agent-workbench__present", input: { files: ["/a/one.png", "/a/two.pdf", "/a/three.svg"] } }));
+    const files = stepTitle(call({ tool: "mcp", name: "mcp__chord__present", input: { files: ["/a/one.png", "/a/two.pdf", "/a/three.svg"] } }));
     expect(files).toEqual({ lead: ["Presented"], object: "/a/one.png", tail: "and 2 more" });
   });
 
@@ -781,13 +783,13 @@ describe("the workbench's own tools in a step's title", () => {
           choices: [],
         }),
       );
-    expect(ask("mcp__agent-workbench__start", { name: "Fix the flake", prompt: "p" })).toBe("start “Fix the flake”");
-    expect(ask("mcp__agent-workbench__send", { session: "s-2", text: "go" })).toBe("write to “Tidy the docs”");
-    expect(ask("mcp__agent-workbench__browser_open", { url: "https://a.b/c" })).toBe("open https://a.b/c");
-    expect(ask("mcp__agent-workbench__show", { path: "/a/b/c/d.ts" })).toBe("show /a/b/c/d.ts");
-    expect(ask("mcp__agent-workbench__sessions", {})).toBe("list the sessions it started");
+    expect(ask("mcp__chord__start", { name: "Fix the flake", prompt: "p" })).toBe("start “Fix the flake”");
+    expect(ask("mcp__chord__send", { session: "s-2", text: "go" })).toBe("write to “Tidy the docs”");
+    expect(ask("mcp__chord__browser_open", { url: "https://a.b/c" })).toBe("open https://a.b/c");
+    expect(ask("mcp__chord__show", { path: "/a/b/c/d.ts" })).toBe("show /a/b/c/d.ts");
+    expect(ask("mcp__chord__sessions", {})).toBe("list the sessions it started");
     expect(ask("mcp__claude_ai_Linear__list_issues", {})).toBe("use Linear's list_issues");
-    expect(ask("mcp__agent-workbench__no_such_tool", {})).toBe("use Chord's no_such_tool");
+    expect(ask("mcp__chord__no_such_tool", {})).toBe("use Chord's no_such_tool");
   });
 
   it("leaves other servers' tools in the general wording", () => {

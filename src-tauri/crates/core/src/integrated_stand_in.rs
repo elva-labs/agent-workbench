@@ -169,7 +169,7 @@ fn start_in(
             dir.join("scenario").to_string_lossy().to_string(),
         ),
         ("CLAUDECODE".to_string(), "1".to_string()),
-        ("WORKBENCH_SESSION".to_string(), "the-parent".to_string()),
+        ("CHORD_SESSION".to_string(), "the-parent".to_string()),
         ("KEEP_ME".to_string(), "yes".to_string()),
     ]);
     let recorder = Arc::new(Recorder::default());
@@ -422,7 +422,7 @@ fn a_text_turn_streams_and_ends_and_the_session_stops_cleanly() {
 
 #[test]
 fn the_command_line_and_environment_are_the_stream_session_s() {
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let config = PathBuf::from("/home/ada/.claude-work");
     let before = now_millis();
     let h = start_with("command", &format!("{READY}\ndrain"), |launch| {
@@ -470,7 +470,7 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     }
     let mcp: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
     assert_eq!(
-        mcp["mcpServers"]["agent-workbench"],
+        mcp["mcpServers"]["chord"],
         json!({"type": "stdio", "command": server.to_string_lossy(), "args": ["mcp"]})
     );
 
@@ -479,11 +479,11 @@ fn the_command_line_and_environment_are_the_stream_session_s() {
     assert!(!env.lines().any(|l| l.starts_with("CLAUDECODE=")), "{env}");
     // The tools are told the session by the workbench's token for it,
     // never by the agent's own id, and never by the parent's.
-    assert!(has("WORKBENCH_SESSION=token-command"), "{env}");
-    assert!(!has(&format!("WORKBENCH_SESSION={}", h.session)), "{env}");
-    assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
+    assert!(has("CHORD_SESSION=token-command"), "{env}");
+    assert!(!has(&format!("CHORD_SESSION={}", h.session)), "{env}");
+    assert!(has("CHORD_ROLE=orchestrator"), "{env}");
     // And that it is drawn as a conversation, which says how its turns end.
-    assert!(has("WORKBENCH_VIEW=conversation"), "{env}");
+    assert!(has("CHORD_VIEW=conversation"), "{env}");
     assert!(
         has(&format!("CLAUDE_CONFIG_DIR={}", config.display())),
         "{env}"
@@ -518,7 +518,7 @@ fn arguments(h: &Harness) -> Vec<String> {
 
 #[test]
 fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let told = "1. Direct the work.\n2. Say \"done\" when it is.";
     let h = start_with("workflow", &format!("{READY}\ndrain"), |launch| {
         launch.resume = true;
@@ -572,8 +572,8 @@ fn a_session_under_a_workflow_is_told_it_and_delegates_only_through_start() {
     assert_eq!(args[args.len() - 2], "--mcp-config");
     let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
     let has = |line: &str| env.lines().any(|l| l == line);
-    assert!(has("WORKBENCH_SESSION=token-flow"), "{env}");
-    assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
+    assert!(has("CHORD_SESSION=token-flow"), "{env}");
+    assert!(has("CHORD_ROLE=orchestrator"), "{env}");
     h.stop();
     let deadline = Instant::now() + Duration::from_secs(5);
     while file.exists() {
@@ -598,10 +598,7 @@ fn a_session_under_no_workflow_keeps_its_own_tools_and_is_told_nothing() {
         assert!(!args.contains(&flag.to_string()), "{flag} in {args:?}");
     }
     let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
-    assert!(
-        !env.lines().any(|l| l.starts_with("WORKBENCH_ROLE=")),
-        "{env}"
-    );
+    assert!(!env.lines().any(|l| l.starts_with("CHORD_ROLE=")), "{env}");
     h.stop();
 
     // Resumed without the workflow it was given, it lets go of the record
@@ -1897,7 +1894,7 @@ fn a_missing_agent_explains_itself() {
 
 /// One short turn against the real `claude` on PATH, on a cheap model, in
 /// a scratch directory. Run by hand:
-/// `cargo test -p workbench-core real_claude -- --ignored`.
+/// `cargo test -p chord-core real_claude -- --ignored`.
 #[test]
 #[ignore = "runs the real claude, signed in, and spends a little of its usage"]
 fn real_claude_holds_a_short_turn() {

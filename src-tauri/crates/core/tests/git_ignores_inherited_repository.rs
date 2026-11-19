@@ -5,7 +5,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use workbench_core::scratch::Scratch;
+use chord_core::scratch::Scratch;
 
 /// The variables the test points at the decoy, which its own git clears.
 const VARIABLES: &[&str] = &[
@@ -61,9 +61,9 @@ fn fingerprint(dir: &Path) -> String {
 /// `file://` address, which is a path as Unix writes one.
 #[cfg(unix)]
 fn clones_a_plugin_source() {
+    use chord_core::plugins::{Plugins, MANIFEST};
+    use chord_core::Sink;
     use std::sync::Arc;
-    use workbench_core::plugins::{Plugins, MANIFEST};
-    use workbench_core::Sink;
 
     struct Quiet;
 
@@ -134,24 +134,24 @@ fn variables_naming_another_repository_do_not_misdirect_the_core() {
     std::fs::write(project.join("found.txt"), "found needle\n").unwrap();
     std::fs::write(project.join(".git/info/exclude"), "excluded.txt\n").unwrap();
 
-    let changed = workbench_core::git::status(&project).unwrap();
+    let changed = chord_core::git::status(&project).unwrap();
     let mut paths: Vec<_> = changed.iter().map(|change| change.path.as_str()).collect();
     paths.sort();
     assert_eq!(paths, ["found.txt", "project.txt"]);
-    assert!(!workbench_core::git::diff(&project, "project.txt")
+    assert!(!chord_core::git::diff(&project, "project.txt")
         .unwrap()
         .lines
         .is_empty());
 
-    let found = workbench_core::git::grep(&project, "needle", None).unwrap();
+    let found = chord_core::git::grep(&project, "needle", None).unwrap();
     let paths: Vec<_> = found.hits.iter().map(|hit| hit.path.as_str()).collect();
     assert_eq!(paths, ["found.txt", "project.txt"]);
 
-    let tree = workbench_core::git::worktree_add(&project, "review").unwrap();
+    let tree = chord_core::git::worktree_add(&project, "review").unwrap();
     assert!(Path::new(&tree).join("project.txt").exists());
-    let listed = workbench_core::git::worktrees(&project).unwrap();
+    let listed = chord_core::git::worktrees(&project).unwrap();
     assert!(listed.iter().any(|worktree| worktree.name == "review"));
-    workbench_core::git::worktree_remove(&project, "review").unwrap();
+    chord_core::git::worktree_remove(&project, "review").unwrap();
 
     #[cfg(unix)]
     clones_a_plugin_source();

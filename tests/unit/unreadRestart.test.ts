@@ -129,7 +129,7 @@ describe("a row unread at the quit", () => {
     flushSync();
     // Nothing is written on the way out: the record is already current.
     expect(waitingRecord().one).toMatchObject({ unread: true, note: "Over to you." });
-    expect(JSON.parse(localStorage.getItem("workbench.waiting")!).one.unread).toBe(true);
+    expect(JSON.parse(localStorage.getItem("chord.waiting")!).one.unread).toBe(true);
   });
 
   it("comes back read once it was read, and keeps none of its lines", () => {
@@ -138,7 +138,7 @@ describe("a row unread at the quit", () => {
     noted(one.key, "Done.");
     viewed(one.key);
     flushSync();
-    expect(JSON.parse(localStorage.getItem("workbench.waiting")!)).toEqual({});
+    expect(JSON.parse(localStorage.getItem("chord.waiting")!)).toEqual({});
 
     restart();
     expect(row("one").unread).toBe(false);
@@ -149,7 +149,7 @@ describe("a row unread at the quit", () => {
 
   it("comes back for an integrated session", () => {
     localStorage.setItem(
-      "workbench.open",
+      "chord.open",
       JSON.stringify({
         open: [{ project: A, id: "conv", agent: "claude-code", startIn: null, model: null, kind: "integrated" }],
         active: null,
@@ -157,7 +157,7 @@ describe("a row unread at the quit", () => {
       }),
     );
     localStorage.setItem(
-      "workbench.waiting",
+      "chord.waiting",
       JSON.stringify({ conv: { unread: true, note: "Tests green.", notice: "Tests green.", at: 1 } }),
     );
     restart();
@@ -192,9 +192,9 @@ describe("a row unread at the quit", () => {
     expect(waitingRecord().child).toBeDefined();
 
     quit();
-    const kept = JSON.parse(localStorage.getItem("workbench.waiting")!);
+    const kept = JSON.parse(localStorage.getItem("chord.waiting")!);
     kept.child.seen = Date.now() - WAITING_FOR - 1;
-    localStorage.setItem("workbench.waiting", JSON.stringify(kept));
+    localStorage.setItem("chord.waiting", JSON.stringify(kept));
     open();
     expect(waitingRecord().child).toBeUndefined();
     expect(create(B, "child").unread).toBe(false);
@@ -224,8 +224,8 @@ describe("a row unread at the quit", () => {
     noted(one.key, "Over to you.");
     quit();
     // A version before rewrites the record of open rows without its flag.
-    const record = JSON.parse(localStorage.getItem("workbench.open")!);
-    localStorage.setItem("workbench.open", JSON.stringify({ open: record.open, active: record.active }));
+    const record = JSON.parse(localStorage.getItem("chord.open")!);
+    localStorage.setItem("chord.open", JSON.stringify({ open: record.open, active: record.active }));
     open();
     expect(row("one").unread).toBe(false);
     expect(row("one").note).toBeNull();

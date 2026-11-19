@@ -9,7 +9,7 @@ import type { Sent } from "$lib/mention";
  * are. Kept between runs, so a message reads the same after a restart.
  */
 
-const KEY = "workbench.mentions";
+const KEY = "chord.mentions";
 /** How many messages with mentions are remembered. */
 const KEEP = 1000;
 

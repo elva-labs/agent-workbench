@@ -6,7 +6,7 @@
 //! exists so the placement math can be checked without a person at the
 //! keyboard.
 //!
-//! `WORKBENCH_PROBE_STEPS` names a file of steps, one per line, run in
+//! `CHORD_PROBE_STEPS` names a file of steps, one per line, run in
 //! order a few seconds after startup. A line is `resize:<width>x<height>`,
 //! which resizes the window, or otherwise a script evaluated in the main
 //! webview, as a JSON string literal or as raw text;
@@ -47,7 +47,7 @@
 //! The probe never brings the app forward on its own; a step file that
 //! needs the keyboard starts with `window:focus`.
 //!
-//! The report is written as pretty JSON to `WORKBENCH_PROBE_REPORT`
+//! The report is written as pretty JSON to `CHORD_PROBE_REPORT`
 //! (default: `workbench-probe.json` in the system temp directory) and to
 //! stderr.
 
@@ -722,7 +722,7 @@ async fn run_probe(app: AppHandle, steps_path: String) {
 }
 
 fn write_report(value: &Value) {
-    let path = std::env::var("WORKBENCH_PROBE_REPORT").unwrap_or_else(|_| {
+    let path = std::env::var("CHORD_PROBE_REPORT").unwrap_or_else(|_| {
         std::env::temp_dir()
             .join("workbench-probe.json")
             .to_string_lossy()
@@ -736,13 +736,13 @@ fn write_report(value: &Value) {
 /// Whether the probe is to run: the app then starts without taking the
 /// keyboard from whatever app the user is in.
 pub fn wanted() -> bool {
-    std::env::var_os("WORKBENCH_PROBE_STEPS").is_some()
+    std::env::var_os("CHORD_PROBE_STEPS").is_some()
 }
 
-/// If `WORKBENCH_PROBE_STEPS` names a file, runs it against the app a few
+/// If `CHORD_PROBE_STEPS` names a file, runs it against the app a few
 /// seconds after startup and writes a report of what happened.
 pub fn maybe_run_probe(app: &AppHandle) {
-    let Ok(steps_path) = std::env::var("WORKBENCH_PROBE_STEPS") else {
+    let Ok(steps_path) = std::env::var("CHORD_PROBE_STEPS") else {
         return;
     };
     let app = app.clone();

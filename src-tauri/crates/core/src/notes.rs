@@ -21,7 +21,7 @@ pub const FILE: &str = "notes.db";
 /// which holds the database and each session's readable copy, for the
 /// viewer. It and everything in it are the user's alone.
 pub fn folder(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("notes")
+    crate::home::dir(home).join("notes")
 }
 
 /// Makes the notes' folder, readable by the user alone.

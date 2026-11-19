@@ -71,8 +71,11 @@ pub struct HookStatus {
 /// Where session hooks append: one JSON line per event, the hook's stdin as
 /// it came. The core tails it; see `activity.rs`.
 pub fn activity_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("sessions.jsonl")
+    crate::home::dir(home).join(ACTIVITY_FILE)
 }
+
+const ACTIVITY_FILE: &str = "sessions.jsonl";
+const EVENTS_FILE: &str = "last-tool-use.json";
 
 /// The session events each agent can report, by the agent's own name for
 /// them. The permission prompt is the one they spell differently.
@@ -130,7 +133,7 @@ fn claude_knows_failed_turns(home: &Path, env: &HashMap<String, String>) -> bool
 const CODEX_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "PermissionRequest"];
 
 pub fn events_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("last-tool-use.json")
+    crate::home::dir(home).join(EVENTS_FILE)
 }
 
 /// Where the daemon lives on a machine, which is also the MCP server the
@@ -139,16 +142,17 @@ pub fn events_path(home: &Path) -> PathBuf {
 /// in. Without one here there is no server to name, and the hooks alone
 /// are installed.
 pub fn daemon_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench")
-        .join("bin")
-        .join(if cfg!(windows) {
-            "agent-workbench-remote.exe"
-        } else {
-            "agent-workbench-remote"
-        })
+    crate::home::dir(home).join("bin").join(DAEMON_FILE)
 }
 
-fn codex_config_path(project: &Path) -> PathBuf {
+/// The daemon's file name on this kind of machine.
+pub const DAEMON_FILE: &str = if cfg!(windows) {
+    "chord-remote.exe"
+} else {
+    "chord-remote"
+};
+
+pub(crate) fn codex_config_path(project: &Path) -> PathBuf {
     project.join(".codex").join("config.toml")
 }
 
@@ -221,11 +225,11 @@ pub fn tool_server(
     }
 }
 
-fn settings_path(project: &Path) -> PathBuf {
+pub(crate) fn settings_path(project: &Path) -> PathBuf {
     project.join(".claude").join("settings.local.json")
 }
 
-fn codex_hooks_path(project: &Path) -> PathBuf {
+pub(crate) fn codex_hooks_path(project: &Path) -> PathBuf {
     project.join(".codex").join("hooks.json")
 }
 
@@ -238,9 +242,13 @@ const PROMPT_EVENT: &str = "UserPromptSubmit";
 /// It never fails the prompt: a daemon from a version without the
 /// command, or one that cannot ask, says nothing and the prompt goes on.
 fn reports_command(home: &Path) -> String {
+    reports_command_of(&daemon_path(home))
+}
+
+fn reports_command_of(daemon: &Path) -> String {
     format!(
         "{daemon} reports 2>/dev/null || true",
-        daemon = shell_quote(&bash_path(&daemon_path(home).to_string_lossy())),
+        daemon = shell_quote(&bash_path(&daemon.to_string_lossy())),
     )
 }
 
@@ -250,12 +258,27 @@ fn reports_entry(home: &Path) -> Value {
 
 /// The command a session hook runs: add what the agent said to the log.
 fn activity_command(home: &Path) -> String {
-    let log = activity_path(home);
+    file_command(&activity_path(home), ">>")
+}
+
+/// A command that writes what it reads to `file`, making its folder
+/// first: `>>` adds to the file, `>` replaces it.
+fn file_command(file: &Path, how: &str) -> String {
     format!(
-        "mkdir -p {parent} && cat >> {file}",
-        parent = shell_quote(&bash_path(&log.parent().unwrap_or(home).to_string_lossy())),
-        file = shell_quote(&bash_path(&log.to_string_lossy())),
+        "mkdir -p {parent} && cat {how} {file}",
+        parent = shell_quote(&bash_path(&file.parent().unwrap_or(file).to_string_lossy())),
+        file = shell_quote(&bash_path(&file.to_string_lossy())),
     )
+}
+
+/// The commands the hooks run, as made for the app's folder `dir` and the
+/// daemon at `daemon`: the tool event's, the session events', the prompt's.
+pub(crate) fn commands_at(dir: &Path, daemon: &Path) -> [String; 3] {
+    [
+        file_command(&dir.join(EVENTS_FILE), ">"),
+        file_command(&dir.join(ACTIVITY_FILE), ">>"),
+        reports_command_of(daemon),
+    ]
 }
 
 /// The command the hook runs: replace our file with what the agent just did.
@@ -263,14 +286,7 @@ fn activity_command(home: &Path) -> String {
 /// on Windows, so the command is the same everywhere and the paths are
 /// spelled the way that shell reads them.
 fn command(home: &Path) -> String {
-    let events = events_path(home);
-    format!(
-        "mkdir -p {parent} && cat > {file}",
-        parent = shell_quote(&bash_path(
-            &events.parent().unwrap_or(home).to_string_lossy()
-        )),
-        file = shell_quote(&bash_path(&events.to_string_lossy())),
-    )
+    file_command(&events_path(home), ">")
 }
 
 /// A path as Git Bash reads it: forward slashes. Elsewhere a path is already
@@ -303,7 +319,7 @@ fn shell_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
-fn read_settings(path: &Path) -> Map<String, Value> {
+pub(crate) fn read_settings(path: &Path) -> Map<String, Value> {
     std::fs::read_to_string(path)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -351,7 +367,7 @@ fn runs(entry: &Value, commands: &[String]) -> bool {
         })
 }
 
-fn is_ours(entry: &Value, home: &Path) -> bool {
+pub(crate) fn is_ours(entry: &Value, home: &Path) -> bool {
     runs(
         entry,
         &[command(home), activity_command(home), reports_command(home)],
@@ -439,6 +455,9 @@ pub fn status_many(
     accounts: &[Dirs],
     env: &HashMap<String, String>,
 ) -> Vec<HookStatus> {
+    for project in projects {
+        crate::migrate::project(home, project);
+    }
     let daemon_here = daemon_path(home).is_file();
     let failures = claude_knows_failed_turns(home, env);
     let events = events_path(home).to_string_lossy().to_string();
@@ -838,10 +857,12 @@ pub fn install(
     env: &HashMap<String, String>,
 ) -> Result<HookStatus, String> {
     let failures = claude_knows_failed_turns(home, env);
+    crate::migrate::project(home, project);
     add_hooks(home, project, &[], failures)?;
     let listed = sharing(project);
     let mut trees = Vec::new();
     for tree in &listed {
+        crate::migrate::project(home, tree);
         let leave = tracked(tree);
         if add_hooks(home, tree, &leave, failures).is_ok() {
             trees.push((tree.clone(), leave));
@@ -905,6 +926,7 @@ pub fn share(
     if !has_hooks(home, project) || !shares_with(project, worktree) {
         return Ok(false);
     }
+    crate::migrate::project(home, worktree);
     let leave = tracked(worktree);
     add_hooks(home, worktree, &leave, claude_knows_failed_turns(home, env))?;
     touch_events(home)?;
@@ -1176,7 +1198,7 @@ fn runs_daemon(server: &dyn toml_edit::TableLike, daemon: &str) -> bool {
 }
 
 /// A Codex config's text as TOML, past a byte order mark.
-fn parse_codex(text: &str) -> Result<toml_edit::DocumentMut, String> {
+pub(crate) fn parse_codex(text: &str) -> Result<toml_edit::DocumentMut, String> {
     text.strip_prefix('\u{feff}')
         .unwrap_or(text)
         .parse::<toml_edit::DocumentMut>()
@@ -1186,7 +1208,7 @@ fn parse_codex(text: &str) -> Result<toml_edit::DocumentMut, String> {
 /// A Codex config written back as the user's file was: with its byte
 /// order mark, and with a carriage return before each line feed where
 /// every line of it had one. The parser writes a bare line feed.
-fn as_the_file_was(file: &str, text: String) -> String {
+pub(crate) fn as_the_file_was(file: &str, text: String) -> String {
     let crlf = file.contains("\r\n") && !file.replace("\r\n", "").contains('\n');
     let text = if crlf {
         text.replace("\r\n", "\n").replace('\n', "\r\n")
@@ -1546,7 +1568,7 @@ fn remove_hooks(home: &Path, folder: &Path, leave: &[&str]) -> Result<(), String
 /// state lock is held from the read to the write, so no other writer in
 /// this process comes between them, and the read comes right before the
 /// write so as little as possible of an agent's own work can be lost.
-fn update_settings(
+pub(crate) fn update_settings(
     path: &Path,
     change: impl FnOnce(&mut Map<String, Value>) -> Result<bool, String>,
 ) -> Result<(), String> {
@@ -1613,7 +1635,7 @@ fn write_settings(path: &Path, settings: &Map<String, Value>) -> Result<(), Stri
 }
 
 /// Writes a file whole, as [`write_settings`] describes.
-fn write_whole(path: &Path, text: &str) -> Result<(), String> {
+pub(crate) fn write_whole(path: &Path, text: &str) -> Result<(), String> {
     let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let parent = path
         .parent()
@@ -2289,7 +2311,7 @@ mod tests {
             .to_string_lossy()
             .to_string();
         let state = read_settings(&claude_json_path(&home));
-        let server = &state["projects"][&key]["mcpServers"]["agent-workbench"];
+        let server = &state["projects"][&key]["mcpServers"]["chord"];
         assert_eq!(server["args"], json!(["mcp"]));
         assert_eq!(
             server["command"].as_str().unwrap(),
@@ -2298,13 +2320,13 @@ mod tests {
         let codex = std::fs::read_to_string(project.join(".codex/config.toml")).unwrap();
         assert!(codex.contains("model = \"o3\""));
         assert!(codex.contains("[mcp_servers.other]"));
-        assert!(codex.contains("[mcp_servers.agent_workbench]"));
+        assert!(codex.contains("[mcp_servers.chord]"));
         assert!(codex.contains("args = [\"mcp\"]"));
         // The workbench's tools that read, show or are asked about by the
         // window run without asking, each by its own approval; the rest,
         // and the other server, ask as the user's approval policy says.
         let document = codex.parse::<toml_edit::DocumentMut>().unwrap();
-        let ours = &document["mcp_servers"]["agent_workbench"];
+        let ours = &document["mcp_servers"]["chord"];
         assert!(ours.get("default_tools_approval_mode").is_none());
         for tool in RUN_UNASKED {
             assert_eq!(
@@ -2320,12 +2342,10 @@ mod tests {
 
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let state = read_settings(&claude_json_path(&home));
-        assert!(state["projects"][&key]["mcpServers"]
-            .get("agent-workbench")
-            .is_none());
+        assert!(state["projects"][&key]["mcpServers"].get("chord").is_none());
         let codex = std::fs::read_to_string(project.join(".codex/config.toml")).unwrap();
         assert!(codex.contains("[mcp_servers.other]"));
-        assert!(!codex.contains("agent_workbench"));
+        assert!(!codex.contains("chord"));
     }
 
     #[test]
@@ -2355,7 +2375,7 @@ mod tests {
             format!(
                 "# the user's own\n\
                  approval_policy = \"on-request\"\n\n\
-                 [mcp_servers.agent_workbench]\n\
+                 [mcp_servers.chord]\n\
                  command = {daemon}\n\
                  args = [\"mcp\"]\n{entry}\n\
                  [mcp_servers.other] # theirs\n\
@@ -2433,7 +2453,7 @@ mod tests {
             "model = \"o3\"\n\n\
              # My MCP servers, keep this comment\n\
              [mcp_servers]\n\n\
-             [mcp_servers.agent_workbench]\n\
+             [mcp_servers.chord]\n\
              command = {daemon}\n\
              args = [\"mcp\"]\n"
         );
@@ -2444,46 +2464,41 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&config).unwrap(),
             format!(
-                "{empty}\n[mcp_servers.agent_workbench]\ncommand = {daemon}\n\
+                "{empty}\n[mcp_servers.chord]\ncommand = {daemon}\n\
                  args = [\"mcp\"]\n{approve}"
             )
         );
 
         // Dotted keys, at the top and under the servers' header.
         let dotted = format!(
-            "mcp_servers.agent_workbench.command = {daemon}\n\
-             mcp_servers.agent_workbench.args = [\"mcp\"]\n"
+            "mcp_servers.chord.command = {daemon}\n\
+             mcp_servers.chord.args = [\"mcp\"]\n"
         );
         brought(
             &dotted,
-            &format!(
-                "{dotted}{}",
-                approvals("mcp_servers.agent_workbench.tools.", &[])
-            ),
+            &format!("{dotted}{}", approvals("mcp_servers.chord.tools.", &[])),
         );
         let under = format!(
             "[mcp_servers]\n\
-             agent_workbench.command = {daemon}\n\
-             agent_workbench.args = [\"mcp\"]\n"
+             chord.command = {daemon}\n\
+             chord.args = [\"mcp\"]\n"
         );
         brought(
             &under,
-            &format!("{under}{}", approvals("agent_workbench.tools.", &[])),
+            &format!("{under}{}", approvals("chord.tools.", &[])),
         );
 
         // A tool's approval the user wrote under a header of its own: the
         // others go under headers of their own beside it.
         let headed = format!(
-            "{}\n[mcp_servers.agent_workbench.tools.notify]\napproval_mode = \"prompt\"\n",
+            "{}\n[mcp_servers.chord.tools.notify]\napproval_mode = \"prompt\"\n",
             older("").trim_end()
         );
         let headers: String = RUN_UNASKED
             .iter()
             .filter(|tool| **tool != "notify")
             .map(|tool| {
-                format!(
-                    "\n[mcp_servers.agent_workbench.tools.{tool}]\napproval_mode = \"approve\"\n"
-                )
+                format!("\n[mcp_servers.chord.tools.{tool}]\napproval_mode = \"approve\"\n")
             })
             .collect();
         brought(&headed, &format!("{headed}{headers}"));
@@ -2496,15 +2511,15 @@ mod tests {
             .map(|tool| format!(", tools.{tool}.approval_mode = \"approve\""))
             .collect();
         brought(
-            &format!("[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"] }}\n"),
+            &format!("[mcp_servers]\nchord = {{ command = {daemon}, args = [\"mcp\"] }}\n"),
             &format!(
-                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }}\n"
+                "[mcp_servers]\nchord = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }}\n"
             ),
         );
         std::fs::write(
             &config,
             format!(
-                "[mcp_servers]\nagent_workbench = {{ command = {daemon}, args = [\n  \"mcp\", # the subcommand\n] }}\n"
+                "[mcp_servers]\nchord = {{ command = {daemon}, args = [\n  \"mcp\", # the subcommand\n] }}\n"
             ),
         )
         .unwrap();
@@ -2517,9 +2532,9 @@ mod tests {
         // install can write to them, so they are never read as out of date
         // with no way to bring them up to date.
         brought(
-            &format!("mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"] }} }}\n"),
+            &format!("mcp_servers = {{ chord = {{ command = {daemon}, args = [\"mcp\"] }} }}\n"),
             &format!(
-                "mcp_servers = {{ agent_workbench = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }} }}\n"
+                "mcp_servers = {{ chord = {{ command = {daemon}, args = [\"mcp\"]{inline_approvals} }} }}\n"
             ),
         );
         let inline_servers = "mcp_servers = { other = { command = \"other\" } }\n";
@@ -2528,17 +2543,14 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&config).unwrap(),
             format!(
-                "mcp_servers = {{ other = {{ command = \"other\" }}, agent_workbench = {{ command = {daemon}, \
+                "mcp_servers = {{ other = {{ command = \"other\" }}, chord = {{ command = {daemon}, \
                  args = [\"mcp\"]{inline_approvals} }} }}\n"
             )
         );
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let written = std::fs::read_to_string(&config).unwrap();
         let document = written.parse::<toml_edit::DocumentMut>().unwrap();
-        assert!(
-            document["mcp_servers"].get("agent_workbench").is_none(),
-            "{written}"
-        );
+        assert!(document["mcp_servers"].get("chord").is_none(), "{written}");
         assert_eq!(
             document["mcp_servers"]["other"]["command"].as_str(),
             Some("other")
@@ -2570,7 +2582,7 @@ mod tests {
             install(&home, &project, &[], &HashMap::new()).unwrap();
             assert!(std::fs::read_to_string(&config)
                 .unwrap()
-                .contains("[mcp_servers.agent_workbench]"));
+                .contains("[mcp_servers.chord]"));
             uninstall(&home, &project, &[], &HashMap::new()).unwrap();
             assert_eq!(std::fs::read_to_string(&config).unwrap(), theirs);
         }
@@ -2651,15 +2663,9 @@ mod tests {
     #[test]
     fn spells_paths_for_bash() {
         if cfg!(windows) {
-            assert_eq!(
-                bash_path(r"C:\Users\ada\.agent-workbench"),
-                "C:/Users/ada/.agent-workbench"
-            );
+            assert_eq!(bash_path(r"C:\Users\ada\.chord"), "C:/Users/ada/.chord");
         } else {
-            assert_eq!(
-                bash_path("/home/ada/.agent-workbench"),
-                "/home/ada/.agent-workbench"
-            );
+            assert_eq!(bash_path("/home/ada/.chord"), "/home/ada/.chord");
         }
     }
 
@@ -2779,10 +2785,7 @@ mod tests {
     #[test]
     fn the_events_file_lives_under_the_home_directory() {
         let path = events_path(Path::new("/home/ada"));
-        assert_eq!(
-            path,
-            Path::new("/home/ada/.agent-workbench/last-tool-use.json")
-        );
+        assert_eq!(path, Path::new("/home/ada/.chord/last-tool-use.json"));
     }
 
     // The watcher can only attach to a file that exists.

@@ -64,7 +64,7 @@ beforeEach(async () => {
   );
   workspace.open.push({ path: A, name: "one", repository: A, isGit: true });
   fake = fakeIntegrated();
-  (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+  (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
     integratedStart: async (options: Parameters<FakeIntegrated["start"]>[0]) => fake.start(options),
     integratedSend: async (id: string, message: string, text: string) => fake.send(id, message, text),
     integratedAnswer: async (id: string, request: string, choice: never, message?: string) =>
@@ -93,7 +93,7 @@ beforeEach(async () => {
 afterEach(() => {
   stop();
   onWaiting(null);
-  delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+  delete (window as unknown as { __CHORD_CORE__?: unknown }).__CHORD_CORE__;
 });
 
 describe("a question from a session another started, while the window is behind", () => {
