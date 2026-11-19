@@ -384,6 +384,9 @@ motion's frames do not grow with the size of the tree or the length of the
 conversation, and nothing moves when it arrives. Opening and closing the viewer
 mounts and unmounts the viewer first; the columns set off once the frame
 that does it is drawn, so that work never takes the motion's first steps.
+The keyboard does not wait for a column: a pane that is folding is out of
+the walk with Tab from the moment it is asked to fold, and one that is
+opening is in it, however long its column takes to start.
 
 The terminal panel eases up and down the same way, and the panes above it
 give up and take back the height as it goes. The panel keeps its own height

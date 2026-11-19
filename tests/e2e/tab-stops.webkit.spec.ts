@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, foldedWidth, installFakeCore } from "./fake";
 
 // The window by keyboard alone, in WebKit as well as Chromium. WebKit, the
 // app's webview on macOS, passes over a button on Tab unless it carries a
@@ -415,6 +415,54 @@ for (const platform of PLATFORMS)
     await expect(page.locator(".sessions-slot.peeking")).toHaveCount(0);
     await expect(page.locator(TREE)).toBeFocused();
   });
+
+// A change of shape moves the columns a frame or two after it is asked for,
+// and a slow frame clock stretches that wait. The keyboard does not wait:
+// the walk is the new shape's from the moment it is asked for.
+test("walks the new shape at once, while its columns wait for frames", async ({ page }) => {
+  await page.addInitScript(() => {
+    const held: FrameRequestCallback[] = [];
+    let holding = false;
+    const request = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (callback) => (holding ? held.push(callback) && 0 : request(callback));
+    Object.assign(window, {
+      __frames: {
+        hold: () => (holding = true),
+        release: () => {
+          holding = false;
+          for (const callback of held.splice(0)) request(callback);
+        },
+      },
+    });
+  });
+  await open(page);
+  const frames = (call: "hold" | "release") =>
+    page.evaluate((call) => (window as unknown as { __frames: Record<string, () => void> }).__frames[call](), call);
+  const column = () => page.locator("section[data-pane='sessions']").evaluate((pane) => pane.getBoundingClientRect().width);
+  const wide = await column();
+
+  // The viewer opens and the sessions column folds: the folded pane is one
+  // stop, its button, before the column has moved.
+  await frames("hold");
+  await tree(page, "lib.rs").dispatchEvent("click");
+  await expect(page.getByTestId("viewer")).toBeVisible();
+  expect(await column()).toBe(wide);
+  await page.getByTestId("start-other").focus();
+  expect(await walk(page, "Shift+Tab", 1)).toEqual(["unfold-sessions"]);
+  await frames("release");
+  await expect.poll(column).toBe(await foldedWidth(page));
+
+  // The viewer closes and the column opens: the pane's list is a stop again
+  // before the column has moved.
+  await frames("hold");
+  await page.getByLabel("Close the viewer").dispatchEvent("click");
+  await expect(page.getByTestId("viewer")).toHaveCount(0);
+  expect(await column()).toBe(await foldedWidth(page));
+  await page.getByTestId("start-other").focus();
+  expect(await walk(page, "Shift+Tab", 2)).toEqual(["Resize projects and sessions", "sessions-nav"]);
+  await frames("release");
+  await expect.poll(column).toBe(wide);
+});
 
 test("walks editor mode: the tree, the tab row and the views as one stop each", async ({ page }) => {
   await open(page, 1728);
