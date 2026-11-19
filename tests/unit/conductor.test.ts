@@ -4142,6 +4142,15 @@ describe("starting in a workflow's shape", () => {
     return workflow;
   };
 
+  it("names the first of several models as the default", () => {
+    const step = defaultWorkflow().steps[0];
+    step.models = [
+      { agent: "claude-code", model: "sonnet" },
+      { agent: "claude-code", model: "haiku" },
+    ];
+    expect(stepFacts(step)).toContain("Models it may use: Sonnet, the default, or Haiku.");
+  });
+
   it("says a limit of one as once in the tag, as the diagram and the instructions do", () => {
     const review = limitOne().steps[1];
     expect(stepFacts(review)).toContain("Otherwise: go back to Work at most once, then ask me.");

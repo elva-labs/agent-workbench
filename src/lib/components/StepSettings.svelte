@@ -286,14 +286,14 @@
                   <span>{option.label}</span>
                 </label>
                 {#if chosen(option) && step.models[0] !== undefined && sameModel(step.models[0], option)}
-                  <small data-testid="step-model-first">used first</small>
+                  <small data-testid="step-model-first">default</small>
                 {:else if chosen(option)}
                   <button
                     type="button"
-                    class="plain"
-                    aria-label="Use {option.label} first"
+                    class="plain make"
+                    aria-label="Make {option.label} the default"
                     onclick={() => useFirst(option)}
-                    data-testid="step-model-use-first">use first</button
+                    data-testid="step-model-use-first">make default</button
                   >
                 {/if}
               </div>
@@ -599,6 +599,21 @@
   .check small {
     font-size: 11.5px;
     color: var(--ink-3);
+  }
+
+  .check .make {
+    opacity: 0;
+  }
+
+  .check:hover .make,
+  .check:focus-within .make {
+    opacity: 1;
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .check .make {
+      opacity: 1;
+    }
   }
 
   .plain {

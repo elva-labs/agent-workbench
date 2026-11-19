@@ -766,7 +766,7 @@ export function stepFacts(step: WorkflowStep, work: string | null = null): strin
       ? "any model"
       : rest.length === 0
         ? label(first)
-        : `${label(first)}, used first, or ${rest.map(label).join(" or ")}`;
+        : `${label(first)}, the default, or ${rest.map(label).join(" or ")}`;
   if (step.kind === "work")
     return ["Does work.", `Models it may use: ${models}.`, `Sessions at once: ${step.parallel}.`];
   const times = step.limit === 1 ? "once" : `${step.limit} times`;
