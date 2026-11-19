@@ -43,6 +43,7 @@ import {
   hideTerminal,
   layout,
   loadLayout,
+  moving,
   peekSessions,
   returnFocus,
   rightmost,
@@ -1263,7 +1264,7 @@ describe("what the moving panes hold", () => {
   });
 
   afterEach(async () => {
-    shaping.sessions = false;
+    Object.assign(shaping, { sessions: false, changes: false, terminal: false });
     layout.mode = "working";
     layout.sessionsForced = false;
     await rest();
@@ -1297,5 +1298,17 @@ describe("what the moving panes hold", () => {
     expect(sessionsDrawnOpen()).toBe(true);
     shaping.sessions = false;
     expect(sessionsDrawnOpen()).toBe(false);
+  });
+
+  it("is moving while a column waits to move and while it is on its way, and not at rest", () => {
+    expect(moving()).toBe(false);
+    for (const which of ["sessions", "changes", "terminal"] as const) {
+      shaping[which] = true;
+      expect(moving()).toBe(true);
+      shaping[which] = false;
+    }
+    expect(moving()).toBe(false);
+    void changesSpan.set(changesWidth() + 100, { duration: 1000 });
+    expect(moving()).toBe(true);
   });
 });

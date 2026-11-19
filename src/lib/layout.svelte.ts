@@ -283,10 +283,10 @@ export function sessionsShown() {
   return sessionsVisible() || layout.sessionsPeek;
 }
 
-/** Set while a change of shape waits for the frame that mounts what it
-    brings before its columns move: until the sessions column moves, the
-    pane is drawn as it was. */
-export const shaping = $state({ sessions: false });
+/** Set for a column or the terminal panel while a change of shape waits
+    for the frame that mounts what it brings before it moves: until the
+    sessions column moves, the pane is drawn as it was. */
+export const shaping = $state({ sessions: false, changes: false, terminal: false });
 
 /** Whether the sessions pane is drawn open: `sessionsShown`, or while a
     change of shape waits to move, what its column is still set to. It is
@@ -413,6 +413,14 @@ const columnsMoving = $derived(
     than one a frame. */
 export function sliding() {
   return columnsMoving;
+}
+
+/** A column or the terminal panel waits to move or is on its way. Once it
+    is false, every column and the panel are at the sizes the layout asks
+    for. The shell carries it as data-moving, which a test that measures the
+    panes after a change waits to see gone. */
+export function moving() {
+  return columnsMoving || shaping.sessions || shaping.changes || shaping.terminal;
 }
 
 /** The changes pane is there: on the right by its toggle while working

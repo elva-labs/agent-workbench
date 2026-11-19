@@ -166,6 +166,7 @@
     sessionsTrack,
     sessionsVisible,
     shaping,
+    moving,
     sliding,
     terminalOpen,
     terminalVisible,
@@ -510,24 +511,24 @@
       ask, and the motion starts once that frame is drawn, so none of its
       steps are lost to the work. Anything else starts at once. */
   function ease(
+    which: keyof typeof shaping,
     tween: Tween<number>,
     to: number,
     duration: number,
     shaped: boolean,
-    waiting: (on: boolean) => void = () => {},
   ) {
     const ask = (asks.get(tween) ?? 0) + 1;
     asks.set(tween, ask);
     if (duration === 0 || !shaped) {
-      waiting(false);
+      shaping[which] = false;
       void tween.set(to, { duration, easing: cubicOut });
       return;
     }
-    waiting(true);
+    shaping[which] = true;
     requestAnimationFrame(() =>
       requestAnimationFrame(() => {
         if (asks.get(tween) !== ask) return;
-        waiting(false);
+        shaping[which] = false;
         void tween.set(to, { duration, easing: cubicOut });
       }),
     );
@@ -555,7 +556,7 @@
       const moved = chosen !== sessionsWasChosen || shaped;
       sessionsWasChosen = chosen;
       sessionsWasMode = mode;
-      ease(sessionsOpen, shown ? 1 : 0, easing(moved), shaped, (on) => (shaping.sessions = on));
+      ease("sessions", sessionsOpen, shown ? 1 : 0, easing(moved), shaped);
     });
   });
 
@@ -570,7 +571,7 @@
     untrack(() => {
       const moved = mode !== changesWasMode && !flipped(changesWasMode, mode);
       changesWasMode = mode;
-      ease(changesSpan, width, easing(moved), moved);
+      ease("changes", changesSpan, width, easing(moved), moved);
     });
   });
 
@@ -606,7 +607,7 @@
       const moved = shown !== terminalWasShown;
       terminalWasShown = shown;
       // A shell that comes with the panel mounts before the panel moves.
-      ease(terminalOpen, shown ? 1 : 0, easing(moved), moved && shown && startup.settled && opensWithShell());
+      ease("terminal", terminalOpen, shown ? 1 : 0, easing(moved), moved && shown && startup.settled && opensWithShell());
     });
   });
 
@@ -1048,6 +1049,7 @@
     style:grid-template-columns={columns}
     data-testid="shell"
     data-mode={layout.mode}
+    data-moving={moving() || undefined}
     bind:clientWidth={viewport}
   >
     <!-- The pane and its splitter in one slot, as wide as the column. What
