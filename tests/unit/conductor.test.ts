@@ -98,6 +98,7 @@ import {
   reset as resetAccounts,
 } from "$lib/accounts.svelte";
 import { register, resetScreens, type Screen } from "$lib/screens";
+import { modeOf } from "$lib/sessionModes";
 import { outsideCaller, outsideFolder } from "$lib/senders.svelte";
 import { render } from "@testing-library/svelte";
 import ConductAsk from "$lib/components/ConductAsk.svelte";
@@ -6673,5 +6674,107 @@ describe("a session whose work is over", () => {
     await startAllowed(call("start", { project: A, prompt: "One more" }), "pty-9", "sid-9");
     expect(last().content).toContain("Started session sid-9");
     for (const row of rows) expect(byKey(row.key)).toBeNull();
+  });
+
+  it("leaves a row the user has not read when it makes room, and refuses the start", async () => {
+    const rows = [];
+    for (let at = 1; at <= CAP; at += 1) {
+      const row = own(A, `pty-${at}`, `sid-${at}`);
+      sessions.active = null;
+      row.working = true;
+      flushSync();
+      row.working = false;
+      flushSync();
+      rows.push(row);
+    }
+    await handle(call("sessions"));
+    for (const row of rows) row.unread = true;
+    flushSync();
+    await handle(call("start", { project: A, prompt: "One more" }));
+    expect(last().error).toContain(`You have ${CAP} sessions running already`);
+    for (const row of rows) expect(byKey(row.key)).not.toBeNull();
+  });
+
+  it("stays while the user has not read it or has words on its line, and goes five minutes after", async () => {
+    const row = await told();
+    row.unread = true;
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    row.unread = false;
+    typed("pty-1", "fix th");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER * 2);
+    expect(byKey(row.key)).not.toBeNull();
+    // Ctrl+C empties the line.
+    typed("pty-1", "\x03");
+    flushSync();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+    expect(byKey(row.key)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(byKey(row.key)).toBeNull();
+  });
+
+  it("counts its time again from the end of a call that names it", async () => {
+    const row = await told();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+    await handle(call("read", { session: "sid-1" }));
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER - 1000);
+    expect(byKey(row.key)).not.toBeNull();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(byKey(row.key)).toBeNull();
+  });
+
+  it("is brought back once by two lines that arrive together, the second sent once it is up", async () => {
+    const row = await told();
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+    const first = call("send", { session: "sid-1", text: "Fix the docs too" });
+    const second = call("send", { session: "sid-1", text: "and the README" });
+    const one = handle(first);
+    const two = handle(second);
+    await settle();
+    const back = sessions.all.filter((session) => session.resumedFrom === "sid-1");
+    expect(back).toHaveLength(1);
+    started(back[0].key, "pty-1b", "sid-1");
+    flushSync();
+    await one;
+    await vi.advanceTimersByTimeAsync(ENTER_AFTER);
+    await two;
+    const answerTo = (request: ConductRequest) => answers.find((answer) => answer.id === request.id);
+    expect(answerTo(first)?.content).toMatch(/Your line resumed it\./);
+    expect(answerTo(second)?.error).toBeNull();
+    expect(answerTo(second)?.content).not.toContain("was not running");
+    expect(written).toContainEqual(["pty-1b", "and the README"]);
+    expect(sessions.all.filter((session) => session.id === "sid-1")).toHaveLength(1);
+  });
+
+  it("is brought back by a line under its account and in the mode it ran in, whatever its starter runs in now", async () => {
+    accounts.list = { Work: { claude: "~/.claude-work", codex: null } };
+    const starter = create(A, null, "claude-code", null, null, null, "Work", null);
+    started(starter.key, "pty-caller", "caller-1");
+    heard("caller-1", "plan");
+    const starting = handle(call("start", { project: A, prompt: "Fix it" }, { session: "caller-1" }));
+    await settle();
+    expect(conductor.asking).toBeNull();
+    const row = forProject(A).at(-1)!;
+    started(row.key, "pty-1", "sid-1");
+    flushSync();
+    await starting;
+    expect(row.account).toBe("Work");
+    expect(row.modeGiven).toBe("plan");
+    sessions.active = null;
+    heard("sid-1", "plan");
+    row.working = false;
+    flushSync();
+    await handle(call("wait", { session: "sid-1" }, { session: "caller-1" }));
+    heard("caller-1", "acceptEdits");
+    await vi.advanceTimersByTimeAsync(PUT_AWAY_AFTER);
+    expect(byKey(row.key)).toBeNull();
+    expect(modeOf("sid-1")).toBe("plan");
+    const back = await resumed(call("send", { session: "sid-1", text: "Fix the docs too" }, { session: "caller-1" }), "pty-1b");
+    expect(back.resumedFrom).toBe("sid-1");
+    expect(back.account).toBe("Work");
+    expect(back.modeGiven).toBeNull();
   });
 });

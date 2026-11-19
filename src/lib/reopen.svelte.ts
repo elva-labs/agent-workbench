@@ -33,7 +33,9 @@ import {
  * running that no row shows. It comes back under the session that started
  * it, which the caller's own record still says. After a restart there is
  * nothing to take up, and its row is put away without being started, as
- * the caller's list offers it, unless it was the one on screen.
+ * the caller's list offers it, unless it was the one on screen. One that
+ * comes back unread, or with words of the user's in it, stays until the
+ * user has seen it.
  *
  * A row comes back unread if it was unread at the quit, with the line under
  * its name, as the sessions keep it by id; the one the restore puts on
@@ -205,11 +207,12 @@ export function reopen(
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
     // row waits to be resumed like any other, but for a session another
-    // started, whose starter brings it back when it is wanted.
+    // started, whose starter brings it back when it is wanted. One the core
+    // could not be asked about may still run, and keeps its row.
     const theirs = startedFor(row.key) !== null && entry.id !== active;
     if (row.kind === "integrated" && entry.handle)
-      void reattach(row.key, entry.handle, entry.spoken ?? true).then((up) => {
-        if (!up && theirs) putAwayLeft(row.key);
+      void reattach(row.key, entry.handle, entry.spoken ?? true).then((how) => {
+        if (how === "gone" && theirs) putAwayLeft(row.key);
       });
     else if (theirs) putAwayLeft(row.key);
   };

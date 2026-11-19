@@ -11,7 +11,7 @@ import { PROJECT, NO_WORKFLOW, WITH_WORKFLOW, installFakeCore } from "./fake";
  */
 
 const STOP_WHEN_DONE =
-  "The workbench puts it away once it has rested five minutes with nothing open; a line you send it after that resumes it.";
+  "The workbench puts it away once it has rested at least five minutes with nothing open; a line you send it after that resumes it.";
 
 const AGENT = "section[data-pane='agent']";
 const MOD = "ControlOrMeta";

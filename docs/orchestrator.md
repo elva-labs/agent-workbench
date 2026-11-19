@@ -237,13 +237,21 @@ background and no error or usage limit; its starter has been told so, by a
 wait, a listing, a note or a wake; it asks nothing; no message of the
 user's or the starter's waits for it and no line is being typed into it;
 no call of the starter's that is not done names it, such as a wait on it
-alone, a read or a line on its way; it is not the session on screen; and
-the user has no words in its terminal or its composer. Once that has held
-for five minutes without a break, its row closes and the session goes
-among the earlier sessions to resume, as a stopped one does. Anything that
-breaks it, the session at work again or the user selecting it, starts the
-five minutes over. A start that would pass the cap, or a work step's
-room, puts away at once the caller's sessions whose work is over.
+alone, a read or a line on its way; it is not the session on screen; the
+user has read it; and the user has no words in its terminal or its
+composer. Once that has held for at least five minutes without a break,
+its row closes and the session goes among the earlier sessions to resume,
+as a stopped one does. Anything that breaks it, the session at work again,
+the user selecting it or marking it unread, starts the five minutes over,
+and so does the end of a call that names it. The window keeps the time,
+so a reload starts it over too. A start that would pass the cap, or a work
+step's room, puts away at once the caller's sessions whose work is over,
+never one the user has not read.
+
+A line its starter sends brings it back under the account it ran under and
+in the permission mode it ran in, whatever mode the starter runs in by
+then. Lines that arrive while it comes back wait for it, and then go to it
+as to any running session.
 
 A session put away stays on its starter's list. `sessions` lists it as put
 away by the workbench once its work was over, and a line its starter sends
@@ -254,8 +262,11 @@ away it answers that none is running.
 
 After a restart, a row of a session another session started that the core
 no longer runs is put away the same way, without being started, unless it
-was the session on screen at the quit. Its starter's list says it has not
-run since the workbench was restarted, and a line sent to it resumes it.
+was the session on screen at the quit. One that comes back unread, or that
+the user writes in before the core has answered, stays until the user has
+seen it, and goes five minutes after. A row whose core could not be asked,
+which may still run it, is kept. Its starter's list says it has not run
+since the workbench was restarted, and a line sent to it resumes it.
 
 ## Who is calling
 

@@ -755,7 +755,7 @@ describe("the account's limits", () => {
     stopListening();
     stopListening = await listenIntegrated();
     const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
-    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(await reattach(row.key, before.handle)).toBe("up");
     expect(limitsOf(null, "claude-code", null)).toMatchObject({ takenAt: 3_000, windows: [{ percent: 64 }] });
   });
 });
@@ -843,7 +843,7 @@ describe("what a resumed session said before", () => {
     fake.holdHistory();
     const row = reopened(PROJECT, "old-conversation", "claude-code", null, null, null, "integrated");
     // The core it ran in is gone, so its old handle answers nothing.
-    expect(await reattach(row.key, "int-9")).toBe(false);
+    expect(await reattach(row.key, "int-9")).toBe("gone");
     const conversation = conversationOf(row.key);
     expect(conversation.earlier).toBe("loading");
     // The row in front starts at once, while the read is still out.
@@ -967,7 +967,7 @@ describe("what a resumed session said before", () => {
     stopListening();
     stopListening = await listenIntegrated();
     const row = reopened(PROJECT, "old-conversation", "claude-code", null, null, null, "integrated");
-    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(await reattach(row.key, before.handle)).toBe("up");
     const conversation = conversationOf(row.key);
     expect(agentTexts(conversation)).toEqual(["There are 12.", "Four of them."]);
     expect(conversation.began!.after).toBe(conversation.entries[1].key);
@@ -1013,7 +1013,7 @@ describe("the workflow a session follows, kept for it", () => {
     stopListening = await listenIntegrated();
     loadRemembered();
     const back = reopened(PROJECT, id, "claude-code", null, null, null, "integrated");
-    expect(await reattach(back.key, handle)).toBe(true);
+    expect(await reattach(back.key, handle)).toBe("up");
     expect(byKey(back.key)!.workflow).toMatchObject({ name: "Build and review", startOnly: false });
   });
 
@@ -1046,7 +1046,7 @@ describe("a session the core still runs after a reload", () => {
     // Heard before the row came back: kept until it claims them.
     fake.emit(before.handle, { type: "text", block: "late", parent: null, text: "meanwhile", done: true });
     const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
-    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(await reattach(row.key, before.handle)).toBe("up");
     const session = byKey(row.key)!;
     expect(session.status).toBe("running");
     expect(session.needs).toBe("permission");
@@ -1081,7 +1081,7 @@ describe("a session the core still runs after a reload", () => {
     stopListening();
     stopListening = await listenIntegrated();
     const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
-    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(await reattach(row.key, before.handle)).toBe("up");
     const session = byKey(row.key)!;
     expect(session.working).toBe(true);
     attention.focused = false;
@@ -1101,7 +1101,7 @@ describe("a session the core still runs after a reload", () => {
     stopListening();
     stopListening = await listenIntegrated();
     const row = reopened(PROJECT, "old-run", "claude-code", null, null, null, "integrated", null, true, "old-run");
-    expect(await reattach(row.key, before.handle)).toBe(true);
+    expect(await reattach(row.key, before.handle)).toBe("up");
     expect(byKey(row.key)!.token).toBe("old-run");
     expect(runningByToken("old-run")?.key).toBe(row.key);
     // A newer session the core numbered the same, which has not said its
@@ -1117,19 +1117,33 @@ describe("a session the core still runs after a reload", () => {
     stopListening();
     stopListening = await listenIntegrated();
     const stale = reopened(PROJECT, "old-gone", "claude-code", null, null, null, "integrated", null, true, "old-gone");
-    expect(await reattach(stale.key, newer.handle)).toBe(false);
+    expect(await reattach(stale.key, newer.handle)).toBe("gone");
     expect(byKey(stale.key)!.status).toBe("dormant");
     expect(runningByToken("old-gone")).toBeNull();
   });
 
   it("is left for a resume when the core has no such session, or another conversation under that id", async () => {
     const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
-    expect(await reattach(row.key, "int-9")).toBe(false);
+    expect(await reattach(row.key, "int-9")).toBe("gone");
     expect(byKey(row.key)!.status).toBe("dormant");
     await started();
     const other = reopened(PROJECT, "another-conversation", "claude-code", null, null, null, "integrated");
-    expect(await reattach(other.key, "int-1")).toBe(false);
+    expect(await reattach(other.key, "int-1")).toBe("gone");
     expect(handleOf(other.key)).toBeNull();
+  });
+
+  it("says a reattach failed, not that the session is gone, when the core could not answer in time", async () => {
+    const before = await started();
+    resetSessions();
+    resetIntegrated();
+    const seam = (window as unknown as { __WORKBENCH_CORE__: { integratedSnapshot: (id: string) => Promise<unknown> } })
+      .__WORKBENCH_CORE__;
+    seam.integratedSnapshot = async () => {
+      throw "the session's news did not go out in time";
+    };
+    const row = reopened(PROJECT, "integrated-session-1", "claude-code", null, null, null, "integrated");
+    expect(await reattach(row.key, before.handle)).toBe("failed");
+    expect(byKey(row.key)!.status).toBe("dormant");
   });
 });
 
