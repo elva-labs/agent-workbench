@@ -503,6 +503,19 @@ agent's name is no title. Codex keeps names in its own index, which is
 polled. A name is kept by session id, so the past-session list shows the
 name you knew a session by, and resuming it starts the row under that name.
 
+A name the user gives a session through the agent's own rename command is
+the row's name at once and from then on. An integrated session hears it
+from the agent; for a Claude Code terminal session the transcript records
+it, and the end of the transcript is read as the session's working folder
+is, every couple of seconds while it is on screen. A title the agent sets
+later does not replace it, and a later rename does.
+
+A slash command is never a name. A row named from its first message passes
+over a message that is a command, a slash and a word with nothing or a
+space after it, and takes the first message that is not one; until then
+it keeps its plain name. A past session's title passes over commands and
+what they printed the same way.
+
 ## Following the session
 
 The changes pane follows the session, not just the project. Every couple of
@@ -1047,7 +1060,7 @@ that was only a compaction the agent did by itself, with nothing said,
 marks nothing. A turn already running when the window takes the session
 up again after a reload marks when it ends, since what it did before is
 not heard again. A row with no name yet takes the first line of its first
-message.
+message that is not a slash command, as [names](#names) describes.
 
 Before a session can run it may need the user. In a folder the agent has
 not been told to trust, the pane asks whether to trust it, and on a yes the

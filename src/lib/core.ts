@@ -399,6 +399,8 @@ export type IntegratedEventBody =
   /** The slash commands and skills changed, or the agent said more of
       which is which; all of them as they now are. */
   | { type: "commands"; commands: IntegratedCommand[] }
+  /** The user named the conversation through the agent's rename command. */
+  | { type: "titled"; title: string }
   /** The model, mode or effort changed; all as they now are. */
   | {
       type: "configured";

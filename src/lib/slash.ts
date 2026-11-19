@@ -74,6 +74,14 @@ export function named(
   return command === undefined ? null : { command, rest: (found[2] ?? "").trim() };
 }
 
+/** Whether a line reads as a slash command: a slash, then a name with no
+    further slash in it, as a path would have, and nothing or a space
+    after it. Such a line is an order to the agent, never a session's
+    name. */
+export function readsAsCommand(line: string): boolean {
+  return /^\/[^\s/]+(?:\s|$)/.test(line.trim());
+}
+
 /** The argument hint to show after a command just completed: while the
     message is the command and a space, with nothing typed after it. */
 export function waitingHint(draft: string, commands: readonly IntegratedCommand[]): string | null {

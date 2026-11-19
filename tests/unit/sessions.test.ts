@@ -49,6 +49,7 @@ import {
   followCwd,
   sessionTitle,
   titled,
+  renamed,
   byKey,
   byStatus,
   nextNeedingYou,
@@ -118,6 +119,9 @@ function hold(host: string): () => void {
 const LAB = "ssh://ada@lab/srv/one";
 let cwdAnswer: string | null = null;
 let cwdAsks = 0;
+/** The name the user gave a Claude Code session, by its id, as the core
+    reads it from the transcript. */
+let givenNames: Record<string, string> = {};
 /** The agent whose history directory cannot be read, if any. */
 let unreadable: string | null = null;
 const spawned: SpawnOptions[] = [];
@@ -138,6 +142,7 @@ vi.mock("$lib/core", () => ({
       cwdAsks += 1;
       return cwdAnswer;
     },
+    sessionTitle: async (_agent: string, id: string) => givenNames[id] ?? null,
     // The repository of a path is its nearest worktree: the directory itself
     // here, or the parent for anything ending in "/inside".
     projectInfo: async (path: string) => {
@@ -192,6 +197,7 @@ beforeEach(() => {
   historyByDir = {};
   cwdAnswer = null;
   cwdAsks = 0;
+  givenNames = {};
   resetAgent();
   applyDetect(
     {
@@ -1164,6 +1170,18 @@ describe("titles", () => {
     expect(label(session)).toBe("session 1");
   });
 
+  it("keeps a name the user gave over the agent's later titles", () => {
+    const session = live(A, "pty-1");
+    titled(session.key, "✳ fix-activity-tracking-bugs");
+    renamed(session.key, "Shared ARM64 host");
+    expect(label(session)).toBe("Shared ARM64 host");
+    titled(session.key, "✳ an-automatic-title");
+    expect(label(session)).toBe("Shared ARM64 host");
+    // A name that reads as the user's own is not taken.
+    renamed(session.key, "You");
+    expect(label(session)).toBe("Shared ARM64 host");
+  });
+
   it("prefers the title over the resumed id", () => {
     const session = create(A, "0520dd94-aaaa");
     titled(session.key, "earlier work");
@@ -1201,6 +1219,18 @@ describe("titles", () => {
     expect(sessions.names).toEqual({});
     loadRemembered();
     expect(sessions.names["session-pty-1"]).toBe("kept name");
+  });
+
+  it("keeps the user's name over automatic titles after a resume", () => {
+    const session = live(A, "pty-1");
+    renamed(session.key, "My name");
+    close(session.key);
+    reset();
+    loadRemembered();
+    const again = create(A, "session-pty-1");
+    expect(label(again)).toBe("My name");
+    titled(again.key, "✳ an-automatic-title");
+    expect(label(again)).toBe("My name");
   });
 
   it("does not remember the agent's own name as a session's", () => {
@@ -1255,6 +1285,25 @@ describe("where the session works", () => {
     const session = live(A, "pty-1");
     await located(session.key, "/broken");
     expect(session.worktree).toBeNull();
+  });
+
+  it("names a terminal session as the user renamed it in its terminal", async () => {
+    vi.useFakeTimers();
+    try {
+      const stop = followCwd();
+      const session = live(A, "pty-1");
+      titled(session.key, "✳ fix-activity-tracking-bugs");
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(label(session)).toBe("fix-activity-tracking-bugs");
+      givenNames[session.id!] = "Shared ARM64 host";
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(label(session)).toBe("Shared ARM64 host");
+      titled(session.key, "✳ an-automatic-title");
+      expect(label(session)).toBe("Shared ARM64 host");
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("asks the core for the active running session, and only that", async () => {

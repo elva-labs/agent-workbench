@@ -2004,9 +2004,10 @@ test.describe("a resumed conversation", () => {
 test("lays out the composer's bar in a narrow pane with nothing drawn over another", async ({ page }) => {
   await page.setViewportSize({ width: 700, height: 800 });
   await openIntegrated(page);
-  await agent(page, `f.context("${H}", 41000, 200000);`);
+  await agent(page, `f.context("${H}", 41000, 200000); f.configure("${H}", { effort: "high" });`);
+  await expect(page.getByTestId("effort-chip")).toBeVisible();
   const boxes = await Promise.all(
-    ["attach", "model-chip", "mode-chip", "workflow-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
+    ["attach", "model-chip", "effort-chip", "mode-chip", "workflow-chip", "send"].map((id) => page.getByTestId(id).boundingBox()),
   );
   const ctx = await page.getByTestId("composer").locator(".ctx").boundingBox();
   const all = [...boxes, ctx].map((box) => box!);
@@ -2019,7 +2020,7 @@ test("lays out the composer's bar in a narrow pane with nothing drawn over anoth
   const composer = (await page.getByTestId("composer").boundingBox())!;
   for (const box of all) expect(box.x + box.width).toBeLessThanOrEqual(composer.x + composer.width + 0.5);
   // Send keeps to the right end, wrapped or not.
-  const send = all[4];
+  const send = all[5];
   expect(composer.x + composer.width - (send.x + send.width)).toBeLessThan(16);
 });
 

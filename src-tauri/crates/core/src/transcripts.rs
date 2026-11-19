@@ -460,6 +460,27 @@ fn read_tail(path: &Path) -> Option<String> {
     )
 }
 
+/// The name the user gave a session through the agent's rename command,
+/// read from the end of its transcript, wherever under the configuration
+/// directory the session was filed. None where it was given none.
+pub fn given_name(claude_dir: &Path, id: &str) -> Option<String> {
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return None;
+    }
+    let file = format!("{id}.jsonl");
+    let path = std::fs::read_dir(claude_dir.join("projects"))
+        .ok()?
+        .flatten()
+        .map(|folder| folder.path().join(&file))
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            meta.is_file().then(|| (meta.modified().ok(), path))
+        })
+        .max_by_key(|(modified, _)| *modified)?
+        .1;
+    latest(&read_tail(&path)?, "custom-title", "customTitle").map(|title| tidy(&title))
+}
+
 /// The newest entry of a kind in the tail, and the field it carries. The
 /// kind is checked as text before any parsing: most lines are not it.
 fn latest(tail: &str, kind: &str, field: &str) -> Option<String> {
@@ -492,19 +513,11 @@ fn prompt_text(entry: &serde_json::Value) -> Option<String> {
     }
     let text = first_text(entry)?;
     let text = text.trim();
-    if text.starts_with("<local-command-caveat>") || text.starts_with("<local-command-stdout>") {
+    // A command the user ran, and what it printed, name nothing.
+    if text.starts_with("<local-command-") || text.starts_with("<command-") {
         return None;
     }
-    if let Some(name) = between(text, "<command-name>", "</command-name>") {
-        return Some(name.to_string());
-    }
     Some(text.to_string())
-}
-
-fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
-    let start = text.find(open)? + open.len();
-    let end = text[start..].find(close)? + start;
-    Some(text[start..end].trim())
 }
 
 /// Content has been both a bare string and a list of typed blocks. Accept
@@ -793,7 +806,7 @@ mod tests {
     // Running a slash command first writes a caveat and the command around
     // it. The picker shows the command, never the caveat.
     #[test]
-    fn shows_a_slash_command_by_name_and_never_the_caveat() {
+    fn passes_over_a_slash_command_and_what_it_printed() {
         let home = home("caveat");
         let project = Path::new("/home/ada/dev/demo");
         write_transcript(
@@ -806,7 +819,38 @@ mod tests {
 {"type":"user","message":{"content":"Review #715"}}
 "#,
         );
-        assert_eq!(list(&home, project)[0].title.as_deref(), Some("/clear"));
+        assert_eq!(
+            list(&home, project)[0].title.as_deref(),
+            Some("Review #715")
+        );
+    }
+
+    #[test]
+    fn a_given_name_is_found_by_the_session_alone() {
+        let home = home("given");
+        let id = "0b1c2d3e-0000-4000-8000-000000000001";
+        assert_eq!(given_name(&home, id), None);
+        write_transcript(
+            &home,
+            Path::new("/home/ada/dev/demo/.claude/worktrees/one"),
+            id,
+            r#"{"type":"user","message":{"content":"Fix the build"}}
+{"type":"custom-title","customTitle":"First name","sessionId":"s"}
+{"type":"ai-title","aiTitle":"an ai title","sessionId":"s"}
+{"type":"custom-title","customTitle":"Shared ARM64 host","sessionId":"s"}
+"#,
+        );
+        assert_eq!(given_name(&home, id).as_deref(), Some("Shared ARM64 host"));
+        assert_eq!(given_name(&home, "../x"), None);
+        let unnamed = "0b1c2d3e-0000-4000-8000-000000000002";
+        write_transcript(
+            &home,
+            Path::new("/home/ada/dev/demo"),
+            unnamed,
+            r#"{"type":"ai-title","aiTitle":"an ai title","sessionId":"s"}
+"#,
+        );
+        assert_eq!(given_name(&home, unnamed), None);
     }
 
     #[test]

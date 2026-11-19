@@ -103,6 +103,10 @@ export interface Session {
   /** What the agent calls the session, from the terminal title it sets.
       Null until it says, and when what it says is just its own name. */
   title: string | null;
+  /** The title is a name the user gave the session through its agent's
+      rename command, which a title the agent chooses later does not
+      replace. */
+  ownTitle: boolean;
   /** The directory the process was last seen working in. */
   cwd: string | null;
   /** Where the agent was started when that is not the project: the
@@ -240,6 +244,7 @@ export function carriedFor(session: Session): Carried | null {
 
 const MINE_KEY = "workbench.mine";
 const NAMES_KEY = "workbench.names";
+const OWN_NAMES_KEY = "workbench.ownNames";
 const TOKENS_KEY = "workbench.tokens";
 const PREFERRED_KEY = "workbench.agents";
 const WORKFLOWS_KEY = "workbench.workflows";
@@ -323,6 +328,9 @@ export const sessions = $state({
    * read out of the transcript, or by when it last moved.
    */
   names: {} as Record<string, string>,
+  /** The session ids whose name the user gave, kept between runs, so an
+      automatic title never replaces it after a resume or a restart. */
+  own: {} as Record<string, true>,
   /** The token each session's tools name it by, with the project it runs
       in, by the agent's id for the session, kept between runs, so a session
       resumed is named as it was and still owns what was kept under its
@@ -682,6 +690,17 @@ export function loadRemembered() {
   } catch {
     // Nothing is named, then.
   }
+  try {
+    const raw = localStorage.getItem(OWN_NAMES_KEY);
+    const stored: unknown = raw === null ? null : JSON.parse(raw);
+    if (Array.isArray(stored)) {
+      const own: Record<string, true> = {};
+      for (const id of stored) if (typeof id === "string") own[id] = true;
+      sessions.own = own;
+    }
+  } catch {
+    // No name is the user's own, then.
+  }
   loadWaiting();
   try {
     const raw = localStorage.getItem(TOKENS_KEY);
@@ -1033,6 +1052,16 @@ function rememberName(id: string, name: string) {
   }
 }
 
+function rememberOwn(id: string) {
+  if (sessions.own[id]) return;
+  sessions.own[id] = true;
+  try {
+    localStorage.setItem(OWN_NAMES_KEY, JSON.stringify(Object.keys(sessions.own)));
+  } catch {
+    // Non-fatal: a later automatic title may replace the name after a restart.
+  }
+}
+
 /** Transcripts not already open as a row: the one a row was resumed from, or
     the one it has been writing since it started, is that row. */
 function closed(project: string): HistoryEntry[] {
@@ -1331,11 +1360,27 @@ export function named(key: string, title: string) {
   if (session.id !== null) rememberName(session.id, title);
 }
 
+/** The user named the session through its agent, by the agent's rename
+    command. That is what the row is called from now on, whatever title
+    the agent sets later, unless it reads as another live session's name
+    or as the user's or the workbench's own. */
+export function renamed(key: string, title: string) {
+  const session = byKey(key);
+  const name = title.trim();
+  if (session === null || name === "" || reservedName(name) || nameTaken(name, key)) return;
+  session.ownTitle = true;
+  if (session.id !== null) rememberOwn(session.id);
+  if (session.title === name) return;
+  session.title = name;
+  if (session.id !== null) rememberName(session.id, name);
+}
+
 /** The agent set the terminal title: that is what the session is called,
-    now and when it is listed as a past session later. */
+    now and when it is listed as a past session later, unless the user
+    has named it. */
 export function titled(key: string, raw: string) {
   const session = byKey(key);
-  if (session === null) return;
+  if (session === null || session.ownTitle) return;
   session.title = sessionTitle(raw);
   if (session.title !== null && session.id !== null)
     rememberName(session.id, session.title);
@@ -1384,10 +1429,11 @@ export async function startedIn(key: string, dir: string) {
 const CWD_POLL = 2000;
 
 /**
- * Asks, every couple of seconds, where the active session is working, and
- * what an agent that names sessions in its own index calls it now. Cheap:
- * one syscall and at most one small query on the core's side. Returns a
- * stop function.
+ * Asks, every couple of seconds, where the active session is working, what
+ * an agent that names sessions in its own index calls it now, and what the
+ * user named a Claude Code session through its rename command. Cheap: one
+ * syscall, and one small query or a look at the end of the transcript on
+ * the core's side. Returns a stop function.
  */
 export function followCwd(): () => void {
   const timer = setInterval(() => {
@@ -1403,11 +1449,15 @@ export function followCwd(): () => void {
       .ptyCwd(ptyId)
       .then((cwd) => located(key, cwd))
       .catch(() => {});
-    if (agent === "codex" && id !== null) {
+    // Codex keeps what it calls a session in an index of its own, and
+    // Claude Code the name the user gave it in its transcript.
+    if (id !== null) {
       core()
         .sessionTitle(agent, id, dirFor(account, agent))
         .then((title) => {
-          if (title !== null) named(key, title);
+          if (title === null) return;
+          if (agent === "codex") named(key, title);
+          else renamed(key, title);
         })
         .catch(() => {});
     }
@@ -1797,6 +1847,7 @@ function row(
     ordinal: ordinals[project],
     // A resumed session keeps the name it had until the agent says otherwise.
     title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
+    ownTitle: resumedFrom !== null && sessions.own[resumedFrom] === true,
     cwd: null,
     startIn,
     prompt,
@@ -3480,6 +3531,7 @@ export function reset() {
   loading.clear();
   sessions.mine = {};
   sessions.names = {};
+  sessions.own = {};
   sessions.tokens = {};
   sessions.workflows = {};
   pending.clear();

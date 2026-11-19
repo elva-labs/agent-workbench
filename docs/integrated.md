@@ -197,7 +197,13 @@ let go, since the app's quit hung up on that run.
 A mode kept for a conversation is that conversation's own, and no
 conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept
-the same way.
+the same way. The composer's chips are the model, the effort and the mode,
+in that order; the effort's is there only while the model takes an effort,
+lists the efforts the agent says that model takes, and always names the one
+the status bar names. In a narrow pane it drops the word effort and keeps
+the level. An effort set with the agent's own command is shown but is not
+the one a new session starts on; only a pick on the chip or the status bar
+is.
 
 A mode the agent was asked to start in and did not, such as auto where the
 account or the model has none, is said in a notice, and the session runs in
@@ -425,7 +431,14 @@ naming the session and its kind:
   underscores, each with what is not a letter, a digit, an underscore or a
   dash made an underscore; it counts as a command with the server as its
   source, and goes once a turn's start does not name it. Codex lists none.
-- **configured**: the model, the mode or the effort changed.
+- **configured**: the model, the mode or the effort changed. Claude Code
+  says nothing in its stream of a model or an effort that a slash command
+  such as `/model` or `/effort` sets, so after a turn that ran a command
+  the core reads the agent's settings again, and this follows where they
+  changed.
+- **titled**: the user named the conversation through the agent's own
+  rename command, with the name. Codex, which takes no slash commands
+  here, never says it.
 - **message**: a sent message went to the agent with nothing ahead of it,
   is queued behind a running turn, was taken into the running turn, was
   dropped and will not be answered, because the agent refused, discarded
