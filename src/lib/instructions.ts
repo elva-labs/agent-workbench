@@ -11,6 +11,32 @@ const OUTCOME_ASKED_BEFORE = [
   "When you are done, or stuck, call the notify tool with one line saying which, before your final message.",
 ];
 
+/** The first and last lines of the briefing the core writes for a
+    conversation that goes on fresh from its notes, which goes ahead of the
+    first message the fresh conversation is sent. */
+export const GOING_ON_HEAD =
+  "From the workbench, not the user: this conversation goes on from an earlier one of yours, which was not read again, since reading all of it with its cache lapsed would cost far more. What you need to go on is below.";
+export const GOING_ON_END = "End of the workbench's briefing.";
+
+/** What a terminal session that goes on from its notes is told after the
+    briefing when nothing else is sent with it: the user writes next. */
+export const GOING_ON_WAIT =
+  "Take in the above, say in one line that you have it, and wait for the user.";
+
+/** The briefing at the start of `words` and the words after it; null
+    where it is not there whole. It ends at its first line that is exactly
+    the end line: every line of a record in it is quoted, so none can be. */
+function briefingAt(words: string): { briefing: string; rest: string } | null {
+  if (!words.startsWith(`${GOING_ON_HEAD}\n`)) return null;
+  const lines = words.split("\n");
+  const end = lines.indexOf(GOING_ON_END);
+  if (end === -1) return null;
+  return {
+    briefing: lines.slice(1, end).join("\n").trim(),
+    rest: lines.slice(end + 1).join("\n").replace(/^\n+/, ""),
+  };
+}
+
 /** The first line of the note a session that started others is given ahead
     of the user's words, on what those sessions did since it last looked.
     The note is the workbench's, a line each, and a blank line ends it. */
@@ -74,10 +100,21 @@ function noteAt(words: string, head: string, shaped: (line: string) => boolean) 
 export function spoken(
   text: string,
   user = false,
-): { text: string; instructions: string | null; reports: string | null; filesBack: string | null } {
+): {
+  text: string;
+  instructions: string | null;
+  reports: string | null;
+  filesBack: string | null;
+  briefing?: string;
+} {
   let words = text;
   let reports: string | null = null;
   let filesBack: string | null = null;
+  // The briefing a fresh conversation went on with goes ahead of whatever
+  // was sent first, the user's words or another session's.
+  const going = briefingAt(words);
+  if (going !== null) words = going.rest === GOING_ON_WAIT ? "" : going.rest;
+  const briefed = going === null ? {} : { briefing: going.briefing };
   if (user) {
     const files = noteAt(words, FILES_BACK_HEAD, (line) => FILES_BACK_AS.test(line) || ABSOLUTE.test(line));
     if (files !== null) {
@@ -91,11 +128,11 @@ export function spoken(
     }
   }
   for (const ask of [OUTCOME_ASK, ...OUTCOME_ASKED_BEFORE]) {
-    if (words === ask) return { text: "", instructions: ask, reports, filesBack };
+    if (words === ask) return { text: "", instructions: ask, reports, filesBack, ...briefed };
     if (words.endsWith(` ${ask}`))
-      return { text: words.slice(0, -(ask.length + 1)), instructions: ask, reports, filesBack };
+      return { text: words.slice(0, -(ask.length + 1)), instructions: ask, reports, filesBack, ...briefed };
   }
-  return { text: words, instructions: null, reports, filesBack };
+  return { text: words, instructions: null, reports, filesBack, ...briefed };
 }
 
 /** A note's lines as the user reads them: each session by the name its row

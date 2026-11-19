@@ -278,6 +278,49 @@ describe("presenting", () => {
 });
 
 describe("what an agent says in a conversation", () => {
+  describe("a fenced block with no language", () => {
+    const fence = (text: string) => renderSaid("```\n" + text + "\n```");
+    const long = "word ".repeat(30).trim();
+
+    it("wraps a drafted message and a list", () => {
+      const html = fence(
+        `Hi team,\n\n- first ${long}\n  - nested ${long}\n\nThanks`,
+      );
+      expect(html).toContain("data-wrap");
+      expect(html).toContain('style="--hang:2ch"');
+      expect(html).toContain('style="--hang:4ch"');
+    });
+
+    it.each([
+      ["an ASCII table", `| name | note |\n|------|------|\n| a | ${long} |`],
+      [
+        "a directory tree",
+        `src\n\u251c\u2500\u2500 lib\n\u2502   \u2514\u2500\u2500 ${long}.ts`,
+      ],
+      [
+        "command output",
+        `-rw-r--r--  1 user  staff  120 Nov 19 10:00 ${long}.txt\ndrwxr-xr-x  3 user  staff   96 Nov 19 10:01 src`,
+      ],
+      [
+        "a stack trace",
+        `Error: boom\n    at run (/app/src/index.ts:12:5)\n    at Object.<anonymous> (/app/src/main.ts:3:1)`,
+      ],
+      [
+        "a Python traceback",
+        `Traceback (most recent call last):\n  File "app.py", line 3, in run\n    boom()`,
+      ],
+      ["a diff", `--- a/x\n+++ b/x\n@@ -1 +1 @@\n-let a = 1\n+let b = 2`],
+    ])("keeps the lines of %s", (_, text) => {
+      const html = fence(text);
+      expect(html).not.toContain("data-wrap");
+      expect(html).not.toContain('class="line"');
+    });
+
+    it("wraps a block marked as text", () => {
+      expect(renderSaid("```text\nHello there\n```")).toContain("data-wrap");
+    });
+  });
+
   it("is rendered as a document is, with an image from an address shown as a link to it", () => {
     const html = renderSaid(
       "Look ![chart](https://example.com/leak?x=secret) and ![dot](data:image/png;base64,AAAA) and [docs](https://example.com) <img src=x>",

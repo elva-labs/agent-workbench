@@ -24,6 +24,16 @@ import {
 } from "$lib/core";
 import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
+import {
+  askWhole,
+  briefingBack,
+  briefingFor,
+  forgetWent,
+  identified,
+  takeUp,
+  wentOn,
+  wholeOf,
+} from "$lib/goingOn.svelte";
 import { clock as timeOfDay } from "$lib/thread";
 import {
   nameTaken,
@@ -37,6 +47,7 @@ import {
   keepToken,
   renewToken,
   loadHistory,
+  nameGoingOn,
   named,
   newTurnLine,
   lineComing,
@@ -445,6 +456,7 @@ function identify(session: Session, id: string) {
   session.id = id;
   keepToken(session);
   adopt(session.project, id);
+  identified(session.key, id);
 }
 
 /** The row says what the session's events say it is doing. A session that
@@ -545,6 +557,14 @@ export async function launch(key: string): Promise<void> {
       link.busy = false;
       return;
     }
+    // A cold and large conversation goes on fresh from its notes, under
+    // its earlier messages, which are still drawn from the old one.
+    if (starting.resumedFrom !== null) {
+      await takeUp(starting);
+      link.conversation.wentOn = wentOn(key) !== null;
+      // The row keeps the name it showed, which its old conversation gave.
+      if (link.conversation.wentOn) starting.title ??= nameGoingOn(starting);
+    }
     await begin(key, link, starting, told);
   } catch (error) {
     startFailed(key, link, error);
@@ -569,7 +589,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     agent: starting.agent,
     project: starting.project,
     cwd: starting.startIn ?? undefined,
-    session: starting.resumedFrom ?? undefined,
+    session: wentOn(key) === null ? (starting.resumedFrom ?? undefined) : undefined,
     token: starting.token,
     model: starting.model ?? undefined,
     mode,
@@ -1115,7 +1135,10 @@ export function send(
   // the conversation goes back on it.
   const files = from === null ? link.filesBack : [];
   const told = files.length === 0 ? null : filesBackNote(files);
-  const text = [told, note?.text ?? null, words].filter((part) => part !== null).join("\n\n");
+  // A run that went on from notes is briefed ahead of its first message,
+  // whoever sends it, the workbench's own wake among them.
+  const briefing = briefingFor(key);
+  const text = [briefing, told, note?.text ?? null, words].filter((part) => part !== null).join("\n\n");
   const id = crypto.randomUUID();
   mentionedIn(id, mentions);
   link.conversation.sending(id, text, images);
@@ -1157,8 +1180,189 @@ export function send(
     .catch((error) => {
       link.conversation.sendFailed(id, message(error));
       settleNotes(key, link);
+      if (briefing !== null) briefingBack(key, briefing);
     });
   return id;
+}
+
+/** The context from which a cold conversation is large, as the core
+    judges it: a row with less is not looked at again. */
+const LARGE = 100_000;
+/** How often a running row is looked at again for having gone cold, as
+    it comes on screen or the window comes forward. */
+const LOOK_EVERY = 5 * 60_000;
+/** The least rest after which a conversation can be cold: its shortest
+    cache, five minutes, less the core's margin on it. */
+const REST_LEAST = 5 * 60_000 - 30_000;
+const looked = new Map<string, number>();
+/** How long the core's answer that a row is warm stands: the core judges
+    a conversation cold this long before its cache lapses at the least. */
+const WARM_STANDS = 30_000;
+/** When each row was last answered warm, or its judging failed. */
+const warmAt = new Map<string, number>();
+
+/** Whether the run has a wake-up of its own pending, which a stop would
+    end: one its last turn scheduled, or a timed prompt no deletion
+    followed. */
+function wakeUpPending(conversation: Conversation): boolean {
+  const said = conversation.entries.flatMap((entry) => (entry.kind === "agent" ? [entry] : []));
+  const last = said.at(-1)?.turn;
+  let timed = 0;
+  for (const entry of said)
+    for (const part of entry.parts) {
+      if (part.kind !== "tool") continue;
+      if (part.name === "CronCreate") timed += 1;
+      else if (part.name === "CronDelete") timed = Math.max(0, timed - 1);
+      else if (part.name === "ScheduleWakeup" && entry.turn === last) {
+        const input = part.input as { stop?: unknown } | null;
+        if (input?.stop !== true) return true;
+      }
+    }
+  return timed > 0;
+}
+
+/** When the run's last turn ended, or null where none has. */
+function restedSince(conversation: Conversation): number | null {
+  const ended = Object.values(conversation.turns)
+    .map((turn) => turn.endedAt)
+    .filter((at): at is number => at !== null);
+  return ended.length === 0 ? null : Math.max(...ended);
+}
+
+/** A row whose run is at rest with nothing on its way, and large: one a
+    stop ends nothing of, and whose next message would read all of it. */
+function restingLarge(key: string, now: number): { session: Session; link: Link } | null {
+  const session = byKey(key);
+  const link = links.get(key);
+  if (session === null || link === undefined || session.kind !== "integrated") return null;
+  if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return null;
+  if (link.busy || link.handle === null || session.working || link.sendingNow || link.goingBack !== null) return null;
+  // A message on its way, the user's or another session's, goes to the run
+  // it was sent to.
+  if (link.conversation.working || link.conversation.waiting.length > 0) return null;
+  // Only a run this window has seen grow large: one whose context is not
+  // known yet has just started, or is taken up after a reload.
+  const used = link.conversation.context?.used ?? null;
+  if (used === null || used < LARGE) return null;
+  if (link.conversation.tasks.some((task) => task.status === "running" && !task.ambient)) return null;
+  if (wakeUpPending(link.conversation)) return null;
+  const rested = restedSince(link.conversation);
+  if (rested !== null && now - rested < REST_LEAST) return null;
+  return { session, link };
+}
+
+/**
+ * Goes on from its notes with a row whose run is at rest and whose
+ * conversation went cold and large while it ran, as when the user comes
+ * back to it after a pause: its run is started again fresh, under the
+ * same row, so the next message is not read with the whole conversation.
+ * Looked at as the row comes on screen or the window comes forward, at
+ * most every few minutes, and as the user sends after a rest, when the
+ * composer holds the message until this is decided. Nothing is spent
+ * until a message goes. Only for a run whose context this window has seen
+ * pass the size, with nothing on its way and nothing of its own that a
+ * stop would end.
+ *
+ * The run counts as starting again while the core judges it, so the
+ * composer holds what is sent meanwhile; a message another session sends
+ * meanwhile goes to the run, and the run is then left as it is. Whether it
+ * goes on is decided, and the run stopped, in one step after the judging,
+ * so no message lands in the conversation being left.
+ */
+export async function goOnIfCold(key: string, now = Date.now(), sending = false): Promise<boolean> {
+  const found = restingLarge(key, now);
+  if (found === null || found.link.restarting) return false;
+  // A warm answer stands for a while, so the message held while it was
+  // given goes at once rather than being judged again.
+  if (now - (warmAt.get(key) ?? -Infinity) < WARM_STANDS) return false;
+  // A run that went on and has not been sent its first message is new.
+  if (wentOn(key)?.briefing != null) return false;
+  const { session, link } = found;
+  if (!sending && now - (looked.get(key) ?? 0) < LOOK_EVERY) return false;
+  looked.set(key, now);
+  const id = session.id;
+  const handle = link.handle;
+  if (id === null || handle === null) return false;
+  link.restarting = true;
+  let resume: string | null;
+  try {
+    resume = await takeUp({ ...session, resumedFrom: id });
+  } catch {
+    resume = id;
+  }
+  const again = restingLarge(key, Date.now());
+  const row = again?.session ?? null;
+  if (resume !== null || row === null || link.handle !== handle || row.id !== id) {
+    if (resume === null) forgetWent(key);
+    else warmAt.set(key, Date.now());
+    link.restarting = false;
+    return false;
+  }
+  row.title ??= nameGoingOn({ ...row, resumedFrom: id });
+  row.resumedFrom = id;
+  link.conversation.wentOn = true;
+  link.conversation.beganHere(Date.now());
+  // The fresh run's context is known once it has read something.
+  link.conversation.context = null;
+  link.handle = null;
+  byHandle.delete(handle);
+  stopped.add(handle);
+  core()
+    .integratedStop(handle)
+    .catch(() => {});
+  link.busy = true;
+  link.prompted = true;
+  try {
+    await begin(key, link, row, toldFor(row));
+  } catch (error) {
+    startFailed(key, link, error);
+    return false;
+  } finally {
+    link.restarting = false;
+  }
+  return true;
+}
+
+/**
+ * Starts a row's run that went on from its notes again on the whole of
+ * its earlier conversation, as the user asked from its row's menu: the
+ * old conversation is resumed, read again in full. Only at rest: a turn
+ * running is not cut short for it. A row left from the last quit does so
+ * once it starts.
+ */
+export async function resumeWhole(key: string): Promise<boolean> {
+  const session = byKey(key);
+  const link = links.get(key);
+  const went = session === null ? null : wholeOf(session);
+  if (session === null || went === null) return false;
+  // A row left from the last quit resumes it whole once it starts.
+  if (session.status === "dormant") {
+    askWhole(key);
+    session.resumedFrom = went.from;
+    session.id = went.from;
+    return true;
+  }
+  if (link === undefined) return false;
+  if (link.busy || link.handle === null || session.working) return false;
+  askWhole(key);
+  session.resumedFrom = went.from;
+  link.conversation.wentOn = false;
+  link.conversation.beganHere(Date.now());
+  const handle = link.handle;
+  link.handle = null;
+  byHandle.delete(handle);
+  stopped.add(handle);
+  core()
+    .integratedStop(handle)
+    .catch(() => {});
+  link.busy = true;
+  try {
+    await begin(key, link, session, toldFor(session));
+  } catch (error) {
+    startFailed(key, link, error);
+    return false;
+  }
+  return true;
 }
 
 /** Compacts the conversation through the agent's own compaction, with
@@ -1748,5 +1952,7 @@ export function resetIntegrated(time: () => number = Date.now) {
   stopped.clear();
   notes.clear();
   toldBy.clear();
+  looked.clear();
+  warmAt.clear();
   clock = time;
 }

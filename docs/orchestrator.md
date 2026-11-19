@@ -644,7 +644,11 @@ of its context could go on from: what it did and where, what state the
 files and the branch are in, and what is left or open. The tools' own words
 say that a new task is a new session, and that resuming a session or
 sending it a line is for the task it already has, since either carries its
-whole conversation into the work.
+whole conversation into the work, or for one cold and large, its notes of
+it: such a session goes on as a fresh conversation from its notes, as
+[notes](sessions.md#going-on-from-the-notes) describes. Its place on its
+starter's list and in a workflow moves to the fresh conversation's id,
+the answer names both ids, and the old one still names it in every tool.
 
 The tools act on the sessions the caller started and on no others. A
 session you started yourself is yours, on a subject of your own: another

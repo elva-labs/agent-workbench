@@ -56,18 +56,21 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    max-width: 100%;
+    max-width: min(100%, var(--conv-measure));
     padding: 2px 6px 2px 2px;
     margin-left: -2px;
     border: 0;
     border-radius: var(--radius-sm);
     background: none;
     font: inherit;
-    font-size: var(--conv-small);
     color: var(--ink-2);
     cursor: pointer;
     text-align: left;
     min-width: 0;
+  }
+
+  .line > * {
+    font-size: var(--conv-small);
   }
 
   .line:hover {

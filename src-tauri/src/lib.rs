@@ -512,6 +512,50 @@ async fn integrated_history(
     .await
 }
 
+/// How a session's conversation is taken up again, judged where its
+/// project is: whole, or fresh from the briefing the answer holds.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn going_on(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    agent: String,
+    project: String,
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+    token: String,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    let cwd = cwd.map(|cwd| match route(&cwd) {
+        Route::Remote { rest, .. } => rest,
+        Route::Local(cwd) => cwd,
+    });
+    blocking(move || match route(&project) {
+        Route::Local(project) => value(core.taken_up(
+            &agent,
+            Path::new(&project),
+            cwd.as_deref().map(Path::new),
+            &session,
+            config_dir.as_deref(),
+            &token,
+        )?),
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "going_on",
+            json!({
+                "agent": agent,
+                "project": rest,
+                "cwd": cwd,
+                "session": session,
+                "configDir": config_dir,
+                "token": token,
+            }),
+        ),
+    })
+    .await
+}
+
 /// Where an integrated session's conversation can go back to, read on the
 /// machine it runs on.
 #[tauri::command]
@@ -1130,6 +1174,74 @@ async fn read_media(
         "read_media",
         |rest| json!({ "path": rest }),
         |core, path| core.read_media(Path::new(path)),
+    )
+    .await
+}
+
+/// How much a session keeps in its notes, read where its project is, and
+/// with `page`, the path of their readable copy as the window names it.
+#[tauri::command]
+async fn notes_kept(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    token: String,
+    page: bool,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(_) => core.notes_kept(&token, page).and_then(value),
+        Route::Remote { host, .. } => {
+            let mut kept = remotes
+                .connection(&host)?
+                .call("notes_kept", json!({ "token": token, "page": page }))?;
+            if let Some(path) = kept.get("page").and_then(Value::as_str) {
+                kept["page"] = Value::String(with_host(&host, path));
+            }
+            Ok(kept)
+        }
+    })
+    .await
+}
+
+/// The brief and list of notes a fresh start of a session is given, read
+/// where its project is.
+#[tauri::command]
+async fn notes_briefing(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    token: String,
+) -> Result<Value, String> {
+    let sent = token.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "notes_briefing",
+        move |_| json!({ "token": sent }),
+        move |core, _| core.notes_briefing(&token),
+    )
+    .await
+}
+
+/// Lets go of the notes of sessions of a project, where it is.
+#[tauri::command]
+async fn notes_forget(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    tokens: Vec<String>,
+) -> Result<Value, String> {
+    let sent = tokens.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "notes_forget",
+        move |_| json!({ "tokens": sent }),
+        move |core, _| core.notes_forget(&tokens),
     )
     .await
 }
@@ -2065,6 +2177,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             agent_detect,
             read_media,
+            notes_kept,
+            notes_briefing,
+            notes_forget,
+            going_on,
             file_info,
             check_page_file,
             page_files::page_files_base,
