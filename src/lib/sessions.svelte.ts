@@ -35,6 +35,7 @@ import { holdMode, modeOf, terminalEnded } from "$lib/sessionModes";
 import { chosenFor, modelToStart, narrowTo } from "$lib/lastChosen.svelte";
 import { carriedOver } from "$lib/modeFit";
 import { starterOf } from "$lib/senders.svelte";
+import { logUsage } from "$lib/usageLog";
 import { bareName, mixesScripts, readsAsWorkbench, reservedName, shown } from "$lib/unseen";
 import { failureOf, interruptedOnScreen, type Failure } from "$lib/turnFailure";
 import { screen } from "$lib/screens";
@@ -3382,6 +3383,7 @@ export function exact(
       newsOverMark(session);
       if (session.note === null && line !== null) leaveLine(session, shown(line));
       unseen(session);
+      logUsage(session, "turn");
       break;
     case "failed":
       // An error ended the turn, a usage limit among them, and the agent did

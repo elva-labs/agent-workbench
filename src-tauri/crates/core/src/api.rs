@@ -142,6 +142,14 @@ struct Run {
     undo: Option<Undo>,
 }
 
+/// Where a Claude Code conversation's transcript is, for the usage log.
+pub struct UsageTranscript<'a> {
+    pub project: &'a Path,
+    pub cwd: Option<&'a Path>,
+    pub session: &'a str,
+    pub config_dir: Option<&'a str>,
+}
+
 /// The conversation as it was before going back: its id, and the entry it
 /// was held at then, where it was.
 #[derive(Debug, Clone)]
@@ -1689,6 +1697,32 @@ impl Core {
     /// Lets go of the notes of these sessions.
     pub fn notes_forget(&self, tokens: &[String]) -> Result<(), String> {
         crate::notes::forget(self.notes_home()?, tokens)
+    }
+
+    /// Adds an entry to a session's usage log. For a turn of a Claude Code
+    /// session in a terminal, `transcript` names the conversation, and the
+    /// turn's tokens and the context are read from it.
+    pub fn usage_log(
+        &self,
+        token: &str,
+        entry: serde_json::Map<String, serde_json::Value>,
+        transcript: Option<UsageTranscript<'_>>,
+    ) -> Result<(), String> {
+        let home = self
+            .home
+            .as_deref()
+            .ok_or_else(|| "this core keeps no usage log: it has no home".to_string())?;
+        let mut entry = entry;
+        if let Some(of) = transcript {
+            let environment = env::environment();
+            let dir = account::claude_dir(home, of.config_dir, &environment.vars);
+            let read = crate::claude_history::find(&dir, of.project, of.cwd, of.session)
+                .and_then(|path| crate::usage::last_turn(&path));
+            if let Some(serde_json::Value::Object(read)) = read {
+                entry.extend(read);
+            }
+        }
+        crate::usage::append(home, token, entry, crate::notes::now() as u64 * 1000)
     }
 
     pub fn read_media(&self, path: &Path) -> Result<crate::show::Media, String> {

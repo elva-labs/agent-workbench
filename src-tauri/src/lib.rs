@@ -1250,6 +1250,55 @@ async fn notes_forget(
     .await
 }
 
+/// Adds an entry to a session's usage log, where its project is. For a
+/// turn of a Claude Code session in a terminal, `transcript` names its
+/// conversation in the project, whose last turn the core reads the tokens
+/// of.
+#[tauri::command]
+async fn usage_log(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    token: String,
+    entry: serde_json::Map<String, Value>,
+    transcript: Option<UsageTranscript>,
+) -> Result<Value, String> {
+    let sent = (token.clone(), entry.clone(), transcript.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&project),
+        "usage_log",
+        move |rest| {
+            let (token, entry, transcript) = sent;
+            let transcript = transcript.map(|of| {
+                json!({ "project": rest, "cwd": of.cwd, "session": of.session, "configDir": of.config_dir })
+            });
+            json!({ "token": token, "entry": entry, "transcript": transcript })
+        },
+        move |core, rest| {
+            let project = PathBuf::from(rest);
+            let read = transcript.as_ref().map(|of| workbench_core::api::UsageTranscript {
+                project: &project,
+                cwd: of.cwd.as_deref().map(Path::new),
+                session: &of.session,
+                config_dir: of.config_dir.as_deref(),
+            });
+            core.usage_log(&token, entry, read)
+        },
+    )
+    .await
+}
+
+/// Where a session's transcript is, for its usage log.
+#[derive(Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageTranscript {
+    cwd: Option<String>,
+    session: String,
+    config_dir: Option<String>,
+}
+
 /// What a file a presented page names beside it is, or why the page may
 /// not load it, read where the page is.
 #[tauri::command]
@@ -2184,6 +2233,7 @@ pub fn run() {
             notes_kept,
             notes_briefing,
             notes_forget,
+            usage_log,
             going_on,
             file_info,
             check_page_file,

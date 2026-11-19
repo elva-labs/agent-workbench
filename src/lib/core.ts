@@ -1638,6 +1638,16 @@ export interface Core {
   notesBriefing(project: string, token: string): Promise<string | null>;
   /** Lets go of the notes of these sessions of a project. */
   notesForget(project: string, tokens: string[]): Promise<void>;
+  /** Adds an entry to a session's usage log, where its project is. With
+      `transcript`, for a turn of a Claude Code session in a terminal, the
+      core reads the turn's tokens and the context from the conversation's
+      transcript. */
+  usageLog(
+    project: string,
+    token: string,
+    entry: Record<string, unknown>,
+    transcript?: { cwd?: string; session: string; configDir?: string },
+  ): Promise<void>;
   /** How a session's conversation is taken up again, judged where its
       project is: whole, or fresh from the briefing the answer holds. */
   goingOn(options: GoingOnOptions): Promise<GoingOn>;
@@ -2172,6 +2182,8 @@ const tauriCore: Core = {
   notesKept: (project, token, page) => invoke<NotesKept>("notes_kept", { project, token, page }),
   notesBriefing: (project, token) => invoke<string | null>("notes_briefing", { project, token }),
   notesForget: (project, tokens) => invoke<void>("notes_forget", { project, tokens }),
+  usageLog: (project, token, entry, transcript) =>
+    invoke<void>("usage_log", { project, token, entry, transcript: transcript ?? null }),
   goingOn: (options) => invoke<GoingOn>("going_on", { ...options }),
   readMedia: (path) => invoke<Media>("read_media", { path }),
   fileInfo: (path) => invoke<FileInfo>("file_info", { path }),
@@ -2547,6 +2559,7 @@ const detachedCore: Core = {
     return null;
   },
   async notesForget() {},
+  async usageLog() {},
   async goingOn() {
     return { context: null, idle: null, goesOn: false, briefing: null };
   },

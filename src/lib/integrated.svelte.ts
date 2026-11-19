@@ -25,6 +25,7 @@ import {
 } from "$lib/core";
 import { Conversation, type Message, type Part } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
+import { logUsage } from "$lib/usageLog";
 import {
   askWhole,
   briefingBack,
@@ -429,6 +430,11 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
       // error, a usage limit among them, which is said for what it is.
       session.turnEnd = body.outcome === "done" ? "done" : body.outcome === "interrupted" ? "cut" : "failed";
       session.failure = body.outcome === "failed" ? failureOf(null, body.error === null ? null : shown(body.error)) : null;
+      logUsage(session, "turn", {
+        outcome: body.outcome,
+        tokens: body.usage,
+        context: link.conversation.context?.used ?? null,
+      });
       break;
     case "ended":
       ended(session, link, body.code, body.clean);

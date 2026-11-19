@@ -194,6 +194,26 @@ struct GoingOnParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct UsageLogParams {
+    token: String,
+    entry: serde_json::Map<String, Value>,
+    #[serde(default)]
+    transcript: Option<UsageTranscriptParams>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UsageTranscriptParams {
+    project: PathBuf,
+    #[serde(default)]
+    cwd: Option<PathBuf>,
+    session: String,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct IntegratedTrustParams {
     agent: String,
     project: PathBuf,
@@ -854,6 +874,17 @@ pub fn dispatch(
         "notes_forget" => {
             let p: NotesForgetParams = parse(params)?;
             core.notes_forget(&p.tokens)?;
+            Ok(Value::Null)
+        }
+        "usage_log" => {
+            let p: UsageLogParams = parse(params)?;
+            let transcript = p.transcript.as_ref().map(|of| crate::api::UsageTranscript {
+                project: &of.project,
+                cwd: of.cwd.as_deref(),
+                session: &of.session,
+                config_dir: of.config_dir.as_deref(),
+            });
+            core.usage_log(&p.token, p.entry, transcript)?;
             Ok(Value::Null)
         }
         "read_media" => {

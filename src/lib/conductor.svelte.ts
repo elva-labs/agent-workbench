@@ -116,6 +116,7 @@ import {
   userWriting,
 } from "$lib/integrated.svelte";
 import { lastRun, nameSessionsBy } from "$lib/thread";
+import { logUsage } from "$lib/usageLog";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
 import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
@@ -2382,6 +2383,7 @@ async function wake(starter: Session, news: Session[]) {
       at: Date.now(),
     };
   conductor.wakesInRow[key] = (conductor.wakesInRow[key] ?? 0) + 1;
+  logUsage(starter, "wake", { reports: news.length, others: out.length });
   if (starter.kind === "integrated") {
     wakeTurns.set(key, null);
     if (sendAsWorkbench(key, [REPORTS_HEAD, ...lines].join("\n"), lost) === null) lost();
@@ -2767,6 +2769,8 @@ async function startFitted(
         : statusMessage(row),
     );
   }
+  const row = byKey(session.key);
+  if (row !== null) logUsage(row, "start", { starter: caller, modelBelow: below !== null });
   remember(caller, {
     id,
     project,
