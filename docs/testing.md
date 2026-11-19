@@ -28,6 +28,13 @@ it does for the first page that asks. Before any test runs, the tier loads
 the app once and waits for its panes, so no test's first wait includes that
 compile.
 
+A change of shape may wait a frame or two before its columns set off, and
+frames can be far apart in a headless browser, so a test never takes a grid
+that holds still for a frame or two as one at rest. The panes' grid carries
+`data-moving` while a column or the terminal panel waits to move or is on its
+way; a test that measures the panes after a change waits for it to be gone,
+and for a new window size to have been taken in, before it reads them.
+
 One unit test reads the window configuration and checks the window cannot be
 made narrower than the panes need, since that constraint lives in two files.
 

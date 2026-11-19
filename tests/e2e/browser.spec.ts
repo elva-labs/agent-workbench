@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { PROJECT, installFakeCore } from "./fake";
+import { PROJECT, columnsAtRest, installFakeCore } from "./fake";
 
 /** A second open project, which a session of the first is asked about
     before it starts one there. */
@@ -21,29 +21,10 @@ function row(page: Page, name: string) {
   return page.locator(TREE).getByText(name, { exact: true });
 }
 
-/** Waits for the panes' columns to arrive: two frames apart, the grid reads
-    the same. Entering review eases the sessions column folded and the
-    changes column to its review width, and the placeholder moves with it. */
-async function settled(page: Page) {
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          new Promise<boolean>((resolve) => {
-            const shell = document.querySelector("[data-testid='shell']")!;
-            const read = () => getComputedStyle(shell).gridTemplateColumns;
-            const first = read();
-            requestAnimationFrame(() => requestAnimationFrame(() => resolve(read() === first)));
-          }),
-      ),
-    )
-    .toBe(true);
-}
-
 async function openBrowser(page: Page) {
   await page.getByTestId("changes-menu").click();
   await page.getByTestId("menu-browser").click();
-  await settled(page);
+  await columnsAtRest(page);
 }
 
 /** Opens a tab from the tree's Browser fold rather than the "⋯" menu: the
@@ -51,7 +32,7 @@ async function openBrowser(page: Page) {
 async function openFoldNewTab(page: Page) {
   await page.getByTestId("browser-fold").click();
   await page.getByTestId("browser-fold-new-tab").click();
-  await settled(page);
+  await columnsAtRest(page);
 }
 
 interface BrowserWindowState {
@@ -115,7 +96,7 @@ test("resizing the viewport moves the rectangle with it", async ({ page }) => {
   const before = (await browserWindowState(page))!.rect!;
 
   await page.setViewportSize({ width: 1100, height: 820 });
-  await settled(page);
+  await columnsAtRest(page);
 
   await expect.poll(() => placedOverBody(page)).toBe(true);
   const after = (await browserWindowState(page))!.rect!;
