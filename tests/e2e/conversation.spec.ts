@@ -3128,4 +3128,21 @@ test.describe("the conversation's width", () => {
     expect(within).toBeGreaterThan(10);
     expect(Math.abs(across - within)).toBeLessThanOrEqual(1);
   });
+
+  test("never pulls a part into the gap above it at a small type size", async ({ page }) => {
+    await openIntegrated(page);
+    await agent(
+      page,
+      `f.send("${H}", crypto.randomUUID(), "Go.");
+       f.startTurn("${H}");
+       f.emit("${H}", { type: "text", block: "a", parent: null, text: "One.", done: true });
+       f.emit("${H}", { type: "text", block: "b", parent: null, text: "## Two\\n\\nBody.", done: true });
+       f.endTurn("${H}");`,
+    );
+    const parts = page.getByTestId("agent-text");
+    await expect(parts).toHaveCount(2);
+    await parts.evaluateAll((els) => els.forEach((el) => ((el as HTMLElement).style.fontSize = "6px")));
+    const [above, below] = await Promise.all([parts.nth(0).boundingBox(), parts.nth(1).boundingBox()]);
+    expect(below!.y - (above!.y + above!.height)).toBeGreaterThanOrEqual(7.5);
+  });
 });
