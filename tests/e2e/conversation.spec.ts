@@ -1691,6 +1691,13 @@ test.describe("a resumed conversation", () => {
     const start = (await calls(page)).find((call) => call.method === "start") as unknown as { options: { session?: string } };
     expect(start.options.session).toBeUndefined();
 
+    // Before anything is said, the menu offers the old conversation whole
+    // and says what that reads.
+    await page.locator("[data-testid='session-row']").first().click({ button: "right" });
+    await expect(page.getByTestId("session-menu-whole")).toHaveText("Resume whole, reads 412k tokens");
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("session-menu")).toHaveCount(0);
+
     await page.getByTestId("composer-input").fill("And the tests?");
     await page.keyboard.press("Enter");
     // The briefing goes ahead of the first message, and is drawn folded.
@@ -1698,7 +1705,7 @@ test.describe("a resumed conversation", () => {
     expect(sent.text).toBe(`${briefing}\n\nAnd the tests?`);
     const mine = page.getByTestId("user-message").last();
     await expect(mine.locator(".bubble")).toHaveText("And the tests?");
-    await expect(mine.getByTestId("workbench-briefing")).toHaveText("Went on from its notes");
+    await expect(mine.getByTestId("workbench-briefing")).toHaveText("Briefing");
     await expect(mine.getByTestId("workbench-briefing-text")).toHaveCount(0);
     await mine.getByTestId("workbench-briefing").click();
     await expect(mine.getByTestId("workbench-briefing-text")).toContainText("Count things.");
@@ -1710,7 +1717,24 @@ test.describe("a resumed conversation", () => {
     await expect(page.locator("[data-testid='session-row']")).toContainText("Count the files in src");
     await expect(page.getByTestId("past-session")).toHaveCount(0);
 
-    // The menu says what resuming whole reads, and does it.
+    // Once something is said, the old conversation would not hold it, so
+    // resuming it whole is no longer offered.
+    await page.locator("[data-testid='session-row']").first().click({ button: "right" });
+    await expect(page.getByTestId("session-menu")).toBeVisible();
+    await expect(page.getByTestId("session-menu-whole")).toHaveCount(0);
+  });
+
+  test("resumes whole from the menu before anything is said in the conversation that went on", async ({ page }) => {
+    const briefing = `From the workbench, not the user: this conversation goes on from an earlier one of yours, which was not read again, since reading all of it with its cache lapsed would cost far more. What you need to go on is below.\n\nNo notes were kept of the earlier conversation.\nEnd of the workbench's briefing.`;
+    await page.addInitScript(
+      (briefing) => ((window as unknown as { __goingOn: unknown }).__goingOn = { context: 412_000, idle: 7200, goesOn: true, briefing }),
+      briefing,
+    );
+    await withPast(page, { keep: true });
+    await page.getByTestId("past-session").click();
+    await expect(page.getByTestId("run-began")).toHaveText(/^Went on from its notes here/);
+    // The old conversation is the row's from the moment it went on.
+    await expect(page.getByTestId("past-session")).toHaveCount(0);
     await page.locator("[data-testid='session-row']").first().click({ button: "right" });
     await expect(page.getByTestId("session-menu-whole")).toHaveText("Resume whole, reads 412k tokens");
     await page.getByTestId("session-menu-whole").click();

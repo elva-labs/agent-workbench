@@ -42,6 +42,8 @@ import {
   askWhole as wholeNext,
   briefingFor,
   identified as wentOnAs,
+  leftBy,
+  spoke,
   superseded as wentOnFromIt,
   takeUp as takeUpAgain,
 } from "$lib/goingOn.svelte";
@@ -852,16 +854,26 @@ function pruneKept(project: string) {
     .map(([id]) => id);
   if (workflows.length === 0 && tokens.length === 0) return;
   // What else is kept for them is kept under their tokens, and for a
-  // session from before there were tokens under its id as well.
+  // session from before there were tokens under its id as well. A token a
+  // row or another kept id still holds is a live session's: one that went
+  // on from its notes keeps its token under the fresh conversation's id,
+  // and its old conversation's going is not its own.
   const ids = [...new Set([...workflows, ...tokens])];
+  const going = new Set(tokens);
+  const held = new Set([
+    ...sessions.all.flatMap((session) => [session.token, ...(session.id === null ? [] : [session.id])]),
+    ...Object.entries(sessions.tokens)
+      .filter(([id]) => !going.has(id))
+      .flatMap(([id, kept]) => [kept.token, id]),
+  ]);
   const callers = [
     ...new Set(ids.flatMap((id) => [sessions.tokens[id]?.token ?? id, id])),
-  ];
+  ].filter((caller) => !held.has(caller));
   for (const id of workflows) delete sessions.workflows[id];
   for (const id of tokens) delete sessions.tokens[id];
   if (workflows.length > 0) saveKept();
   if (tokens.length > 0) saveTokens();
-  forgotten(callers, project);
+  if (callers.length > 0) forgotten(callers, project);
 }
 
 let forgotten: (tokens: string[], project: string) => void = () => {};
@@ -1030,8 +1042,12 @@ function closed(project: string): HistoryEntry[] {
       .map((session) => session.id)
       .filter((id): id is string => id !== null),
   );
-  // A conversation another went on from is that one's, which lists it.
-  return known.filter((transcript) => !open.has(transcript.id) && !wentOnFromIt(transcript.id));
+  // A conversation another went on from is that one's, which lists it,
+  // from the moment its row decides to go on.
+  const left = leftBy(sessions.all.map((session) => session.key));
+  return known.filter(
+    (transcript) => !open.has(transcript.id) && !left.has(transcript.id) && !wentOnFromIt(transcript.id),
+  );
 }
 
 /** Whether a past session is listed under its project: one this app ran,
@@ -1995,7 +2011,8 @@ export async function launch(
     // nothing else to go on with. A conversation held at a point it went
     // back to is resumed as it is.
     const resume = session.resumedFrom === null || back ? session.resumedFrom : await takeUpAgain(session);
-    const briefing = resume === null && session.resumedFrom !== null ? briefingFor(key) : null;
+    const briefing =
+      resume === null && session.resumedFrom !== null ? briefingFor(key, session.prompt !== null) : null;
     // The row keeps the name it showed, which its old conversation gave.
     if (briefing !== null) session.title ??= nameGoingOn(session);
     const prompt =
@@ -2762,6 +2779,7 @@ export function typed(ptyId: string, data: string) {
   if (REPORT.test(data) || REPLY.test(data)) return;
   if (data.includes("\r") || data.includes("\n")) {
     session.engaged = true;
+    spoke(session.key);
     stirred(session);
   }
   pressed.set(session.key, Date.now());
@@ -2803,6 +2821,7 @@ export function spokenTo(ptyId: string) {
   const session = sessions.all.find((candidate) => candidate.ptyId === ptyId);
   if (session === undefined) return;
   session.engaged = true;
+  spoke(session.key);
   session.turnEnd = null;
   stirred(session);
 }

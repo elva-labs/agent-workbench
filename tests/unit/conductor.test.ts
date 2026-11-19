@@ -1845,7 +1845,7 @@ describe("a session named by the start of its id", () => {
       rounds: {},
       rested: [ONE],
     };
-    going.runs[row.key] = { from: ONE, context: 400_000, briefing: null };
+    going.runs[row.key] = { from: ONE, context: 400_000, briefing: null, spoken: false };
     identified(row.key, TWO);
     expect(conductor.started[caller].map((entry) => entry.id)).toEqual([TWO]);
     expect(Object.keys(conductor.runs[caller].places)).toEqual([TWO]);
@@ -5656,6 +5656,25 @@ describe("sessions told apart by their tokens", () => {
     expect(conductor.runs[tok(token)]).toBeUndefined();
     expect(JSON.parse(localStorage.getItem("workbench.runs") ?? "{}")).not.toHaveProperty(token);
     expect(sessions.tokens["orch-id"]).toBeUndefined();
+  });
+
+  it("keeps the notes and workflow run of a live session that went on, once its old conversation is gone", async () => {
+    const row = create(A, null, "claude-code", null, null, null, null, null);
+    started(row.key, "pty-row", "old-id");
+    const token = row.token;
+    conductor.runs[tok(token)] = {
+      places: { "kid-1": { step: "Work", kind: "work", piece: "kid-1", round: null, work: null } },
+      rounds: {},
+    };
+    // It went on from its notes as a fresh conversation, under its token.
+    row.id = "new-id";
+    sessions.tokens["new-id"] = { token, project: A };
+    past[A] = [{ id: "new-id", title: "Fix it", modified: 1, size: 100, cwd: null }];
+    await loadHistory(A);
+    expect(sessions.tokens["old-id"]).toBeUndefined();
+    // Only what the old id alone named goes, never the shared token.
+    expect(notesForgotten.flatMap((forgotten) => forgotten.tokens)).not.toContain(token);
+    expect(conductor.runs[tok(token)]).toBeDefined();
   });
 
   it("lets go of what was moved, and of the id's copy, once the session is gone from its project's history", async () => {

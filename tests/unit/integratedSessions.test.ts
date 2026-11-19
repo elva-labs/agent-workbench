@@ -5,6 +5,7 @@ import {
   configure,
   conversationOf,
   follow,
+  goOnIfCold,
   handleOf,
   interrupt,
   lastWords,
@@ -206,6 +207,70 @@ beforeEach(async () => {
 afterEach(() => {
   stopListening();
   delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+});
+
+describe("a row at rest whose conversation went cold and large", () => {
+  /** A core whose judgement waits until `judged` is called with it. */
+  function judging() {
+    let judged: (answer: unknown) => void = () => {};
+    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    core.goingOn = () => new Promise((resolve) => (judged = resolve));
+    return (answer: unknown) => judged(answer);
+  }
+  const COLD = { context: 400_000, idle: 7_200, goesOn: true, briefing: "BRIEFING" };
+
+  async function large() {
+    const row = await started();
+    fake.emit(row.handle, { type: "context", used: 400_000, size: 1_000_000 });
+    await settled();
+    return row;
+  }
+
+  it("holds what the user sends while the core judges, and goes on before it goes", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key);
+    // Counted as starting again, so the composer holds a message.
+    expect(linkFor(key).restarting).toBe(true);
+    judged(COLD);
+    expect(await going).toBe(true);
+    expect(linkFor(key).restarting).toBe(false);
+    expect(handleOf(key)).not.toBe(handle);
+    const starts = fake.calls.filter((call) => call.method === "start");
+    expect(starts.at(-1)).toMatchObject({ options: { session: undefined } });
+    // The fresh run is not judged again before its first message.
+    expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
+  });
+
+  it("leaves the run as it is when a message reached it while the core judged", async () => {
+    const judged = judging();
+    const { key, handle } = await large();
+    const going = goOnIfCold(key);
+    send(key, "Carry on", [], "another-session");
+    judged(COLD);
+    expect(await going).toBe(false);
+    expect(handleOf(key)).toBe(handle);
+    expect(linkFor(key).restarting).toBe(false);
+    expect(fake.calls.filter((call) => call.method === "stop")).toHaveLength(0);
+  });
+
+  it("leaves a run with a wake-up of its own pending", async () => {
+    judging();
+    const { key, handle } = await large();
+    fake.emit(handle, { type: "turnStarted", messages: [] });
+    fake.emit(handle, { type: "toolStarted", call: "w-1", parent: null, name: "ScheduleWakeup", kind: "other" });
+    fake.emit(handle, {
+      type: "turnEnded",
+      outcome: "done",
+      error: null,
+      totalCostUsd: null,
+      durationMs: 1,
+      usage: null,
+    });
+    await settled();
+    expect(await goOnIfCold(key, Date.now() + 3_600_000, true)).toBe(false);
+    expect(linkFor(key).restarting).toBe(false);
+  });
 });
 
 describe("an integrated session behind its row", () => {

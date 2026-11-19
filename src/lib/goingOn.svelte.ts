@@ -16,12 +16,14 @@ import { core } from "$lib/core";
 import type { Session } from "$lib/sessions.svelte";
 
 /** A row's run that went on from notes: the conversation it went on from,
-    that conversation's context in tokens when its transcript said, and
-    the briefing until the first message takes it. */
+    that conversation's context in tokens when its transcript said, the
+    briefing until the first message takes it, and whether anything has
+    been said to the fresh run beyond the briefing. */
 export interface Went {
   from: string;
   context: number | null;
   briefing: string | null;
+  spoken: boolean;
 }
 
 const LINEAGE_KEY = "workbench.wentOn";
@@ -88,7 +90,7 @@ export async function takeUp(session: Session): Promise<string | null> {
       token: session.token,
     });
     if (!judged.goesOn || judged.briefing === null) return from;
-    going.runs[session.key] = { from, context: judged.context, briefing: judged.briefing };
+    going.runs[session.key] = { from, context: judged.context, briefing: judged.briefing, spoken: false };
     return null;
   } catch {
     return from;
@@ -101,23 +103,24 @@ export function wentOn(key: string): Went | null {
 }
 
 /** What a row can resume whole: the conversation its run went on from in
-    this window, with the context it had, or the one its conversation is
-    kept as going on from, after a restart too. None for a row whose
-    conversation went on from none. */
-export function wholeOf(session: { key: string; id: string | null }): Went | null {
+    this window, with the context it had, until anything is said to the
+    fresh run. Resumed whole after that, the old conversation would not
+    hold what was said since, while the row still drew it. None for a row
+    whose run went on from none. */
+export function wholeOf(session: { key: string }): Went | null {
   const went = going.runs[session.key];
-  if (went !== undefined) return went;
-  load();
-  const from = session.id === null ? undefined : going.lineage[session.id];
-  return from === undefined ? null : { from, context: null, briefing: null };
+  return went === undefined || went.spoken ? null : went;
 }
 
-/** The briefing to send ahead of the run's first message, given once. */
-export function briefingFor(key: string): string | null {
+/** The briefing to send ahead of the run's first message, given once.
+    `said` is whether a message goes with it, which the fresh run is then
+    spoken to with. */
+export function briefingFor(key: string, said = true): string | null {
   const went = going.runs[key];
   if (went === undefined || went.briefing === null) return null;
   const briefing = went.briefing;
   went.briefing = null;
+  if (said) went.spoken = true;
   return briefing;
 }
 
@@ -125,7 +128,29 @@ export function briefingFor(key: string): string | null {
     agent. */
 export function briefingBack(key: string, briefing: string) {
   const went = going.runs[key];
-  if (went !== undefined && went.briefing === null) went.briefing = briefing;
+  if (went !== undefined && went.briefing === null) {
+    went.briefing = briefing;
+    went.spoken = false;
+  }
+}
+
+/** Something was said to the row's run, which can no longer be resumed
+    whole without losing it. */
+export function spoke(key: string) {
+  const went = going.runs[key];
+  if (went !== undefined) went.spoken = true;
+}
+
+/** The conversations the rows with these keys went on from, while their
+    runs last: the rows go on with them, and the list does not offer them
+    again, whether the fresh runs' ids are known yet or not. */
+export function leftBy(keys: readonly string[]): Set<string> {
+  const left = new Set<string>();
+  for (const key of keys) {
+    const went = going.runs[key];
+    if (went !== undefined) left.add(went.from);
+  }
+  return left;
 }
 
 let movedOn: (from: string, to: string, key: string) => void = () => {};

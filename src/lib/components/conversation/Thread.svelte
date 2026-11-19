@@ -1359,9 +1359,9 @@
         data-thread-item
         onclick={() => (unfolded[shown] = !unfolded[shown])}
         aria-expanded={unfolded[shown] === true}
-        data-testid="workbench-briefing">Went on from its notes</button
+        data-testid="workbench-briefing">Briefing</button
       >
-      {#if unfolded[shown]}<p class="state reports" data-testid="workbench-briefing-text"
+      {#if unfolded[shown]}<p class="state briefing" data-testid="workbench-briefing-text"
           ><Plain text={words.briefing} /></p
         >{/if}
     {/if}
@@ -1677,6 +1677,14 @@
   }
 
   .state.reports {
+    white-space: pre-line;
+  }
+
+  /* A briefing runs to a few thousand words: read as a block from the
+     left, across the thread's width. */
+  .state.briefing {
+    align-self: stretch;
+    text-align: left;
     white-space: pre-line;
   }
 

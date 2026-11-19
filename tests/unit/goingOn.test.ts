@@ -20,13 +20,16 @@ const {
   briefingBack,
   briefingFor,
   identified,
+  leftBy,
   lineageOf,
   onWentOn,
   resetGoingOn,
+  spoke,
   takeUp,
   tokensText,
   wentOn,
   wentOnFrom,
+  wholeOf,
 } = await import("$lib/goingOn.svelte");
 
 function row(fields: Partial<Session> = {}): Session {
@@ -60,7 +63,7 @@ describe("taking a conversation up again", () => {
 
     answer = COLD;
     expect(await takeUp(row())).toBeNull();
-    expect(wentOn("row-1")).toEqual({ from: "old-id", context: 967_000, briefing: "BRIEFING" });
+    expect(wentOn("row-1")).toEqual({ from: "old-id", context: 967_000, briefing: "BRIEFING", spoken: false });
     expect(briefingFor("row-1")).toBe("BRIEFING");
     expect(briefingFor("row-1")).toBeNull();
     // A first message that never reached the agent takes it back.
@@ -96,6 +99,39 @@ describe("taking a conversation up again", () => {
     expect(wentOnFrom("old-id")).toBe("newer-id");
     expect(wentOnFrom("old-i")).toBe("newer-id");
     expect(wentOnFrom("other")).toBeNull();
+  });
+
+  it("offers to resume whole only until anything is said to the fresh run", async () => {
+    answer = COLD;
+    await takeUp(row());
+    expect(wholeOf({ key: "row-1" })).toMatchObject({ from: "old-id", context: 967_000 });
+    // The first message takes the briefing, and with it the choice.
+    expect(briefingFor("row-1")).toBe("BRIEFING");
+    expect(wholeOf({ key: "row-1" })).toBeNull();
+    // One that never reached the agent gives it back.
+    briefingBack("row-1", "BRIEFING");
+    expect(wholeOf({ key: "row-1" })).not.toBeNull();
+    // A terminal row's briefing goes as its first prompt with nothing
+    // said; a line typed after it is.
+    await takeUp(row());
+    expect(briefingFor("row-1", false)).toBe("BRIEFING");
+    expect(wholeOf({ key: "row-1" })).not.toBeNull();
+    spoke("row-1");
+    expect(wholeOf({ key: "row-1" })).toBeNull();
+    // After a restart, with no run that went on in this window, there is
+    // nothing to offer.
+    resetGoingOn();
+    identified("row-1", "new-id");
+    expect(wholeOf({ key: "row-1" })).toBeNull();
+  });
+
+  it("leaves the old conversation off the list from the moment the row goes on, before its new id", async () => {
+    expect(leftBy(["row-1"]).size).toBe(0);
+    answer = COLD;
+    await takeUp(row());
+    expect([...leftBy(["row-1", "row-2"])]).toEqual(["old-id"]);
+    // A closed row no longer holds it.
+    expect(leftBy(["row-2"]).size).toBe(0);
   });
 
   it("says a context in tokens as the menu does", () => {

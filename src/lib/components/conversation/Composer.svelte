@@ -4,7 +4,7 @@
   import type { Attached } from "$lib/integrated.svelte";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { compact, follow, interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { compact, follow, goOnIfCold, interrupt, linkFor, send } from "$lib/integrated.svelte";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import { choose, heldModel, modeChoices, modeName, modelChoices, workflowChoices } from "$lib/settingChoices";
   import type { AgentId, Workflow } from "$lib/core";
@@ -675,6 +675,10 @@
       goes. A command, such as compact, is no message. */
   function submit(): boolean {
     if (!ready || !hasWords || unlisted) return false;
+    // After a rest, a cold and large conversation goes on from its notes
+    // before the message goes: it counts as starting again meanwhile, so
+    // the message is held below and goes to whichever run is left.
+    if (reading === 0 && !link.restarting && link.goingBack === null) void goOnIfCold(sessionKey, Date.now(), true);
     if (reading > 0 || link.restarting || link.goingBack !== null) {
       held = true;
       heldMissed = link.backMissed;

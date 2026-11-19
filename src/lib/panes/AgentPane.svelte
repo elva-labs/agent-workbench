@@ -101,14 +101,21 @@
 
   // A conversation that went cold and large while its row ran at rest goes
   // on from its notes once the user comes back to it: the row on screen,
-  // or the window brought forward.
+  // or the window brought forward or shown again. The composer looks too
+  // as the user sends after a rest.
   $effect(() => {
     const key = current?.status === "running" && current.kind === "integrated" ? current.key : null;
     if (key === null) return;
     void goOnIfCold(key);
-    const back = () => void goOnIfCold(key);
+    const back = () => {
+      if (document.visibilityState === "visible") void goOnIfCold(key);
+    };
     window.addEventListener("focus", back);
-    return () => window.removeEventListener("focus", back);
+    document.addEventListener("visibilitychange", back);
+    return () => {
+      window.removeEventListener("focus", back);
+      document.removeEventListener("visibilitychange", back);
+    };
   });
 
   // An integrated session starts as soon as its row is starting, as a

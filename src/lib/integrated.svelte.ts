@@ -1188,44 +1188,113 @@ export function send(
 /** The context from which a cold conversation is large, as the core
     judges it: a row with less is not looked at again. */
 const LARGE = 100_000;
-/** How often a running row is looked at again for having gone cold. */
+/** How often a running row is looked at again for having gone cold, as
+    it comes on screen or the window comes forward. */
 const LOOK_EVERY = 5 * 60_000;
+/** The least rest after which a conversation can be cold: its shortest
+    cache, five minutes, less the core's margin on it. */
+const REST_LEAST = 5 * 60_000 - 30_000;
 const looked = new Map<string, number>();
+
+/** Whether the run has a wake-up of its own pending, which a stop would
+    end: one its last turn scheduled, or a timed prompt no deletion
+    followed. */
+function wakeUpPending(conversation: Conversation): boolean {
+  const said = conversation.entries.flatMap((entry) => (entry.kind === "agent" ? [entry] : []));
+  const last = said.at(-1)?.turn;
+  let timed = 0;
+  for (const entry of said)
+    for (const part of entry.parts) {
+      if (part.kind !== "tool") continue;
+      if (part.name === "CronCreate") timed += 1;
+      else if (part.name === "CronDelete") timed = Math.max(0, timed - 1);
+      else if (part.name === "ScheduleWakeup" && entry.turn === last) {
+        const input = part.input as { stop?: unknown } | null;
+        if (input?.stop !== true) return true;
+      }
+    }
+  return timed > 0;
+}
+
+/** When the run's last turn ended, or null where none has. */
+function restedSince(conversation: Conversation): number | null {
+  const ended = Object.values(conversation.turns)
+    .map((turn) => turn.endedAt)
+    .filter((at): at is number => at !== null);
+  return ended.length === 0 ? null : Math.max(...ended);
+}
+
+/** A row whose run is at rest with nothing on its way, and large: one a
+    stop ends nothing of, and whose next message would read all of it. */
+function restingLarge(key: string, now: number): { session: Session; link: Link } | null {
+  const session = byKey(key);
+  const link = links.get(key);
+  if (session === null || link === undefined || session.kind !== "integrated") return null;
+  if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return null;
+  if (link.busy || link.handle === null || session.working || link.sendingNow || link.goingBack !== null) return null;
+  // A message on its way, the user's or another session's, goes to the run
+  // it was sent to.
+  if (link.conversation.working || link.conversation.waiting.length > 0) return null;
+  // Only a run this window has seen grow large: one whose context is not
+  // known yet has just started, or is taken up after a reload.
+  const used = link.conversation.context?.used ?? null;
+  if (used === null || used < LARGE) return null;
+  if (link.conversation.tasks.some((task) => task.status === "running" && !task.ambient)) return null;
+  if (wakeUpPending(link.conversation)) return null;
+  const rested = restedSince(link.conversation);
+  if (rested !== null && now - rested < REST_LEAST) return null;
+  return { session, link };
+}
 
 /**
  * Goes on from its notes with a row whose run is at rest and whose
  * conversation went cold and large while it ran, as when the user comes
  * back to it after a pause: its run is started again fresh, under the
  * same row, so the next message is not read with the whole conversation.
- * Nothing is sent and nothing is spent until the user writes. Only for a
- * run whose context this window has seen pass the size, with nothing of
- * its own that a stop would end, and at most every few minutes for a row.
+ * Looked at as the row comes on screen or the window comes forward, at
+ * most every few minutes, and as the user sends after a rest, when the
+ * composer holds the message until this is decided. Nothing is spent
+ * until a message goes. Only for a run whose context this window has seen
+ * pass the size, with nothing on its way and nothing of its own that a
+ * stop would end.
+ *
+ * The run counts as starting again while the core judges it, so the
+ * composer holds what is sent meanwhile; a message another session sends
+ * meanwhile goes to the run, and the run is then left as it is. Whether it
+ * goes on is decided, and the run stopped, in one step after the judging,
+ * so no message lands in the conversation being left.
  */
-export async function goOnIfCold(key: string, now = Date.now()): Promise<boolean> {
-  const session = byKey(key);
-  const link = links.get(key);
-  if (session === null || link === undefined || session.kind !== "integrated") return false;
-  if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return false;
-  if (link.busy || link.handle === null || session.working || link.sendingNow) return false;
-  // Only a run this window has seen grow large: one whose context is not
-  // known yet has just started, or is taken up after a reload.
-  const used = link.conversation.context?.used ?? null;
-  if (used === null || used < LARGE) return false;
-  if (link.conversation.tasks.some((task) => task.status === "running" && !task.ambient)) return false;
-  if (now - (looked.get(key) ?? 0) < LOOK_EVERY) return false;
+export async function goOnIfCold(key: string, now = Date.now(), sending = false): Promise<boolean> {
+  const found = restingLarge(key, now);
+  if (found === null || found.link.restarting) return false;
+  // A run that went on and has not been sent its first message is new.
+  if (wentOn(key)?.briefing != null) return false;
+  const { session, link } = found;
+  if (!sending && now - (looked.get(key) ?? 0) < LOOK_EVERY) return false;
   looked.set(key, now);
   const id = session.id;
   const handle = link.handle;
-  const resume = await takeUp({ ...session, resumedFrom: id });
-  const row = byKey(key);
-  if (resume !== null || row === null || link.handle !== handle || link.busy || row.working) {
+  if (id === null || handle === null) return false;
+  link.restarting = true;
+  let resume: string | null;
+  try {
+    resume = await takeUp({ ...session, resumedFrom: id });
+  } catch {
+    resume = id;
+  }
+  const again = restingLarge(key, Date.now());
+  const row = again?.session ?? null;
+  if (resume !== null || row === null || link.handle !== handle || row.id !== id) {
     if (resume === null) forgetWent(key);
+    link.restarting = false;
     return false;
   }
   row.title ??= nameGoingOn({ ...row, resumedFrom: id });
   row.resumedFrom = id;
   link.conversation.wentOn = true;
-  link.conversation.beganHere(now);
+  link.conversation.beganHere(Date.now());
+  // The fresh run's context is known once it has read something.
+  link.conversation.context = null;
   link.handle = null;
   byHandle.delete(handle);
   stopped.add(handle);
@@ -1239,6 +1308,8 @@ export async function goOnIfCold(key: string, now = Date.now()): Promise<boolean
   } catch (error) {
     startFailed(key, link, error);
     return false;
+  } finally {
+    link.restarting = false;
   }
   return true;
 }
