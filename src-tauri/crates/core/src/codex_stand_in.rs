@@ -7,8 +7,10 @@
 //! given text, `reply` writes a line with `@ID@` replaced by the id of the
 //! request last expected, `sleep`, `exit` and `die` do what they say,
 //! `drain` reads until stdin closes, `err` writes a line to stderr, `bg`
-//! runs a command in the background, writing its pid beside it, and `await`
-//! waits until a file of that name is beside the scenario. It
+//! runs a command in the background, writing its pid beside it, `shell`
+//! runs one in the background in a process group of its own, as Codex runs
+//! a command of the user's, and `await` waits until a file of that name is
+//! beside the scenario. It
 //! writes its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 //!
@@ -50,6 +52,7 @@ while IFS= read -r step || [ -n "$step" ]; do
     "die") kill -9 $$ ;;
     "err "*) printf '%s\n' "${step#err }" >&2 ;;
     "bg "*) sh -c "${step#bg }" & printf '%s\n' "$!" > "$dir/bg" ;;
+    "shell "*) set -m; sh -c "${step#shell }" & set +m ;;
     "await "*) while [ ! -e "$dir/${step#await }" ]; do sleep 0.05; done ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
   esac
@@ -1862,6 +1865,77 @@ fn a_command_codex_runs_stopped_before_its_turn_is_named_is_interrupted_once_it_
     assert_eq!(interrupts[0]["params"]["turnId"], "shell-1");
     assert!(!events.iter().any(|event| event["type"] == "turnEnded"));
     h.stop();
+}
+
+#[test]
+fn a_command_codex_runs_ends_with_what_it_started_when_codex_dies() {
+    // Run in the project, the command writes the pid of what it started
+    // there.
+    let text = "sleep 300 & echo $! > command-child; wait";
+    let scenario = [
+        ready_scenario(),
+        r#"expect "method":"thread/shellCommand""#.into(),
+        r#"reply {"id":@ID@,"result":{}}"#.into(),
+        format!("shell {text}"),
+        notify("turn/started", &format!(r#"{{"threadId":"{THREAD}","turn":{{"id":"shell-1","status":"inProgress","items":[]}}}}"#)),
+        user_shell("item/started", "inProgress", r#""aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        "await found".into(),
+        "die".into(),
+    ]
+    .join("\n");
+    let h = start("user-shell-dies", &scenario);
+    let child = h.dir.join("command-child");
+    h.until_type("ready");
+    run(&h.sessions, &h.id, C1, text).unwrap();
+    h.until(|event| event["type"] == "command" && event["state"] == "running");
+
+    // Codex dies once the core holds its shell's group.
+    let live = h.sessions.get(&h.id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let group = loop {
+        let machine = live.machine.lock().unwrap();
+        if let Some(group) = machine.running.as_ref().and_then(|running| running.group) {
+            break group;
+        }
+        drop(machine);
+        assert!(
+            Instant::now() < deadline,
+            "the shell's group was never found"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        match std::fs::read_to_string(&child) {
+            Ok(pid) if pid.ends_with('\n') => break pid,
+            _ => {
+                assert!(Instant::now() < deadline, "the command wrote no pid");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert!(alive(pid.trim()), "the sleep ended before Codex did");
+    std::fs::write(h.dir.join("found"), "").unwrap();
+    h.until_type("ended");
+
+    // The sleep the command left running in the group ended with it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(pid.trim()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let ended = !alive(pid.trim());
+    unsafe {
+        libc::killpg(group as i32, libc::SIGKILL);
+    }
+    assert!(ended, "the sleep in group {group} is still there");
+}
+
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// The real `codex app-server` on PATH, under a home of its own, against

@@ -2634,6 +2634,10 @@ impl Live {
             return Ok(());
         }
         if running.exited {
+            // Only on Unix is a group's id kept from other processes while
+            // any of the group lives; elsewhere the shell's id is free once
+            // it exited.
+            #[cfg(unix)]
             if let Some(group) = running.group {
                 let grace = self.deadlines.term_grace;
                 std::thread::spawn(move || user_command::end_group(group, grace));
@@ -2661,8 +2665,8 @@ impl Live {
     /// user's command, away from the machine lock, and keeps it, so a stop
     /// or the session's end reaches what the shell started even once the
     /// agent is gone. A command stopped while it is looked for has its
-    /// group ended once found. It is looked for once, and `again` where an
-    /// earlier look found nothing.
+    /// group ended once found, as is one whose agent ended meanwhile. It is
+    /// looked for once, and `again` where an earlier look found nothing.
     fn find_group(&self, machine: &mut Machine, again: bool) {
         let Some(agent) = machine.agent else {
             return;
@@ -2692,6 +2696,15 @@ impl Live {
                 return;
             };
             let mut machine = live.machine.lock().expect("machine lock");
+            // The agent ended while the group was looked for, and with it
+            // the command, whose group is ended as it would have been.
+            if machine.ended {
+                drop(machine);
+                if let Some(group) = group {
+                    user_command::end_group(group, grace);
+                }
+                return;
+            }
             let Some(running) = machine
                 .running
                 .as_mut()
@@ -3394,8 +3407,13 @@ fn watch_command(
     if let Some(live) = live.upgrade() {
         live.command_ran(command, status, &stdout.finish(), &stderr.finish());
     }
-    // Nothing a command started outlives it.
+    // What the command left in its process group is ended with it. Only on
+    // Unix is the group's id kept from other processes while any of the
+    // group lives; elsewhere the shell's id is free once it exited.
+    #[cfg(unix)]
     user_command::end_group(group, grace);
+    #[cfg(not(unix))]
+    let _ = (group, grace);
 }
 
 /// A length of time in words, in minutes where it is whole minutes.
@@ -3537,7 +3555,14 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     machine.held.clear();
     machine.steered.clear();
     machine.handed = None;
-    if let Some(group) = machine.running.take().and_then(|running| running.group) {
+    // A shell of the core's that exited already is ended only where its
+    // group's id cannot have gone to another process, as in its own end.
+    if let Some(group) = machine
+        .running
+        .take()
+        .filter(|running| cfg!(unix) || !running.exited)
+        .and_then(|running| running.group)
+    {
         let grace = live.deadlines.term_grace;
         std::thread::spawn(move || user_command::end_group(group, grace));
     }
@@ -6379,6 +6404,39 @@ mod tests {
             .collect();
         assert_eq!(output.len(), 1);
         assert_eq!(output[0]["delta"], "hello there");
+    }
+
+    /// The agent's shell for the command is this process's child here, and
+    /// the agent ends while the shell's group is looked for.
+    #[cfg(unix)]
+    #[test]
+    fn a_group_found_once_the_agent_ended_is_ended_all_the_same() {
+        use std::os::unix::process::CommandExt;
+        let bench = Bench::new(runner());
+        let path = scratch("found-late");
+        let text = format!("sleep 300 & echo $! > '{}'; wait", path.display());
+        run_command(&bench, C1, &text).unwrap();
+        assert!(bench.next().is_some());
+        let mut shell = std::process::Command::new("/bin/sh")
+            .args(["-c", &text])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let child = pid_in(&path);
+        {
+            let mut machine = bench.live.machine.lock().unwrap();
+            machine.agent = Some(std::process::id());
+            bench.live.find_group(&mut machine, false);
+            // As the agent's end does, before the look is done.
+            machine.running.take();
+            machine.ended = true;
+        }
+        let ended = gone(&child);
+        unsafe {
+            libc::killpg(shell.id() as i32, libc::SIGKILL);
+        }
+        let _ = shell.wait();
+        assert!(ended, "the sleep is still there");
     }
 
     #[test]
