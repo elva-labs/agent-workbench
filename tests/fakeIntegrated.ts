@@ -32,6 +32,8 @@ export type IntegratedCall =
   | { method: "interrupt"; id: string }
   | { method: "sendNow"; id: string }
   | { method: "withdraw"; id: string; message: string }
+  | { method: "run"; id: string; command: string; text: string }
+  | { method: "stopCommand"; id: string; command: string }
   | { method: "compact"; id: string; instructions: string | null }
   | {
       method: "answer";
@@ -126,8 +128,33 @@ export interface FakeIntegrated {
       `releaseSteers`, as an agent that takes its time answers. */
   holdSteers: boolean;
   releaseSteers(): void;
-  /** Takes back a message the agent has not taken; it is withdrawn. */
+  /** Takes back a message the agent has not taken, or a command that
+      waits; it is withdrawn. */
   withdraw(id: string, message: string): void;
+  /** Runs a line the user typed after a `!`, under an id the window chose,
+      refused as the core refuses it. One command runs at a time: it waits
+      behind one that runs, and in a session of Codex behind a running
+      turn too, and runs once that is over. Claude Code's runs while a turn
+      does. It keeps the session as it is, idle or working. */
+  run(id: string, command: string, text: string): void;
+  /** Stops a running command; it ends stopped, with its output so far,
+      after the call. */
+  stopCommand(id: string, command: string): void;
+  /** The next piece of a running command's output. */
+  commandOutput(id: string, command: string, delta: string): void;
+  /** A running command ends: by default done, exiting 0, with the output
+      it streamed. */
+  finishCommand(
+    id: string,
+    command: string,
+    options?: {
+      state?: "done" | "stopped" | "timedOut" | "failed";
+      exitCode?: number | null;
+      output?: string;
+      truncated?: boolean;
+      error?: string | null;
+    },
+  ): void;
   /** While set, a message taken back is withdrawn and the asking then
       fails with this, as when the answer is lost on the way. */
   withdrawAnswer: string | null;
@@ -359,6 +386,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     ambient: boolean;
   };
   type Held = { message: string; text: string; images: IntegratedImage[] };
+  type Ran = Extract<IntegratedEventBody, { type: "command" }>;
   type Session = {
     codex: boolean;
     /** How it was started, for a start again. */
@@ -389,6 +417,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     compactAsked: boolean;
     held: Held[];
     handed: string | null;
+    /** The commands that wait or run, in the order sent, each as it last
+        went out, a running one with its output so far. */
+    ran: Map<string, Ran>;
     state: string | null;
     ended: boolean;
     /** The last limits event. */
@@ -654,11 +685,62 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
 
     withdraw(id, message) {
       const session = live(id);
+      const ran = session.ran.get(message);
+      if (ran !== undefined) {
+        if (ran.state !== "queued") throw new Error("the command runs already");
+        fake.calls.push({ method: "withdraw", id, message });
+        fake.emit(id, { ...ran, state: "withdrawn" });
+        return;
+      }
       if (!session.pending.includes(message) || session.handed === message)
         throw new Error("the agent has taken the message already");
       fake.calls.push({ method: "withdraw", id, message });
       fake.emit(id, { ...movedOn(message, "withdrawn"), error: null });
       if (fake.withdrawAnswer !== null) throw new Error(fake.withdrawAnswer);
+    },
+
+    run(id, command, text) {
+      const session = live(id);
+      if (!text.trim()) throw new Error("there is no command to run");
+      if (!UUID.test(command)) throw new Error(`"${command}" is not a UUID`);
+      if (session.used.has(command)) throw new Error(`command ${command} was sent already`);
+      session.used.add(command);
+      fake.calls.push({ method: "run", id, command, text });
+      fake.emit(id, {
+        type: "command",
+        command,
+        state: commandWaits(session) ? "queued" : "running",
+        text,
+        exitCode: null,
+        output: null,
+        truncated: false,
+        error: null,
+      });
+    },
+
+    stopCommand(id, command) {
+      const session = live(id);
+      if (session.ran.get(command)?.state !== "running") throw new Error("that command is not running");
+      fake.calls.push({ method: "stopCommand", id, command });
+      later(() => fake.finishCommand(id, command, { state: "stopped", exitCode: null }));
+    },
+
+    commandOutput(id, command, delta) {
+      fake.emit(id, { type: "commandOutput", command, delta });
+    },
+
+    finishCommand(id, command, finishOptions = {}) {
+      const ran = sessions.get(id)?.ran.get(command);
+      if (ran?.state !== "running") throw new Error("that command is not running");
+      const state = finishOptions.state ?? "done";
+      fake.emit(id, {
+        ...ran,
+        state,
+        exitCode: finishOptions.exitCode !== undefined ? finishOptions.exitCode : state === "done" ? 0 : null,
+        output: finishOptions.output ?? ran.output ?? "",
+        truncated: finishOptions.truncated ?? false,
+        error: finishOptions.error ?? (state === "failed" ? "the command could not run" : null),
+      });
     },
 
     compact(id, instructions) {
@@ -761,6 +843,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         limits: session.limits,
         resumedAt: session.resumedAt,
         tasks: [...session.starts.values()],
+        commands: [...session.ran.values()].map((ran) => ({ ...ran })),
       };
     },
 
@@ -1071,6 +1154,16 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
         case "limits":
           session.limits = body;
           break;
+        case "command":
+          if (body.state === "queued" || body.state === "running") session.ran.set(body.command, body);
+          else if (!session.ran.delete(body.command)) return;
+          break;
+        case "commandOutput": {
+          const ran = session.ran.get(body.command);
+          if (ran?.state !== "running") return;
+          session.ran.set(body.command, { ...ran, output: (ran.output ?? "") + body.delta });
+          break;
+        }
         case "ended":
           session.ended = true;
           break;
@@ -1080,6 +1173,8 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       fake.events.push(event);
       for (const handler of handlers) handler(event);
       if (body.type === "turnEnded") afterTurn(id);
+      if (body.type === "turnEnded" || (body.type === "command" && body.state !== "queued"))
+        nextCommand(id);
       if (body.type !== "state" && body.type !== "ended") {
         release(id);
         settle(id);
@@ -1278,6 +1373,13 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
           ...movedOn(message, "dropped"),
           error: "the agent ended before it took the message",
         });
+      for (const ran of session.ran.values())
+        say(id, {
+          ...ran,
+          state: "dropped",
+          output: ran.output ?? "",
+          error: ran.state === "running" ? "the session ended while it ran" : "the session ended before it ran",
+        });
       if (!clean)
         say(id, { type: "error", kind: "process", message: "claude ended with code 1" });
       fake.emit(id, { type: "ended", code: clean ? 0 : 1, clean });
@@ -1319,6 +1421,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       compactAsked: false,
       held: [],
       handed: null,
+      ran: new Map(),
       state: null,
       ended: false,
       limits: null,
@@ -1486,6 +1589,9 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
       case "compacted":
         write(body);
         break;
+      case "command":
+        if (body.state !== "queued" && body.state !== "running" && body.state !== "withdrawn") write(body);
+        break;
     }
   }
 
@@ -1544,6 +1650,22 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     if (session.turn || session.handed !== null) return;
     const next = session.held.shift();
     if (next) handOver(id, next.message);
+  }
+
+  /** Whether a command sent now waits: behind one that waits or runs, or
+      in a session of Codex behind a running turn. */
+  function commandWaits(session: Session): boolean {
+    return session.ran.size > 0 || (session.codex && session.turn);
+  }
+
+  /** Runs the first command that waits, once nothing holds it. */
+  function nextCommand(id: string) {
+    const session = sessions.get(id);
+    if (!session || session.ended) return;
+    if ([...session.ran.values()].some((ran) => ran.state === "running")) return;
+    if (session.codex && session.turn) return;
+    const next = [...session.ran.values()].find((ran) => ran.state === "queued");
+    if (next) fake.emit(id, { ...next, state: "running" });
   }
 
   /** What the agent does once a turn is over: compact, if it was asked. */

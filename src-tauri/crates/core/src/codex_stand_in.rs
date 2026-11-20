@@ -6,8 +6,11 @@
 //! line to its stdout, `expect` reads its stdin until a line holds the
 //! given text, `reply` writes a line with `@ID@` replaced by the id of the
 //! request last expected, `sleep`, `exit` and `die` do what they say,
-//! `drain` reads until stdin closes, `err` writes a line to stderr and `bg`
-//! runs a command in the background, writing its pid beside it. It
+//! `drain` reads until stdin closes, `err` writes a line to stderr, `bg`
+//! runs a command in the background, writing its pid beside it, `shell`
+//! runs one in the background in a process group of its own, as Codex runs
+//! a command of the user's, and `await` waits until a file of that name is
+//! beside the scenario. It
 //! writes its arguments, its environment and every line it read beside the
 //! scenario, for the tests to look at.
 //!
@@ -49,6 +52,11 @@ while IFS= read -r step || [ -n "$step" ]; do
     "die") kill -9 $$ ;;
     "err "*) printf '%s\n' "${step#err }" >&2 ;;
     "bg "*) sh -c "${step#bg }" & printf '%s\n' "$!" > "$dir/bg" ;;
+    # Job control would give the job a group only where the shell allows it
+    # without a terminal, which dash does not; perl makes the group, then
+    # becomes the command's shell under the same pid.
+    "shell "*) perl -e 'setpgrp(0, 0); exec @ARGV' sh -c "${step#shell }" & ;;
+    "await "*) while [ ! -e "$dir/${step#await }" ]; do sleep 0.05; done ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
   esac
 done < "$FAKE_CODEX_SCENARIO"
@@ -1754,6 +1762,184 @@ while IFS= read -r line; do
   esac
 done
 "#;
+
+const C1: &str = "44444444-4444-4444-8444-444444444444";
+
+/// A command of the user's as Codex tells it, in the turn it runs in.
+fn user_shell(method: &str, status: &str, rest: &str) -> String {
+    item(
+        method,
+        "shell-1",
+        &format!(
+            r#"{{"type":"commandExecution","id":"call_1","command":"/bin/zsh -lc 'printf hi; exit 3'","cwd":"/w","source":"userShell","status":"{status}","commandActions":[],"processId":null,{rest}}}"#
+        ),
+    )
+}
+
+fn commands(events: &[Value]) -> Vec<&Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "command")
+        .collect()
+}
+
+#[test]
+fn codex_runs_a_command_of_the_user_s_in_a_turn_that_is_not_shown() {
+    let scenario = [
+        ready_scenario(),
+        r#"expect "method":"thread/shellCommand""#.into(),
+        r#"reply {"id":@ID@,"result":{}}"#.into(),
+        notify("turn/started", &format!(r#"{{"threadId":"{THREAD}","turn":{{"id":"shell-1","status":"inProgress","items":[]}}}}"#)),
+        user_shell("item/started", "inProgress", r#""aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        notify("item/commandExecution/outputDelta", &format!(r#"{{"threadId":"{THREAD}","turnId":"shell-1","itemId":"call_1","delta":"hi"}}"#)),
+        user_shell("item/completed", "failed", r#""aggregatedOutput":"hi","exitCode":3,"durationMs":5"#),
+        done("shell-1", "completed"),
+        take("turn-1"),
+        done("turn-1", "completed"),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("user-shell", &scenario);
+    h.until_type("ready");
+    run(&h.sessions, &h.id, C1, "printf hi; exit 3").unwrap();
+    let events = h.until(|event| event["type"] == "command" && event["state"] == "done");
+    let ran = commands(&events);
+    let states: Vec<&str> = ran.iter().map(|e| e["state"].as_str().unwrap()).collect();
+    assert_eq!(states, ["running", "done"]);
+    assert_eq!(ran[1]["exitCode"], 3);
+    // The end of it carries the output that streamed.
+    assert_eq!(ran[1]["output"], "hi");
+    let printed: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["type"] == "commandOutput")
+        .collect();
+    assert_eq!(printed.len(), 1);
+    assert_eq!(printed[0]["delta"], "hi");
+    assert!(
+        !events.iter().any(|event| matches!(
+            event["type"].as_str(),
+            Some("turnStarted" | "turnEnded" | "toolStarted")
+        )),
+        "{events:?}"
+    );
+    let asked = &h.sent("thread/shellCommand")[0]["params"];
+    assert_eq!(asked["threadId"], THREAD);
+    assert_eq!(asked["command"], "printf hi; exit 3");
+    assert_eq!(asked["timeoutMs"], 660_000);
+
+    // The next message has a turn of its own.
+    let message = h.send("why?");
+    let events = h.until_type("turnEnded");
+    let started = events.iter().find(|e| e["type"] == "turnStarted").unwrap();
+    assert_eq!(started["messages"], json!([message]));
+    h.stop();
+}
+
+#[test]
+fn a_command_codex_runs_stopped_before_its_turn_is_named_is_interrupted_once_it_is() {
+    let scenario = [
+        ready_scenario(),
+        r#"expect "method":"thread/shellCommand""#.into(),
+        r#"reply {"id":@ID@,"result":{}}"#.into(),
+        "await stopped".into(),
+        notify("turn/started", &format!(r#"{{"threadId":"{THREAD}","turn":{{"id":"shell-1","status":"inProgress","items":[]}}}}"#)),
+        user_shell("item/started", "inProgress", r#""aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        r#"expect "method":"turn/interrupt""#.into(),
+        r#"reply {"id":@ID@,"result":{}}"#.into(),
+        user_shell("item/completed", "failed", r#""aggregatedOutput":"command aborted by user","exitCode":-1,"durationMs":5"#),
+        done("shell-1", "interrupted"),
+        "drain".into(),
+    ]
+    .join("\n");
+    let h = start("user-shell-stop", &scenario);
+    h.until_type("ready");
+    run(&h.sessions, &h.id, C1, "sleep 300").unwrap();
+    h.until(|event| event["type"] == "command" && event["state"] == "running");
+    stop_command(&h.sessions, &h.id, C1).unwrap();
+    std::fs::write(h.dir.join("stopped"), "").unwrap();
+    let events = h.until(|event| event["type"] == "command" && event["state"] != "running");
+    let ended = commands(&events).pop().unwrap().clone();
+    assert_eq!(ended["state"], "stopped");
+    assert_eq!(ended["exitCode"], Value::Null);
+    // Codex's word on how it stopped is not the command's output.
+    assert_eq!(ended["output"], Value::Null);
+    let interrupts = h.sent("turn/interrupt");
+    assert_eq!(interrupts.len(), 1);
+    assert_eq!(interrupts[0]["params"]["turnId"], "shell-1");
+    assert!(!events.iter().any(|event| event["type"] == "turnEnded"));
+    h.stop();
+}
+
+#[test]
+fn a_command_codex_runs_ends_with_what_it_started_when_codex_dies() {
+    // Run in the project, the command writes the pid of what it started
+    // there.
+    let text = "sleep 300 & echo $! > command-child; wait";
+    let scenario = [
+        ready_scenario(),
+        r#"expect "method":"thread/shellCommand""#.into(),
+        r#"reply {"id":@ID@,"result":{}}"#.into(),
+        format!("shell {text}"),
+        notify("turn/started", &format!(r#"{{"threadId":"{THREAD}","turn":{{"id":"shell-1","status":"inProgress","items":[]}}}}"#)),
+        user_shell("item/started", "inProgress", r#""aggregatedOutput":null,"exitCode":null,"durationMs":null"#),
+        "await found".into(),
+        "die".into(),
+    ]
+    .join("\n");
+    let h = start("user-shell-dies", &scenario);
+    let child = h.dir.join("command-child");
+    h.until_type("ready");
+    run(&h.sessions, &h.id, C1, text).unwrap();
+    h.until(|event| event["type"] == "command" && event["state"] == "running");
+
+    // Codex dies once the core holds its shell's group.
+    let live = h.sessions.get(&h.id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let group = loop {
+        let machine = live.machine.lock().unwrap();
+        if let Some(group) = machine.running.as_ref().and_then(|running| running.group) {
+            break group;
+        }
+        drop(machine);
+        assert!(
+            Instant::now() < deadline,
+            "the shell's group was never found"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let pid = loop {
+        match std::fs::read_to_string(&child) {
+            Ok(pid) if pid.ends_with('\n') => break pid,
+            _ => {
+                assert!(Instant::now() < deadline, "the command wrote no pid");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert!(alive(pid.trim()), "the sleep ended before Codex did");
+    std::fs::write(h.dir.join("found"), "").unwrap();
+    h.until_type("ended");
+
+    // The sleep the command left running in the group ended with it.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(pid.trim()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let ended = !alive(pid.trim());
+    unsafe {
+        libc::killpg(group as i32, libc::SIGKILL);
+    }
+    assert!(ended, "the sleep in group {group} is still there");
+}
+
+fn alive(pid: &str) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
 
 /// The real `codex app-server` on PATH, under a home of its own, against
 /// the stand-in for the model above: no login and no network. Run by hand:

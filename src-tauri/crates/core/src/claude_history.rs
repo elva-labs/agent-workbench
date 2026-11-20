@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use crate::claude_stream::{file_changes, steps, text_of, tool_kind, PLAN_TOOL, TODO_TOOL};
 use crate::integrated::{
-    CompactReason, Event, History, Image, MessageState, Outcome, Said, ToolKind,
+    CommandState, CompactReason, Event, History, Image, MessageState, Outcome, Said, ToolKind,
 };
 use crate::transcripts::mangle;
 
@@ -878,8 +878,20 @@ enum Prompt {
     /// Something the agent was told by itself, such as that background work
     /// finished: a turn it began, with no message behind it.
     Begun,
+    /// A command the user ran themselves, or the part of one the entry
+    /// gives.
+    Command(Ran),
     /// Nothing the conversation shows.
     Nothing,
+}
+
+/// What an entry gives of a command the user ran themselves: the line
+/// typed, what it printed and how it exited, or both. The agent writes
+/// them in one entry or in two, the line first.
+struct Ran {
+    text: Option<String>,
+    output: Option<String>,
+    exit_code: Option<i32>,
 }
 
 struct Reader {
@@ -891,6 +903,9 @@ struct Reader {
     /// next where the entry does not.
     blocks: HashMap<String, u64>,
     subagents: Subagents,
+    /// The item of the last command read whose output was not, for the
+    /// entry after it to finish.
+    ran: Option<usize>,
 }
 
 impl Reader {
@@ -901,6 +916,7 @@ impl Reader {
             turn: None,
             blocks: HashMap::new(),
             subagents,
+            ran: None,
         }
     }
 
@@ -933,6 +949,7 @@ impl Reader {
     }
 
     fn begin(&mut self, messages: Vec<String>) {
+        self.ran = None;
         self.end();
         let start = self.items.len();
         self.push(Event::TurnStarted { messages });
@@ -972,6 +989,7 @@ impl Reader {
     /// A message of the user's starts a turn, or joins the one it opened
     /// when the agent has said nothing in it yet.
     fn said(&mut self, id: String, text: String, images: Vec<Image>) {
+        self.ran = None;
         if self
             .turn
             .as_ref()
@@ -1032,7 +1050,56 @@ impl Reader {
                 }
             }
             Prompt::Begun => self.begin(Vec::new()),
+            // The agent takes a command's record only between turns.
+            Prompt::Command(ran) => {
+                self.end();
+                self.command(ran, uuid);
+            }
             Prompt::Nothing => {}
+        }
+    }
+
+    /// A command the user ran themselves, done: read from one entry, or
+    /// from two where the second gives the output of the command the first
+    /// gave the line of.
+    fn command(&mut self, ran: Ran, id: Option<&str>) {
+        let (at, command, text) = match ran.text {
+            Some(text) => {
+                let command =
+                    id.map_or_else(|| format!("ran-{}", self.items.len()), str::to_string);
+                (None, command, text)
+            }
+            None => {
+                let Some(at) = self.ran.take() else {
+                    return;
+                };
+                let Event::Command { command, text, .. } = &self.items[at].event else {
+                    return;
+                };
+                (Some(at), command.clone(), text.clone())
+            }
+        };
+        let event = History::kept(Event::Command {
+            command,
+            state: CommandState::Done,
+            text,
+            exit_code: ran.exit_code,
+            truncated: false,
+            error: None,
+            output: ran.output.clone(),
+        });
+        match at {
+            Some(at) => self.items[at].event = event,
+            None => {
+                self.items.push(Said {
+                    at: self.at,
+                    model: None,
+                    event,
+                });
+                if ran.output.is_none() {
+                    self.ran = Some(self.items.len() - 1);
+                }
+            }
         }
     }
 
@@ -1288,16 +1355,15 @@ impl Reader {
         {
             return;
         }
-        let Prompt::Said { text, images } =
-            prompt(&attached["prompt"], attached["origin"]["kind"].as_str())
-        else {
-            return;
+        let id = attached["source_uuid"].as_str().or(uuid);
+        let (text, images) = match prompt(&attached["prompt"], attached["origin"]["kind"].as_str())
+        {
+            Prompt::Said { text, images } => (text, images),
+            // A command run while a turn ran is taken in it.
+            Prompt::Command(ran) => return self.command(ran, id),
+            _ => return,
         };
-        let Some(id) = attached["source_uuid"]
-            .as_str()
-            .or(uuid)
-            .map(str::to_string)
-        else {
+        let Some(id) = id.map(str::to_string) else {
             return;
         };
         match &self.turn {
@@ -1399,6 +1465,9 @@ fn prompt(content: &Value, origin: Option<&str>) -> Prompt {
     if origin.is_some_and(|kind| kind != "human") || trimmed.starts_with("<task-notification>") {
         return Prompt::Begun;
     }
+    if let Some(ran) = ran(trimmed) {
+        return Prompt::Command(ran);
+    }
     if trimmed.starts_with("<local-command-") {
         return Prompt::Nothing;
     }
@@ -1420,9 +1489,77 @@ fn prompt(content: &Value, origin: Option<&str>) -> Prompt {
 }
 
 fn between<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
+    inside(text, open, close).map(str::trim)
+}
+
+fn inside<'a>(text: &'a str, open: &str, close: &str) -> Option<&'a str> {
     let start = text.find(open)? + open.len();
     let end = text[start..].find(close)? + start;
-    Some(text[start..end].trim())
+    Some(&text[start..end])
+}
+
+/// What the agent writes in place of a command's output when it printed
+/// nothing.
+const NO_OUTPUT: &str = "(Bash completed with no output)";
+
+/// A command the user ran themselves, in what a user entry says: past any
+/// caveat before it, the line typed in `<bash-input>`, and what it printed
+/// in `<bash-stdout>` and `<bash-stderr>`, escaped as the agent escapes it,
+/// with `<bash-exit-code>` where it did not exit with 0. The entry is the
+/// record and nothing else, its parts in that order; any may be missing,
+/// as where the agent writes the line and its output in two entries.
+fn ran(text: &str) -> Option<Ran> {
+    let mut rest = match text.strip_prefix("<local-command-caveat>") {
+        Some(caveat) => caveat.split_once("</local-command-caveat>")?.1,
+        None => text,
+    }
+    .trim();
+    let input = part(&mut rest, "<bash-input>", "</bash-input>");
+    let stdout = part(&mut rest, "<bash-stdout>", "</bash-stdout>");
+    let stderr = part(&mut rest, "<bash-stderr>", "</bash-stderr>");
+    let code = part(&mut rest, "<bash-exit-code>", "</bash-exit-code>");
+    if !rest.is_empty() || (input.is_none() && stdout.is_none() && stderr.is_none()) {
+        return None;
+    }
+    let output = (stdout.is_some() || stderr.is_some()).then(|| {
+        let stdout = unescape(stdout.unwrap_or_default());
+        let stderr = unescape(stderr.unwrap_or_default());
+        match (stdout.as_str(), stderr.as_str()) {
+            ("" | NO_OUTPUT, _) => stderr,
+            (_, "") => stdout,
+            (out, _) if out.ends_with('\n') => stdout + &stderr,
+            _ => stdout + "\n" + &stderr,
+        }
+    });
+    let exit_code = code
+        .and_then(|code| code.trim().parse().ok())
+        .or(output.as_ref().map(|_| 0));
+    Some(Ran {
+        text: input.map(|input| unescape(input.trim())),
+        output,
+        exit_code,
+    })
+}
+
+/// The part of a record `rest` starts with, between `open` and `close`,
+/// taking it and the space after it off `rest`. A part closes where what
+/// follows is the next part or the end, so a line the agent wrote unescaped
+/// may hold its own closing tag.
+fn part<'a>(rest: &mut &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let inner = rest.strip_prefix(open)?;
+    let (end, after) = inner.match_indices(close).find_map(|(at, _)| {
+        let after = inner[at + close.len()..].trim_start();
+        (after.is_empty() || after.starts_with("<bash-")).then_some((at, after))
+    })?;
+    *rest = after;
+    Some(&inner[..end])
+}
+
+/// Output as it was before the agent escaped it.
+fn unescape(text: &str) -> String {
+    text.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// Leaves out the first turns of a history longer than it may hold, so

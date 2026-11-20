@@ -1013,6 +1013,33 @@ composer give the mentions as they were typed. A message whose mentions
 were not kept, from another session or another window's store, shows its
 words as they are.
 
+A `!` typed as the first thing in the composer makes what follows a
+command for the shell, which the empty composer's hint names. The field
+turns to the shell's type with the `!` in the accent, the folder it runs
+in stands where the context share was, files cannot be attached, and Enter
+runs it in that folder, as [integrated](integrated.md#commands-the-user-runs)
+describes; before the agent is ready the composer says it runs once it
+is. What it prints goes to the agent as context for the next message,
+with no turn of its own. The thread shows it as the user's, the `!` and the
+line, with what it prints under it as it comes; past twelve lines only the
+last show, with how many there are and Show all. A line under it says it
+runs, with Stop; that it waits for the agent to finish what it is doing,
+with Take back, which puts the line back in the composer; or how it ended
+where that is worth saying: its exit code where it was not 0, stopped,
+stopped after ten minutes, or why it could not run, with Put back in the
+composer. One that runs or waits while a turn runs stands under the
+thread with the waiting messages, and takes its place in the thread once
+the turn is over.
+
+A code span, or a line of a code block, that begins with `!` and a space
+in the agent's own words is a command it offers the user to run, as the
+agent is told to write one it wants the user to run themselves, such as a
+login. A quiet run mark stands after it once the words are whole, and a
+click runs it as if the user had typed it in the composer, leaving what is
+written there as it is; nothing runs without the click, and each click
+runs it again. Prose, the user's messages, the agent's thinking and plan,
+a tool's output and a subagent's words get no mark.
+
 A session at rest goes back to before one of the user's own messages, as
 [integrated](integrated.md#going-back) describes. Esc twice within a
 moment in its empty composer, or Go back to an earlier message in the

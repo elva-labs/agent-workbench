@@ -3554,3 +3554,286 @@ fn a_read_of_the_limits_that_fails_or_is_not_understood_tells_nothing() {
         assert_eq!(limit_reads(&turn_through(&mut driver, M2).writes).len(), 1);
     }
 }
+
+const C1: &str = "44444444-4444-4444-8444-444444444444";
+
+/// Hands a command of the user's over, answers it, and starts its turn:
+/// the request written and the events.
+fn shell(driver: &mut AppServer) -> (Value, Vec<Event>) {
+    let line: Value =
+        serde_json::from_str(&driver.run(C1, "ls nope", Duration::from_secs(600)).unwrap())
+            .unwrap();
+    let out = events(
+        driver,
+        &[
+            json!({"id": line["id"], "result": {}}),
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-s", "status": "inProgress", "items": []}}),
+            ),
+        ],
+    );
+    (line, out)
+}
+
+fn user_shell(status: &str) -> Value {
+    json!({"type": "commandExecution", "id": "call_s", "command": "/bin/zsh -lc 'ls nope'",
+        "cwd": "/work/demo", "commandActions": [], "status": status, "source": "userShell"})
+}
+
+fn shell_item(method: &str, item: Value) -> Value {
+    notification(
+        method,
+        json!({"threadId": THREAD, "turnId": "turn-s", "item": item}),
+    )
+}
+
+fn shell_done(status: &str) -> Value {
+    notification(
+        "turn/completed",
+        json!({"threadId": THREAD, "turn": {"id": "turn-s", "status": status, "items": [],
+               "durationMs": 20, "error": null}}),
+    )
+}
+
+fn turns(out: &[Event]) -> usize {
+    out.iter()
+        .filter(|e| matches!(e, Event::TurnStarted { .. } | Event::TurnEnded { .. }))
+        .count()
+}
+
+#[test]
+fn a_command_of_the_user_s_runs_in_a_turn_that_is_not_shown_as_one() {
+    let mut driver = ready();
+    let (line, mut out) = shell(&mut driver);
+    assert_eq!(line["method"], "thread/shellCommand");
+    assert_eq!(
+        line["params"],
+        json!({"threadId": THREAD, "command": "ls nope", "timeoutMs": 660_000})
+    );
+    let mut done = user_shell("failed");
+    done["exitCode"] = json!(2);
+    done["aggregatedOutput"] = json!("ls: nope: No such file\n");
+    out.extend(events(
+        &mut driver,
+        &[
+            shell_item("item/started", user_shell("inProgress")),
+            notification(
+                "item/commandExecution/outputDelta",
+                json!({"threadId": THREAD, "turnId": "turn-s", "itemId": "call_s", "delta": "ls: nope"}),
+            ),
+            shell_item("item/completed", done),
+        ],
+    ));
+    // The shell's start is told, so its process group can be found.
+    assert_eq!(
+        out,
+        [
+            Event::Command {
+                command: C1.into(),
+                state: CommandState::Running,
+                text: "ls nope".into(),
+                exit_code: None,
+                output: None,
+                truncated: false,
+                error: None,
+            },
+            Event::CommandOutput {
+                command: C1.into(),
+                delta: "ls: nope".into()
+            }
+        ]
+    );
+    let out = events(&mut driver, &[shell_done("completed")]);
+    assert_eq!(
+        out,
+        [Event::Command {
+            command: C1.into(),
+            state: CommandState::Done,
+            text: "ls nope".into(),
+            exit_code: Some(2),
+            output: None,
+            truncated: false,
+            error: None,
+        }]
+    );
+    assert_eq!(turns(&out), 0);
+    // A message after it starts its own turn as before.
+    let out = turn(&mut driver, M1);
+    assert_eq!(
+        out,
+        [Event::TurnStarted {
+            messages: vec![M1.into()]
+        }]
+    );
+}
+
+#[test]
+fn a_turn_codex_began_by_itself_while_a_command_waits_is_shown_and_the_next_is_the_command_s() {
+    let mut driver = ready();
+    shell(&mut driver);
+    // The turn taken as the command's starts with a compaction instead.
+    let out = events(
+        &mut driver,
+        &[shell_item(
+            "item/started",
+            json!({"type": "contextCompaction", "id": "compact-1"}),
+        )],
+    );
+    assert_eq!(
+        out,
+        [Event::TurnStarted { messages: vec![] }, Event::Compacting]
+    );
+    let out = events(&mut driver, &[shell_done("completed")]);
+    assert!(matches!(&out[..], [.., Event::TurnEnded { .. }]), "{out:?}");
+    let mut started = user_shell("inProgress");
+    started["id"] = json!("call_t");
+    let out = events(
+        &mut driver,
+        &[
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-t", "status": "inProgress", "items": []}}),
+            ),
+            notification(
+                "item/started",
+                json!({"threadId": THREAD, "turnId": "turn-t", "item": started}),
+            ),
+        ],
+    );
+    assert_eq!(turns(&out), 0, "{out:?}");
+    assert!(
+        matches!(
+            &out[..],
+            [Event::Command {
+                state: CommandState::Running,
+                ..
+            }]
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_command_whose_output_did_not_stream_ends_with_what_codex_gathered() {
+    let mut driver = ready();
+    shell(&mut driver);
+    let mut done = user_shell("completed");
+    done["exitCode"] = json!(0);
+    done["aggregatedOutput"] = json!("a\nb\n");
+    let out = events(
+        &mut driver,
+        &[shell_item("item/completed", done), shell_done("completed")],
+    );
+    assert!(
+        matches!(&out[..], [Event::Command { state: CommandState::Done, exit_code: Some(0), output: Some(output), .. }]
+        if output == "a\nb\n"),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn stop_interrupts_the_command_s_turn_and_ends_it_stopped() {
+    let mut driver = ready();
+    shell(&mut driver);
+    events(
+        &mut driver,
+        &[shell_item("item/started", user_shell("inProgress"))],
+    );
+    let line: Value = serde_json::from_str(&driver.stop_command(C1).unwrap().unwrap()).unwrap();
+    assert_eq!(line["method"], "turn/interrupt");
+    assert_eq!(
+        line["params"],
+        json!({"threadId": THREAD, "turnId": "turn-s"})
+    );
+    let mut done = user_shell("failed");
+    done["exitCode"] = json!(-1);
+    done["aggregatedOutput"] = json!("aborted by user");
+    let out = events(
+        &mut driver,
+        &[
+            json!({"id": line["id"], "result": {}}),
+            shell_item("item/completed", done),
+            shell_done("interrupted"),
+        ],
+    );
+    assert!(
+        matches!(
+            &out[..],
+            [Event::Command {
+                state: CommandState::Stopped,
+                exit_code: None,
+                output: None,
+                ..
+            }]
+        ),
+        "{out:?}"
+    );
+    assert!(driver.stop_command(C1).is_err());
+}
+
+#[test]
+fn a_stop_before_the_command_s_turn_starts_is_sent_once_it_does() {
+    let mut driver = ready();
+    let line = driver.run(C1, "sleep 5", Duration::from_secs(600)).unwrap();
+    let line: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(driver.stop_command(C1), Ok(None));
+    let reading = read(&mut driver, json!({"id": line["id"], "result": {}}));
+    assert!(reading.writes.is_empty());
+    let reading = read(
+        &mut driver,
+        notification(
+            "turn/started",
+            json!({"threadId": THREAD, "turn": {"id": "turn-s", "status": "inProgress", "items": []}}),
+        ),
+    );
+    let writes = written(&reading.writes);
+    assert_eq!(writes[0]["method"], "turn/interrupt");
+    assert_eq!(writes[0]["params"]["turnId"], "turn-s");
+    let out = events(&mut driver, &[shell_done("interrupted")]);
+    assert!(
+        matches!(
+            &out[..],
+            [Event::Command {
+                state: CommandState::Stopped,
+                ..
+            }]
+        ),
+        "{out:?}"
+    );
+}
+
+#[test]
+fn a_command_codex_timed_out_or_refused_says_so() {
+    let mut driver = ready();
+    shell(&mut driver);
+    let mut done = user_shell("failed");
+    done["exitCode"] = json!(-1);
+    done["aggregatedOutput"] = json!("Sandbox(Timeout(..))");
+    let out = events(
+        &mut driver,
+        &[shell_item("item/completed", done), shell_done("completed")],
+    );
+    assert!(
+        matches!(
+            &out[..],
+            [Event::Command {
+                state: CommandState::TimedOut,
+                output: None,
+                ..
+            }]
+        ),
+        "{out:?}"
+    );
+    let line: Value =
+        serde_json::from_str(&driver.run(C1, "ls", Duration::from_secs(600)).unwrap()).unwrap();
+    let out = events(
+        &mut driver,
+        &[json!({"id": line["id"], "error": {"code": -32600, "message": "no such thread"}})],
+    );
+    assert!(
+        matches!(&out[..], [Event::Command { state: CommandState::Failed, error: Some(error), .. }]
+        if error == "no such thread"),
+        "{out:?}"
+    );
+}

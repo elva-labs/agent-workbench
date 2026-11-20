@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
-  import type { Conversation, Entry, Message } from "$lib/conversation.svelte";
-  import { clock, drawnPart, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
+  import type { Command, Conversation, Entry, Message } from "$lib/conversation.svelte";
+  import { clock, commandEnd, drawnPart, lineCount, notRead, nowDoing, replyMarkdown, speaker, stamps, startedIds, tokens, toHear } from "$lib/thread";
   import { reportsShown, spoken, wakeShown } from "$lib/instructions";
   import { sentParts, unsent } from "$lib/mention";
   import { mentionsOf } from "$lib/mentioned.svelte";
@@ -25,7 +25,10 @@
    * session sent sits there too, in a plain bubble under that session's
    * name; the agent's run on the left under its name, down a quiet line at
    * the side. Messages that wait for the agent stand under the thread until
-   * a turn takes them. The workbench's own sentence after a started
+   * a turn takes them. A command the user ran with a leading `!` sits on
+   * the user's side in the shell's type, with what it printed under it; one
+   * that waits, or runs while a turn does, stands under the thread until it
+   * is over. The workbench's own sentence after a started
    * session's prompt is never shown as part of it, only behind a fold.
    *
    * The thread stays at its foot while it is there and new content comes,
@@ -86,6 +89,18 @@
     onGoBack?: ((message: Message) => void) | null;
     /** Undoes going back, from the line that marks it. */
     onUndo?: () => void;
+    /** What the user's commands can do: be stopped while they run, taken
+        back while they wait, and put back in the composer when they never
+        reached the agent. Absent where a thread offers none of it. */
+    commands?: {
+      stop: (command: Command) => void;
+      takeBack: (command: Command) => void;
+      putBack: (command: Command) => void;
+    };
+    /** Runs a command the agent wrote for the user to run, from the mark
+        beside it in the agent's reply. Absent where a thread offers no
+        mark. */
+    onRun?: (command: string) => void;
   }
 
   let {
@@ -102,6 +117,8 @@
     marked = null,
     onGoBack = null,
     onUndo,
+    commands,
+    onRun,
   }: Props = $props();
 
 
@@ -126,8 +143,13 @@
   let asking = $derived(askingOf(conversation));
   shareAsking(() => asking);
 
-  /** The messages whose workbench sentence stands open. */
+  /** The messages whose workbench sentence stands open, and the commands
+      whose output stands open whole. */
   let unfolded = $state<Record<string, boolean>>({});
+
+  /** A command's output past this many lines shows only its last ones,
+      until all of it is opened. */
+  const TAIL = 12;
 
   function goToSender(from: Sender) {
     if (from.key !== null && goTo(from.key)) focusPane("agent");
@@ -167,7 +189,8 @@
   });
 
   /** A cheap reading of what the thread holds, which changes whenever
-      something new comes: more entries, a longer last part, a request. */
+      something new comes: more entries, a longer last part, a request,
+      more output from the command that runs. */
   function pulse(): string {
     const last = conversation.entries[conversation.entries.length - 1];
     let tail = "";
@@ -182,7 +205,9 @@
               : part.kind;
       tail = `${last.parts.length}:${tail}`;
     }
-    return `${conversation.entries.length}|${conversation.waiting.length}|${tail}|${conversation.open.length}|${liveKey}`;
+    const command = conversation.commandRunning;
+    const printed = command === null ? "" : `${command.id}:${command.output.length}`;
+    return `${conversation.entries.length}|${conversation.below.length}|${tail}|${conversation.open.length}|${liveKey}|${printed}`;
   }
 
   let col = $state<HTMLDivElement | null>(null);
@@ -270,7 +295,10 @@
   // once it is laid out, even just after a press in the thread, such as on
   // its own Send now.
   $effect(() => {
-    const now = `${conversation.waiting.map((said) => `${said.id}:${said.state}`).join(",")}|${waiting?.line}|${waiting?.canSend}|${waiting?.canTake}`;
+    const below = conversation.below.map((item) =>
+      item.kind === "message" ? `${item.message.id}:${item.message.state}` : `${item.command.id}:${item.command.state}`,
+    );
+    const now = `${below.join(",")}|${waiting?.line}|${waiting?.canSend}|${waiting?.canTake}`;
     untrack(() => {
       if (now === waitingThen) return;
       waitingThen = now;
@@ -1092,8 +1120,8 @@
   let beganAtTop = $derived(conversation.began !== null && conversation.began.after === null);
 
   /** Every time the thread shows, as it writes it, by what it is shown
-      on: a message by its id, a run by its key, and the line where this
-      run began, which always names its day. */
+      on: a message by its id, a command by its id, a run by its key, and
+      the line where this run began, which always names its day. */
   let written = $derived.by(() => {
     const keys: string[] = [];
     const times: { at: number; day?: boolean }[] = [];
@@ -1108,10 +1136,15 @@
       if (entry.kind === "user") {
         const said = conversation.messages[entry.message];
         if (said !== undefined) add(`m:${said.id}`, said.at ?? timeOf(said.id));
+      } else if (entry.kind === "command") {
+        const command = conversation.commands[entry.command];
+        if (command !== undefined) add(`c:${command.id}`, command.at);
       } else if (entry.kind === "agent" && visible(entry)) add(`e:${entry.key}`, entry.at);
       if (began !== null && began.after === entry.key) add("began", began.at, true);
     }
-    for (const said of conversation.waiting) add(`m:${said.id}`, said.at ?? timeOf(said.id));
+    for (const item of conversation.below)
+      if (item.kind === "message") add(`m:${item.message.id}`, item.message.at ?? timeOf(item.message.id));
+      else add(`c:${item.command.id}`, item.command.at);
     const shown = stamps(times);
     return new Map(keys.map((key, at) => [key, shown[at]]));
   });
@@ -1164,7 +1197,7 @@
     {/if}
     <!-- Earlier messages that could not be read are said to be missing for
          as long as the thread is drawn, above whatever comes after. -->
-    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && (conversation.earlier === "unread" || (conversation.entries.length === 0 && conversation.waiting.length === 0 && conversation.began === null && conversation.earlier !== "loading")))}
+    {#if (conversation.late && conversation.earlier !== "loading") || (intro !== null && (conversation.earlier === "unread" || (conversation.entries.length === 0 && conversation.below.length === 0 && conversation.began === null && conversation.earlier !== "loading")))}
       <p class="intro" data-testid="thread-intro">
         {conversation.late ? `Earlier messages of this session ${notRead(conversation.earlierWhy)}` : intro}
       </p>
@@ -1204,7 +1237,7 @@
               <Copy label="Copy as Markdown" text={() => replyMarkdown(entry.parts)} host="message" place="end" testid="copy-reply" />
             {/if}
           </header>
-          <Parts parts={entry.parts} {root} />
+          <Parts parts={entry.parts} {root} onrun={onRun} />
           <Started ids={startedIds(entry.parts)} />
           {#if live && doing !== null}
             <p class="now" data-testid="now"><span class="caret"></span><Plain text={doing} /></p>
@@ -1217,6 +1250,11 @@
             </p>
           {/if}
         </article>
+      {:else if entry.kind === "command"}
+        {@const command = conversation.commands[entry.command]}
+        {#if command !== undefined}
+          {@render commandEntry(command)}
+        {/if}
       {:else if entry.kind === "note" && entry.key !== endedWith}
         <p class="note {entry.tone}" data-testid="note" data-find={entry.key}>
           <Icon name={entry.tone === "info" ? "info" : "warn"} size={13} /><Plain text={entry.text} />
@@ -1249,8 +1287,12 @@
     </div>
     {/if}
 
-    {#each conversation.waiting as said (said.id)}
-      {@render userMessage(said)}
+    {#each conversation.below as item (item.kind === "message" ? item.message.id : item.command.id)}
+      {#if item.kind === "message"}
+        {@render userMessage(item.message)}
+      {:else}
+        {@render commandEntry(item.command)}
+      {/if}
     {/each}
   </div>
 </div>
@@ -1448,6 +1490,99 @@
         {#if putBack}
           <button class="link" tabindex="-1" data-thread-item onclick={() => putBack(said)} data-testid="put-back">Put back in the composer</button>
         {/if}
+      </p>
+    {/if}
+  </article>
+{/snippet}
+
+<!-- A command of the user's: the line typed with its `!`, in the shell's
+     type, and under it on the same side what it printed. Past a dozen
+     lines the output shows its last ones, faded in from the top, and opens
+     whole in place, as tall as a step's output, to scroll. -->
+{#snippet commandEntry(command: Command)}
+  {@const lines = lineCount(command.output)}
+  {@const long = lines > TAIL}
+  {@const all = long && unfolded[`${command.id}:all`] === true}
+  {@const ended = commandEnd(command)}
+  <article
+    class="msg you sh"
+    class:waiting={command.state === "queued"}
+    class:dropped={command.state === "unsent"}
+    data-testid="command"
+    data-state={command.state}
+    data-copy-host="message"
+  >
+    <header class="who">
+      <Copy label="Copy" name="Copy the command" text={() => `!${command.text}`} host="message" testid="copy-command" />
+      <b>You</b>
+      {#if command.at !== null}<time class="num">{written.get(`c:${command.id}`) ?? clock(command.at)}</time>{/if}
+    </header>
+    <div class="bubble">
+      <p data-find={command.id} data-testid="command-line"><span class="bang">!</span><Plain text={command.text} /></p>
+    </div>
+    {#if command.output !== ""}
+      <div class="copyable" data-copy-host="output">
+        <pre class="out" class:tail={long && !all} class:all data-find="{command.id}:output" data-testid="command-output"><Plain
+            text={command.output}
+          /></pre>
+        <Copy label="Copy output" text={() => command.output} host="output" place="corner" testid="copy-command-output" />
+      </div>
+    {/if}
+    {#if command.truncated}
+      <p class="state" data-find-skip data-testid="command-cut">The output was cut short; this is all of it that was kept.</p>
+    {:else if command.gap}
+      <p class="state" data-find-skip>Some of the output did not reach the window; all of it shows once the command ends.</p>
+    {/if}
+    {#if command.state === "running"}
+      <p class="state" data-testid="command-state">
+        <i class="dot"></i>Running{#if commands !== undefined}<span class="acts"
+            ><button
+              class="link"
+              tabindex="-1"
+              data-thread-item
+              onclick={() => commands.stop(command)}
+              aria-label="Stop {command.text}"
+              data-testid="stop-command">Stop</button
+            ></span
+          >{/if}
+      </p>
+    {:else if command.state === "queued"}
+      <p class="state" data-testid="command-state">
+        Waiting for the agent to finish what it is doing{#if commands !== undefined}<span class="acts"
+            ><button
+              class="link"
+              tabindex="-1"
+              data-thread-item
+              onclick={() => commands.takeBack(command)}
+              title="Take it back into the composer"
+              aria-label="Take back {command.text}"
+              data-testid="take-back-command">Take back</button
+            ></span
+          >{/if}
+      </p>
+    {:else if command.state === "unsent"}
+      <p class="state bad" data-testid="command-state">
+        Not run{#if command.error}: <Plain text={command.error} />{/if}
+        {#if commands !== undefined}
+          <button class="link" tabindex="-1" data-thread-item onclick={() => commands.putBack(command)} data-testid="put-back-command"
+            >Put back in the composer</button
+          >
+        {/if}
+      </p>
+    {:else if ended !== null || long}
+      <p class="state" data-testid="command-state">
+        {#if ended !== null}<span class:bad={ended.bad} data-testid="command-end"><Plain text={ended.text} /></span>{/if}{#if ended !== null && long}<span
+            class="sep">·</span
+          >{/if}{#if long}{lines.toLocaleString("en")} lines<span class="acts"
+            ><button
+              class="link"
+              tabindex="-1"
+              data-thread-item
+              onclick={() => (unfolded[`${command.id}:all`] = !all)}
+              aria-expanded={all}
+              data-testid="command-all">{all ? "Show less" : "Show all"}</button
+            ></span
+          >{/if}
       </p>
     {/if}
   </article>
@@ -1714,6 +1849,75 @@
     opacity: 0.65;
   }
 
+  /* A command of the user's, in the shell's type, its `!` in the accent. */
+  .sh .bubble {
+    padding: 7px 12px;
+    font: var(--conv-fine) / 1.5 var(--mono);
+  }
+
+  .bang {
+    padding-right: 0.15em;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  /* What a command printed, as a step's output is drawn, as wide as it
+     needs up to the column. */
+  .copyable {
+    position: relative;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .out {
+    margin: 0;
+    padding: 7px 10px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--clear-surface);
+    font: var(--conv-fine) / 1.5 var(--mono);
+    color: var(--ink-2);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    text-align: left;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  /* Long output shows its last lines, TAIL of them, faded in from the
+     top; it stays on its last line as more comes. */
+  .out.tail {
+    display: flex;
+    flex-direction: column-reverse;
+    max-height: calc(12lh + 16px);
+    overflow: hidden;
+    mask-image: linear-gradient(transparent, #000 44px);
+  }
+
+  .out.all {
+    max-height: 280px;
+    overflow: auto;
+  }
+
+  .state .bad {
+    color: var(--del);
+  }
+
+  .state .sep {
+    margin: 0 6px;
+  }
+
+  .state .dot {
+    display: inline-block;
+    width: var(--dot);
+    height: var(--dot);
+    margin: -1px 6px 0 0;
+    border-radius: 50%;
+    background: var(--add);
+    vertical-align: middle;
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+
   .state {
     margin: -2px 0 0;
     font-size: var(--conv-fine);
@@ -1918,7 +2122,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .caret {
+    .caret,
+    .state .dot {
       animation: none;
     }
   }

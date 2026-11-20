@@ -1,8 +1,10 @@
 <script lang="ts">
   import { core } from "$lib/core";
+  import { runnable } from "$lib/bang";
   import { saidBlocks, settled } from "$lib/media.svelte";
   import { mount, tick, unmount, untrack } from "svelte";
   import Copy from "./Copy.svelte";
+  import Run from "./Run.svelte";
 
   /**
    * What the agent wrote, as a reader sees it: the same Markdown the viewer
@@ -15,13 +17,18 @@
    * Every code block, at the top or in a list or a quote, has a Copy in its
    * top corner that copies its code; one in a block that is done keeps its
    * Copy, and the keyboard on it, while the words after it still come.
+   * Given `onrun`, a code span or a line of a code block that is a command
+   * for the user to run, `!` and a space and then the command, has a Run
+   * after it once the text is whole.
    */
   interface Props {
     text: string;
     streaming?: boolean;
+    /** Runs a command the text holds, without its `!`. */
+    onrun?: (command: string) => void;
   }
 
-  let { text, streaming = false }: Props = $props();
+  let { text, streaming = false, onrun }: Props = $props();
 
   // Drawn with its text from the first render, so the row it is in has its
   // full height when the thread measures it.
@@ -78,17 +85,23 @@
       its block is drawn again, and its Copy with it. */
   const copies = new Map<HTMLElement, ReturnType<typeof mount>>();
 
+  /** The Run put after each command in the text, by the code span or line
+      that holds the command. It goes when its text is drawn again, and
+      all of them while the text streams. */
+  const runs = new Map<HTMLElement, ReturnType<typeof mount>>();
+
   /** The code a block's box holds, as written. */
   function codeIn(code: HTMLElement): string {
     return (code.querySelector("pre code")?.textContent ?? "").replace(/\n$/, "");
   }
 
   // A link is walked with the arrows in the thread, which is one stop for
-  // Tab, rather than being a stop of its own; and each code block gets its
-  // Copy.
+  // Tab, rather than being a stop of its own; each code block gets its
+  // Copy, and each command its Run.
   $effect(() => {
     blocks;
     const node = box;
+    const run = streaming ? undefined : onrun;
     // After the text is drawn again, which can be a turn after this runs.
     void tick().then(() => {
       for (const link of node?.querySelectorAll<HTMLAnchorElement>("a[href]") ?? []) link.tabIndex = -1;
@@ -107,18 +120,35 @@
           }),
         );
       }
+      for (const [held, mark] of runs)
+        if (run === undefined || !held.isConnected || node === null || !node.contains(held)) {
+          void unmount(mark);
+          runs.delete(held);
+        }
+      if (run === undefined) return;
+      for (const held of node?.querySelectorAll<HTMLElement>("[data-run]") ?? []) {
+        const command = runnable(held.textContent ?? "");
+        if (runs.has(held) || command === null || held.parentNode === null) continue;
+        runs.set(held, mount(Run, { target: held.parentNode as Element, anchor: held.nextSibling ?? undefined, props: { command, onrun: run } }));
+      }
     });
   });
 
   $effect(() => () => {
     for (const copy of copies.values()) void unmount(copy);
     copies.clear();
+    for (const mark of runs.values()) void unmount(mark);
+    runs.clear();
   });
 
   function onclick(e: MouseEvent) {
-    const anchor = (e.target as HTMLElement | null)?.closest("a");
+    const target = e.target as HTMLElement | null;
+    const anchor = target?.closest("a");
     if (anchor === null || anchor === undefined) return;
     e.preventDefault();
+    // A button in a link, a command's Run, does its own work and only that.
+    const button = target?.closest("button");
+    if (button !== null && button !== undefined && anchor.contains(button)) return;
     const href = anchor.getAttribute("href") ?? "";
     if (/^https?:\/\//.test(href)) core().openUrl(href).catch(() => {});
   }

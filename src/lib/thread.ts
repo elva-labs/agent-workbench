@@ -10,6 +10,7 @@ import type {
   PermissionOffer,
 } from "$lib/core";
 import type {
+  Command,
   Conversation,
   Entry,
   Message,
@@ -920,6 +921,38 @@ export function tokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
+/** How a command that is over ended, as the line under it says it, with
+    the error the core gave, and whether that reads as bad news, as an
+    error always does; null for one that ended well, which says nothing,
+    and for one not over. */
+export function commandEnd(command: Command): { text: string; bad: boolean } | null {
+  const said = (text: string, bad: boolean) => (command.error === null ? { text, bad } : { text: `${text}: ${command.error}`, bad: true });
+  switch (command.state) {
+    case "done":
+      if (command.exitCode !== null && command.exitCode !== 0) return said(`Exit code ${command.exitCode}`, true);
+      return command.error === null ? null : said("Ran", true);
+    case "stopped":
+      return said("Stopped", false);
+    case "timedOut":
+      return said("Timed out", false);
+    case "failed":
+      return { text: command.error ?? "Could not run", bad: true };
+    case "dropped":
+      return said("Not finished", true);
+    default:
+      return null;
+  }
+}
+
+/** How many lines a command printed: a newline at the end closes the last
+    line rather than starting one. */
+export function lineCount(output: string): number {
+  if (output === "") return 0;
+  let lines = output.endsWith("\n") ? 0 : 1;
+  for (let at = output.indexOf("\n"); at !== -1; at = output.indexOf("\n", at + 1)) lines += 1;
+  return lines;
+}
+
 let clockFormat: Intl.DateTimeFormat | null = null;
 
 /** A clock time as the thread shows it, in the user's own format. One
@@ -997,6 +1030,9 @@ export function toHear(
     } else if (entry.kind === "agent") {
       for (const part of entry.parts)
         if (part.kind === "text" && part.done) hear(`b:${part.block}`, part.at, () => words.block(part.text));
+    } else if (entry.kind === "command") {
+      const command = conversation.commands[entry.command];
+      if (command !== undefined) hear(`c:${command.id}`, command.at, () => `!${command.text}`);
     } else if (entry.kind === "note") hear(`n:${entry.key}`, entry.at, () => entry.text);
   }
   return heard;
@@ -1345,22 +1381,39 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
   if (entry.kind === "user") {
     const message = conversation.messages[entry.message];
     if (message !== undefined) add(message.id, [], shown(words(message)));
+  } else if (entry.kind === "command") {
+    const command = conversation.commands[entry.command];
+    if (command !== undefined) out.push(...heldCommand(command, entry.key));
   } else if (entry.kind === "agent") walk(entry.parts, []);
   else if (entry.kind === "note") add(entry.key, [], shown(entry.text));
   return out;
 }
 
-/** The messages waiting under the thread, as `held` gives them. */
+/** A command of the user's, as `held` gives it: its line with the `!`,
+    and what it printed, each where the thread draws it. */
+function heldCommand(command: Command, entry: string | null): Held[] {
+  const line = { id: command.id, key: command.id, entry, folds: [], text: shown(`!${command.text}`), markdown: null };
+  if (command.output === "") return [line];
+  return [line, { id: command.id, key: `${command.id}:output`, entry, folds: [], text: shown(command.output), markdown: null }];
+}
+
+/** The messages and commands under the thread, as `held` gives them. */
 export function heldWaiting(conversation: Conversation, options: HeldOptions = {}): Held[] {
   const words = options.words ?? plainWords;
-  return conversation.waiting.map((message) => ({
-    id: message.id,
-    key: message.id,
-    entry: null,
-    folds: [],
-    text: shown(words(message)),
-    markdown: null,
-  }));
+  return conversation.below.flatMap((below) =>
+    below.kind === "command"
+      ? heldCommand(below.command, null)
+      : [
+          {
+            id: below.message.id,
+            key: below.message.id,
+            entry: null,
+            folds: [],
+            text: shown(words(below.message)),
+            markdown: null,
+          },
+        ],
+  );
 }
 
 /**
@@ -1390,6 +1443,9 @@ export function entryPrint(conversation: Conversation, entry: Entry): unknown[] 
   if (entry.kind === "user") {
     const message = conversation.messages[entry.message];
     out.push(message, message?.text);
+  } else if (entry.kind === "command") {
+    const command = conversation.commands[entry.command];
+    out.push(command, command?.text, command?.output);
   } else if (entry.kind === "agent") parts(entry.parts);
   else if (entry.kind === "note") out.push(entry.text);
   return out;

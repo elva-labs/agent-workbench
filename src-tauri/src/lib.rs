@@ -344,6 +344,45 @@ async fn integrated_withdraw(
 }
 
 #[tauri::command]
+async fn integrated_run(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    command: String,
+    text: String,
+) -> Result<Value, String> {
+    let (named, typed) = (command.clone(), text.clone());
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_run",
+        move |rest| json!({ "id": rest, "command": named, "text": typed }),
+        move |core, id| core.integrated_run(id, &command, &text),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn integrated_stop_command(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    id: String,
+    command: String,
+) -> Result<Value, String> {
+    let named = command.clone();
+    routed(
+        Arc::clone(&core),
+        Arc::clone(&remotes),
+        route(&id),
+        "integrated_stop_command",
+        move |rest| json!({ "id": rest, "command": named }),
+        move |core, id| core.integrated_stop_command(id, &command),
+    )
+    .await
+}
+
+#[tauri::command]
 async fn integrated_compact(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
@@ -2347,6 +2386,8 @@ pub fn run() {
             integrated_interrupt,
             integrated_send_now,
             integrated_withdraw,
+            integrated_run,
+            integrated_stop_command,
             integrated_compact,
             integrated_answer,
             integrated_reply,

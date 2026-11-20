@@ -184,6 +184,14 @@ and the terminal to the session or project on screen.
 A reference the agent writes in its answer, `src/lib/a.ts:12`, opens the
 same way on a click with the modifier a link takes, with nothing installed.
 
+As it connects, the daemon also tells the agent that the user can run a
+shell command themselves by sending `!` and the command, whose output then
+comes to the agent as context, and that a command the agent wants the
+user to run, such as a login, is written as `! ` and the command in a code
+span or on a code block line of its own. A conversation offers such a
+line a run mark, as [sessions](sessions.md#integrated-sessions) describes;
+in a terminal, Claude Code's own `!` runs it.
+
 ![The agent answers where the retry delay is set and opens the file at the lines, with its note above them; the user selects three other lines, asks about them, and the agent reads the selection back before explaining.](tools-show.gif)
 
 A second, `diff`, opens a file's changes in the viewer the same way, with

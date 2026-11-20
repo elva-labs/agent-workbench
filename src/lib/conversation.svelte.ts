@@ -1,4 +1,5 @@
 import type {
+  IntegratedCommandState,
   IntegratedEventBody,
   IntegratedFileChange,
   IntegratedHistory,
@@ -74,6 +75,49 @@ export interface Message {
   /** Whether it stands in the thread, rather than waiting under it. */
   placed: boolean;
 }
+
+export type CommandState =
+  /** Handed to the core, with no word back yet. */
+  | "sending"
+  /** Never reached the core. */
+  | "unsent"
+  | Exclude<IntegratedCommandState, "withdrawn">;
+
+/** A command of the user's: a line typed with a leading `!`, which runs
+    in the session's folder and whose output the agent takes without a
+    turn. */
+export interface Command {
+  id: string;
+  /** The command as typed, without its `!`. */
+  text: string;
+  state: CommandState;
+  /** What it printed: as it streams while it runs, then all of it that
+      was kept once it is over. */
+  output: string;
+  /** How it exited, where it did. */
+  exitCode: number | null;
+  /** The output was cut short past what is kept. */
+  truncated: boolean;
+  /** Why it could not run, or never reached the core. */
+  error: string | null;
+  /** Pieces of the output were left out on the way, and no end has
+      mended it. */
+  gap: boolean;
+  /** When the window first heard of it; null for one read from a snapshot. */
+  at: number | null;
+  /** Whether it stands in the thread, rather than under it. */
+  placed: boolean;
+}
+
+/** Whether a command has run its course, or never will. */
+export function commandOver(state: CommandState): boolean {
+  return state !== "sending" && state !== "queued" && state !== "running";
+}
+
+/** What stands under the thread rather than in it: a message that waits
+    or failed to send, or a command that waits, failed to send, or runs
+    while a turn does. */
+export type Below = { kind: "message"; message: Message } | { kind: "command"; command: Command };
 
 interface Timed {
   /** When the window first heard of it. */
@@ -182,6 +226,7 @@ export interface Turn {
 
 export type Entry =
   | { kind: "user"; key: string; message: string }
+  | { kind: "command"; key: string; command: string }
   | { kind: "agent"; key: string; turn: number; parts: Part[]; at: number | null }
   | {
       kind: "note";
@@ -238,7 +283,8 @@ export class Conversation {
   state = $state<IntegratedState | null>(null);
   entries = $state<Entry[]>([]);
   messages = $state<Record<string, Message>>({});
-  /** Message ids in the order the window heard of them. */
+  commands = $state<Record<string, Command>>({});
+  /** Message and command ids in the order the window heard of them. */
   order = $state<string[]>([]);
   turns = $state<Record<number, Turn>>({});
   /** The running turn's id. */
@@ -303,10 +349,14 @@ export class Conversation {
   #loose = new Set<number>();
   #entryCount = 0;
   #revisions = 0;
+  /** What was said before is being laid: a command read stands where the
+      transcript has it. */
+  #laying = false;
   /** What the thread held before it went back, while that can be undone. */
   #before: {
     entries: Entry[];
     messages: Record<string, Message>;
+    commands: Record<string, Command>;
     order: string[];
     turns: Record<number, Turn>;
   } | null = null;
@@ -346,6 +396,38 @@ export class Conversation {
       .filter((message) => message !== undefined && !message.placed);
   }
 
+  /** The messages and commands not standing in the thread, in the order
+      sent: what `waiting` holds, and the commands that wait, failed to
+      send, or run while a turn does. */
+  get below(): Below[] {
+    const below: Below[] = [];
+    for (const id of this.order) {
+      const message = this.messages[id];
+      if (message !== undefined) {
+        if (!message.placed) below.push({ kind: "message", message });
+        continue;
+      }
+      const command = this.commands[id];
+      if (command !== undefined && !command.placed) below.push({ kind: "command", command });
+    }
+    return below;
+  }
+
+  /** Whether a command of the user's is on its way to the core, waits,
+      or runs. */
+  get commanding(): boolean {
+    return Object.values(this.commands).some((command) => !commandOver(command.state));
+  }
+
+  /** The command that runs now, or null; one runs at a time. */
+  get commandRunning(): Command | null {
+    for (const id of this.order) {
+      const command = this.commands[id];
+      if (command?.state === "running") return command;
+    }
+    return null;
+  }
+
   /** Whether the agent is at work on something: a turn, a compaction, a
       message about to start a turn, or a subagent that will report. */
   get working(): boolean {
@@ -374,6 +456,37 @@ export class Conversation {
     this.sentHere += 1;
   }
 
+  /** The window is running a command, the line typed after a `!`, under
+      an id it chose. */
+  running(id: string, text: string) {
+    this.#changed();
+    this.#goneOn();
+    if (this.commands[id] !== undefined) return;
+    this.commands[id] = {
+      id,
+      text,
+      state: "sending",
+      output: "",
+      exitCode: null,
+      truncated: false,
+      error: null,
+      gap: false,
+      at: this.#clock(),
+      placed: false,
+    };
+    this.order.push(id);
+    this.sentHere += 1;
+  }
+
+  /** The core refused the command: it never ran. */
+  runFailed(id: string, error: string) {
+    this.#changed();
+    const command = this.commands[id];
+    if (command === undefined || command.state !== "sending") return;
+    command.state = "unsent";
+    command.error = error;
+  }
+
   /** The core refused the message: it never reached the agent. */
   sendFailed(id: string, error: string) {
     this.#changed();
@@ -383,12 +496,15 @@ export class Conversation {
     message.error = error;
   }
 
-  /** A failed message is taken back, its words to be sent again. */
+  /** A failed message or command is taken back, its words to be sent
+      again, or one that waits was withdrawn. */
   forget(id: string) {
     this.#changed();
     const message = this.messages[id];
-    if (message === undefined || message.placed) return;
-    delete this.messages[id];
+    const command = this.commands[id];
+    if (message !== undefined && !message.placed) delete this.messages[id];
+    else if (command !== undefined && !command.placed) delete this.commands[id];
+    else return;
     this.order = this.order.filter((known) => known !== id);
   }
 
@@ -433,6 +549,7 @@ export class Conversation {
     this.state = null;
     this.entries = [];
     this.messages = {};
+    this.commands = {};
     this.order = [];
     this.turns = {};
     this.current = null;
@@ -470,18 +587,23 @@ export class Conversation {
     this.#before = {
       entries: this.entries,
       messages: { ...this.messages },
+      commands: { ...this.commands },
       order: [...this.order],
       turns: { ...this.turns },
     };
     const gone = left.flatMap((entry) => (entry.kind === "user" ? [entry.message] : []));
+    const ran = new Set(left.flatMap((entry) => (entry.kind === "command" ? [entry.command] : [])));
     const ended = new Set(left.flatMap((entry) => (entry.kind === "agent" ? [entry.turn] : [])));
     const messages = { ...this.messages };
     for (const id of gone) delete messages[id];
+    const commands = { ...this.commands };
+    for (const id of ran) delete commands[id];
     const turns = { ...this.turns };
     for (const id of ended) delete turns[id];
     this.messages = messages;
+    this.commands = commands;
     this.turns = turns;
-    this.order = this.order.filter((id) => !gone.includes(id));
+    this.order = this.order.filter((id) => !gone.includes(id) && !ran.has(id));
     this.current = null;
     this.entries = this.entries.slice(0, index);
     this.#push({ kind: "rewound", key: "", at, undo: false });
@@ -504,6 +626,7 @@ export class Conversation {
     this.#before = null;
     this.entries = before.entries;
     this.messages = before.messages;
+    this.commands = before.commands;
     this.order = before.order;
     this.turns = before.turns;
     return true;
@@ -567,6 +690,7 @@ export class Conversation {
     this.entries = [];
     this.current = null;
     let after: string | null | undefined;
+    this.#laying = true;
     for (const item of history.items) {
       const main = !("parent" in item.event) || item.event.parent === null;
       if (after === undefined && run !== null && run.since !== null && main && item.at >= run.since)
@@ -577,6 +701,7 @@ export class Conversation {
         if (turn !== null) turn.model = item.model;
       }
     }
+    this.#laying = false;
     if (after === undefined) after = this.entries[this.entries.length - 1]?.key ?? null;
     const left = this.current;
     this.entries = [...this.entries, ...later];
@@ -647,6 +772,16 @@ export class Conversation {
       case "message":
         this.#message(event, now);
         break;
+      case "command":
+        this.#command(event, now);
+        break;
+      case "commandOutput": {
+        const command = this.commands[event.command];
+        if (command === undefined || commandOver(command.state)) break;
+        command.state = "running";
+        command.output += event.delta;
+        break;
+      }
       case "turnStarted":
         this.#goneOn();
         this.#startTurn(event.messages, now);
@@ -889,6 +1024,8 @@ export class Conversation {
         this.skipped += event.pieces;
         for (const block of this.#blocks.values()) if (!block.done) block.gap = true;
         for (const call of this.#calls.values()) if (!call.done) call.gap = true;
+        for (const command of Object.values(this.commands))
+          if (command.state === "running") command.gap = true;
         break;
       case "retrying": {
         const turn = this.turn;
@@ -947,6 +1084,8 @@ export class Conversation {
     // The subagents still at work, which no transcript holds: one whose
     // call is not heard of yet joins it when it comes.
     for (const started of snapshot.tasks ?? []) this.apply(started, now);
+    // The commands that wait or run, a running one with its output so far.
+    for (const told of snapshot.commands ?? []) this.#command(told, now, null);
     for (const told of snapshot.messages) {
       const known = this.messages[told.message];
       if (known === undefined) {
@@ -1025,6 +1164,73 @@ export class Conversation {
     if (message.placed) return;
     message.placed = true;
     this.#push({ kind: "user", key: "", message: message.id });
+  }
+
+  /** Where a command stands. One that has begun stands in the thread once
+      no turn runs: it runs under a running turn until that ends, as the
+      agent takes it then. */
+  #command(event: Extract<IntegratedEventBody, { type: "command" }>, now: number, at: number | null = now) {
+    let command = this.commands[event.command];
+    if (command === undefined) {
+      if (event.state === "withdrawn") return;
+      this.commands[event.command] = {
+        id: event.command,
+        text: event.text,
+        state: "sending",
+        output: "",
+        exitCode: null,
+        truncated: false,
+        error: null,
+        gap: false,
+        at,
+        placed: false,
+      };
+      this.order.push(event.command);
+      command = this.commands[event.command];
+    } else if (command.text === "") command.text = event.text;
+    switch (event.state) {
+      // Taken back before it ran: its line went back to the composer of
+      // the window that took it, and it leaves every thread.
+      case "withdrawn":
+        this.forget(command.id);
+        return;
+      case "queued":
+        if (command.state === "sending") command.state = "queued";
+        return;
+      case "running":
+        if (commandOver(command.state)) return;
+        command.state = "running";
+        // A window that comes late has the output so far.
+        if (event.output !== null) command.output = event.output;
+        break;
+      default:
+        command.state = event.state;
+        command.output = event.output ?? command.output;
+        command.exitCode = event.exitCode;
+        command.truncated = event.truncated;
+        command.error = event.error;
+        command.gap = false;
+        break;
+    }
+    if (this.current === null || this.#laying) this.#placeCommand(command);
+  }
+
+  #placeCommand(command: Command) {
+    if (command.placed) return;
+    command.placed = true;
+    this.#push({ kind: "command", key: "", command: command.id });
+  }
+
+  /** The commands that began while a turn ran take their place in the
+      thread once it is over. */
+  #placeCommands() {
+    if (this.#laying) return;
+    for (const id of this.order) {
+      const command = this.commands[id];
+      if (command === undefined || command.placed) continue;
+      if (command.state === "running" || (commandOver(command.state) && command.state !== "unsent"))
+        this.#placeCommand(command);
+    }
   }
 
   #startTurn(messages: string[], now: number | null) {
@@ -1120,6 +1326,7 @@ export class Conversation {
     }
     this.current = null;
     this.interrupting = false;
+    this.#placeCommands();
   }
 
   /** The blocks in these parts that are still streaming end where they are. */
@@ -1339,6 +1546,14 @@ export class Conversation {
     }
     for (const id of this.order) {
       const message = this.messages[id];
+      if (message === undefined) {
+        const command = this.commands[id];
+        if (command === undefined || commandOver(command.state)) continue;
+        command.error = command.state === "running" ? "the session ended while it ran" : "the session ended before it ran";
+        command.state = "dropped";
+        this.#placeCommand(command);
+        continue;
+      }
       if (message.state === "sending" || message.state === "queued" || (message.state === "sent" && !message.placed)) {
         message.state = "dropped";
         message.error = message.error ?? "the session ended before the agent took it";

@@ -331,12 +331,14 @@ the same way.
 | Send | Sends the user's message, with any images, under an id the window chose: a UUID it has not used in the session. |
 | Interrupt | Stops the running turn. Messages already queued stay queued. |
 | Send now | Sends every message that waits for a turn now, in the order sent, as described under [sending now](#sending-now), and answers whether the turn was stopped for them, takes them in, or found none waiting. Fails saying why while a request waits for an answer, while the conversation is being compacted, when no turn runs, or when nothing waits. |
-| Withdraw | Takes back a message the agent has not taken yet, which then ends as withdrawn. Fails once the agent has taken it. |
+| Run | Runs a command the user typed with a leading `!`, under an id the window chose: a UUID it has not used in the session. It waits for what was sent before it, as described under [commands the user runs](#commands-the-user-runs). Fails with nothing to run, or while the session goes back. |
+| Stop command | Stops the user's command that runs. Fails when it does not run. |
+| Withdraw | Takes back a message, or a command of the user's, the agent has not taken yet, which then ends as withdrawn. Fails once the agent has taken it, or once the command runs. |
 | Compact | Compacts the conversation, the way the agent does it, with what the summary should keep where the agent takes that. Claude Code is sent a compact command as a message of its own, with those words after it, and Codex is asked to compact its thread, refusing words since it takes none; either way the turn it starts names no message of the window's. |
 | Answer | Answers a permission request with one of the choices it offered. |
 | Reply | Answers a question the agent asked: for each question, the options picked or, where the question takes them, the user's own words. It can also decline to answer. |
 | Configure | Switches the model, the mode or the effort, each that is given, all within 45 seconds, which is less than a call to another machine waits. A change that would be asked for once that time is up is not asked for at all. Answers with what the session now runs on. Codex takes the change with the next message. |
-| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, the account's limits as they were last told, every subagent still at work as its start went out, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
+| Snapshot | Says what a window that comes to the session late needs and no transcript holds: the session's state and whether a turn runs, its settings, what the agent said it offers when it was ready with its commands as they now are, every permission request and question still waiting for an answer, the messages no turn has taken yet, the user's commands that wait or run, the running one with its output so far, the account's limits as they were last told, every subagent still at work as its start went out, and for a conversation it resumed when this run of it began. It answers once every event that went out before it has, so it reflects those events and none after. |
 | History | Reads what a conversation said and did before, from where its agent keeps it, as described under history. It is addressed by the project's path and the conversation's id rather than by a session, so it needs no session running. It answers with none for an agent whose history is not read, and fails with why where the agent could not read it. |
 | Points | Says where a session's conversation can go back to: each message of the user's in it as the agent keeps it now, oldest first, whether the conversation can go back to before it, with why where it cannot, and whether the files can; or why none can. |
 | Preview | Says what putting the files back as they were before a message would change, as the agent's own dry run says: the files, and the lines that would come back and go. Changes nothing. Fails, in the agent's words, where it cannot put them back to there. |
@@ -445,6 +447,16 @@ naming the session and its kind:
   or cancelled it, or was withdrawn by the user before the agent took it.
   The first of these for a message carries its
   text and the images it attached, so that any window can draw it.
+- **command**: a command of the user's waits, runs, or is over: done, with
+  its exit code; stopped by the user; timed out; failed, with why; withdrawn
+  by the user before it ran; or dropped because the session ended first.
+  Each carries the command, and the last its output, both streams as they
+  came, cut short past a megabyte and flagged so. Any that is over may
+  carry an error as well, such as the agent not being given the command,
+  and the window shows it under the command as bad news.
+- **command output**: the next piece of what a running command printed.
+  Pieces stop past the limit, and the output the command ends with holds
+  all that was kept.
 - **turn started**, with the messages it answers, and **turn ended**: how
   it ended (done, interrupted or failed, with why), its time and token
   usage, and the agent's running total cost for its process so far, which
@@ -573,8 +585,8 @@ timing or hooks:
   says one is coming. A task that is lost has no report to wait for, and
   an interrupt while no turn runs stops waiting for one;
 - **idle** otherwise. A command left running in the background, such as a
-  dev server, does not keep a session working, nor does housekeeping the
-  agent does on its own account.
+  dev server, does not keep a session working, nor does a command of the
+  user's, nor housekeeping the agent does on its own account.
 
 Claude Code says which tasks run in the background as a whole list, in no
 promised order with the start and the end of each. A task the list leaves
@@ -638,6 +650,66 @@ already handed over or given to the running turn cannot be withdrawn. A
 message the user withdrew is withdrawn for every window; the window that
 withdrew it puts its words back in the composer when the withdrawn event
 comes, whatever the command answers.
+
+## Commands the user runs
+
+A line the user sends with a leading `!` is a command of their own. It
+runs in the session's folder, on the machine the agent runs on, and what
+it prints goes to the agent as context, with no turn of the agent's own:
+the agent reads it with the next message. One runs at a time, and a
+message or a command sent while one runs or waits waits behind it, in the
+order sent. Each agent takes a command its own way.
+
+- **Claude Code** runs none of the user's commands itself, so the core
+  runs it: with the user's shell, in the session's folder, with the
+  agent's own environment, with nothing to read from, and leading a
+  process group of its own. It starts at once, even while a turn runs.
+  Once it has ended, the core gives it to the agent as the agent records
+  a command the user ran in its own terminal: the line typed, what it
+  printed on each stream, each escaped as the agent escapes them, and,
+  where it did not exit with 0, its exit code. A command a signal ended
+  has the code a shell gives it, 128 and the signal's number, and a line
+  saying which signal ended it. Once the record is written, whatever the
+  command left in its process group, such as a server it sent to the
+  background, is ended with that group, on macOS and Linux; on Windows it
+  runs on. A process the command moved to a process group or session of
+  its own, as a shell's job control or a daemon does, runs on everywhere.
+  Claude Code takes that record once the running turn is over, or
+  at once where none runs, in a turn that asks no model and is not told
+  as one. A message sent meanwhile waits until the agent has taken the
+  record, so that it reads the command first, and sending such a message
+  now stops the running turn. Should Claude Code drop the record,
+  refusing, discarding or cancelling it, the window warns that the agent
+  has not seen what the command printed.
+- **Codex** runs the command itself, as its own shell command, in a turn
+  of its own that asks no model and is not told as one, and keeps it in
+  its thread for the next turn to read. It is handed over only when no
+  turn runs and Codex has named the message handed over before, so a
+  command sent while a turn runs waits for that turn to end. The command
+  ends with the turn it runs in. Should Codex end while the command runs,
+  what is left in the command's process group is ended with it.
+
+What a command prints streams to the window as it comes, up to a megabyte.
+The agent is given at most thirty thousand bytes of each stream, standard
+output and standard error apart, so up to sixty thousand in all: past
+that, the start and the end of each, with a line between them saying how
+many lines were left out. Codex is given what Codex keeps.
+
+Stopping a command asks its whole process group to end, and kills what is
+still there a moment later, so what it started stops with it. For Codex,
+the core finds the group of the shell Codex runs it in, and interrupts the
+turn it runs in as well, once Codex has named that turn. A command still
+running after ten minutes is stopped the same way, and ends as timed out;
+one meant to run on, such as a watch or a server, belongs in a terminal.
+Claude Code is told, after what the command printed, that the user stopped
+it or that it ran too long.
+
+A command that waits can be withdrawn, as a message can; one that runs
+cannot, and is stopped instead. Sending now is refused while a command
+runs or waits, and going back while one runs, waits, or is being recorded
+for Claude Code. Stopping the session stops the command that runs first.
+When the session ends, a command still running ends as stopped and one
+that waits as dropped.
 
 ## Going back
 
@@ -1015,6 +1087,14 @@ no result when its turn ended failed, as a live session's does. What a
 subagent said and did is read from its own transcript, beside the
 session's, and goes under the call that started it.
 
+A command the user ran themselves, here or in the agent's own terminal,
+comes back as a command that was done, under the id of the entry that
+gave it: the line typed, what it printed, and its exit code, which is 0
+where the agent wrote none. The agent writes such a command in one entry
+or in two, the line first, and writes a placeholder where it printed
+nothing, which is read as no output. One the agent took while a turn ran
+comes back in that turn.
+
 A transcript can hold turns the user went back on. The conversation is the
 line from the last entry back through each entry's parent to the first,
 past a compaction to what it compacted, with the results of calls the agent
@@ -1035,12 +1115,12 @@ read twice: once for each line's ids and parent alone, to find the lines
 that make up the conversation, and once for what those lines say, each made
 into its events and let go before the next, so no more than what is kept is
 held at once. The second reading reads the same bytes as the first, though
-the file grows between them. Long
-content is cut down further than a live session's and flagged: a tool's
-output and each string of its input to sixteen kilobytes, a changed file to
-sixty-four, and a block of text to a quarter of a megabyte; an image larger
-than four megabytes is left out; and a history of more than thirty-two
-megabytes in all leaves out its first turns and says so.
+the file grows between them. Long content is cut down further than a live
+session's and flagged: a tool's output and each string of its input to
+sixteen kilobytes, a changed file and a command's output to sixty-four,
+and a block of text to a quarter of a megabyte; an image larger than four
+megabytes is left out; and a history of more than thirty-two megabytes in
+all leaves out its first turns and says so.
 
 What a Codex conversation said before is read through Codex itself, which
 keeps each thread's turns and their items. For each read the workbench
@@ -1066,10 +1146,15 @@ context was full. Codex's app-server names no model for a turn, so a turn
 read from it names none. An item of a kind the workbench does not know is
 skipped. Codex keeps no record of a plan's steps or of a turn's diff, so
 neither comes back. A command an interrupt left running comes back as
-failed once it has ended, and not at all while it still runs. A thread
-kept by an older Codex, which kept less, comes back with its messages and
-what the agent said, under ids of Codex's own that differ from those its
-live events had.
+failed once it has ended, and not at all while it still runs. A command
+the user ran themselves comes back as a command, under Codex's id for it,
+with the line as typed, taken out of the shell Codex ran it with: running
+while its turn still runs, done with its exit code and output, timed out,
+stopped where its turn was interrupted, or failed. Codex keeps no output of
+one stopped or out of time. A turn that only ran such commands is no turn
+of the agent's. A thread kept by an older Codex, which kept less, comes
+back with its messages and what the agent said, under ids of Codex's own
+that differ from those its live events had.
 
 Read from a process of its own, a turn that still runs comes back as
 interrupted with no time it completed, where one that was interrupted has
@@ -1130,6 +1215,12 @@ has to do itself:
   took them together; a turn that names none is one the agent began by
   itself. The first message event for an id carries its text and images,
   so a second window can draw a message it did not send.
+- **Commands.** A command's id is the window's own too, and its first event
+  carries the line typed. One that runs while a turn does is drawn below
+  the thread, with the messages that wait, and takes its place in the
+  thread once the turn is over. Claude Code's record of a command is
+  written under the window's id, so the history names it as the events
+  did; Codex gives a command an id of its own, which the history names.
 - **Requests.** Each permission and question is settled by an answered or
   a withdrawn event, whichever window answered it, and a withdrawn one is
   over even where no answered event came before it. The answer to a

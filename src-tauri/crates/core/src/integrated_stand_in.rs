@@ -1992,3 +1992,145 @@ fn real_claude_holds_a_short_turn() {
     );
     assert_eq!(h.stop()["clean"], true);
 }
+
+/// The agent taking the record of a command the user ran while no turn
+/// runs: a turn that asks no model.
+const RECORDED: &str = r#"expect "shouldQuery":false
+reply {"type":"command_lifecycle","command_uuid":"@UUID@","state":"started"}
+say {"type":"system","subtype":"init","model":"claude-haiku","permissionMode":"default","session_id":"s"}
+say {"type":"result","subtype":"success","is_error":false,"num_turns":0,"total_cost_usd":0,"session_id":"s"}
+reply {"type":"command_lifecycle","command_uuid":"@UUID@","state":"completed"}"#;
+
+const C1: &str = "44444444-4444-4444-8444-444444444444";
+
+fn commands(events: &[Value]) -> Vec<&Value> {
+    events
+        .iter()
+        .filter(|event| event["type"] == "command")
+        .collect()
+}
+
+#[test]
+fn a_command_the_user_runs_streams_to_the_window_and_goes_to_the_agent_before_the_next_message() {
+    let scenario = [
+        READY,
+        RECORDED,
+        r#"expect "type":"user""#,
+        TAKE,
+        INIT,
+        DONE,
+        "drain",
+    ]
+    .join("\n");
+    let h = start("run", &scenario);
+    h.until_type("ready");
+    run(
+        &h.sessions,
+        &h.id,
+        C1,
+        "printf 'out <1>\\n'; printf 'err\\n' >&2; exit 3",
+    )
+    .unwrap();
+    // Sent while the command runs, the message waits for its record.
+    let message = h.send("why did it fail?");
+    let events = h.until_type("turnEnded");
+
+    let ran = commands(&events);
+    let states: Vec<&str> = ran.iter().map(|e| e["state"].as_str().unwrap()).collect();
+    assert_eq!(states, ["running", "done"]);
+    assert_eq!(ran[1]["exitCode"], 3);
+    assert_eq!(
+        ran[1]["text"],
+        "printf 'out <1>\\n'; printf 'err\\n' >&2; exit 3"
+    );
+    let printed: String = events
+        .iter()
+        .filter(|event| event["type"] == "commandOutput")
+        .map(|event| event["delta"].as_str().unwrap())
+        .collect();
+    assert!(
+        printed.contains("out <1>\n") && printed.contains("err\n"),
+        "{printed:?}"
+    );
+    // The record opened no turn: the one turn is the message's.
+    let turns: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["type"] == "turnStarted")
+        .collect();
+    assert_eq!(turns.len(), 1, "{events:?}");
+    assert_eq!(turns[0]["messages"], json!([message]));
+
+    let sent: Vec<Value> = h
+        .stdin()
+        .into_iter()
+        .filter(|line| line["type"] == "user")
+        .collect();
+    assert_eq!(sent[0]["uuid"], C1);
+    assert_eq!(sent[0]["shouldQuery"], false);
+    assert_eq!(
+        sent[0]["message"]["content"],
+        format!(
+            "{}\n<bash-input>printf 'out &lt;1&gt;\\n'; printf 'err\\n' &gt;&amp;2; exit 3</bash-input>\n<bash-stdout>out &lt;1&gt;\n</bash-stdout><bash-stderr>err\n</bash-stderr>\n<bash-exit-code>3</bash-exit-code>",
+            crate::claude_stream::RAN_CAVEAT
+        )
+    );
+    assert_eq!(sent[1]["uuid"], message.as_str());
+    assert_eq!(h.stop()["clean"], true);
+}
+
+#[test]
+fn a_command_the_user_stops_ends_with_everything_it_started_and_says_so_to_the_agent() {
+    let scenario = [READY, RECORDED, "drain"].join("\n");
+    let h = start_keeping("run-stop", &scenario, short_graces());
+    h.until_type("ready");
+    let child = h.dir.join("command-child");
+    run(
+        &h.sessions,
+        &h.id,
+        C1,
+        &format!(
+            "echo before; sleep 300 & echo $! > '{}'; wait",
+            child.display()
+        ),
+    )
+    .unwrap();
+    h.until(|event| event["type"] == "commandOutput");
+    stop_command(&h.sessions, &h.id, C1).unwrap();
+    let events = h.until(|event| event["type"] == "command" && event["state"] != "running");
+    let ended = commands(&events).pop().unwrap().clone();
+    assert_eq!(ended["state"], "stopped");
+    assert_eq!(
+        stop_command(&h.sessions, &h.id, C1).unwrap_err(),
+        "the command does not run"
+    );
+
+    // The sleep it left running in the background ended with it.
+    let pid = std::fs::read_to_string(&child).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(pid.trim()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(!alive(pid.trim()), "the sleep is still there");
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let record = loop {
+        if let Some(line) = h.stdin().into_iter().find(|line| line["uuid"] == C1) {
+            break line;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the agent was never given the command"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let content = record["message"]["content"].as_str().unwrap();
+    assert!(
+        content.contains("<bash-stdout>before\n</bash-stdout>"),
+        "{content}"
+    );
+    assert!(
+        content.contains("The user stopped the command."),
+        "{content}"
+    );
+    assert_eq!(h.stop()["clean"], true);
+}

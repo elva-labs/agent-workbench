@@ -51,7 +51,7 @@ async function listed(page: Page): Promise<string[]> {
 test.describe("mentioning a file with @", () => {
   test("opens what changed, then the project's top, over the thread and as wide as the composer", async ({ page }) => {
     await openIntegrated(page);
-    await expect(input(page)).toHaveAttribute("placeholder", "Tell Claude what to do. Type / for commands, @ for files");
+    await expect(input(page)).toHaveAttribute("placeholder", "Tell Claude what to do. Type / for commands, @ for files, ! for the shell");
     await input(page).click();
     await page.keyboard.type("Why does @");
     await expect(menu(page)).toBeVisible();

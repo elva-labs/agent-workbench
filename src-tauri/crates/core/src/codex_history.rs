@@ -35,7 +35,8 @@ use crate::adapter::{prepare_process, process, CODEX_HOME_VAR};
 use crate::codex_app_server::{call_of, finished, said, turned_down};
 use crate::env::find_on_path;
 use crate::integrated::{
-    cut, now_millis, CompactReason, Event, History, Image, MessageState, Outcome, Said,
+    cut, now_millis, CommandState, CompactReason, Event, History, Image, MessageState, Outcome,
+    Said,
 };
 use crate::short_lived::{Gone, Line, ShortLived};
 
@@ -427,12 +428,121 @@ fn data_image(url: &str) -> Option<Image> {
 }
 
 /// Whether an item is something the agent said or did, rather than the
-/// user's message or Codex's own housekeeping.
+/// user's message, a command the user ran, or Codex's own housekeeping.
 fn agent_s(item: &Value) -> bool {
-    matches!(
-        item["type"].as_str(),
-        Some("agentMessage" | "reasoning" | "plan")
-    ) || call_of(item).is_some()
+    !user_shell(item)
+        && (matches!(
+            item["type"].as_str(),
+            Some("agentMessage" | "reasoning" | "plan")
+        ) || call_of(item).is_some())
+}
+
+/// Whether an item is a command the user ran themselves.
+fn user_shell(item: &Value) -> bool {
+    item["type"] == "commandExecution" && item["source"] == "userShell"
+}
+
+/// Whether a turn has no end yet: one that still runs, read from a process
+/// of Codex's own, comes back as interrupted with no time it completed.
+fn unended(turn: &Value) -> bool {
+    matches!(turn["status"].as_str(), Some("inProgress" | "interrupted"))
+        && turn["completedAt"].as_u64().is_none_or(|at| at == 0)
+}
+
+/// A command the user ran, as the session told of it, where `running`
+/// says its turn has no end yet. Its id is Codex's own for the item, and
+/// its line the one typed, unwrapped from the shell Codex ran it with.
+/// One stopped or out of time has no output kept beyond the state.
+fn ran(item: &Value, turn: &Value, running: bool) -> Event {
+    let id = item["id"].as_str().unwrap_or_default();
+    let line = typed(item["command"].as_str().unwrap_or_default());
+    let code = item["exitCode"]
+        .as_i64()
+        .and_then(|code| i32::try_from(code).ok());
+    let output = item["aggregatedOutput"].as_str().map(str::to_string);
+    let timed_out = code == Some(-1)
+        && output
+            .as_deref()
+            .is_some_and(|output| output.contains("Timeout"));
+    let state = match code {
+        _ if item["status"] == "inProgress" && running => CommandState::Running,
+        Some(code) if code >= 0 => CommandState::Done,
+        _ if timed_out => CommandState::TimedOut,
+        _ if turn["status"] == "interrupted" => CommandState::Stopped,
+        _ => CommandState::Failed,
+    };
+    let mut event = Event::command(id, state, &line);
+    if let Event::Command {
+        exit_code,
+        output: kept,
+        error,
+        ..
+    } = &mut event
+    {
+        match state {
+            CommandState::Done => {
+                *exit_code = code;
+                *kept = output;
+            }
+            CommandState::Failed => {
+                *kept = output;
+                *error = Some("the command did not finish".into());
+            }
+            _ => {}
+        }
+    }
+    event
+}
+
+/// The line a command of the user's was typed as: the word Codex gave the
+/// shell after `-lc` or `-c`, its quotes taken away, or all of what it ran
+/// where that is not how it ran it.
+fn typed(command: &str) -> String {
+    [" -lc ", " -c "]
+        .iter()
+        .find_map(|flag| {
+            let (shell, word) = command.split_once(flag)?;
+            if shell.contains(' ') {
+                return None;
+            }
+            unquoted(word)
+        })
+        .unwrap_or_else(|| command.to_string())
+}
+
+/// One word of a POSIX shell's line with its quotes taken away; None for
+/// what is not one whole word.
+fn unquoted(word: &str) -> Option<String> {
+    let mut out = String::new();
+    let mut chars = word.chars();
+    while let Some(next) = chars.next() {
+        match next {
+            '\'' => loop {
+                match chars.next()? {
+                    '\'' => break,
+                    inside => out.push(inside),
+                }
+            },
+            '"' => loop {
+                match chars.next()? {
+                    '"' => break,
+                    '\\' => match chars.next()? {
+                        escaped @ ('$' | '`' | '"' | '\\') => out.push(escaped),
+                        '\n' => {}
+                        other => {
+                            out.push('\\');
+                            out.push(other);
+                        }
+                    },
+                    inside => out.push(inside),
+                }
+            },
+            '\\' => out.push(chars.next()?),
+            space if space.is_whitespace() => return None,
+            other => out.push(other),
+        }
+    }
+    Some(out)
 }
 
 /// One turn as the events a session sends for it, each at the time Codex
@@ -443,10 +553,9 @@ fn agent_s(item: &Value) -> bool {
 /// one was asked for, while one in a turn the user began was made because
 /// the context was full. A tool call Codex keeps as still running finishes
 /// as failed when its turn has ended. The newest turn, `last`, is left
-/// open while it has no end: a turn that still runs, read from a process
-/// of Codex's own, comes back as interrupted with no time it completed,
-/// where one that was interrupted has one. An older turn Codex never ended
-/// was interrupted.
+/// open while it has no end. An older turn Codex never ended was
+/// interrupted. A command the user ran is told of as the session tells of
+/// one, and a turn that only ran such commands is no turn of the agent's.
 fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<Said> {
     let mut out: Vec<Said> = Vec::new();
     let mut now = items
@@ -461,6 +570,14 @@ fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<
             event: History::kept(event),
         });
     };
+    let running = last && unended(turn);
+    if !items.is_empty() && items.iter().all(user_shell) {
+        for item in items {
+            let at = millis(item, "startedAtMs").unwrap_or(now);
+            push(&mut out, at, ran(item, turn, running));
+        }
+        return out;
+    }
     let messages = items.iter().any(|item| item["type"] == "userMessage");
     let opener = items
         .iter()
@@ -529,6 +646,7 @@ fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<
                     push(&mut out, ended, event);
                 }
             }
+            _ if user_shell(item) => push(&mut out, started, ran(item, turn, running)),
             _ => {
                 let Some((name, kind, input)) = call_of(item) else {
                     continue;
@@ -575,9 +693,7 @@ fn turn_events(turn: &Value, items: &[Value], folder: &Path, last: bool) -> Vec<
         }
     }
     let status = turn["status"].as_str();
-    let running = matches!(status, Some("inProgress" | "interrupted"))
-        && turn["completedAt"].as_u64().is_none_or(|at| at == 0);
-    if last && running {
+    if running {
         return out;
     }
     let end = seconds(turn, "completedAt").map_or(now, |at| at.max(now));

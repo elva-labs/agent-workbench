@@ -452,6 +452,54 @@ describe("code in Markdown", () => {
   });
 });
 
+describe("a command the agent writes for the user to run", () => {
+  const drawn = (html: string) => {
+    const box = document.createElement("div");
+    box.innerHTML = html;
+    return box;
+  };
+
+  it("marks a code span that begins with ! and a space", () => {
+    const box = drawn(renderSaid("Run `! npm test` to check."));
+    const code = box.querySelector("code");
+    expect(code?.hasAttribute("data-run")).toBe(true);
+    expect(code?.textContent).toBe("! npm test");
+  });
+
+  it("leaves other code and prose unmarked", () => {
+    for (const md of ["Use `!important` sparingly.", "Then `npm test`.", "Say ! npm test out loud.", "`!`"])
+      expect(drawn(renderSaid(md)).querySelector("[data-run]"), md).toBeNull();
+  });
+
+  it("marks each line of a code block that is a command, as written, and no other line", () => {
+    for (const fence of ["```", "```sh", "```text"]) {
+      const md = `${fence}\n! npm test\nnpm run build\n# then ! npm run lint\n! git status\n\`\`\``;
+      const box = drawn(renderSaid(md));
+      const marked = [...box.querySelectorAll("[data-run]")];
+      expect(
+        marked.map((element) => element.textContent?.trim()),
+        fence,
+      ).toEqual(["! npm test", "! git status"]);
+      expect(box.querySelector("pre code")?.textContent, fence).toBe("! npm test\nnpm run build\n# then ! npm run lint\n! git status\n");
+    }
+  });
+
+  it("draws a command left to right as it runs, whatever letters it holds", () => {
+    const box = drawn(renderSaid("Run `! sort א > 1`.\n\n```sh\n! sort א > 1\n```"));
+    const marked = [...box.querySelectorAll<HTMLElement>("[data-run]")];
+    expect(marked).toHaveLength(2);
+    for (const element of marked) {
+      expect(element.dir).toBe("ltr");
+      expect(element.style.unicodeBidi).toBe("bidi-override");
+    }
+  });
+
+  it("marks nothing in a document the viewer draws", () => {
+    const box = drawn(render("Run `! npm test`.\n\n```sh\n! npm test\n```\n\n```\n! npm test\n```"));
+    expect(box.querySelector("[data-run]")).toBeNull();
+  });
+});
+
 describe("what Markdown may draw", () => {
   const ELEMENTS = new Set(
     "P,BR,EM,STRONG,DEL,CODE,PRE,A,IMG,UL,OL,LI,BLOCKQUOTE,H1,H2,H3,H4,H5,H6,HR,TABLE,THEAD,TBODY,TR,TH,TD,INPUT".split(","),

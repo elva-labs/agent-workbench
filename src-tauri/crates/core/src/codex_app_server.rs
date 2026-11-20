@@ -25,7 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
@@ -36,10 +36,10 @@ use crate::adapter::{
 use crate::env::find_on_path;
 use crate::hook;
 use crate::integrated::{
-    kept_windows, limits_due, now_seconds, percent, ChangeKind, Choice, CompactReason, Control,
-    Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind, LimitWindow,
-    MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep, Prepared, Protocol,
-    Question, QuestionOption, Reading, Sending, StepStatus, ToolKind, Usage,
+    kept_windows, limits_due, now_seconds, percent, ChangeKind, Choice, CommandState,
+    CompactReason, Control, Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind,
+    LimitWindow, MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep,
+    Prepared, Protocol, Question, QuestionOption, Reading, Sending, StepStatus, ToolKind, Usage,
 };
 
 pub struct CodexAppServer;
@@ -337,6 +337,51 @@ enum Sent {
     RateLimits,
     /// The conversation taken back to before a turn.
     Revert,
+    /// A command of the user's, by the window's id.
+    Shell(String),
+    /// The interrupt of the turn a command of the user's runs in.
+    ShellInterrupt,
+}
+
+/// A command of the user's Codex runs, in a turn of its own that is not
+/// shown as one.
+#[derive(Debug, Default)]
+struct Shell {
+    command: String,
+    text: String,
+    /// The turn it runs in and the item it is, once Codex names them.
+    turn: Option<String>,
+    item: Option<String>,
+    /// A turn taken as its own whose first item was something else: one
+    /// Codex began by itself, never claimed again.
+    disowned: Option<String>,
+    /// Some of its output came as it ran.
+    streamed: bool,
+    /// The user stopped it, and whether the interrupt waits for its turn.
+    stopping: bool,
+    interrupt_wanted: bool,
+    /// How it ended, told when its turn ends.
+    ended: Option<Event>,
+}
+
+impl Shell {
+    fn ended_as(
+        &self,
+        state: CommandState,
+        exit_code: Option<i32>,
+        output: Option<String>,
+        error: Option<String>,
+    ) -> Event {
+        Event::Command {
+            command: self.command.clone(),
+            state,
+            text: self.text.clone(),
+            exit_code,
+            output,
+            truncated: false,
+            error,
+        }
+    }
 }
 
 /// What a request from the server is, by what its answer takes.
@@ -764,6 +809,8 @@ struct AppServer {
     ended: Option<String>,
     interrupt_wanted: bool,
     compact_asked: bool,
+    /// The command of the user's that runs.
+    shell: Option<Shell>,
     /// Why the running turn failed, as the agent said before it ended.
     failure: Option<String>,
     told_signed_out: bool,
@@ -795,6 +842,34 @@ struct AppServer {
     /// answered was taken, in seconds since the epoch.
     rate_limits_asked: Option<Instant>,
     read_at: Option<u64>,
+}
+
+/// How much longer than the core's own limit Codex lets a command of the
+/// user's run.
+const SHELL_SLACK: Duration = Duration::from_secs(60);
+
+/// How a command of the user's ended, from its completed item. Output that
+/// streamed is the command's own; what the item holds then may be Codex's
+/// word on how it was stopped instead.
+fn shell_ended(shell: &Shell, item: &Value) -> Event {
+    let code = item["exitCode"]
+        .as_i64()
+        .and_then(|code| i32::try_from(code).ok());
+    let aggregated = text(&item["aggregatedOutput"]).filter(|output| !output.is_empty());
+    let timed_out = code == Some(-1)
+        && aggregated
+            .as_deref()
+            .is_some_and(|output| output.contains("Timeout"));
+    let (state, exit_code) = match code {
+        _ if shell.stopping => (CommandState::Stopped, None),
+        _ if timed_out => (CommandState::TimedOut, None),
+        Some(code) if code >= 0 => (CommandState::Done, Some(code)),
+        _ => (CommandState::Failed, None),
+    };
+    let told = matches!(state, CommandState::Done | CommandState::Failed);
+    let output = (!shell.streamed && told).then_some(aggregated).flatten();
+    let error = (state == CommandState::Failed).then(|| "the command did not finish".to_string());
+    shell.ended_as(state, exit_code, output, error)
 }
 
 /// How much of a line too long to read is kept to name what it was.
@@ -1359,6 +1434,7 @@ impl AppServer {
             ended: None,
             interrupt_wanted: false,
             compact_asked: false,
+            shell: None,
             failure: None,
             told_signed_out: false,
             calls: HashMap::new(),
@@ -1763,7 +1839,19 @@ impl AppServer {
                 Err(error) => out.unsteered.push((message, error)),
             },
             Sent::Interrupt => out.replies.push((id.to_string(), reply)),
-            Sent::LateInterrupt => {}
+            Sent::LateInterrupt | Sent::ShellInterrupt => {}
+            Sent::Shell(command) => {
+                if let Err(error) = reply {
+                    if let Some(shell) = self.shell.take_if(|shell| shell.command == command) {
+                        out.events.push(shell.ended_as(
+                            CommandState::Failed,
+                            None,
+                            None,
+                            Some(error),
+                        ));
+                    }
+                }
+            }
             Sent::RateLimits => {
                 // Nothing waits on it, and a read that fails or answers in
                 // a shape not known here leaves the limits as they were.
@@ -1843,6 +1931,33 @@ impl AppServer {
         if self.turn.as_deref() == Some(turn) {
             return;
         }
+        // The first turn after a command of the user's is handed over,
+        // while no other runs or is on its way, is the one it runs in.
+        let quiet = self.starting.is_none() && self.awaited.is_none();
+        let running = self.turn.clone();
+        if let Some(shell) = self.shell.as_mut().filter(|shell| {
+            shell.turn.is_some()
+                || (quiet
+                    && shell.disowned.as_deref() != Some(turn)
+                    && running.is_none_or(|running| shell.disowned == Some(running)))
+        }) {
+            if shell.turn.is_none() {
+                shell.turn = Some(turn.to_string());
+                if std::mem::take(&mut shell.interrupt_wanted) {
+                    if let Some(thread) = self.thread.clone() {
+                        let (line, _) = self.request(
+                            Sent::ShellInterrupt,
+                            "turn/interrupt",
+                            json!({ "threadId": thread, "turnId": turn }),
+                        );
+                        out.writes.push(line);
+                    }
+                }
+            }
+            if self.shell.as_ref().and_then(|shell| shell.turn.as_deref()) == Some(turn) {
+                return;
+            }
+        }
         // The turn Codex said a message starts; any other is one it began
         // by itself, such as to compact, or one whose message's answer has
         // not come yet.
@@ -1857,6 +1972,25 @@ impl AppServer {
 
     fn turn_completed(&mut self, params: &Value, out: &mut Reading) {
         let turn = &params["turn"];
+        let id = turn["id"].as_str();
+        if let Some(mut shell) = self
+            .shell
+            .take_if(|shell| id.is_some() && shell.turn.as_deref() == id)
+        {
+            out.events.push(shell.ended.take().unwrap_or_else(|| {
+                let state = if shell.stopping {
+                    CommandState::Stopped
+                } else {
+                    CommandState::Failed
+                };
+                let error = (!shell.stopping).then(|| {
+                    text(&turn["error"]["message"])
+                        .unwrap_or_else(|| "Codex did not run the command".into())
+                });
+                shell.ended_as(state, None, None, error)
+            }));
+            return;
+        }
         if let (None, Some(ended)) = (&self.turn, turn["id"].as_str()) {
             // The end of a message's turn never seen to start.
             if matches!(&self.awaited, Some((Some(awaited), _)) if awaited == ended) {
@@ -1918,6 +2052,17 @@ impl AppServer {
         self.ask_rate_limits(out);
     }
 
+    /// The command of the user's that runs, where `item` is it.
+    fn user_shell(&mut self, item: &Value) -> Option<&mut Shell> {
+        if item["type"] != "commandExecution" || item["source"] != "userShell" {
+            return None;
+        }
+        let id = item["id"].as_str();
+        self.shell.as_mut().filter(|shell| {
+            shell.turn.is_some() && shell.item.as_deref().is_none_or(|item| Some(item) == id)
+        })
+    }
+
     /// Starts the tool call an item is, once.
     fn start_call(&mut self, id: &str, item: &Value, out: &mut Reading) -> bool {
         if self.calls.contains_key(id) {
@@ -1944,10 +2089,33 @@ impl AppServer {
         true
     }
 
-    fn item_started(&mut self, item: &Value, out: &mut Reading) {
+    fn item_started(&mut self, item: &Value, turn: Option<String>, out: &mut Reading) {
         let Some(id) = item["id"].as_str() else {
             return;
         };
+        if let Some(shell) = self.user_shell(item) {
+            if shell.item.is_none() {
+                shell.item = Some(id.to_string());
+                out.events.push(Event::command(
+                    &shell.command,
+                    CommandState::Running,
+                    &shell.text,
+                ));
+            }
+            return;
+        }
+        // The command's turn starts with the command: a turn taken as its
+        // own that starts with anything else is one Codex began by itself.
+        if let Some(shell) = self
+            .shell
+            .as_mut()
+            .filter(|shell| shell.item.is_none() && turn.is_some() && shell.turn == turn)
+        {
+            let disowned = shell.turn.take().expect("matched above");
+            shell.interrupt_wanted |= shell.stopping;
+            shell.disowned = Some(disowned.clone());
+            self.begin(&disowned, vec![], out);
+        }
         if item["type"] == "contextCompaction" {
             if self.compacting.insert(id.to_string()) {
                 out.events.push(Event::Compacting);
@@ -1961,6 +2129,10 @@ impl AppServer {
         let Some(id) = item["id"].as_str() else {
             return;
         };
+        if let Some(shell) = self.user_shell(item) {
+            shell.ended = Some(shell_ended(shell, item));
+            return;
+        }
         match item["type"].as_str() {
             Some("contextCompaction") => {
                 self.compacting.remove(id);
@@ -2039,7 +2211,7 @@ impl AppServer {
         match method {
             "turn/started" => self.turn_started(params, out),
             "turn/completed" => self.turn_completed(params, out),
-            "item/started" => self.item_started(&params["item"], out),
+            "item/started" => self.item_started(&params["item"], text(&params["turnId"]), out),
             "item/completed" => self.item_completed(&params["item"], out),
             "item/agentMessage/delta" => {
                 if let (Some(block), Some(delta)) =
@@ -2079,7 +2251,17 @@ impl AppServer {
                 if let (Some(call), Some(delta)) =
                     (params["itemId"].as_str(), params["delta"].as_str())
                 {
-                    if self.calls.contains_key(call) {
+                    if let Some(shell) = self
+                        .shell
+                        .as_mut()
+                        .filter(|shell| shell.item.as_deref() == Some(call))
+                    {
+                        shell.streamed = true;
+                        out.events.push(Event::CommandOutput {
+                            command: shell.command.clone(),
+                            delta: delta.to_string(),
+                        });
+                    } else if self.calls.contains_key(call) {
                         out.events.push(Event::ToolOutput {
                             call: call.to_string(),
                             parent: None,
@@ -2525,6 +2707,60 @@ impl Driver for AppServer {
     /// and settings of its own.
     fn takes_while_busy(&self) -> bool {
         false
+    }
+
+    /// Codex runs a command of the user's in a turn of its own, with no
+    /// model asked, and records it for the next turn to read.
+    fn runs_commands(&self) -> bool {
+        true
+    }
+
+    fn run(&mut self, command: &str, text: &str, timeout: Duration) -> Result<String, String> {
+        let thread = self
+            .thread
+            .clone()
+            .ok_or("Codex has no conversation to run the command in yet")?;
+        if self.shell.is_some() {
+            return Err("a command runs already".into());
+        }
+        self.shell = Some(Shell {
+            command: command.to_string(),
+            text: text.to_string(),
+            ..Shell::default()
+        });
+        // The core ends the command when its time is up; Codex's own limit
+        // is there should that not reach it.
+        let limit = timeout + SHELL_SLACK;
+        let (line, _) = self.request(
+            Sent::Shell(command.to_string()),
+            "thread/shellCommand",
+            json!({
+                "threadId": thread,
+                "command": text,
+                "timeoutMs": u64::try_from(limit.as_millis()).unwrap_or(u64::MAX),
+            }),
+        );
+        Ok(line)
+    }
+
+    fn stop_command(&mut self, command: &str) -> Result<Option<String>, String> {
+        let thread = self.thread.clone();
+        let shell = self
+            .shell
+            .as_mut()
+            .filter(|shell| shell.command == command)
+            .ok_or("the command does not run")?;
+        shell.stopping = true;
+        let (Some(thread), Some(turn)) = (thread, shell.turn.clone()) else {
+            shell.interrupt_wanted = true;
+            return Ok(None);
+        };
+        let (line, _) = self.request(
+            Sent::ShellInterrupt,
+            "turn/interrupt",
+            json!({ "threadId": thread, "turnId": turn }),
+        );
+        Ok(Some(line))
     }
 
     fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String> {

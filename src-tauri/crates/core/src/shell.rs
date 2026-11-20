@@ -22,7 +22,7 @@ pub fn command(project: &Path, vars: &HashMap<String, String>) -> CommandBuilder
 /// process's own is the same variable seen from a different angle, and the
 /// system shell is what is left when neither says.
 #[cfg(unix)]
-fn program(vars: &HashMap<String, String>) -> String {
+pub(crate) fn program(vars: &HashMap<String, String>) -> String {
     vars.get("SHELL")
         .filter(|shell| !shell.is_empty())
         .cloned()
@@ -35,7 +35,7 @@ fn program(vars: &HashMap<String, String>) -> String {
 }
 
 #[cfg(windows)]
-fn program(vars: &HashMap<String, String>) -> String {
+pub(crate) fn program(vars: &HashMap<String, String>) -> String {
     vars.get("COMSPEC")
         .filter(|shell| !shell.is_empty())
         .cloned()

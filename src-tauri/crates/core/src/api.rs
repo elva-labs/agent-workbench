@@ -1036,7 +1036,19 @@ impl Core {
             .map(|_| ())
     }
 
-    /// Takes back a message the agent has not taken yet.
+    /// Runs a command the user typed in the session, `text`, under the id
+    /// the window chose for it. It waits for what runs before it; its
+    /// output and its end come as events.
+    pub fn integrated_run(&self, id: &str, command: &str, text: &str) -> Result<(), String> {
+        crate::integrated::run(&self.integrated, id, command, text)
+    }
+
+    /// Stops the user's command that runs.
+    pub fn integrated_stop_command(&self, id: &str, command: &str) -> Result<(), String> {
+        crate::integrated::stop_command(&self.integrated, id, command)
+    }
+
+    /// Takes back a message, or a command, the agent has not taken yet.
     pub fn integrated_withdraw(&self, id: &str, message: &str) -> Result<(), String> {
         crate::integrated::control(
             &self.integrated,
