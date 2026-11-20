@@ -287,8 +287,12 @@
       keep the reader's place across a change of width: a scroll that lands
       there says nothing of where the user wants to be. */
   let ownTop = Number.NEGATIVE_INFINITY;
-  /** Where the thread last put the view at its foot. A place it keeps or
-      brings an entry to elsewhere is its own scroll too, but not the foot. */
+  /** Where the thread last put the view at its foot, the one place in
+      `ownTop` that is the foot: only `toEnd` sets it, with `ownTop`, and
+      keeping the view's place moves it along while the view is there. An
+      entry `reveal` brings into view is not the foot, the last one
+      included: the thread goes on to the foot from there for what comes
+      next. */
   let footTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
@@ -310,6 +314,7 @@
   function reflowed() {
     if (scroller === null) return;
     const width = scroller.clientWidth;
+    // Not `footTop`: a thread drawn whole follows by its size, not `atFoot`.
     if (across > 0 && width !== across && !windowed) ownTop = scroller.scrollTop;
     across = width;
   }
@@ -840,6 +845,7 @@
     const was = scroller.scrollTop;
     scroller.scrollTop += moved;
     ownTop = scroller.scrollTop;
+    if (footTop === was) footTop = scroller.scrollTop;
     lookedTop += scroller.scrollTop - was;
   }
 

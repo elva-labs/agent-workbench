@@ -294,19 +294,29 @@ test.describe("a long conversation", () => {
     const rows = page.getByTestId("thread-rows");
     await expect(rows).toHaveCSS("font-size", "13.5px");
     const before = await markTop(page);
+    // Told of the rows' heights in the smaller type by an observer made
+    // after the thread's, so right after the thread is; the thread draws
+    // the rows for them at the frame after, before this observer's.
+    await thread(page).evaluate((node) => {
+      const rows = node.querySelector<HTMLElement>("[data-testid='thread-rows']")!;
+      (node as HTMLElement & { redrawn?: Promise<void> }).redrawn = new Promise((done) => {
+        const watcher = new ResizeObserver(() => {
+          if (getComputedStyle(rows).fontSize !== "12.5px") return;
+          watcher.disconnect();
+          requestAnimationFrame(() => done());
+        });
+        watcher.observe(rows);
+      });
+    });
     await switchLook(page, "terminal");
     await expect(rows).toHaveCSS("font-size", "12.5px");
-    // The style is read before the rows have reflowed: the frames after it
-    // are when the thread hears of their new heights and draws again.
-    await thread(page).evaluate(
-      () =>
-        new Promise((done) => {
-          void document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(done)));
-        }),
-    );
+    await thread(page).evaluate((node) => (node as HTMLElement & { redrawn?: Promise<void> }).redrawn);
     await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
     await expect.poll(() => covered(page)).toBe(true);
     await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
+    await agent(page, `f.turn("${H}", "One more reply, after the type changed.");`);
+    await expect(thread(page).getByText("One more reply, after the type changed.")).toBeInViewport();
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
   });
 
   test("goes to the first and the last with Home and End on the thread itself", async ({ page }) => {
