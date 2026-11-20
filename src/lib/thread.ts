@@ -37,13 +37,11 @@ export type Segment =
   | { kind: "work"; parts: (ToolCall | TextPart)[]; key: string }
   | { kind: "thought"; part: TextPart };
 
-/** `answers` says the run follows a message the agent took while its turn
-    went on: there, its last thinking that is all it says before the
-    workbench's own calls, with no text after it, is drawn in sight, as its answer may be there
-    and nowhere else. */
-export function segments(parts: Part[], answers = false): Segment[] {
+/** The last thinking a run ends its say with before the workbench's own
+    calls is drawn in sight, as its answer may be there and nowhere else. */
+export function segments(parts: Part[]): Segment[] {
   const out: Segment[] = [];
-  const thought = answers ? thoughtAnswer(parts) : null;
+  const thought = thoughtAnswer(parts);
   for (const part of parts) {
     if (!drawnPart(part)) continue;
     if (part === thought) out.push({ kind: "thought", part });
@@ -73,19 +71,16 @@ export function segments(parts: Part[], answers = false): Segment[] {
     before them stays the last thing in its run. */
 const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
 
-/** The last thinking in a run that is the whole of a message the agent
-    sent before a wait, notify, note or notes call: no text comes right
-    before it, one of those calls right after it, and no text anywhere
-    after it in the run, where the agent may have said it in words. */
+/** The last thinking in a run that has something in it, when one of the
+    workbench's own calls comes right after it: what the agent says there
+    is often its answer, put before the call, with at most a closing line
+    in words after it. Thinking with text right after it stays folded. */
 export function thoughtAnswer(parts: Part[]): TextPart | null {
   for (let at = parts.length - 1; at >= 0; at--) {
     const part = parts[at];
-    if (part.kind === "text") return null;
-    if (part.kind !== "thinking" || !part.done || part.text.trim() === "") continue;
-    const before = parts[at - 1];
+    if (part.kind !== "thinking" || part.text.trim() === "") continue;
     const after = parts[at + 1];
-    if (before?.kind === "text") continue;
-    if (after !== undefined && !drawnPart(after)) return part;
+    return part.done && after !== undefined && !drawnPart(after) ? part : null;
   }
   return null;
 }
@@ -1305,8 +1300,8 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
       .filter((piece): piece is string => typeof piece === "string" && piece !== "")
       .map(shown)
       .join("\n");
-  const walk = (parts: Part[], around: string[], answers = false) => {
-    for (const segment of segments(parts, answers)) {
+  const walk = (parts: Part[], around: string[]) => {
+    for (const segment of segments(parts)) {
       if (segment.kind === "text" || segment.kind === "thought") add(segment.part.block, around, "", segment.part.text);
       else if (segment.kind === "plan") {
         const plan = segment.part;
@@ -1345,7 +1340,7 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
   if (entry.kind === "user") {
     const message = conversation.messages[entry.message];
     if (message !== undefined) add(message.id, [], shown(words(message)));
-  } else if (entry.kind === "agent") walk(entry.parts, [], entry.answers === true);
+  } else if (entry.kind === "agent") walk(entry.parts, []);
   else if (entry.kind === "note") add(entry.key, [], shown(entry.text));
   return out;
 }

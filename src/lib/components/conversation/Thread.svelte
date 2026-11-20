@@ -1191,7 +1191,7 @@
               <Copy label="Copy as Markdown" text={() => replyMarkdown(entry.parts)} host="message" place="end" testid="copy-reply" />
             {/if}
           </header>
-          <Parts parts={entry.parts} {root} answers={entry.answers === true} />
+          <Parts parts={entry.parts} {root} />
           <Started ids={startedIds(entry.parts)} />
           {#if live && doing !== null}
             <p class="now" data-testid="now"><span class="caret"></span><Plain text={doing} /></p>

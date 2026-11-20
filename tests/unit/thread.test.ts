@@ -371,32 +371,65 @@ describe("the workbench's wait and notify in a run", () => {
     expect(nowDoing(running(), parts)).toBe("Waiting on the sessions it started");
   });
 
-  it("leave thinking that is all the agent said to a message it took mid-turn in sight, and nowhere else", () => {
-    const shapeOf = (parts: Part[], answers: boolean) =>
-      segments(parts, answers).map((segment) =>
-        segment.kind === "work" ? `work:${segment.parts.map((part) => (part.kind === "tool" ? part.name : part.kind)).join("+")}` : segment.kind,
-      );
+  it("leave the last thinking before them in sight, in any run, and no other", () => {
     const thought = (words = "Yes: the cache is fixed.") => text({ kind: "thinking", text: words });
     const wait = (done = true) => call({ name: WAIT, tool: "mcp", done });
-    const answered: Part[] = [call({ name: "Bash" }), thought(), call({ name: NOTIFY, tool: "mcp" }), wait(false)];
-    expect(shapeOf(answered, true)).toEqual(["work:Bash", "thought"]);
-    expect(shapeOf(answered, false)).toEqual(["work:Bash+thinking"]);
-    expect(shapeOf([thought(), wait()], true)).toEqual(["thought"]);
-    // Words of its own, empty thinking, or work after it: the thinking stays work.
-    expect(shapeOf([text({ text: "Yes." }), thought(), wait()], true)).toEqual(["text", "work:thinking"]);
-    expect(shapeOf([thought(" "), wait()], true)).toEqual(["work:thinking"]);
-    expect(shapeOf([thought(), call({ name: "Bash" }), wait()], true)).toEqual(["work:thinking+Bash"]);
-    expect(shapeOf([thought()], true)).toEqual(["work:thinking"]);
+    const notify = () => call({ name: NOTIFY, tool: "mcp" });
+    expect(shape([call({ name: "Bash" }), thought(), notify(), wait(false)])).toEqual(["work:Bash", "thought"]);
+    expect(shape([thought(), wait()])).toEqual(["thought"]);
+    // Words before it do not hide it, nor a closing line after the call.
+    expect(shape([text({ text: "Looking." }), thought(), wait()])).toEqual(["text", "thought"]);
+    expect(shape([thought(), notify(), text({ text: "Yes." })])).toEqual(["thought", "text"]);
+    // Empty thinking, unfinished thinking, work or words right after it: the thinking stays work.
+    expect(shape([thought(" "), wait()])).toEqual(["work:thinking"]);
+    expect(shape([text({ kind: "thinking", done: false }), wait(false)])).toEqual(["work:thinking"]);
+    expect(shape([thought(), call({ name: "Bash" }), wait()])).toEqual(["work:thinking+Bash"]);
+    expect(shape([thought(), text({ text: "Yes." }), notify()])).toEqual(["work:thinking", "text"]);
+    expect(shape([thought()])).toEqual(["work:thinking"]);
     // Only the last: what it thought at each earlier wait is work.
-    expect(shapeOf([thought(), wait(), thought("Still waiting."), wait(false)], true)).toEqual(["work:thinking", "thought"]);
+    expect(shape([thought(), wait(), thought("Still waiting."), wait(false)])).toEqual(["work:thinking", "thought"]);
     const note = call({ name: "mcp__chord__note", tool: "mcp" });
-    const shown = segments([thought("A"), note, thought("B"), wait(false)], true).flatMap((segment) => (segment.kind === "thought" ? [segment.part.text] : []));
+    const shown = segments([thought("A"), note, thought("B"), wait(false)]).flatMap((segment) => (segment.kind === "thought" ? [segment.part.text] : []));
     expect(shown).toEqual(["B"]);
-    // Words later in the run: the agent said it there, so the thinking stays work.
-    expect(shapeOf([thought(), call({ name: NOTIFY, tool: "mcp" }), text({ text: "Yes." })], true)).toEqual(["work:thinking", "text"]);
   });
 
-  it("mark the run after a message taken mid-turn, live and read back, and find its thinking there", () => {
+  it("leave an answer said in thinking before notify in sight, in a turn the user's message began, live and read back", () => {
+    const run = (closing: string | null): IntegratedEventBody[] => [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "Can you check?", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "thinking", block: "t-1", parent: null, text: "Look at the tests.", done: true },
+      { type: "toolStarted", call: "c-1", parent: null, name: "Bash", kind: "command" },
+      { type: "toolFinished", call: "c-1", parent: null, output: "", error: false, truncated: false, changes: [] },
+      { type: "thinking", block: "t-2", parent: null, text: "Then the docs.", done: true },
+      { type: "toolStarted", call: "c-2", parent: null, name: "Bash", kind: "command" },
+      { type: "toolFinished", call: "c-2", parent: null, output: "", error: false, truncated: false, changes: [] },
+      { type: "thinking", block: "t-3", parent: null, text: "Five things are wrong. Shall I fix them?", done: true },
+      { type: "toolStarted", call: "n-1", parent: null, name: NOTIFY, kind: "mcp" },
+      { type: "toolFinished", call: "n-1", parent: null, output: "", error: false, truncated: false, changes: [] },
+      ...(closing === null ? [] : [{ type: "text", block: "b-1", parent: null, text: closing, done: true } as IntegratedEventBody]),
+    ];
+    // Ending on the thinking, with no text after the call, and with one closing line.
+    for (const [closing, drawn] of [
+      [null, ["work:thinking+Bash+thinking+Bash", "thought"]],
+      ["Shall I make those five changes as one commit?", ["work:thinking+Bash+thinking+Bash", "thought", "text"]],
+    ] as const) {
+      const events = run(closing);
+      const live = new Conversation(() => 0);
+      for (const event of events) live.apply(event);
+      const read = new Conversation(() => 0);
+      read.lay({ items: events.map((event, at) => ({ at: at + 1, event })), cut: false }, null);
+      for (const c of [live, read]) {
+        const runs = c.entries.filter((entry) => entry.kind === "agent");
+        expect(runs.map((entry) => (entry.kind === "agent" ? shape(entry.parts) : []))).toEqual([drawn]);
+        const found = held(c).filter((item) => item.markdown !== null && item.folds.length === 0);
+        expect(found.map((item) => item.markdown)).toEqual(
+          closing === null ? ["Five things are wrong. Shall I fix them?"] : ["Five things are wrong. Shall I fix them?", closing],
+        );
+      }
+    }
+  });
+
+  it("leave the last thinking of each run in sight around a message taken mid-turn, live and read back", () => {
     const events: IntegratedEventBody[] = [
       { type: "message", message: "m-1", state: "sent", error: null, text: "go", images: [] },
       { type: "turnStarted", messages: ["m-1"] },
@@ -413,10 +446,10 @@ describe("the workbench's wait and notify in a run", () => {
     read.lay({ items: events.map((event, at) => ({ at: at + 1, event })), cut: false }, null);
     for (const c of [live, read]) {
       const runs = c.entries.filter((entry) => entry.kind === "agent");
-      expect(runs.map((run) => run.kind === "agent" && run.answers === true)).toEqual([false, true]);
+      expect(runs.map((entry) => (entry.kind === "agent" ? shape(entry.parts) : []))).toEqual([["thought"], ["thought"]]);
       const found = held(c).filter((item) => item.markdown !== null);
       expect(found.map((item) => [item.markdown, item.folds.length])).toEqual([
-        ["Start the review.", 2],
+        ["Start the review.", 0],
         ["Yes: the cache is fixed.", 0],
       ]);
     }

@@ -10,20 +10,18 @@
    * What the agent said and did, in order: its text as written, its plan
    * and the questions it asked in sight, and each stretch of work between
    * them folded into one line. A subagent's own run is drawn the same way
-   * under the step that started it. In a run that follows a message the
-   * agent took mid-turn, thinking that is all it said before the
+   * under the step that started it. The last thinking before the
    * workbench's own calls is in sight, marked as its thinking.
    */
   interface Props {
     parts: Part[];
     root: string | null;
     nested?: boolean;
-    answers?: boolean;
   }
 
-  let { parts, root, nested = false, answers = false }: Props = $props();
+  let { parts, root, nested = false }: Props = $props();
 
-  let drawn = $derived(segments(parts, answers));
+  let drawn = $derived(segments(parts));
 
   const STEP = { done: "check", active: "chev", pending: "" } as const;
 </script>

@@ -695,11 +695,11 @@ started, and notify, which leaves a line on its row. Neither has a step, a
 count in the line work folds into, or a line at the foot of its own, and
 neither folds anything: what the agent wrote before them stays the last
 thing in its run, in full, and a wait that follows a wake leaves it so as
-well. In the run that follows a message the agent took while its turn went
-on, the last thinking that is all it said before one of the workbench's
-own calls, with no words of its own after it, is not folded into work: it is drawn in sight under a label that
-calls it a summary of the agent's thinking, as an answer the agent left
-there would be read nowhere else. While a turn is only waiting, its foot says on what, in the
+well. The last thinking in a run, when one of the workbench's own calls
+comes right after it, is not folded into work: it is drawn in sight under a
+label that calls it a summary of the agent's thinking, as an agent often
+puts its answer there and keeps only a closing line, or nothing, for its
+words. Thinking with words right after it stays folded. While a turn is only waiting, its foot says on what, in the
 wait's own words: waiting on a session by its name, or on the sessions it
 started. A plan is drawn
 where it came and changed in place, a question the user answered with the
