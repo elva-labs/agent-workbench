@@ -298,7 +298,9 @@ notify after the answer would fold the answer away. A session drawn as a
 conversation draws neither notify nor wait and folds no text, so an agent
 there is told that a message followed only by them stays in full, and that
 it can answer the user while it waits on the sessions it started and then
-go back to waiting. It cannot tell whether
+go back to waiting. It is also told that its thinking is never shown, so
+whatever the user should read goes in a message's text, the message just
+before a wait or note call included. It cannot tell whether
 the user is watching, so it calls regardless, and never for progress. A
 turn that ends without the call leaves a line all the same: the stop hook
 brings the agent's last message, and the row takes its first line.
