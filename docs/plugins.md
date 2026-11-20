@@ -276,7 +276,9 @@ session. A later session started in that folder, a session in the main
 checkout, and one in a worktree someone else made all say false, so a
 plugin that maps things to a session by its branch can do it only where
 the branch is the session's own. `branch` is the branch the worktree was
-made on, there only when `worktree` is true and the app knows it.
+made on, and it is there whenever `worktree` is true. A session keeps
+both when it is resumed, by the user from its history or by the session
+that started it.
 
 `startedBy` names the session that started this one, when another session
 did and is still known to the window. A session the user started has none.
@@ -304,22 +306,42 @@ plugin is told once the command has finished:
   "project": "/srv/orbit-api",
   "session": "6f2a…",
   "cwd": "/srv/orbit-api/.claude/worktrees/retry-jitter",
-  "command": "cd api && gh pr create --fill",
+  "command": "gh pr create --fill",
   "ok": true,
   "output": "https://github.com/acme/orbit-api/pull/42\n",
-  "truncated": false
+  "truncated": false,
+  "withheld": false
 }
 ```
 
 `session` is the agent's id, as the session events give it. `cwd` is the
 folder the command ran in, the session's own where the agent does not say.
-`ok` is whether it succeeded. `output` is the end of what it printed, at
-most 16 KiB, with `truncated` true when there was more. A command is told
-once, however many ways the app heard it.
+`ok` is whether the line it ran in succeeded.
+
+`command` is the matched command's own words, as written, from its program
+to its last word. The rest of the line is never sent: not the commands
+before or after it, not the `NAME=value` words that open it, and not the
+`bash -lc '…'` it was wrapped in. Run as
+`cd api && GH_TOKEN=x gh pr create --fill`, it arrives as
+`gh pr create --fill`.
+
+`output` is what the line printed, sent only when it can be that command's
+alone: when every other command in the line prints nothing. Those are
+`cd`, `pushd` and `popd`, `export` and `set` given something to set, and a
+line of `NAME=value` words. Otherwise `output` is null and `withheld` is
+true, and a plugin that needs the result looks it up itself, with
+`gh pr view` for one. When it is sent, `output` is the end of what was
+printed, at most 16 KiB, with `truncated` true when there was more.
+
+Each matched command is told once, however many ways the app heard it; a
+line that runs two matched commands is told as two messages.
 
 A plugin hears only commands that match what its manifest lists, and never
 any other. The settings row of a plugin that lists any says what it hears,
-"Hears when a session runs gh pr create, gh pr merge".
+"Hears when a session runs gh pr create, gh pr merge", and turning it on
+asks with what it is told: that command's own words, its folder and
+whether it worked, and its output unless another command in the same line
+prints.
 
 A command matches when one of the simple commands in it begins with the
 listed words, word for word, with quotes taken off. A line is split at
@@ -328,23 +350,37 @@ listed words, word for word, with quotes taken off. A line is split at
 part. Words before the program are passed over: `NAME=value`, `env`,
 `time`, `nohup`, `exec`, `command`, and the words of `if`, `while` and
 their like. The script given to `sh`, `bash`, `zsh`, `dash` or `ksh` with
-`-c` is looked into the same way, three shells deep. The program is known
-by its name wherever it lives, so `/opt/homebrew/bin/gh pr create` matches
-`gh pr create`.
+`-c` is looked into the same way, three shells deep, and the shell itself
+is not a command of the line. A heredoc's body is text and is not looked
+into, so `cat > notes.md <<EOF` with `gh pr create` among its lines tells
+nothing. The program is known by its name wherever it lives, so
+`/opt/homebrew/bin/gh pr create` matches `gh pr create`.
 
 The app hears a command:
 
 - in a session drawn as a conversation, from the tool call and its result
-  in the agent's stream, Claude Code's and Codex's alike; a Codex command
-  arrives as Codex ran it, wrapped in the shell's `-lc`;
-- in a Claude Code session in a terminal, from the project's hooks, once
-  they are installed; a command that fails there is not heard, since
-  Claude Code runs no hook after a failed one.
+  in the agent's stream, Claude Code's and Codex's alike;
+- in a Claude Code session in a terminal, from the project's hooks; a
+  command that fails there is not heard, since Claude Code runs no hook
+  after a failed one.
+
+The hooks hear shell commands only while an enabled plugin lists
+`commands`. Then the project's hooks gain one more, run after each shell
+command a Claude Code session in a terminal runs, which appends what
+Claude Code gives it to the app's activity log in the app's own folder:
+the command, and everything it printed to its output and its errors. The
+log is cut back once it passes 512 KiB, and a command whose record passes
+256 KiB is skipped unread. The settings show a project's hooks as outdated
+until they are updated to add that hook, and again once no enabled plugin
+lists `commands`, until they are updated to take it out. A project's
+hooks log commands only while they hold that hook.
 
 A command is not heard, and nothing is sent, when:
 
-- the hooks are not installed, or were installed by an older app, which
-  the settings show as outdated;
+- the hooks are not installed, or are outdated, as the settings show
+  them;
+- a command in a Claude Code session in a terminal printed so much that
+  its record passes 256 KiB;
 - a Codex session runs in a terminal, which has no hooks;
 - the user types it in a shell of their own;
 - the session was not started by the app, or its agent has not given its
@@ -352,8 +388,8 @@ A command is not heard, and nothing is sent, when:
 - the plugin is not running when the command finishes;
 - the command runs it out of sight of the words: an alias, a shell
   function, a script, `eval`, `sudo`, an option before the subcommand
-  (`gh -R acme/api pr create`), a `$(...)` inside double quotes, or a shell
-  more than three deep;
+  (`gh -R acme/api pr create`), a `$(...)` inside double quotes, a
+  heredoc's body, or a shell more than three deep;
 - the session stops before the command finishes;
 - more than 256 commands are running in conversations at once, when the
   app lets go of the ones it was waiting on.
@@ -454,8 +490,11 @@ colour of a deletion. The label is what hovering it says, the plugin's
 name and the count without one.
 
 A mark sits at the end of the row's second line, and a row with a mark and
-nothing else to say grows that line for it. A new mark from the same
-plugin for the same session replaces the last one. A mark with no icon
+nothing else to say grows that line for it. A row draws two marks at most:
+the two that most want looking at, failed before waiting, waiting before
+busy, and busy before ok or none. A mark belongs to the session's own project, whatever `project`
+the plugin names. A new mark from the same plugin for the same session
+replaces the last one. A mark with no icon
 takes it away, and so does the plugin stopping or the session ending.
 
 ## Web addresses
@@ -463,13 +502,27 @@ takes it away, and so does the plugin stopping or the session ending.
 An action can open a web address in the user's browser:
 
 ```json
-{ "type": "open_url", "project": "/srv/orbit-api", "url": "https://github.com/acme/orbit-api/pull/42" }
+{
+  "type": "open_url",
+  "project": "/srv/orbit-api",
+  "action": "9d1e…",
+  "url": "https://github.com/acme/orbit-api/pull/42"
+}
 ```
 
-It opens only an `http` or `https` address, and only while one of the
-plugin's actions waits for its result, so the browser opens because the
-user asked something of the plugin and at no other time. Sent at any other
-moment, it is dropped.
+`action` is the `id` of the action it answers, as the action message gave
+it. The address opens only when all of these hold, and is dropped
+otherwise:
+
+- it is `http` or `https`, at most 2048 characters, with no whitespace;
+- the action went to this plugin and still waits for its result;
+- the action went to it less than 30 seconds ago;
+- no address has been opened for that action yet.
+
+So the browser opens once because the user asked something of the plugin,
+and at no other time. An action's right to open an address goes when the
+plugin answers it, when the plugin stops, and 30 seconds after it was
+sent.
 
 ## Tools
 
