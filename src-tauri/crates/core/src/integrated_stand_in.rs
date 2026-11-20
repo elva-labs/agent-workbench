@@ -2070,7 +2070,7 @@ fn a_command_the_user_runs_streams_to_the_window_and_goes_to_the_agent_before_th
     assert_eq!(
         sent[0]["message"]["content"],
         format!(
-            "{}\n<bash-input>printf 'out <1>\\n'; printf 'err\\n' >&2; exit 3</bash-input>\n<bash-stdout>out &lt;1&gt;\n</bash-stdout><bash-stderr>err\n</bash-stderr>\n<bash-exit-code>3</bash-exit-code>",
+            "{}\n<bash-input>printf 'out &lt;1&gt;\\n'; printf 'err\\n' &gt;&amp;2; exit 3</bash-input>\n<bash-stdout>out &lt;1&gt;\n</bash-stdout><bash-stderr>err\n</bash-stderr>\n<bash-exit-code>3</bash-exit-code>",
             crate::claude_stream::RAN_CAVEAT
         )
     );

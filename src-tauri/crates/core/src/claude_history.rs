@@ -1505,20 +1505,22 @@ const NO_OUTPUT: &str = "(Bash completed with no output)";
 /// A command the user ran themselves, in what a user entry says: past any
 /// caveat before it, the line typed in `<bash-input>`, and what it printed
 /// in `<bash-stdout>` and `<bash-stderr>`, escaped as the agent escapes it,
-/// with `<bash-exit-code>` where it did not exit with 0.
+/// with `<bash-exit-code>` where it did not exit with 0. The entry is the
+/// record and nothing else, its parts in that order; any may be missing,
+/// as where the agent writes the line and its output in two entries.
 fn ran(text: &str) -> Option<Ran> {
-    let rest = match text.strip_prefix("<local-command-caveat>") {
-        Some(caveat) => caveat.split_once("</local-command-caveat>")?.1.trim_start(),
+    let mut rest = match text.strip_prefix("<local-command-caveat>") {
+        Some(caveat) => caveat.split_once("</local-command-caveat>")?.1,
         None => text,
-    };
-    if !["<bash-input>", "<bash-stdout>", "<bash-stderr>"]
-        .iter()
-        .any(|tag| rest.starts_with(tag))
-    {
+    }
+    .trim();
+    let input = part(&mut rest, "<bash-input>", "</bash-input>");
+    let stdout = part(&mut rest, "<bash-stdout>", "</bash-stdout>");
+    let stderr = part(&mut rest, "<bash-stderr>", "</bash-stderr>");
+    let code = part(&mut rest, "<bash-exit-code>", "</bash-exit-code>");
+    if !rest.is_empty() || (input.is_none() && stdout.is_none() && stderr.is_none()) {
         return None;
     }
-    let stdout = inside(rest, "<bash-stdout>", "</bash-stdout>");
-    let stderr = inside(rest, "<bash-stderr>", "</bash-stderr>");
     let output = (stdout.is_some() || stderr.is_some()).then(|| {
         let stdout = unescape(stdout.unwrap_or_default());
         let stderr = unescape(stderr.unwrap_or_default());
@@ -1529,14 +1531,28 @@ fn ran(text: &str) -> Option<Ran> {
             _ => stdout + "\n" + &stderr,
         }
     });
-    let exit_code = between(rest, "<bash-exit-code>", "</bash-exit-code>")
-        .and_then(|code| code.parse().ok())
+    let exit_code = code
+        .and_then(|code| code.trim().parse().ok())
         .or(output.as_ref().map(|_| 0));
     Some(Ran {
-        text: between(rest, "<bash-input>", "</bash-input>").map(str::to_string),
+        text: input.map(|input| unescape(input.trim())),
         output,
         exit_code,
     })
+}
+
+/// The part of a record `rest` starts with, between `open` and `close`,
+/// taking it and the space after it off `rest`. A part closes where what
+/// follows is the next part or the end, so a line the agent wrote unescaped
+/// may hold its own closing tag.
+fn part<'a>(rest: &mut &'a str, open: &str, close: &str) -> Option<&'a str> {
+    let inner = rest.strip_prefix(open)?;
+    let (end, after) = inner.match_indices(close).find_map(|(at, _)| {
+        let after = inner[at + close.len()..].trim_start();
+        (after.is_empty() || after.starts_with("<bash-")).then_some((at, after))
+    })?;
+    *rest = after;
+    Some(&inner[..end])
 }
 
 /// Output as it was before the agent escaped it.

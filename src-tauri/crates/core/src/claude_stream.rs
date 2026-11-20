@@ -593,8 +593,8 @@ struct Stream {
 /// What heads a command the user ran, in the agent's record of it.
 pub(crate) const RAN_CAVEAT: &str = "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output goes straight to the user. It's recorded here as context for later messages.</local-command-caveat>";
 
-/// Output in the agent's record of a command, escaped as the agent
-/// escapes it, so no output closes the tag it stands in.
+/// The line and output in the agent's record of a command, escaped as the
+/// agent escapes output, so neither closes the tag it stands in.
 fn escape(output: &str) -> String {
     output
         .replace('&', "&amp;")
@@ -1899,7 +1899,13 @@ impl Stream {
                 self.done_with(message, out, false);
             }
             Some("cancelled" | "discarded" | "refused") => {
-                self.quiet.remove(message);
+                if self.quiet.remove(message) {
+                    self.notice(
+                        NoticeLevel::Warning,
+                        Some("The agent dropped the output of a command you ran, so it has not seen it".into()),
+                        out,
+                    );
+                }
                 self.done_with(message, out, true);
             }
             _ => {}
@@ -1907,10 +1913,12 @@ impl Stream {
     }
 
     fn result(&mut self, line: &Value, out: &mut Reading) {
-        // A turn opened for records alone asks no model and is not shown.
+        // A turn opened for records alone asks no model and is not shown,
+        // unless it failed.
         let hushed = std::mem::take(&mut self.hushed);
         self.batch = None;
-        if hushed && !self.turn && line["num_turns"].as_u64() == Some(0) {
+        if hushed && !self.turn && line["num_turns"].as_u64() == Some(0) && line["is_error"] != true
+        {
             return;
         }
         self.begin(out);
@@ -2283,7 +2291,7 @@ impl Driver for Stream {
     fn ran(&mut self, command: &str, ran: &Ran) -> Result<String, String> {
         let mut content = format!(
             "{RAN_CAVEAT}\n<bash-input>{}</bash-input>\n<bash-stdout>{}</bash-stdout><bash-stderr>{}</bash-stderr>",
-            ran.text,
+            escape(ran.text),
             escape(ran.stdout),
             escape(ran.stderr),
         );
@@ -2751,6 +2759,64 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("bash-exit-code"));
+    }
+
+    #[test]
+    fn the_line_in_a_record_is_escaped_as_its_output_is() {
+        let mut stream = stream();
+        let line = stream
+            .ran(
+                C1,
+                &Ran {
+                    text: "grep '</bash-input>' a && echo '<bash-stdout>'",
+                    stdout: "",
+                    stderr: "",
+                    exit_code: Some(0),
+                },
+            )
+            .unwrap();
+        let line: Value = serde_json::from_str(&line).unwrap();
+        assert!(line["message"]["content"].as_str().unwrap().contains(
+            "<bash-input>grep '&lt;/bash-input&gt;' a &amp;&amp; echo '&lt;bash-stdout&gt;'</bash-input>"
+        ));
+    }
+
+    #[test]
+    fn a_record_s_turn_that_fails_is_shown() {
+        let mut stream = stream();
+        ran(&mut stream, C1, Some(0));
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(C1, "started"),
+                init(),
+                json!({"type":"result","subtype":"error_during_execution","is_error":true,"num_turns":0,"total_cost_usd":0}),
+            ],
+        );
+        assert_eq!(turns(&out), 2, "{out:?}");
+        assert!(
+            out.iter().any(|e| matches!(
+                e,
+                Event::TurnEnded {
+                    outcome: Outcome::Failed,
+                    ..
+                }
+            )),
+            "{out:?}"
+        );
+    }
+
+    #[test]
+    fn a_record_the_agent_drops_is_told() {
+        let mut stream = stream();
+        ran(&mut stream, C1, Some(0));
+        let out = events(&mut stream, &[lifecycle(C1, "cancelled")]);
+        assert!(
+            matches!(&out[..], [Event::Notice { level: NoticeLevel::Warning, message }]
+                if message.contains("has not seen it")),
+            "{out:?}"
+        );
+        assert!(!stream.recording());
     }
 
     #[test]
