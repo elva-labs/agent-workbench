@@ -200,6 +200,15 @@ for (const look of ["modern", "terminal"] as const) {
       await pushMark(page, first, { icon: null });
       await expect(failing).toHaveCount(0);
       await expect(fine).toHaveCount(1);
+
+      // A row draws two marks at most, the one waiting on the user among them.
+      await pushMark(page, second, { plugin: "linear", icon: "issue", count: 3, state: "waiting" });
+      await pushMark(page, second, { plugin: "sentry", icon: "dot", count: null, state: "ok" });
+      await expect(fine).toHaveCount(2);
+      expect(await fine.evaluateAll((marks) => marks.map((mark) => mark.getAttribute("data-plugin")))).toEqual([
+        "src-1/github",
+        "src-1/linear",
+      ]);
     });
   });
 }

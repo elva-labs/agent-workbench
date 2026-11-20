@@ -119,6 +119,7 @@ import { defaultWorkflow, describeWorkflow, reset as resetWorkflows, stepFacts }
 import { instructionLines } from "$lib/workflowInstructions";
 import { BOUNDED, BOUNDED_TYPED, FORGED } from "../forgedName";
 import type { Workflow } from "$lib/core";
+import { pickResume, resume } from "$lib/resume.svelte";
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
@@ -782,12 +783,22 @@ describe("starting a session", () => {
     expect(worktrees).toEqual([[A, "fix-the-flaky-test"]]);
     expect(row.startIn).toBe(`${A}/.worktrees/fix-the-flaky-test`);
     expect(last().content).toContain(`${A}/.worktrees/fix-the-flaky-test`);
-    // The tree is the caller's to clean up, and stays so after a restart.
-    const made = [{ project: A, path: `${A}/.worktrees/fix-the-flaky-test` }];
+    // The tree is the caller's to clean up, and stays so after a restart,
+    // kept by the session it was made for.
+    const path = `${A}/.worktrees/fix-the-flaky-test`;
+    const made = [{ project: A, path, id: "sid-new" }];
     const caller = startedFor(row.key)!;
     expect(treesMadeBy(caller)).toEqual(made);
+    expect(row.madeTree).toBe(true);
     restarted();
     expect(treesMadeBy(caller)).toEqual(made);
+    // The user resuming it from history finds the tree its own still; a
+    // session that only ran there does not.
+    resume.project = A;
+    pickResume({ id: "sid-new", agent: "claude-code", title: null, modified: 0, size: 0, cwd: path, account: null });
+    expect(sessions.all.at(-1)!.madeTree).toBe(true);
+    pickResume({ id: "sid-other", agent: "claude-code", title: null, modified: 0, size: 0, cwd: path, account: null });
+    expect(sessions.all.at(-1)!.madeTree).toBe(false);
   });
 
   it("starts the session on the model the caller names", async () => {
@@ -1610,6 +1621,11 @@ describe("a start in the caller's own project", () => {
     expect(originOf(caller)).toEqual({});
     // A later session in the same folder was not what the worktree was made for.
     const later = create(A, null, "claude-code", tree.startIn);
+    expect(originOf(later)).toEqual({});
+    // A starter still kept by its agent id is told by it, while its row is there.
+    conductor.startedBy[later.key] = "caller-1";
+    expect(originOf(later)).toEqual({ starter: "caller-1" });
+    conductor.startedBy[later.key] = "gone-1";
     expect(originOf(later)).toEqual({});
   });
 

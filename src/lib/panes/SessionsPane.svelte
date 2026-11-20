@@ -73,6 +73,7 @@
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
+  import { treeMadeFor } from "$lib/conductor.svelte";
   import { hasNotes, openNotes } from "$lib/notes";
   import { tokensText, wholeOf } from "$lib/goingOn.svelte";
   import { resumesWords } from "$lib/autoResume.svelte";
@@ -109,7 +110,7 @@
   import { showCall } from "$lib/callShown.svelte";
   import Plain from "$lib/components/conversation/Plain.svelte";
   import Icon from "$lib/components/conversation/Icon.svelte";
-  import { markLabel, marksOf } from "$lib/pluginMarks.svelte";
+  import { markLabel, marksOf, shownMarks } from "$lib/pluginMarks.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -1279,10 +1280,12 @@
   }
 
   /** A past session resumes where it ran: in its worktree when it had
-      one, and under the account it ran under. */
+      one, and under the account it ran under. A worktree the app made for
+      it is still its own. */
   function resume(path: string, transcript: HistoryEntry) {
     touch(path);
-    create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
+    const session = create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
+    session.madeTree = treeMadeFor(transcript.id, transcript.cwd ?? null);
     focusPane("agent");
   }
 
@@ -1758,7 +1761,7 @@
                   : "orchestrator-summary"}>{line}</span
           >
           {/if}
-          {#each marks as mark (mark.plugin)}
+          {#each shownMarks(marks) as mark (mark.plugin)}
             <span
               class="plugin-mark"
               data-state={mark.state ?? "none"}
@@ -3272,7 +3275,7 @@
   /* A plugin's mark: its icon and count, as quiet as the model while all
      is well, and a step stronger in the colour of what needs the user when
      something failed or waits on them. Marks never shrink; the line beside
-     them gives way first. */
+     them gives way first, and a row draws two at most. */
   .plugin-mark {
     flex: none;
     display: inline-flex;

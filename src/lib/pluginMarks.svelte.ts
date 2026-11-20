@@ -47,6 +47,25 @@ export function marksOf(token: string): PluginMark[] {
   return pluginMarks.bySession[token] ?? [];
 }
 
+/** How many marks a row draws: past two the line beside them has no room
+    left. */
+export const MARKS_SHOWN = 2;
+
+const STANDING = { failed: 0, waiting: 1, busy: 2, ok: 3 } as const;
+const standing = (mark: PluginMark) => (mark.state === null ? 3 : STANDING[mark.state]);
+
+/** The marks a row draws, in the plugins' order: all of them up to
+    `MARKS_SHOWN`, and past that the ones that need the user most, a failure
+    before a wait before work under way. The rest are still in the row's
+    words for a screen reader. */
+export function shownMarks(marks: PluginMark[]): PluginMark[] {
+  if (marks.length <= MARKS_SHOWN) return marks;
+  const kept = new Set(
+    [...marks].sort((a, b) => standing(a) - standing(b)).slice(0, MARKS_SHOWN),
+  );
+  return marks.filter((mark) => kept.has(mark));
+}
+
 /** What a mark says on hover and to a screen reader. */
 export function markLabel(mark: PluginMark): string {
   if (mark.label !== null && mark.label !== "") return mark.label;

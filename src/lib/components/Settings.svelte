@@ -1065,7 +1065,8 @@
                     <p>
                       {#if fetched(source)}
                         {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.{#if hears !== null}
-                          {hears}, and is told their folder and output.{/if}
+                          {hears}, and is told that command's own words, its folder and whether it worked; its output
+                          too, unless another command in the same line prints.{/if}
                       {:else}
                         {plugin.name} is fetched from <code>{lastSegment(source.location)}</code> and runs
                         with your privileges: {plugin.description}

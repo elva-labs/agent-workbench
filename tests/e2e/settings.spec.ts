@@ -390,6 +390,9 @@ test.describe("plugins", () => {
     await expect(source.getByTestId("plugin-ask")).toContainText(
       "runs node with your privileges",
     );
+    await expect(source.getByTestId("plugin-ask")).toContainText(
+      "is told that command's own words, its folder and whether it worked; its output too, unless another command in the same line prints.",
+    );
     await page.getByTestId("plugin-cancel").click();
     await expect(source.getByTestId("plugin-ask")).toHaveCount(0);
     await expect(row.getByTestId("plugin-on")).toHaveAttribute(

@@ -2210,11 +2210,21 @@
   .sections.keyed .process.cursor,
   .sections.keyed .browser-tab.cursor,
   .sections.keyed .group-line.cursor,
-  .sections.keyed .plugin.cursor,
   .sections.keyed .started.cursor,
   .sections.keyed .allowed.cursor,
   .sections.keyed .board-line.cursor {
     box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  /* A plugin's row holds its own lit line and its facts, so its cursor is
+     drawn over them both, unbroken by the line's background. */
+  .sections.keyed .plugin.cursor::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    pointer-events: none;
   }
 
   .media-caption {

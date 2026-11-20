@@ -6,6 +6,7 @@ import {
   marksOf,
   pluginMarks,
   resetPluginMarks,
+  shownMarks,
 } from "$lib/pluginMarks.svelte";
 
 const mark = (extra: Partial<PluginMarkEvent> = {}): PluginMarkEvent => ({
@@ -58,5 +59,17 @@ describe("a plugin's mark", () => {
     expect(markLabel(marksOf("tok-a")[0])).toBe("github: 2");
     markChanged(mark({ label: "", count: null }));
     expect(markLabel(marksOf("tok-a")[0])).toBe("github");
+  });
+
+  it("draws two at most, the ones that need the user first, in the plugins' order", () => {
+    markChanged(mark({ plugin: "a", state: "ok" }));
+    markChanged(mark({ plugin: "b", state: "failed" }));
+    expect(shownMarks(marksOf("tok-a")).map((m) => m.plugin)).toEqual(["src-1/a", "src-1/b"]);
+    markChanged(mark({ plugin: "c", state: "waiting" }));
+    markChanged(mark({ plugin: "d", state: null }));
+    expect(shownMarks(marksOf("tok-a")).map((m) => m.plugin)).toEqual(["src-1/b", "src-1/c"]);
+    markChanged(mark({ plugin: "b", icon: null }));
+    markChanged(mark({ plugin: "c", icon: null }));
+    expect(shownMarks(marksOf("tok-a")).map((m) => m.plugin)).toEqual(["src-1/a", "src-1/d"]);
   });
 });

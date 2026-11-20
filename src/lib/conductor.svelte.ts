@@ -705,11 +705,14 @@ export interface Woken {
   at: number;
 }
 
-/** A worktree a caller's start made: the project it is under and where
-    it is. */
+/** A worktree a caller's start made: the project it is under, where it
+    is, and the agent id of the session it was made for once that session
+    has one. A version that does not know the id reads the record without
+    it. */
 export interface MadeTree {
   project: string;
   path: string;
+  id?: string;
 }
 
 /** Reads what callers started in earlier runs. A corrupt entry reads as
@@ -734,7 +737,12 @@ function loadTrees() {
         (entry): entry is MadeTree =>
           isRecord(entry) && typeof entry.project === "string" && typeof entry.path === "string",
       );
-      if (kept.length > 0) trees[caller] = kept.map(({ project, path }) => ({ project, path }));
+      if (kept.length > 0)
+        trees[caller] = kept.map(({ project, path, id }) => ({
+          project,
+          path,
+          ...(typeof id === "string" ? { id } : {}),
+        }));
     }
     conductor.trees = trees;
   } catch {
@@ -750,12 +758,25 @@ function saveTrees() {
   }
 }
 
-/** A worktree one of this caller's starts made. */
-function madeTree(caller: string, project: string, path: string) {
+/** A worktree one of this caller's starts made, and the agent id of the
+    session it was made for when that is known. */
+function madeTree(caller: string, project: string, path: string, id?: string) {
   const list = conductor.trees[caller] ?? [];
-  if (list.some((tree) => tree.project === project && tree.path === path)) return;
-  conductor.trees[caller] = [...list, { project, path }];
+  const known = list.find((tree) => tree.project === project && tree.path === path);
+  if (known !== undefined) {
+    if (id === undefined || known.id === id) return;
+    known.id = id;
+  } else conductor.trees[caller] = [...list, { project, path, ...(id === undefined ? {} : { id }) }];
   saveTrees();
+}
+
+/** Whether the app made the worktree at `cwd` for the session with this
+    agent id, whoever started or resumes it. */
+export function treeMadeFor(id: string, cwd: string | null): boolean {
+  if (cwd === null) return false;
+  return Object.values(conductor.trees).some((list) =>
+    list.some((tree) => tree.id === id && tree.path === cwd),
+  );
 }
 
 /** The worktrees this caller's starts made, whether or not a session still
@@ -2822,6 +2843,7 @@ async function startFitted(
   }
   const row = byKey(session.key);
   if (row !== null) logUsage(row, "start", { starter: caller, modelBelow: below !== null });
+  if (startIn !== null) madeTree(caller, project, startIn, id);
   remember(caller, {
     id,
     project,
@@ -4304,7 +4326,7 @@ onMoved((id, token) => {
   const trees = conductor.trees[id];
   if (trees !== undefined) {
     delete conductor.trees[id];
-    for (const tree of trees) madeTree(token, tree.project, tree.path);
+    for (const tree of trees) madeTree(token, tree.project, tree.path, tree.id);
     saveTrees();
   }
   const list = conductor.started[id];

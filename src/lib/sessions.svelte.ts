@@ -1657,7 +1657,11 @@ export function toldFor(session: Session): Told {
     and whether it runs in a worktree made for it. */
 export function originOf(session: Session): { starter?: string; madeWorktree?: boolean } {
   const starter = starterOf(session.key);
-  const id = starter === null ? null : (byToken(starter)?.id ?? null);
+  // A starter is kept by its agent id until its token is known.
+  const id =
+    starter === null
+      ? null
+      : (byToken(starter)?.id ?? sessions.all.find((row) => row.id === starter)?.id ?? null);
   return {
     ...(id === null ? {} : { starter: id }),
     ...(session.madeTree && session.startIn !== null ? { madeWorktree: true } : {}),

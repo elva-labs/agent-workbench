@@ -172,6 +172,7 @@ export async function installFakeCore(
       title: string | null;
       configDir?: string;
       agent?: string;
+      cwd?: string | null;
     }[];
     /** The project in front when the window last closed; the first open
         one unless said. */
@@ -192,6 +193,7 @@ export async function installFakeCore(
       title: string | null;
       configDir?: string;
       agent?: string;
+      cwd?: string | null;
     }[];
   } = {},
 ) {

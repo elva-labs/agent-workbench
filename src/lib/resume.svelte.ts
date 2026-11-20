@@ -8,6 +8,7 @@
  * account it ran under.
  */
 
+import { treeMadeFor } from "$lib/conductor.svelte";
 import type { AgentId } from "$lib/core";
 import { focusPane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
@@ -67,7 +68,8 @@ export function offered(): HistoryEntry[] {
 export function pickResume(entry: HistoryEntry) {
   if (resume.project === null) return;
   touch(resume.project);
-  create(resume.project, entry.id, entry.agent, entry.cwd ?? null, null, null, entry.account);
+  const session = create(resume.project, entry.id, entry.agent, entry.cwd ?? null, null, null, entry.account);
+  session.madeTree = treeMadeFor(entry.id, entry.cwd ?? null);
   closeResume();
   focusPane("agent");
 }
