@@ -326,11 +326,21 @@ before or after it, not the `NAME=value` words that open it, and not the
 `gh pr create --fill`.
 
 `output` is what the line printed, sent only when it can be that command's
-alone: when every other command in the line prints nothing. Those are
-`cd`, `pushd` and `popd`, `export` and `set` given something to set, and a
-line of `NAME=value` words. Otherwise `output` is null and `withheld` is
-true, and a plugin that needs the result looks it up itself, with
-`gh pr view` for one. When it is sent, `output` is the end of what was
+alone: when every other command in the line prints nothing. Those are:
+
+- `cd` to a folder, but not `cd -`, which prints where it went;
+- `export` given only `NAME=value` words;
+- `set` given only `NAME=value` words and options that print nothing:
+  `-e`, `-u`, `-E`, `-C` and `-f`, alone or together, with `+` as well as
+  `-`, and `-o` naming `errexit`, `nounset`, `pipefail`, `errtrace`,
+  `noclobber` or `noglob`;
+- a line of `NAME=value` words.
+
+Anything else counts as printing: `pushd` and `popd`, `export -p`, `set -x`
+and `set -v`, which print the commands that follow, and a bare `set -o`.
+So does one of the commands above when it holds `$(`, a backquote or `$'`.
+Otherwise `output` is null and `withheld` is true, and a plugin that needs
+the result looks it up itself, with `gh pr view` for one. When it is sent, `output` is the end of what was
 printed, at most 16 KiB, with `truncated` true when there was more.
 
 Each matched command is told once, however many ways the app heard it; a
@@ -370,10 +380,18 @@ command a Claude Code session in a terminal runs, which appends what
 Claude Code gives it to the app's activity log in the app's own folder:
 the command, and everything it printed to its output and its errors. The
 log is cut back once it passes 512 KiB, and a command whose record passes
-256 KiB is skipped unread. The settings show a project's hooks as outdated
-until they are updated to add that hook, and again once no enabled plugin
-lists `commands`, until they are updated to take it out. A project's
-hooks log commands only while they hold that hook.
+256 KiB is skipped unread. Turning on the first enabled plugin that lists
+`commands`, or turning off the last, adds that hook or takes it out at
+once in every open project whose hooks the app keeps. A project not open
+then has it added or taken out when it is next opened, and until then the
+settings show its hooks as outdated. A project's hooks log commands only
+while they hold that hook.
+
+Whether a plugin listens is kept in the app's own folder. An app and a
+daemon on the same machine that share that folder both keep it, and the
+later word wins: the daemon starting or changing its plugins can take the
+hook out while a plugin of the app's listens, or put it in when none
+does.
 
 A command is not heard, and nothing is sent, when:
 
