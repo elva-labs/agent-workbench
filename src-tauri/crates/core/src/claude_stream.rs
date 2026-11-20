@@ -2988,6 +2988,87 @@ mod tests {
     }
 
     #[test]
+    fn whole_blocks_sent_before_their_stop_keep_their_streamed_ids() {
+        // The real agent's order: each block's whole form before the block's
+        // stop, and a message's text in one burst once its thinking is done.
+        // A message taken mid-turn ends a call, and the turn goes on with a
+        // message of two thinking blocks and no text, then one that answers.
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        let event =
+            |event: Value| json!({"type":"stream_event","event":event,"parent_tool_use_id":null});
+        let whole = |id: &str, block: Value| json!({"type":"assistant","message":{"id":id,"content":[block]},"parent_tool_use_id":null});
+        let thinking = |id: &str, index: u64, text: &str| {
+            [
+                event(
+                    json!({"type":"content_block_start","index":index,"content_block":{"type":"thinking","thinking":"","signature":""}}),
+                ),
+                event(
+                    json!({"type":"content_block_delta","index":index,"delta":{"type":"thinking_delta","thinking":text}}),
+                ),
+                event(
+                    json!({"type":"content_block_delta","index":index,"delta":{"type":"signature_delta","signature":"s"}}),
+                ),
+                whole(
+                    id,
+                    json!({"type":"thinking","thinking":text,"signature":"s"}),
+                ),
+                event(json!({"type":"content_block_stop","index":index})),
+            ]
+        };
+        let mut lines = vec![
+            json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"wait-1","content":"ok"}]},"parent_tool_use_id":null}),
+            json!({"type":"user","message":{"role":"user","content":"hi"},"parent_tool_use_id":null,"uuid":M1,"isReplay":true}),
+            lifecycle(M1, "started"),
+            event(json!({"type":"message_start","message":{"id":"m2"}})),
+        ];
+        lines.extend(thinking("m2", 0, ""));
+        lines.extend(thinking("m2", 1, "A short summary."));
+        lines.extend([
+            event(json!({"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"wait-2","name":"wait","input":{}}})),
+            whole("m2", json!({"type":"tool_use","id":"wait-2","name":"wait","input":{}})),
+            event(json!({"type":"content_block_stop","index":2})),
+            event(json!({"type":"message_start","message":{"id":"m3"}})),
+        ]);
+        lines.extend(thinking("m3", 0, ""));
+        lines.extend([
+            event(json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}})),
+            event(json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"The "}})),
+            event(json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}})),
+            whole("m3", json!({"type":"text","text":"The answer"})),
+            event(json!({"type":"content_block_stop","index":1})),
+        ]);
+        events(&mut stream, &[init()]);
+        let out = events(&mut stream, &lines);
+        let said: Vec<_> = out
+            .iter()
+            .filter_map(|event| match event {
+                Event::Text {
+                    block, text, done, ..
+                } => Some(("text", block.as_str(), text.as_str(), *done)),
+                Event::Thinking {
+                    block, text, done, ..
+                } => Some(("thinking", block.as_str(), text.as_str(), *done)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                ("thinking", "m2#0", "", true),
+                ("thinking", "m2#1", "A short summary.", false),
+                ("thinking", "m2#1", "A short summary.", true),
+                ("thinking", "m3#0", "", true),
+                ("text", "m3#1", "The ", false),
+                ("text", "m3#1", "answer", false),
+                ("text", "m3#1", "The answer", true),
+            ]
+        );
+        assert!(out.contains(&Event::message(M1, MessageState::Taken, None)));
+        assert!(stream.closed.is_empty() && stream.open.is_empty());
+    }
+
+    #[test]
     fn text_a_tool_and_text_in_one_message_keep_their_own_ids() {
         let mut stream = stream();
         let out = events(

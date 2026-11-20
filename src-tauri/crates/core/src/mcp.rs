@@ -51,7 +51,7 @@ macro_rules! turn_in_a_terminal {
 /// text whole and draws no wait, notify, note or notes call.
 macro_rules! turn_in_a_conversation {
     () => {
-        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait, notify, note and notes calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. "
+        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait, notify, note and notes calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. Your thinking is never shown to the user, so whatever they should read goes in a message's text, the message right before a wait or note call too. "
     };
 }
 
@@ -2102,6 +2102,7 @@ mod tests {
         ] {
             assert!(told.contains("a message followed only by them stays on screen in full"));
             assert!(told.contains("then call wait again"));
+            assert!(told.contains("Your thinking is never shown to the user"));
             assert!(!told.contains("folded into one line"));
         }
         // In a terminal Claude Code's own view folds what comes before a
