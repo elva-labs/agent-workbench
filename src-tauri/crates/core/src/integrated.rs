@@ -3354,6 +3354,9 @@ fn watch_command(
     let mut stderr = ForAgent::default();
     let mut status = None;
     let mut drained: Option<Instant> = None;
+    // What the window has been given: past its limit the session is not
+    // asked again, beyond the piece that tells it the output was cut.
+    let mut shown = 0;
     loop {
         let piece = match drained {
             None => came.recv().ok(),
@@ -3374,7 +3377,10 @@ fn watch_command(
                 let Some(live) = live.upgrade() else {
                     break;
                 };
-                live.command_output(command, text);
+                if shown <= COMMAND_KEEP {
+                    shown += text.len();
+                    live.command_output(command, text);
+                }
             }
             Piece::Exited(ended) => {
                 status = ended;
@@ -6219,6 +6225,33 @@ mod tests {
         );
         let background = pid_in(&pidfile);
         assert!(gone(&background), "nothing the command started outlives it");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_past_the_window_s_limit_is_cut_there_and_the_agent_still_gets_it() {
+        let bench = shell_bench(Deadlines::default());
+        run_command(
+            &bench,
+            C1,
+            "for n in $(seq 10 49); do echo line$n; sleep 0.01; done",
+        )
+        .unwrap();
+        let record = recorded(&bench);
+        assert!(record.contains("line10\\nline11") && record.contains("line49\\n"));
+        let events = bench.events();
+        let shown: usize = events
+            .iter()
+            .filter(|e| e["type"] == "commandOutput" && e["command"] == C1)
+            .map(|e| e["delta"].as_str().unwrap_or_default().len())
+            .sum();
+        assert!(shown > 0 && shown <= COMMAND_KEEP);
+        let last = events
+            .iter()
+            .rfind(|e| e["type"] == "command" && e["command"] == C1)
+            .unwrap();
+        assert_eq!(last["truncated"], true);
+        assert_eq!(last["output"].as_str().unwrap().len(), COMMAND_KEEP);
     }
 
     #[cfg(unix)]
