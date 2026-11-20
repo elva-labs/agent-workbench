@@ -22,7 +22,9 @@ import { watchRoot } from "$lib/workspace.svelte";
  *           index plus untracked, honouring .gitignore. A second data source,
  *           not a filter over the first.
  *   view  — how the selected file is shown. Diff, content, or rendered,
- *           which a Markdown file has: the document as a reader sees it.
+ *           which a file the app can render has: a Markdown, HTML, Mermaid
+ *           or SVG file as a reader sees it. The rendered view belongs to
+ *           the file it was chosen on.
  *
  * The connection: a file with no changes has no diff to show, so widening the
  * scope is exactly what puts files in the list that can only be read as
@@ -56,6 +58,9 @@ export const SEARCH_DELAY = 250;
 export const files = $state({
   scope: "changed" as Scope,
   view: "diff" as View,
+  /** The file the rendered view was chosen for: another file opens as
+      source, or as its Markdown when that is all there is to read. */
+  viewOf: null as string | null,
   selected: null as string | null,
   /** What the agent presented, when the viewer holds that rather than a
       file: every file of one call, down the viewer. */
@@ -399,6 +404,18 @@ export function canRender(entry: FileEntry | null): boolean {
   );
 }
 
+/** A file can be previewed if the app renders its kind: Markdown, HTML, a
+    Mermaid diagram or SVG, still there. A page is drawn as one presented
+    by an agent is. */
+export function canPreview(entry: FileEntry | null): boolean {
+  return (
+    entry !== null &&
+    entry.status !== "D" &&
+    entry.binary !== true &&
+    /\.(md|markdown|html?|mmd|mermaid|svg)$/i.test(entry.path)
+  );
+}
+
 /** A binary file the viewer shows as a picture rather than declining: an
     image or a PDF, by its extension, read where it is. */
 export function isPicture(entry: FileEntry | null): boolean {
@@ -422,7 +439,7 @@ export function views(entry = selectedEntry()): View[] {
   const own: View[] = [];
   if (canDiff(entry)) own.push("diff");
   own.push("content");
-  if (canRender(entry)) own.push("rendered");
+  if (canPreview(entry)) own.push("rendered");
   return own;
 }
 
@@ -436,7 +453,11 @@ export function views(entry = selectedEntry()): View[] {
 export function effectiveView(): View {
   const entry = selectedEntry();
   const own = views(entry);
-  if (own.includes(files.view)) return files.view;
+  const chosen =
+    files.view === "rendered" && files.viewOf !== files.selected
+      ? "diff"
+      : files.view;
+  if (own.includes(chosen)) return chosen;
   if (canRender(entry)) return "rendered";
   return own[0];
 }
@@ -579,6 +600,7 @@ export async function setScope(scope: Scope) {
 
 export function setView(view: View) {
   files.view = view;
+  files.viewOf = view === "rendered" ? files.selected : null;
 }
 
 /** The chord walks the views the file has, round and round. */

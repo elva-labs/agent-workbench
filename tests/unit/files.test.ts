@@ -712,13 +712,13 @@ describe("view", () => {
     setView("content");
     expect(effectiveView()).toBe("content");
 
-    // Rendered is remembered for the next document, and falls to the diff
-    // of a file that has none of that.
+    // Rendered belongs to the file it was chosen on: another file opens on
+    // its own default.
     setView("rendered");
     await select("src/lib.rs");
     expect(effectiveView()).toBe("diff");
     await select("docs/plan.md");
-    expect(effectiveView()).toBe("rendered");
+    expect(effectiveView()).toBe("diff");
   });
 
   it("shows a binary image or PDF as a picture, and not a deleted one", () => {

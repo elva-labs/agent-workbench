@@ -132,6 +132,7 @@ async function restore(what: Viewed) {
       await setScope("all");
     }
     files.view = what.view;
+    files.viewOf = what.view === "rendered" ? what.path : null;
     files.target = what.target;
     await select(what.path);
     files.picked = what.picked;

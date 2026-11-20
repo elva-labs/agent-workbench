@@ -29,7 +29,7 @@
   import { onMount, tick, untrack } from "svelte";
   import {
     canDiff,
-    canRender,
+    canPreview,
     effectiveView,
     clear,
     clearQuery,
@@ -138,7 +138,7 @@
       while it shows, and comes back with its folds and its selection. */
   let fullView = $derived(files.pluginView?.width === "full");
   let diffable = $derived(canDiff(selectedEntry()));
-  let renderable = $derived(canRender(selectedEntry()));
+  let renderable = $derived(canPreview(selectedEntry()));
   let view = $derived(effectiveView());
   let root = $derived(watchRoot());
   let worktree = $derived(followedWorktree());
