@@ -34,13 +34,18 @@ export type Segment =
   | { kind: "text"; part: TextPart }
   | { kind: "plan"; part: PlanPart }
   | { kind: "question"; part: QuestionPart }
-  | { kind: "work"; parts: (ToolCall | TextPart)[]; key: string };
+  | { kind: "work"; parts: (ToolCall | TextPart)[]; key: string }
+  | { kind: "thought"; part: TextPart };
 
+/** The last thinking a run ends its say with before the workbench's own
+    calls is drawn in sight, as its answer may be there and nowhere else. */
 export function segments(parts: Part[]): Segment[] {
   const out: Segment[] = [];
+  const thought = thoughtAnswer(parts);
   for (const part of parts) {
     if (!drawnPart(part)) continue;
-    if (part.kind === "text") out.push({ kind: "text", part });
+    if (part === thought) out.push({ kind: "thought", part });
+    else if (part.kind === "text") out.push({ kind: "text", part });
     else if (part.kind === "plan") out.push({ kind: "plan", part });
     else if (part.kind === "question") {
       // An open question is in the dock; the thread draws it once settled.
@@ -65,6 +70,25 @@ export function segments(parts: Part[]): Segment[] {
     has a step, a count or a line of its own, and what the agent wrote
     before them stays the last thing in its run. */
 const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
+
+/** The last thinking in a run that has something in it, when one of the
+    workbench's own calls comes right after it and the run ends there or
+    goes on in words: what the agent says there is often its answer, put
+    before the call, with at most a closing line after it. Thinking with
+    text right after it, or with more work after the calls, stays folded. */
+export function thoughtAnswer(parts: Part[]): TextPart | null {
+  for (let at = parts.length - 1; at >= 0; at--) {
+    const part = parts[at];
+    if (part.kind !== "thinking" || part.text.trim() === "") continue;
+    if (!part.done) return null;
+    let next = at + 1;
+    while (next < parts.length && !drawnPart(parts[next])) next++;
+    if (next === at + 1) return null;
+    const after = parts[next];
+    return after === undefined || after.kind === "text" ? part : null;
+  }
+  return null;
+}
 
 /** Whether the thread draws a part of a run. */
 export function drawnPart(part: Part): boolean {
@@ -1283,7 +1307,7 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
       .join("\n");
   const walk = (parts: Part[], around: string[]) => {
     for (const segment of segments(parts)) {
-      if (segment.kind === "text") add(segment.part.block, around, "", segment.part.text);
+      if (segment.kind === "text" || segment.kind === "thought") add(segment.part.block, around, "", segment.part.text);
       else if (segment.kind === "plan") {
         const plan = segment.part;
         add(`plan-${plan.at}`, around, lines(plan.steps.map((step) => step.text)), plan.text);

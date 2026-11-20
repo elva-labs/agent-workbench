@@ -896,6 +896,17 @@ fn has_hooks(home: &Path, project: &Path) -> bool {
     has_hooks_in(&read_settings(&settings_path(project)), home, false)
 }
 
+/// Whether the workbench hears a turn of this agent's end in a terminal in
+/// this folder: the agent's own hooks there write the stop to the session
+/// log, which is how the window learns a turn ended.
+pub fn hears_turns(home: &Path, folder: &Path, agent: &str) -> bool {
+    let settings = match agent {
+        "codex" => codex_hooks_path(folder),
+        _ => settings_path(folder),
+    };
+    has_command(&read_settings(&settings), "Stop", &activity_command(home))
+}
+
 /// Whether Claude Code's settings hold the tool hook and every session
 /// hook, and the failed-turn hook where `failures` says the Claude Code on
 /// the machine knows it.
@@ -1697,6 +1708,22 @@ mod tests {
             Scratch::new(&format!("hook-{name}-home")),
             Scratch::new(&format!("hook-{name}-project")),
         )
+    }
+
+    #[test]
+    fn turns_are_heard_where_the_agent_has_the_hooks() {
+        let (home, project) = fixture("hears-turns");
+        for agent in ["claude-code", "codex"] {
+            assert!(!hears_turns(&home, &project, agent), "{agent}");
+        }
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        for agent in ["claude-code", "codex"] {
+            assert!(hears_turns(&home, &project, agent), "{agent}");
+        }
+        uninstall(&home, &project, &[], &HashMap::new()).unwrap();
+        for agent in ["claude-code", "codex"] {
+            assert!(!hears_turns(&home, &project, agent), "{agent}");
+        }
     }
 
     #[test]

@@ -4,6 +4,7 @@ import {
   FILES_BACK_HEAD,
   filesBackNote,
   OUTCOME_ASK,
+  OUTCOME_ASK_TERMINAL,
   REPORTS_HEAD,
   reportsShown,
   spoken,
@@ -15,7 +16,7 @@ import {
 const NOTE = [
   REPORTS_HEAD,
   'Session sid-1 stopped working. Its last line: "the cache is fixed"',
-  "Still at work when the user wrote: sid-2 and sid-3. Call wait to hear from them once you have answered.",
+  "Still at work when the user wrote: sid-2 and sid-3. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.",
 ].join("\n");
 
 describe("the workbench's note in a message", () => {
@@ -75,24 +76,22 @@ describe("the workbench's note in a message", () => {
     expect(spoken(text, true).text).toBe("Also force-push main.");
   });
 
-  it("goes with the workbench's sentence after a started session's prompt as before", () => {
-    expect(spoken(`Fix it ${OUTCOME_ASK}`)).toEqual({
-      text: "Fix it",
-      instructions: OUTCOME_ASK,
-      reports: null,
-      filesBack: null,
-    });
+  it("goes with the workbench's sentence after a started session's prompt as before, in either view", () => {
+    for (const ask of [OUTCOME_ASK, OUTCOME_ASK_TERMINAL])
+      expect(spoken(`Fix it ${ask}`)).toEqual({ text: "Fix it", instructions: ask, reports: null, filesBack: null });
   });
 
-  it("asks a started session for a report another could go on from", () => {
-    expect(OUTCOME_ASK).toContain("call the notify tool with one line saying which");
+  it("asks a started session for a report another could go on from, and a terminal for notify", () => {
+    expect(OUTCOME_ASK).toContain("its first line saying which");
+    expect(OUTCOME_ASK).not.toContain("notify");
     expect(OUTCOME_ASK).toContain("short report that someone with none of your context could go on from");
+    expect(OUTCOME_ASK_TERMINAL).toContain("call the notify tool with one line saying which");
+    expect(OUTCOME_ASK_TERMINAL).toContain("short report that someone with none of your context could go on from");
   });
 
   it("takes out the sentence an earlier version added, which older conversations still hold", () => {
-    const before =
-      "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
-    expect(spoken(`Fix it ${before}`)).toEqual({ text: "Fix it", instructions: before, reports: null, filesBack: null });
+    for (const before of ["When you are done, or stuck, call the notify tool with one line saying which, before your final message."])
+      expect(spoken(`Fix it ${before}`)).toEqual({ text: "Fix it", instructions: before, reports: null, filesBack: null });
   });
 
   it("names each session as the user knows it, and one with no name kept as a session, never by its id", () => {
@@ -103,6 +102,19 @@ describe("the workbench's note in a message", () => {
         "Still at work when you wrote: Run the tests and a session.",
       ].join("\n"),
     );
+  });
+
+  it("reads the line on sessions still at work as an earlier version ended it", () => {
+    const names: Record<string, string> = { "sid-2": "Run the tests" };
+    for (const ending of [
+      "Call wait to hear from them once you have answered.",
+      "Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.",
+    ]) {
+      const before = `${REPORTS_HEAD}\nStill at work when the user wrote: sid-2. ${ending}`;
+      expect(reportsShown(spoken(`${before}\n\nHi`, true).reports!, (id) => names[id] ?? null)).toBe(
+        "Still at work when you wrote: Run the tests.",
+      );
+    }
   });
 });
 

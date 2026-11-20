@@ -10,7 +10,8 @@
    * What the agent said and did, in order: its text as written, its plan
    * and the questions it asked in sight, and each stretch of work between
    * them folded into one line. A subagent's own run is drawn the same way
-   * under the step that started it.
+   * under the step that started it. The last thinking before the
+   * workbench's own calls is in sight, marked as its thinking.
    */
   interface Props {
     parts: Part[];
@@ -26,13 +27,18 @@
 </script>
 
 <div class="parts" class:nested>
-  {#each drawn as segment (segment.kind === "work" ? segment.key : segment.kind === "text" ? segment.part.block : segment.kind === "question" ? segment.part.request : `plan-${segment.part.at}`)}
+  {#each drawn as segment (segment.kind === "work" ? segment.key : segment.kind === "text" || segment.kind === "thought" ? segment.part.block : segment.kind === "question" ? segment.part.request : `plan-${segment.part.at}`)}
     {#if segment.kind === "text"}
       <div class="text" data-testid="agent-text" data-find={segment.part.block}>
         <Markdown text={segment.part.text} streaming={!segment.part.done} />
         {#if segment.part.gap && segment.part.done}
           <p class="gap" data-find-skip>Some of this did not reach the window.</p>
         {/if}
+      </div>
+    {:else if segment.kind === "thought"}
+      <div class="thought" data-testid="agent-thought" data-find={segment.part.block}>
+        <p class="thought-head" data-find-skip><Icon name="thought" size={13} />Summary of the agent's thinking</p>
+        <Markdown text={segment.part.text} />
       </div>
     {:else if segment.kind === "work"}
       <WorkFold parts={segment.parts} {root} />
@@ -103,6 +109,26 @@
 
   .text + .text:has(> :global(.md) > :global(:is(h1, h2, h3, h4):first-child)) {
     margin-top: max(0px, calc(1em - 8px));
+  }
+
+  .thought {
+    min-width: 0;
+    max-width: var(--conv-measure);
+    padding-left: 11px;
+    border-left: 2px solid var(--rule-strong);
+  }
+
+  .thought-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 0 4px;
+    font-family: var(--chrome);
+    font-size: var(--conv-meta);
+    font-weight: 600;
+    letter-spacing: var(--label-track-fine);
+    text-transform: var(--label-case);
+    color: var(--ink-2);
   }
 
   .gap {

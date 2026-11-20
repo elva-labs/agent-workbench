@@ -37,14 +37,17 @@ session on a remote machine runs under directories on that machine.
 
 Every session is given a token the workbench chose, in its environment as
 `CHORD_SESSION`, with `CHORD_ROLE` beside it for a session that
-follows a workflow, which directs the others. The tool server and the hooks
-read both, and every call they make names the session by its token; see
+follows a workflow, which directs the others, and `CHORD_WAKE` for a
+session in a terminal whose project has the hooks on, which the workbench
+can wake once its turn ends (see [when the user writes to
+it](orchestrator.md#when-the-user-writes-to-it)). The tool server and the hooks
+read them, and every call they make names the session by its token; see
 [who is calling](orchestrator.md#who-is-calling). Claude Code passes its whole
 environment to the servers it starts. Codex passes a server only the
 variables its entry names, so wherever a Codex session has the tool
 server, from its project's configuration or named for a workflow, the
 server is named whole on its command line, its command, its arguments and
-those two variables to pass on, with the time a call of its tools may take:
+those three variables to pass on, with the time a call of its tools may take:
 the longest a wait sits, half an hour, and a minute more, where Codex's own
 is a minute and would cut a wait short and leave its answer unread. An
 integrated Codex session's thread gives the server the same time. A Codex

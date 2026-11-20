@@ -1,3 +1,4 @@
+import type { Part } from "$lib/conversation.svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   answer,
@@ -1461,6 +1462,20 @@ describe("the last words of a run", () => {
         { kind: "note", key: "n", tone: "info", text: "x", at: 0 },
       ]),
     ).toBe("Done. The tests pass.");
+  });
+
+  it("are its latest turn's only, with the thinking drawn in sight after its words, never one more work followed", () => {
+    const said = (turn: number, parts: Part[]) => ({ kind: "agent" as const, key: `a-${turn}`, turn, at: 0, parts });
+    const words = (text: string) => ({ kind: "text" as const, block: text, text, done: true, gap: false, at: 0, until: 0 });
+    const thought = (text: string) => ({ ...words(text), kind: "thinking" as const });
+    const notify = { kind: "tool", call: "n", name: "mcp__chord__notify", tool: "mcp", done: true, parts: [] } as unknown as Part;
+    const user = { kind: "user" as const, key: "u", message: "m" };
+    expect(lastWords([said(1, [words("Done.")]), user, said(2, [])])).toBeNull();
+    expect(lastWords([said(1, [words("Done.")]), user, said(2, [thought("Shall I fix them?"), notify])])).toBe("Shall I fix them?");
+    expect(lastWords([said(2, [thought("Five are wrong."), notify, words("Shall I?")])])).toBe("Shall I?");
+    const bash = { kind: "tool", call: "b", name: "Bash", tool: "command", done: true, parts: [] } as unknown as Part;
+    expect(lastWords([said(2, [thought("Shall I fix them?"), notify, bash])])).toBeNull();
+    expect(lastWords([said(2, [words("Done.")]), user, said(2, [])])).toBe("Done.");
   });
 });
 

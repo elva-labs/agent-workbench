@@ -30,8 +30,13 @@ own subagents, and name the step in each start. A session
 that follows no workflow is told none of this. Every session, an
 orchestrator included, is told that once it has started sessions it keeps
 calling `wait` until all of them are done, and does not hand its turn back
-while any is running unless it needs the user, that a message from the
+while any is running unless it needs the user or the user wrote to it,
+that it answers a message from the user that comes while they run as the
+final message of its turn and ends the turn there rather than waiting
+after the answer, that a message from the
 workbench, not the user, is what those sessions did while it was idle,
+both only where the workbench can wake it (see [when the user writes to
+it](#when-the-user-writes-to-it)),
 and that the workbench puts away a session it started once that session's
 work is over, as [when the work is over](#when-the-work-is-over) describes,
 so it stops one only when its work is not wanted.
@@ -385,8 +390,9 @@ beside the id, and a refusal that names the work of a review gives it too.
 An id of any other shape than the agents' own, up to 64 letters, digits,
 dashes and underscores, is quoted the same way. When the user's message cuts a
 wait short, or comes while one is held, the note also names the sessions
-still at work and tells it to wait for them once it has answered. A wait
-still held answers for the sessions it watches, so the note leaves those
+still at work and tells it, when there is something to tell the user, to
+answer them as its turn's final message and end the turn there, since the
+workbench wakes it when one of them stops or asks. A wait still held answers for the sessions it watches, so the note leaves those
 out and gives the rest. A message with nothing to tell goes as it is.
 Nothing is typed into its terminal, and no turn is started for it.
 
@@ -415,14 +421,33 @@ name its row has. The note counts as telling once the agent takes the
 message into a turn; a message that fails or that the agent drops leaves
 it untold, and the next message carries it again. The message also ends
 a wait the session holds, with an answer that tells it to read the
-message, and while the agent has not taken a message of the user's, a
-wait it calls answers so at once, so the message is never held behind a
-wait.
+message, answer it as its turn's final message and end the turn without
+waiting again, and while the agent has not taken a message of the user's,
+a wait it calls answers so at once, so the message is never held behind a
+wait. The answer ends the turn because an agent's thinking is never shown
+in full, and an answer written there just before another wait would read
+as work; the wake takes the starter up again once one of its sessions
+stops or asks.
 
 A wait the user's message cuts short answers nothing the agent reads:
 Claude Code ends the call itself and records only that it did not
 complete. The note on that message is what says which sessions are still
 out.
+
+An answer that ends the turn leaves it to the wake to take the starter up
+again, so a starter is told to end its turn there only where the workbench
+can wake it: in a conversation, and in a terminal whose project has the
+hooks on, since they are how the workbench hears a terminal's turns end.
+A starter in a terminal without them is told to answer the user and then
+call `wait` again, as nothing would take it up once its turn ended; its
+tool server learns which from the environment the workbench started it in.
+
+The wake does not always come at once. It comes up to half a minute after
+a session comes to rest while others are still at work, and a starter
+whose prompt cache has lapsed is woken only once all of its sessions are
+done, or twenty minutes after the first came to rest. After a turn that
+failed or that the user cut short, no wake comes until the user's next
+turn has ended. [When it is idle](#when-it-is-idle) has the details.
 
 ## When it is idle
 
@@ -681,7 +706,9 @@ A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
 all say how it went, and to end with a short report that someone with none
 of its context could go on from: what it did and where, what state the
-files and the branch are in, and what is left or open. The tools' own words
+files and the branch are in, and what is left or open. In a terminal the
+line goes to the notify tool; in a conversation it is the report's first
+line, which the workbench puts on the row when the turn ends. The tools' own words
 say that a new task is a new session, and that resuming a session or
 sending it a line is for the task it already has, since either carries its
 whole conversation into the work, or for one cold and large, its notes of

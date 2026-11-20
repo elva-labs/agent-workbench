@@ -101,6 +101,11 @@ pub struct LaunchCtx<'a> {
     /// The context, in tokens, at which the agent compacts the conversation
     /// on its own, for an agent that takes one. Its own default when None.
     pub compact_at: Option<u64>,
+    /// Whether the workbench hears the session's turns end, so it can wake
+    /// the agent once a session it started stops or asks: given to the
+    /// agent's environment as [`WAKE_VAR`], which decides what the tool
+    /// server tells it to do when the user writes while it waits.
+    pub wakes: bool,
 }
 
 /// The tools Claude Code hands work to agents the user cannot see with: its
@@ -173,6 +178,15 @@ pub const VIEW_VAR: &str = "CHORD_VIEW";
 
 /// The view of a session the workbench draws as a conversation.
 pub const CONVERSATION_VIEW: &str = "conversation";
+
+/// The variable that says the workbench hears a terminal session's turns
+/// end, through the project's hooks, so it can write to the agent once a
+/// session it started stops or asks after its turn ended. A conversation's
+/// turns are always heard and need no such word.
+pub const WAKE_VAR: &str = "CHORD_WAKE";
+
+/// What [`WAKE_VAR`] holds where the workbench hears the turns end.
+pub const WAKES: &str = "1";
 
 pub trait AgentAdapter: Send + Sync {
     fn id(&self) -> &'static str;
@@ -459,9 +473,10 @@ fn codex_workflow(ctx: &LaunchCtx, windows: bool, script: bool) -> Result<Vec<St
         ));
         settings.push(format!("mcp_servers.{CODEX_SERVER_KEY}.args=[\"mcp\"]"));
         settings.push(format!(
-            "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}]",
+            "mcp_servers.{CODEX_SERVER_KEY}.env_vars=[{}, {}, {}]",
             text(SESSION_VAR),
-            text(ROLE_VAR)
+            text(ROLE_VAR),
+            text(WAKE_VAR)
         ));
         settings.push(format!(
             "mcp_servers.{CODEX_SERVER_KEY}.{CODEX_TOOL_TIMEOUT}={CODEX_TOOL_SECONDS}"
@@ -588,6 +603,9 @@ fn name_session(command: &mut CommandBuilder, ctx: &LaunchCtx) {
     }
     if ctx.orchestrator {
         command.env(ROLE_VAR, ORCHESTRATOR_ROLE);
+    }
+    if ctx.wakes {
+        command.env(WAKE_VAR, WAKES);
     }
 }
 
@@ -834,6 +852,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let Surface::Pty(resumed) = Codex.resume(&ctx, "abc").unwrap();
         let argv: Vec<String> = resumed
@@ -880,6 +899,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -933,6 +953,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let Surface::Pty(claude) = ClaudeCode.launch(&ctx, "abc").unwrap();
         assert_eq!(claude.get_env(CLAUDE_CONFIG_VAR), Some(own.as_os_str()));
@@ -976,6 +997,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1050,6 +1072,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1126,6 +1149,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1182,7 +1206,8 @@ mod tests {
                 "-c".to_string(),
                 "mcp_servers.chord.args=[\"mcp\"]".to_string(),
                 "-c".to_string(),
-                "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\"]".to_string(),
+                "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\", \"CHORD_WAKE\"]"
+                    .to_string(),
                 "-c".to_string(),
                 "mcp_servers.chord.tool_timeout_sec=1860".to_string(),
             ],
@@ -1462,6 +1487,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let named_settings = codex_workflow(&named, false, false).unwrap();
         let said = starts(&named_settings);
@@ -1506,7 +1532,7 @@ mod tests {
             let entry: serde_json::Value = serde_json::from_slice(&read.stdout).unwrap();
             assert_eq!(
                 entry["transport"]["env_vars"],
-                serde_json::json!([SESSION_VAR, ROLE_VAR])
+                serde_json::json!([SESSION_VAR, ROLE_VAR, WAKE_VAR])
             );
         }
     }
@@ -1548,6 +1574,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "abc-123").unwrap();
         assert_eq!(
@@ -1587,6 +1614,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let Surface::Pty(command) = ClaudeCode.launch(&unnamed, "abc-123").unwrap();
         assert!(command.get_env(SESSION_VAR).is_none());
@@ -1614,6 +1642,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         // No server anywhere: nothing is said of one, since an entry Codex
         // cannot start would stop the session from starting.
@@ -1631,7 +1660,8 @@ mod tests {
             "-c".to_string(),
             "mcp_servers.chord.args=[\"mcp\"]".to_string(),
             "-c".to_string(),
-            "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\"]".to_string(),
+            "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\", \"CHORD_WAKE\"]"
+                .to_string(),
             "-c".to_string(),
             "mcp_servers.chord.tool_timeout_sec=1860".to_string(),
         ];
@@ -1709,6 +1739,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let says = |text: &str| {
             crate::executable::write(&bin, format!("#!/bin/sh\necho '{text}'\n")).unwrap();
@@ -1769,6 +1800,7 @@ mod tests {
                 configured: None,
                 afresh: false,
                 compact_at: None,
+                wakes: false,
             };
             let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
             command
@@ -1783,6 +1815,51 @@ mod tests {
                 adapter.id()
             );
             assert_eq!(role(false, adapter), None, "{}", adapter.id());
+        }
+    }
+
+    #[test]
+    fn tells_the_agent_the_workbench_wakes_it_only_where_it_hears_the_turns_end() {
+        let dir = Scratch::new("adapter-wake");
+        for name in ["claude", "codex"] {
+            let bin = dir.join(name);
+            crate::executable::write(&bin, b"#!/bin/sh\n").unwrap();
+        }
+        let vars = vars_with_path(&dir);
+        let wake = |wakes: bool, adapter: &dyn AgentAdapter| {
+            let ctx = LaunchCtx {
+                project: Path::new("/tmp"),
+                env: &vars,
+                config_dir: None,
+                session: Some("abc"),
+                token: None,
+                prompt: None,
+                model: None,
+                mode: None,
+                orchestrator: true,
+                instructions: None,
+                start_only: false,
+                server: None,
+                instructions_file: None,
+                server_file: None,
+                configured: None,
+                afresh: false,
+                compact_at: None,
+                wakes,
+            };
+            let Surface::Pty(command) = adapter.launch(&ctx, "abc").unwrap();
+            command
+                .get_env(WAKE_VAR)
+                .map(|value| value.to_string_lossy().to_string())
+        };
+        for adapter in [&ClaudeCode as &dyn AgentAdapter, &Codex] {
+            assert_eq!(
+                wake(true, adapter),
+                Some(WAKES.to_string()),
+                "{}",
+                adapter.id()
+            );
+            assert_eq!(wake(false, adapter), None, "{}", adapter.id());
         }
     }
 
@@ -1807,6 +1884,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
         let error = ClaudeCode.launch(&ctx, "id").unwrap_err();
         assert!(error.contains("claude"), "names the binary: {error}");
@@ -1835,6 +1913,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "fresh-id").unwrap();
@@ -1869,6 +1948,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at,
+            wakes: false,
         };
         let argv = |surface: Surface| {
             let Surface::Pty(command) = surface;
@@ -1919,6 +1999,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.resume(&ctx, "abc-123").unwrap();
@@ -1959,6 +2040,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -1996,6 +2078,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();
@@ -2028,6 +2111,7 @@ mod tests {
             configured: None,
             afresh: false,
             compact_at: None,
+            wakes: false,
         };
 
         let Surface::Pty(command) = ClaudeCode.launch(&ctx, "id").unwrap();

@@ -119,7 +119,7 @@ import { lastRun, nameSessionsBy } from "$lib/thread";
 import { logUsage } from "$lib/usageLog";
 import { defaultModelOf } from "$lib/lastChosen.svelte";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
-import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
+import { atWorkLine, OUTCOME_ASK, OUTCOME_ASK_TERMINAL, REPORTS_HEAD, stillOutLine } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsWorkbench, readsAsYou, reservedName, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
@@ -170,7 +170,7 @@ export const KEEP_WAITING =
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
-export { OUTCOME_ASK, REPORTS_HEAD };
+export { OUTCOME_ASK, OUTCOME_ASK_TERMINAL, REPORTS_HEAD };
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
@@ -1522,7 +1522,7 @@ export function cancelled(id: string) {
 
 /** What a wait the user's message ended answers. */
 export const USER_WROTE =
-  "The user wrote to you, which ends this wait. Read their message, ending your turn if it has not reached you yet, and answer it before you wait again.";
+  "The user wrote to you, which ends this wait. If their message has not reached you yet, end your turn now so that it does. Answer it as the final message of your turn and end the turn there without calling wait again: the workbench writes to you when one of your sessions stops or asks.";
 
 /** Ends the waits these callers hold, each with the answer given. */
 function endWaits(callers: string[], answer: string) {
@@ -2108,9 +2108,7 @@ function reportNote(caller: string, ending: boolean): Note | null {
   const lines = [...went.lines, ...news.map((kid) => restText(kid))];
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
-    lines.push(
-      `Still at work when the user wrote: ${either(out.map(namedAs), "and")}. Call wait to hear from them once you have answered.`,
-    );
+    lines.push(stillOutLine(either(out.map(namedAs), "and")));
   if (lines.length === 0) return null;
   // What each report was counted as before it was told, to count it so
   // again should the conversation go back on the message.
@@ -2707,6 +2705,13 @@ function nameCut(name: string): string {
   return chars.length > NAME_MOST ? `${chars.slice(0, NAME_MOST - 1).join("")}…` : name;
 }
 
+/** The sentence a started session's prompt ends with, by the way its
+    agent runs: a conversation's row reads its last message, a terminal's
+    the line it gives the notify tool. */
+function outcomeAsk(agent: AgentId): string {
+  return kindFor(agent) === "integrated" ? OUTCOME_ASK : OUTCOME_ASK_TERMINAL;
+}
+
 /** The rest of a start, once it has been held to the caller's workflow:
     the account it runs under, which turns on the agent the step chose, the
     question, and the session itself. */
@@ -2782,7 +2787,7 @@ async function startFitted(
     null,
     agent,
     startIn,
-    `${oneLine(prompt)} ${OUTCOME_ASK}`,
+    `${oneLine(prompt)} ${outcomeAsk(agent)}`,
     model,
     account,
     null,
@@ -3400,7 +3405,7 @@ async function resumeSession(
       id,
       agent,
       worktree,
-      prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
+      prompt === null ? null : `${oneLine(prompt)} ${outcomeAsk(agent)}`,
       model,
       entry.account ?? null,
       null,

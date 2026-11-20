@@ -10,7 +10,7 @@ import {
   PASTE_FROM,
   PIECE,
   PIECE_EVERY,
-  OUTCOME_ASK,
+  OUTCOME_ASK_TERMINAL,
   REPORTS_HEAD,
   USER_WROTE,
   KEEP_WAITING,
@@ -754,7 +754,7 @@ describe("starting a session", () => {
     }
   });
 
-  it("gives the session its prompt as one line, and asks it to say how it went", async () => {
+  it("gives the session its prompt as one line, and asks it to say how it went, with notify in a terminal", async () => {
     const row = await startAllowed(
       call(
         "start",
@@ -764,7 +764,9 @@ describe("starting a session", () => {
       "pty-1",
       "sid-new",
     );
-    expect(row.prompt).toBe(`Fix the flaky test in the cache ${OUTCOME_ASK}`);
+    expect(row.prompt).toBe(`Fix the flaky test in the cache ${OUTCOME_ASK_TERMINAL}`);
+    expect(row.kind).toBe("terminal");
+    expect(OUTCOME_ASK_TERMINAL).toContain("call the notify tool with one line saying which");
     expect(written).toHaveLength(0);
   });
 
@@ -2383,7 +2385,7 @@ describe("telling a starter as the user writes to it", () => {
     expect(last().content!.split("\n")).toEqual([
       REPORTS_HEAD,
       `Session ${BOUNDED} stopped working. It has left no line.`,
-      `Still at work when the user wrote: ${BOUNDED}. Call wait to hear from them once you have answered.`,
+      `Still at work when the user wrote: ${BOUNDED}. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.`,
     ]);
   });
 
@@ -2458,7 +2460,7 @@ describe("telling a starter as the user writes to it", () => {
     await settle();
     await prompt();
     expect(last().content).toBe(
-      `${REPORTS_HEAD}\nStill at work when the user wrote: sid-1. Call wait to hear from them once you have answered.`,
+      `${REPORTS_HEAD}\nStill at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.`,
     );
     // The message cuts the wait short; the next one is not told again.
     cancelled(waiting.id);
@@ -2483,7 +2485,7 @@ describe("telling a starter as the user writes to it", () => {
       [
         REPORTS_HEAD,
         "Session sid-2 stopped working. It has left no line.",
-        "Still at work when the user wrote: sid-1. Call wait to hear from them once you have answered.",
+        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.",
       ].join("\n"),
     );
     cancelled(waiting.id);
@@ -2509,7 +2511,7 @@ describe("telling a starter as the user writes to it", () => {
       [
         REPORTS_HEAD,
         "Session sid-2 stopped working. It has left no line.",
-        "Still at work when the user wrote: sid-1. Call wait to hear from them once you have answered.",
+        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.",
       ].join("\n"),
     );
     // Said once: the cut is not news again.
@@ -2816,6 +2818,31 @@ describe("waking an idle starter", () => {
     expect(starter.turnEnd).toBe("done");
     await wakeGoes();
     expect(typedInto("pty-0")).toContain("Session sid-1 stopped working.");
+  });
+
+  it("wakes a starter that answered the user's message, which cut its wait short, and ended its turn with its sessions still out", async () => {
+    const starter = idleStarter();
+    exact("caller-1", "prompt");
+    const kid = atWork("pty-1", "sid-1");
+    const waiting = call("wait", {}, { session: "caller-1" });
+    const held = handle(waiting);
+    await settle();
+    // The user writes: the prompt hook tells the agent what is still out,
+    // and the message cuts the wait short.
+    await handle(call("prompt", { agentSession: "caller-1" }, { session: "caller-1" }));
+    expect(last().content).toContain("Still at work when the user wrote: sid-1.");
+    cancelled(waiting.id);
+    await held;
+    // The agent answers and ends its turn with no wait after it.
+    exact("caller-1", "prompt");
+    exact("caller-1", "stop");
+    flushSync();
+    expect(starter.turnEnd).toBe("done");
+    stops(kid, "the cache is fixed");
+    await wakeGoes();
+    expect(typedInto("pty-0")).toBe(
+      `${REPORTS_HEAD} Session sid-1 stopped working. Its last line: "the cache is fixed"\r`,
+    );
   });
 
   it("leaves a starter holding a wait to hear it from the wait", async () => {
@@ -3871,7 +3898,7 @@ describe("resuming a session", () => {
     expect(row.id).toBe("sid-1");
     expect(row.startIn).toBe(tree);
     expect(row.title).toBe("Cache flake");
-    expect(row.prompt).toBe(`Go on with the test ${OUTCOME_ASK}`);
+    expect(row.prompt).toBe(`Go on with the test ${OUTCOME_ASK_TERMINAL}`);
     expect(row.model).toBe("opus");
     expect(startedFor(row.key)).toBe(tok("caller-1"));
     // Nothing is made: the worktree stands.
@@ -6941,7 +6968,7 @@ describe("a session whose work is over", () => {
     expect(byKey(row.key)).toBeNull();
     const back = await resumed(call("send", { session: "sid-1", text: "Fix the docs too" }), "pty-1b");
     expect(back.id).toBe("sid-1");
-    expect(back.prompt).toBe(`Fix the docs too ${OUTCOME_ASK}`);
+    expect(back.prompt).toBe(`Fix the docs too ${OUTCOME_ASK_TERMINAL}`);
     expect(last().content).toMatch(
       /^Session sid-1 was not running: the workbench put it away once its work was over\. Your line resumed it\. Resumed session sid-1 /,
     );

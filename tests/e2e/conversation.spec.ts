@@ -161,6 +161,34 @@ test.describe("an integrated session", () => {
     await expect(run.getByTestId("step")).toHaveCount(1);
   });
 
+  for (const look of ["modern", "terminal"]) {
+    test(`draws the last thinking before notify in sight, marked as its thinking, above a closing line, in the ${look} look`, async ({ page }) => {
+      await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"], look } });
+      await page.goto("/");
+      await page.getByTestId("start-agent").click();
+      await agent(
+        page,
+        `f.send("${H}", crypto.randomUUID(), "Can you check the tests?");
+         f.startTurn("${H}");
+         f.think("${H}", "Run the tests first.");
+         f.tool("${H}", "Bash", { command: "npm test" }, "ok", { kind: "command" });
+         f.think("${H}", "Five tests are wrong. Fix them as one commit?");
+         const n = f.startTool("${H}", "mcp__chord__notify", { text: "Asked" }, { kind: "mcp" });
+         f.finishTool("${H}", n, "Left on the session's row.");
+         f.emit("${H}", { type: "text", block: "a", parent: null, text: "Shall I make those five changes as one commit?", done: true });`,
+      );
+      const run = page.getByTestId("agent-run");
+      // The thinking before the command is work, folded.
+      await expect(run.getByTestId("work-line")).toHaveCount(1);
+      await expect(run.getByTestId("work-line")).toContainText(/ran 1 command$/);
+      // The last, before notify, in sight and said to be the agent's thinking.
+      const thought = run.getByTestId("agent-thought");
+      await expect(thought).toContainText("Summary of the agent's thinking");
+      await expect(thought).toContainText("Five tests are wrong. Fix them as one commit?");
+      await expect(run.getByTestId("agent-text")).toHaveText("Shall I make those five changes as one commit?");
+    });
+  }
+
   test("grows streaming text in place and says what the agent does meanwhile", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "cargo build" }, { kind: "command" });`);
@@ -2270,12 +2298,12 @@ test("shows a message another session sent under that session, and never the wor
   await page.getByTestId("conduct-allow").click();
   const started = page.getByTestId("started-session");
   await expect(started).toContainText("Count the files");
-  await expect(started).not.toContainText("notify");
+  await expect(started).not.toContainText("short report");
   await conduct("o-2", "send", { session: "integrated-session-2", text: "Now count the tests" });
   await started.click();
   const view = page.locator("[data-testid='conversation']:visible");
   await expect(page.locator(`${AGENT} > header`)).toContainText("Count the files");
-  await expect(page.locator(`${AGENT} > header`)).not.toContainText("notify");
+  await expect(page.locator(`${AGENT} > header`)).not.toContainText("short report");
   const messages = view.getByTestId("user-message");
   await expect(messages).toHaveCount(2);
   for (const message of await messages.all()) {
@@ -2286,7 +2314,7 @@ test("shows a message another session sent under that session, and never the wor
   await expect(messages.last().locator(".bubble")).toHaveText("Now count the tests");
   // The workbench's sentence is behind a fold of its own.
   await messages.first().getByTestId("workbench-instructions").click();
-  await expect(messages.first().getByTestId("workbench-instructions-text")).toContainText("call the notify tool");
+  await expect(messages.first().getByTestId("workbench-instructions-text")).toContainText("its first line saying which");
   // And the sender is a click away.
   await messages.first().getByTestId("message-sender-go").click();
   await expect(page.locator(".session.kid")).not.toHaveClass(/(^|\s)on(\s|$)/);
