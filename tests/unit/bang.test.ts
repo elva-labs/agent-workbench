@@ -37,4 +37,56 @@ describe("a command the agent writes for the user to run", () => {
     expect(runnable("npm test")).toBeNull();
     expect(runnable("! npm install\nnpm test")).toBeNull();
   });
+
+  it("is not one whose drawn text could differ from what runs", () => {
+    // Bidirectional overrides, embeddings, isolates and marks.
+    for (const mark of ["\u202a", "\u202b", "\u202c", "\u202d", "\u202e"]) {
+      expect(runnable(`! echo hi ${mark}fr- mr`)).toBeNull();
+    }
+    for (const mark of [
+      "\u2066",
+      "\u2067",
+      "\u2068",
+      "\u2069",
+      "\u200e",
+      "\u200f",
+      "\u061c",
+    ]) {
+      expect(runnable(`! echo ${mark}hi`)).toBeNull();
+    }
+    // Zero-width and other undrawn characters.
+    for (const mark of [
+      "\u200b",
+      "\u200c",
+      "\u200d",
+      "\u2060",
+      "\ufeff",
+      "\u00ad",
+      "\u034f",
+      "\u115f",
+      "\u3164",
+      "\ufe0f",
+    ]) {
+      expect(runnable(`! r${mark}m -rf build`)).toBeNull();
+    }
+    // Controls and separators that break or hide a line.
+    for (const mark of [
+      "\r",
+      "\u0000",
+      "\u001b",
+      "\u007f",
+      "\u0085",
+      "\u2028",
+      "\u2029",
+    ]) {
+      expect(runnable(`! ls${mark}rm x`)).toBeNull();
+    }
+  });
+
+  it("may hold a tab and characters of any script", () => {
+    expect(runnable("! printf 'a\\tb'\t| cat")).toBe("printf 'a\\tb'\t| cat");
+    expect(runnable("! echo 'héllo wörld' 日本 שלום")).toBe(
+      "echo 'héllo wörld' 日本 שלום",
+    );
+  });
 });
