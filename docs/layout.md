@@ -638,8 +638,10 @@ at highlighted and the tool's note above. A Markdown, HTML, Mermaid or SVG
 file has a third view, rendered as a reader sees it, drawn as what the agent
 presents is, with the same limits: an HTML page keeps to its own frame and
 fetches nothing from the network. The rendered view follows the file on disk.
-A Markdown document opens on it when it has no diff; any other file opens on
-its source, and a rendered view lasts only for the file it was chosen on. The
+A Markdown document opens on it when it has no diff, and a rendered view
+chosen on one Markdown file carries to the next. For HTML, Mermaid and SVG
+the rendered view lasts only for the file it was chosen on: any other file
+opens on its source, and so does the same file when it is opened again. The
 view chord walks the views a file has, round and round, and the command
 palette has Preview file and Show source for the file open in the viewer.
 Editor mode has its own tabs, and the commands are not offered there. An image or a

@@ -313,7 +313,8 @@ function viewCommand(): PaletteItem | null {
 
 /** The sessions and the projects a query leaves, in that order, then the
     command for the file in the viewer when something is typed that it
-    matches: go to lists no commands otherwise. */
+    matches, first when the text is the start of its name: go to lists no
+    commands otherwise. */
 export function goToItems(query: string): PaletteItem[] {
   const now = Date.now();
   const rows = [...sessions.all]
@@ -345,6 +346,11 @@ export function goToItems(query: string): PaletteItem[] {
   const view = viewCommand();
   const shown =
     view !== null && query.trim() !== "" && matches(view.label, query) ? [view] : [];
+  // Typing the start of the command's name puts it first, so Enter runs it.
+  const first =
+    view !== null &&
+    shown.length > 0 &&
+    view.label.toLowerCase().startsWith(query.trim().toLowerCase());
   if (sessions.all.length === 0 && workspace.open.length === 0) {
     const open: PaletteItem = {
       kind: "command",
@@ -356,7 +362,7 @@ export function goToItems(query: string): PaletteItem[] {
     };
     return [...(matches(open.label, query) ? [open] : []), ...shown];
   }
-  return [...rows, ...projects, ...shown];
+  return first ? [...shown, ...rows, ...projects] : [...rows, ...projects, ...shown];
 }
 
 /** The commands a query leaves: the jump to who needs you, then the ones

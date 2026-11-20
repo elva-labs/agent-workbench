@@ -26,7 +26,8 @@ import {
   stepsLeft,
   type PaletteItem,
 } from "$lib/palette.svelte";
-import { canPreview, effectiveView, files, matches } from "$lib/files.svelte";
+import { canPreview, effectiveView, files, matches, select as selectFile } from "$lib/files.svelte";
+import { browser } from "$lib/browser.svelte";
 import { layout } from "$lib/layout.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
@@ -499,7 +500,7 @@ describe("previewing the file in the viewer", () => {
     files.everything = [{ path, status }];
     files.selected = path;
     files.view = "diff";
-    files.viewOf = null;
+    files.renderedFor = null;
     layout.mode = "reviewing";
   };
   const labels = (query: string) => goToItems(query).map((item) => item.label);
@@ -547,13 +548,69 @@ describe("previewing the file in the viewer", () => {
     expect(effectiveView()).toBe("content");
   });
 
-  it("shows source for another file", () => {
+  it("shows source for another HTML file, and for the same file reopened", async () => {
     open("page.html");
+    files.everything = [
+      { path: "page.html", status: "M" },
+      { path: "other.html", status: "M" },
+    ];
     const outcome = pickItem(goToItems("preview")[0]);
     if (outcome.type === "close") outcome.then();
-    files.selected = "other.html";
-    files.everything = [{ path: "other.html", status: null }];
-    expect(effectiveView()).toBe("content");
+    expect(effectiveView()).toBe("rendered");
+    await selectFile("other.html");
+    expect(effectiveView()).toBe("diff");
+    await selectFile("page.html");
+    expect(effectiveView()).toBe("diff");
+  });
+
+  it("keeps the rendered view across a code file for Markdown", async () => {
+    open("notes.md");
+    files.everything = [
+      { path: "notes.md", status: "M" },
+      { path: "main.rs", status: "M" },
+      { path: "more.md", status: "M" },
+    ];
+    const outcome = pickItem(goToItems("preview")[0]);
+    if (outcome.type === "close") outcome.then();
+    await selectFile("main.rs");
+    await selectFile("more.md");
+    expect(effectiveView()).toBe("rendered");
+  });
+
+  it.each([
+    ["media", () => (files.media = { id: "m", owner: "a", project: "/p", files: ["/x.md"], caption: "", at: 1 })],
+    ["a plugin page", () => (files.pluginView = { plugin: "p", id: "v", title: "V", html: "" } as never)],
+    ["the browser", () => (browser.showing = true)],
+  ])("is not offered while %s fills the viewer", (_name, fill) => {
+    open("page.html");
+    expect(labels("preview")).toEqual(["Preview file"]);
+    fill();
+    expect(labels("preview")).toEqual([]);
+    expect(commandItems("preview")).toEqual([]);
+    browser.showing = false;
+  });
+
+  it("stops being offered when the previewed file is deleted or changes kind", () => {
+    open("page.html");
+    files.renderedFor = "page.html";
+    files.view = "rendered";
+    expect(labels("source")).toEqual(["Show source"]);
+    files.everything = [{ path: "page.html", status: "D" }];
+    expect(labels("source")).toEqual([]);
+    expect(labels("preview")).toEqual([]);
+    open("main.rs");
+    files.view = "rendered";
+    expect(labels("source")).toEqual([]);
+    expect(labels("preview")).toEqual([]);
+  });
+
+  it("ranks the command first when the text starts its name, and not otherwise", () => {
+    open("page.html");
+    expect(labels("preview")[0]).toBe("Preview file");
+    // "e" matches projects as well, and starts no command name.
+    const both = labels("e");
+    expect(both).toContain("Preview file");
+    expect(both[0]).not.toBe("Preview file");
   });
 });
 

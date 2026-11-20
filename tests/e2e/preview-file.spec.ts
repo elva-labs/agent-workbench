@@ -67,3 +67,28 @@ test("opens another file on its source", async ({ page }) => {
   await page.getByTestId("file-tree").getByText("other.rs").first().click();
   await expect(page.getByTestId("viewer").locator("table.lines")).toBeVisible();
 });
+
+test("previews an HTML file in a frame, then shows its source", async ({ page }) => {
+  await open(page, "page.html");
+  const viewer = page.getByTestId("viewer");
+  await expect(viewer.locator("table.lines")).toBeVisible();
+
+  await run(page, "preview");
+  const inner = page.frameLocator("[data-testid='media-page']").frameLocator("iframe");
+  await expect(inner.locator("#page")).toHaveText("A page");
+  await expect(viewer.locator("table.lines")).toHaveCount(0);
+
+  await run(page, "source");
+  await expect(viewer.locator("table.lines")).toBeVisible();
+  await expect(viewer.getByTestId("media-page")).toHaveCount(0);
+});
+
+test("opens the same HTML file again on its source", async ({ page }) => {
+  await open(page, "page.html");
+  await run(page, "preview");
+  await expect(page.getByTestId("media-page")).toBeVisible();
+  await page.getByTestId("file-tree").getByText("main.rs").first().click();
+  await page.getByTestId("file-tree").getByText("page.html").first().click();
+  await expect(page.getByTestId("viewer").locator("table.lines")).toBeVisible();
+  await expect(page.getByTestId("media-page")).toHaveCount(0);
+});

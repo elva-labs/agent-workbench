@@ -58,9 +58,9 @@ export const SEARCH_DELAY = 250;
 export const files = $state({
   scope: "changed" as Scope,
   view: "diff" as View,
-  /** The file the rendered view was chosen for: another file opens as
-      source, or as its Markdown when that is all there is to read. */
-  viewOf: null as string | null,
+  /** The file whose rendered view was chosen. Markdown keeps the rendered
+      view from file to file; any other kind shows it only for this file. */
+  renderedFor: null as string | null,
   selected: null as string | null,
   /** What the agent presented, when the viewer holds that rather than a
       file: every file of one call, down the viewer. */
@@ -443,6 +443,18 @@ export function views(entry = selectedEntry()): View[] {
   return own;
 }
 
+/** The view the user has on, with a rendered view that was chosen for
+    another file, of a kind that does not carry, read as the diff. */
+export function chosenView(): View {
+  if (
+    files.view === "rendered" &&
+    files.renderedFor !== files.selected &&
+    !canRender(selectedEntry())
+  )
+    return "diff";
+  return files.view;
+}
+
 /**
  * What the viewer actually renders. A view the file does not have falls
  * to the richest one it does rather than showing an empty diff, so
@@ -453,10 +465,7 @@ export function views(entry = selectedEntry()): View[] {
 export function effectiveView(): View {
   const entry = selectedEntry();
   const own = views(entry);
-  const chosen =
-    files.view === "rendered" && files.viewOf !== files.selected
-      ? "diff"
-      : files.view;
+  const chosen = chosenView();
   if (own.includes(chosen)) return chosen;
   if (canRender(entry)) return "rendered";
   return own[0];
@@ -509,6 +518,8 @@ export async function select(path: string) {
   if (files.target !== null && files.target.path !== path) files.target = null;
   if (files.picked !== null && files.picked.path !== path) files.picked = null;
   leaveOtherKinds();
+  if (files.renderedFor !== null && files.renderedFor !== path)
+    files.renderedFor = null;
   files.selected = path;
   reveal(path);
   await loadSelected();
@@ -600,7 +611,7 @@ export async function setScope(scope: Scope) {
 
 export function setView(view: View) {
   files.view = view;
-  files.viewOf = view === "rendered" ? files.selected : null;
+  files.renderedFor = view === "rendered" ? files.selected : null;
 }
 
 /** The chord walks the views the file has, round and round. */
@@ -660,6 +671,7 @@ export function clear() {
   files.everything = [];
   files.everythingLoaded = false;
   files.selected = null;
+  files.renderedFor = null;
   files.diff = null;
   files.content = null;
   files.error = null;
