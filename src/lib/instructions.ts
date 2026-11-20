@@ -68,10 +68,13 @@ export function filesBackNote(files: { path: string; line: string }[]): string {
 const SESSION_LINE = /^Session (\S+) (.+)$/;
 const STILL_OUT = "Still at work when the user wrote: ";
 const STILL_OUT_END =
-  ". Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.";
+  ". Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.";
 /** How the line ended in an earlier version, which a conversation it
     began still holds. */
-const STILL_OUT_ENDED_BEFORE = [". Call wait to hear from them once you have answered."];
+const STILL_OUT_ENDED_BEFORE = [
+  ". Call wait to hear from them once you have answered.",
+  ". Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.",
+];
 
 /** The line that names the sessions still at work, as a note on the
     user's message ends. */

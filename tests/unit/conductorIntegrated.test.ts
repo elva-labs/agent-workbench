@@ -716,7 +716,7 @@ describe("the orchestrator's tools with an integrated session", () => {
         "Answer it as the final message of your turn, with notify just before it, and end the turn there without calling wait again",
       );
       expect(sentTexts().at(-1)).toBe(
-        `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.\n\nStop for a moment`,
+        `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.\n\nStop for a moment`,
       );
     });
 

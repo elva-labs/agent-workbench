@@ -390,8 +390,8 @@ beside the id, and a refusal that names the work of a review gives it too.
 An id of any other shape than the agents' own, up to 64 letters, digits,
 dashes and underscores, is quoted the same way. When the user's message cuts a
 wait short, or comes while one is held, the note also names the sessions
-still at work and tells it to answer the user as its turn's final message
-and end the turn there, since the workbench wakes it when one of them stops
+still at work and tells it, when there is something to tell the user, to
+answer them as its turn's final message and end the turn there, since the workbench wakes it when one of them stops
 or asks. A wait
 still held answers for the sessions it watches, so the note leaves those
 out and gives the rest. A message with nothing to tell goes as it is.

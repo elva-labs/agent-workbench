@@ -2383,7 +2383,7 @@ describe("telling a starter as the user writes to it", () => {
     expect(last().content!.split("\n")).toEqual([
       REPORTS_HEAD,
       `Session ${BOUNDED} stopped working. It has left no line.`,
-      `Still at work when the user wrote: ${BOUNDED}. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.`,
+      `Still at work when the user wrote: ${BOUNDED}. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.`,
     ]);
   });
 
@@ -2458,7 +2458,7 @@ describe("telling a starter as the user writes to it", () => {
     await settle();
     await prompt();
     expect(last().content).toBe(
-      `${REPORTS_HEAD}\nStill at work when the user wrote: sid-1. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.`,
+      `${REPORTS_HEAD}\nStill at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.`,
     );
     // The message cuts the wait short; the next one is not told again.
     cancelled(waiting.id);
@@ -2483,7 +2483,7 @@ describe("telling a starter as the user writes to it", () => {
       [
         REPORTS_HEAD,
         "Session sid-2 stopped working. It has left no line.",
-        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.",
+        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.",
       ].join("\n"),
     );
     cancelled(waiting.id);
@@ -2509,7 +2509,7 @@ describe("telling a starter as the user writes to it", () => {
       [
         REPORTS_HEAD,
         "Session sid-2 stopped working. It has left no line.",
-        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.",
+        "Still at work when the user wrote: sid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.",
       ].join("\n"),
     );
     // Said once: the cut is not news again.
