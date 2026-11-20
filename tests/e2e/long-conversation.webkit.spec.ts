@@ -282,6 +282,33 @@ test.describe("a long conversation", () => {
     await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
   });
 
+  test("keeps the place the view was moved to, not by the user, when the type size changes", async ({ page }) => {
+    await openLong(page);
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    // Moved as a screen reader's cursor or a find bar would move it: the
+    // thread still follows, and goes back to the foot only for what comes
+    // next, not for the rows reflowing around the view.
+    await thread(page).evaluate((node) => (node.scrollTop = node.scrollHeight / 2));
+    await expect.poll(() => covered(page)).toBe(true);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(5000);
+    const rows = page.getByTestId("thread-rows");
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    const before = await markTop(page);
+    await switchLook(page, "terminal");
+    await expect(rows).toHaveCSS("font-size", "12.5px");
+    // The style is read before the rows have reflowed: the frames after it
+    // are when the thread hears of their new heights and draws again.
+    await thread(page).evaluate(
+      () =>
+        new Promise((done) => {
+          void document.fonts.ready.then(() => requestAnimationFrame(() => requestAnimationFrame(done)));
+        }),
+    );
+    await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
+    await expect.poll(() => covered(page)).toBe(true);
+    await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
+  });
+
   test("goes to the first and the last with Home and End on the thread itself", async ({ page }) => {
     await openLong(page);
     await thread(page).focus();

@@ -287,11 +287,15 @@
       keep the reader's place across a change of width: a scroll that lands
       there says nothing of where the user wants to be. */
   let ownTop = Number.NEGATIVE_INFINITY;
+  /** Where the thread last put the view at its foot. A place it keeps or
+      brings an entry to elsewhere is its own scroll too, but not the foot. */
+  let footTop = Number.NEGATIVE_INFINITY;
 
   function toEnd(node: HTMLDivElement) {
     if (!shown()) return;
     node.scrollTop = node.scrollHeight;
     ownTop = node.scrollTop;
+    footTop = node.scrollTop;
     // The thread has the view now: a scroll that comes after this is the
     // user's only once they scroll again.
     scrolledBy = Number.NEGATIVE_INFINITY;
@@ -320,13 +324,14 @@
 
   /** Whether a long thread is at its foot to follow it: it follows, and it
       has not been laid out yet, or the view is where the thread last put
-      it or within two screens of the foot. A view something else moved far
-      from the foot, a screen reader, a find bar or a selection being
-      dragged, has the rows around it drawn, and goes back to the foot only
-      for what comes next. */
+      it at its foot or within two screens of the foot. A view something
+      else moved far from the foot, a screen reader, a find bar or a
+      selection being dragged, has the rows around it drawn, keeps its
+      place there as they reflow, and goes back to the foot only for what
+      comes next. */
   function atFoot(): boolean {
     if (!pinned || scroller === null) return false;
-    if (anchor === null || scroller.scrollTop === ownTop) return true;
+    if (anchor === null || scroller.scrollTop === footTop) return true;
     return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < Math.max(800, 2 * scroller.clientHeight);
   }
 
@@ -346,6 +351,7 @@
     scrolledBy = performance.now();
     // From here on a scroll is the user's, wherever it lands.
     ownTop = Number.NEGATIVE_INFINITY;
+    footTop = Number.NEGATIVE_INFINITY;
     if (scroller !== null) footThen = scroller.scrollHeight - scroller.clientHeight;
   }
 
@@ -957,6 +963,7 @@
       if (top <= 0) return;
       scroller.scrollTop = top + by;
       if (ownTop === top) ownTop = scroller.scrollTop;
+      if (footTop === top) footTop = scroller.scrollTop;
       if (lookedTop === top) lookedTop = scroller.scrollTop;
       lastTop = scroller.scrollTop;
     });
