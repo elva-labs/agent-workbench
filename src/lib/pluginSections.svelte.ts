@@ -11,6 +11,15 @@
  *
  * The sections of one plugin are drawn together: the one it declared first
  * is the plugin's face, and the rest are groups inside its fold.
+ *
+ * A section is the whole project's, or one session's. The pane shows the
+ * project's sections and those of the session on screen, and a session's
+ * section stands in place of the project's one of the same name. Another
+ * session coming on screen brings its own sections, kept all along; a
+ * session that ends has its sections taken away by the core.
+ *
+ * A row with facts opens to show them, and stays open while its section
+ * stands, however many others are open beside it.
  */
 
 import {
@@ -21,6 +30,7 @@ import {
   type PluginSectionEvent,
 } from "$lib/core";
 import { workspace } from "$lib/workspace.svelte";
+import { activeSession } from "$lib/sessions.svelte";
 
 /** A section as one project has it. */
 export interface PluginSection {
@@ -33,6 +43,9 @@ export interface PluginSection {
   /** A short line beside the title, or nothing. */
   detail: string | null;
   project: string;
+  /** The token of the session the section is for, or null for the whole
+      project's. */
+  session: string | null;
   rows: PluginRow[];
   actions: PluginAction[];
   /** Whether the group starts folded when nothing is remembered for it. */
@@ -70,6 +83,8 @@ export const pluginSections = $state({
     action: PluginAction;
     row: string | null;
   } | null,
+  /** The rows open to show their facts, by `openKey`. */
+  open: {} as Record<string, true>,
 });
 
 const timers: Record<string, ReturnType<typeof setTimeout>> = {};
@@ -86,18 +101,41 @@ function pluginOf(section: { source: string; plugin: string }): string {
   return `${section.source}/${section.plugin}`;
 }
 
-/** The latest rows a plugin sent for one of its sections in a project. */
+/** What an open row is remembered by: its section, the project, the
+    session and the row. */
+function openKey(section: PluginSection, row: string): string {
+  return JSON.stringify([section.key, section.project, section.session, row]);
+}
+
+function forgetOpen(section: PluginSection, keep: Set<string>) {
+  const prefix = openKey(section, "").slice(0, -3);
+  for (const key of Object.keys(pluginSections.open)) {
+    if (!key.startsWith(prefix)) continue;
+    const row = JSON.parse(key)[3] as string;
+    if (!keep.has(row)) delete pluginSections.open[key];
+  }
+}
+
+/** The latest rows a plugin sent for one of its sections in a project, or
+    in one session of it. */
 export function sectionChanged(event: PluginSectionEvent) {
   const key = keyOf(event);
+  const session = event.session ?? null;
   const at = pluginSections.sections.findIndex(
-    (section) => section.key === key && section.project === event.project,
+    (section) =>
+      section.key === key &&
+      section.project === event.project &&
+      section.session === session,
   );
   const nothing =
     event.rows.length === 0 &&
     event.actions.length === 0 &&
     (event.detail === null || event.detail === "");
   if (nothing) {
-    if (at !== -1) pluginSections.sections.splice(at, 1);
+    if (at !== -1) {
+      forgetOpen(pluginSections.sections[at], new Set());
+      pluginSections.sections.splice(at, 1);
+    }
     if (pluginSections.pending?.key === key) pluginSections.pending = null;
     return;
   }
@@ -109,11 +147,16 @@ export function sectionChanged(event: PluginSectionEvent) {
     title: event.title,
     detail: event.detail,
     project: event.project,
+    session,
     rows: event.rows,
     actions: event.actions,
     folded: event.folded,
     order: event.order,
   };
+  forgetOpen(
+    section,
+    new Set(section.rows.filter((row) => factsOf(row).length > 0).map((row) => row.id)),
+  );
   if (at === -1) pluginSections.sections.push(section);
   else pluginSections.sections[at] = section;
 }
@@ -141,13 +184,54 @@ export function noticeOf(section: {
   return pluginSections.notices[pluginOf(section)] ?? null;
 }
 
-/** The sections of the project on screen, plugin by plugin and section by
-    section, so the order under the tree does not move as rows arrive. */
+/** What a row opens to show, none for a row that does not open. */
+export function factsOf(row: PluginRow) {
+  return row.facts ?? [];
+}
+
+/** Whether a row with facts is open. */
+export function isOpen(section: PluginSection, row: PluginRow): boolean {
+  return pluginSections.open[openKey(section, row.id)] === true;
+}
+
+/** Opens a row with facts or closes it, or sets it one way when `to` says.
+    A row with no facts stays shut. */
+export function toggleOpen(section: PluginSection, row: PluginRow, to?: boolean) {
+  const key = openKey(section, row.id);
+  const open = to ?? pluginSections.open[key] !== true;
+  if (open && factsOf(row).length > 0) pluginSections.open[key] = true;
+  else delete pluginSections.open[key];
+}
+
+/** The token of the session on screen, when it is the project's. */
+function shownSession(project: string): string | null {
+  const session = activeSession();
+  return session !== null && session.project === project ? session.token : null;
+}
+
+/** The sections of the project on screen and of the session on screen,
+    plugin by plugin and section by section, so the order under the tree
+    does not move as rows arrive. A session's section hides the project's
+    of the same name. */
 export function listed(): PluginSection[] {
   const project = workspace.active;
   if (project === null) return [];
+  const session = shownSession(project);
+  const mine = pluginSections.sections.filter(
+    (section) =>
+      section.project === project &&
+      section.session !== null &&
+      section.session === session,
+  );
+  const hidden = new Set(mine.map((section) => section.key));
   return pluginSections.sections
-    .filter((section) => section.project === project)
+    .filter(
+      (section) =>
+        (section.project === project &&
+          section.session === null &&
+          !hidden.has(section.key)) ||
+        mine.includes(section),
+    )
     .sort(
       (a, b) =>
         a.plugin.localeCompare(b.plugin) || a.section.localeCompare(b.section),
@@ -212,6 +296,7 @@ export async function run(
       row,
       input,
       project: section.project,
+      session: section.session,
     });
   } catch (error) {
     say(pluginOf(section), String(error));
@@ -241,4 +326,5 @@ export function resetPluginSections() {
     delete pluginSections.notices[key];
   pluginSections.sections = [];
   pluginSections.pending = null;
+  pluginSections.open = {};
 }

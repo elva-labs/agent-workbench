@@ -64,6 +64,7 @@
   } from "$lib/plugins.svelte";
   import ActionInput from "$lib/components/ActionInput.svelte";
   import { cancelAction, noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
+  import { markChanged } from "$lib/pluginMarks.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import {
@@ -274,6 +275,14 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginNotice((event) => pluginNoticed(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginMark((event) => markChanged(event))
+      .then((unlisten) => offs.push(unlisten));
+    // The core lets a plugin open an address only while an action the user
+    // started on it is under way.
+    core()
+      .onPluginOpenUrl((event) => void core().openUrl(event.url))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginView((event) => pluginViewChanged(event))

@@ -93,6 +93,7 @@ import {
   titled,
   typed,
   STARTED_CONTEXT,
+  originOf,
   toldFor,
   WORK_BYTES,
   WORK_WINDOWS,
@@ -1597,6 +1598,19 @@ describe("a start in the caller's own project", () => {
     expect((await begun("sid-6")).model).toBeNull();
     heardOffers("claude-code", null, ["default", "opus", "sonnet"], "claude-opus-5-5");
     expect((await begun("sid-7")).model).toBe("opus");
+  });
+
+  it("tells the core the starter's id, and a worktree made for the very session it starts", async () => {
+    const caller = live(A, "pty-caller", "caller-1");
+    heard("caller-1");
+    const plain = await unasked({ project: A }, "sid-1");
+    expect(originOf(plain)).toEqual({ starter: "caller-1" });
+    const tree = await unasked({ project: A, worktree: true, name: "Fix it" }, "sid-2");
+    expect(originOf(tree)).toEqual({ starter: "caller-1", madeWorktree: true });
+    expect(originOf(caller)).toEqual({});
+    // A later session in the same folder was not what the worktree was made for.
+    const later = create(A, null, "claude-code", tree.startIn);
+    expect(originOf(later)).toEqual({});
   });
 
   it("caps the context of a session it starts, and leaves the caller's own to the agent", async () => {

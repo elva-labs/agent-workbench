@@ -71,6 +71,7 @@ import {
   runUp,
   toldAtStart,
   toldFor,
+  originOf,
   type Carried,
   type Session,
   type Told,
@@ -630,6 +631,7 @@ async function begin(key: string, link: Link, starting: Session, told: Told) {
     effort,
     configDir: dirFor(starting.account, starting.agent),
     ...told,
+    ...originOf(starting),
   });
   link.busy = false;
   const row = byKey(key);

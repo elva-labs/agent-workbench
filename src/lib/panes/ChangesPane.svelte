@@ -98,9 +98,12 @@
   } from "$lib/processes.svelte";
   import {
     askFor,
+    factsOf,
     grouped as groupedSections,
+    isOpen as rowOpen,
     noticeOf,
     run as runAction,
+    toggleOpen as toggleRow,
     type PluginSection,
   } from "$lib/pluginSections.svelte";
   import { open as openPluginView, viewOf as pluginViewOf } from "$lib/pluginView.svelte";
@@ -269,7 +272,7 @@
         if (section !== undefined) setSectionOpen(entry.key, !lineOpen(section));
       } else if (entry.kind === "plugin-row") {
         const section = sectionAt(entry.key);
-        if (section !== undefined) runDefault(section, section.rows[entry.index]);
+        if (section !== undefined) pressRow(section, section.rows[entry.index]);
       }
     },
     key: (index, e) => {
@@ -300,6 +303,22 @@
         setSectionOpen(entry.group, open);
         if (!open) sectionCursor = index;
         return;
+      }
+      if (entry.kind === "plugin-row") {
+        // A row with facts opens and shuts on its own before Left goes on
+        // to fold the line it sits under.
+        const section = sectionAt(entry.key);
+        const row = section?.rows[entry.index];
+        if (section !== undefined && row !== undefined && factsOf(row).length > 0) {
+          if (open) {
+            toggleRow(section, row, true);
+            return;
+          }
+          if (rowOpen(section, row)) {
+            toggleRow(section, row, false);
+            return;
+          }
+        }
       }
       if (entry.kind === "plugin-group" || entry.kind === "plugin-row") {
         // A group line opens and folds on its own; a row folds the line it
@@ -421,6 +440,14 @@
     if (row === undefined || row.default === null) return;
     const action = row.actions?.find((candidate) => candidate.id === row.default);
     if (action !== undefined) act(section, action, row.id);
+  }
+
+  /** A row with facts opens and shuts when pressed, its actions staying on
+      its buttons; any other row runs its default action. */
+  function pressRow(section: PluginSection, row: PluginRow | undefined) {
+    if (row === undefined) return;
+    if (factsOf(row).length > 0) toggleRow(section, row);
+    else runDefault(section, row);
   }
 
   function resizeMedia(dy: number) {
@@ -1779,6 +1806,8 @@
 <!-- One section's rows, on the fold itself or a step in under a group. -->
 {#snippet pluginRows(section: PluginSection, deep: boolean)}
   {#each section.rows as row (row.id)}
+    {@const facts = factsOf(row)}
+    {@const opened = facts.length > 0 && rowOpen(section, row)}
     <li
       id={pluginRowId(section.key, row)}
       class="plugin"
@@ -1787,36 +1816,55 @@
       data-row={row.id}
       data-testid="plugin-row"
     >
-      <button
-        class="media-row"
-        tabindex="-1"
-        onpointerdown={(e) => e.preventDefault()}
-        onclick={() => {
-          sectionCursor = sectionEntries.findIndex((entry) => entry.id === pluginRowId(section.key, row));
-          runDefault(section, row);
-        }}
-        title={row.detail ?? row.label}
-      >
-        <span class="row-line">
-          <span class="dot" data-state={row.state ?? "none"}></span>
-          <span class="media-caption">{row.label}</span>
+      <div class="plugin-line">
+        <button
+          class="media-row"
+          tabindex="-1"
+          onpointerdown={(e) => e.preventDefault()}
+          onclick={() => {
+            sectionCursor = sectionEntries.findIndex((entry) => entry.id === pluginRowId(section.key, row));
+            pressRow(section, row);
+          }}
+          title={row.detail ?? row.label}
+          aria-expanded={facts.length > 0 ? opened : undefined}
+        >
+          <span class="row-line">
+            {#if facts.length > 0}
+              <span class="row-chevron" aria-hidden="true" data-testid="plugin-row-chevron">{opened ? "▾" : "▸"}</span>
+            {/if}
+            <span class="dot" data-state={row.state ?? "none"}></span>
+            <span class="media-caption">{row.label}</span>
+          </span>
+          {#if row.detail !== null}
+            <span class="media-meta">{row.detail}</span>
+          {/if}
+        </button>
+        <span class="row-actions">
+          {#each row.actions ?? [] as action (action.id)}
+            <button
+              class="row-action"
+              tabindex="-1"
+              onpointerdown={(e) => e.preventDefault()}
+              onclick={() => act(section, action, row.id)}
+              data-action={action.id}
+              data-testid="plugin-row-action">{action.label}</button
+            >
+          {/each}
         </span>
-        {#if row.detail !== null}
-          <span class="media-meta">{row.detail}</span>
-        {/if}
-      </button>
-      <span class="row-actions">
-        {#each row.actions ?? [] as action (action.id)}
-          <button
-            class="row-action"
-            tabindex="-1"
-            onpointerdown={(e) => e.preventDefault()}
-            onclick={() => act(section, action, row.id)}
-            data-action={action.id}
-            data-testid="plugin-row-action">{action.label}</button
-          >
-        {/each}
-      </span>
+      </div>
+      {#if opened}
+        <ul class="facts" data-testid="plugin-facts">
+          {#each facts as fact, at (at)}
+            <li class="fact" data-state={fact.state ?? "none"} data-testid="plugin-fact">
+              <span class="dot" data-state={fact.state ?? "none"}></span>
+              <span class="fact-text"
+                ><span class="fact-label">{fact.label}</span>{#if fact.text !== null}
+                  <span class="fact-detail">{fact.text}</span>{/if}</span
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
     </li>
   {/each}
 {/snippet}
@@ -1970,6 +2018,73 @@
 
   .plugin.deep .media-row {
     padding-left: calc(var(--row-indent) + 12px);
+  }
+
+  /* A row's own line, which its actions sit over the end of; the facts it
+     opens to sit under it, outside their reach. */
+  .plugin-line {
+    position: relative;
+  }
+
+  /* A row that opens to show facts carries a chevron in its indent, so its
+     label lines up with the rows that do not. */
+  .row-line {
+    position: relative;
+  }
+
+  .row-chevron {
+    position: absolute;
+    right: calc(100% + 3px);
+    font-size: 10px;
+    line-height: 1;
+    color: var(--ink-3);
+  }
+
+  /* A row's facts, a step in under its label: a state dot, the label, and
+     the text after it. */
+  .facts {
+    list-style: none;
+    margin: 0;
+    padding: 0 var(--row-pad-x) 4px calc(var(--row-indent) + 13px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .plugin.deep .facts {
+    padding-left: calc(var(--row-indent) + 25px);
+  }
+
+  .fact {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    min-width: 0;
+    font-size: 11.5px;
+    line-height: 1.4;
+    color: var(--ink-2);
+  }
+
+  .fact .dot {
+    margin-top: calc((1.4em - var(--dot)) / 2);
+  }
+
+  .fact-text {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .fact-label {
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .fact-detail {
+    margin-left: 4px;
+  }
+
+  .fact[data-state="failed"] .fact-label {
+    color: var(--del);
   }
 
   .head-actions,

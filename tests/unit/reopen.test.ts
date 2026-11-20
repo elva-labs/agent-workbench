@@ -173,6 +173,15 @@ describe("keeping the record", () => {
     });
   });
 
+  it("keeps that a session runs in a worktree made for it", () => {
+    stop = reopen();
+    const session = create(A, "one", "claude-code", "/home/ada/dev/one/tree");
+    session.madeTree = true;
+    started(session.key, "pty-1", "one");
+    flushSync();
+    expect((record().open[0] as { made?: boolean }).made).toBe(true);
+  });
+
   it("brings a session that follows a workflow back on that workflow after a quit", async () => {
     adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     stop = reopen();
@@ -221,6 +230,12 @@ describe("coming back", () => {
       expect(session.resumedFrom).toBe(session.id);
       expect(isLive(session)).toBe(false);
     }
+  });
+
+  it("brings back that a session runs in a worktree made for it, which a record from before does not say", () => {
+    onRecord([{ ...entry(A, "one"), startIn: `${A}/tree`, made: true }, { ...entry(A, "two"), startIn: `${A}/tree` }], null);
+    stop = reopen();
+    expect(forProject(A).map((session) => session.madeTree)).toEqual([true, false]);
   });
 
   it("puts away a session another started without starting it, and keeps it on its starter's list", async () => {

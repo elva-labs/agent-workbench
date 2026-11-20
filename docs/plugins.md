@@ -123,8 +123,9 @@ names the project, so one process serves them all.
 
 From the app to the plugin: a greeting with the app's version and the
 projects open; a project opened or closed; a session started or ended;
-the tree moved; an action taken, with its row and any
-input given; a tool called, with its arguments and the session that
+the tree moved; a shell command a session ran, for a plugin that asked to
+hear it; an action taken, with its row, any input given and the session
+whose section it is on; a tool called, with its arguments and the session that
 called it, by the agent's own id as the session events give it, or none
 where that is not known yet; a message from the plugin's view; a request
 to stop.
@@ -133,8 +134,10 @@ From the plugin to the app: a greeting with its name and version and the
 full shape of what the manifest declared, the tools with their
 descriptions and input schemas, the sections with their actions, the view
 with its width; a section's rows for a project, with its title, its line
-of detail and whether it starts folded, sent whenever they change;
-the result of a tool call or an action; a place to open in the viewer, a
+of detail and whether it starts folded, sent whenever they change, for the
+project or for one session in it; a mark on a session's row; a web
+address to open in the user's browser; the result of a tool call or an
+action; a place to open in the viewer, a
 file's diff, files to present, or a line for a session's row, the same
 means the agent has; the view's page and the data the view shows. The app
 never polls a plugin, and a plugin that has nothing to say stays silent.
@@ -144,8 +147,8 @@ session it started with that id. A line naming an id the session events
 have not given, one it is not running, or one two running sessions share,
 lands on no row.
 
-A plugin gets the project path, the session events and the tree events,
-and nothing else from the app. What it knows about the repository it finds
+A plugin gets the project path, the session events, the tree events and
+the commands it asked to hear, and nothing else from the app. What it knows about the repository it finds
 out itself, `git` and `gh` on the machine, as the agent does.
 
 ## What a plugin looks like
@@ -240,6 +243,234 @@ p.run();
 Without the helper it is a loop over stdin lines and a switch on the
 message's type, in any language that can read and write lines.
 
+A field the app does not know is ignored, in either direction, so a plugin
+written for a newer app runs on an older one and the other way round. A
+plugin that sends none of the session sections, marks or web addresses
+below works as it did before they were there.
+
+## Sessions
+
+A session started or ended is one line, sent for every session the core
+starts in an open project, and again for each one running when the plugin
+greets the app:
+
+```json
+{
+  "type": "session",
+  "event": "started",
+  "id": "6f2a…",
+  "project": "/srv/orbit-api",
+  "cwd": "/srv/orbit-api/.claude/worktrees/retry-jitter",
+  "worktree": true,
+  "branch": "retry-jitter",
+  "startedBy": "41c0…"
+}
+```
+
+`id` is the agent's own id for the session, the one every other message
+names it by. A session the agent has not yet given an id is told once it
+has one. `cwd` is the folder it runs in.
+
+`worktree` is true only when `cwd` is a worktree the app made for this very
+session. A later session started in that folder, a session in the main
+checkout, and one in a worktree someone else made all say false, so a
+plugin that maps things to a session by its branch can do it only where
+the branch is the session's own. `branch` is the branch the worktree was
+made on, there only when `worktree` is true and the app knows it.
+
+`startedBy` names the session that started this one, when another session
+did and is still known to the window. A session the user started has none.
+
+A session that ends is told with the same fields and `"event": "ended"`.
+
+## Hearing commands
+
+A plugin can ask to hear about some of the shell commands sessions run.
+The manifest lists the beginnings it wants, up to 16 of up to 200
+characters each:
+
+```toml
+[[plugin]]
+name = "github"
+commands = ["gh pr create", "gh pr merge", "gh pr close", "gh pr ready"]
+```
+
+When a session in an open project runs a command that matches one, the
+plugin is told once the command has finished:
+
+```json
+{
+  "type": "command",
+  "project": "/srv/orbit-api",
+  "session": "6f2a…",
+  "cwd": "/srv/orbit-api/.claude/worktrees/retry-jitter",
+  "command": "cd api && gh pr create --fill",
+  "ok": true,
+  "output": "https://github.com/acme/orbit-api/pull/42\n",
+  "truncated": false
+}
+```
+
+`session` is the agent's id, as the session events give it. `cwd` is the
+folder the command ran in, the session's own where the agent does not say.
+`ok` is whether it succeeded. `output` is the end of what it printed, at
+most 16 KiB, with `truncated` true when there was more. A command is told
+once, however many ways the app heard it.
+
+A plugin hears only commands that match what its manifest lists, and never
+any other. The settings row of a plugin that lists any says what it hears,
+"Hears when a session runs gh pr create, gh pr merge".
+
+A command matches when one of the simple commands in it begins with the
+listed words, word for word, with quotes taken off. A line is split at
+`;`, `&&`, `||`, `|`, `&`, a new line, parentheses and backquotes, so
+`cd api && gh pr create` and `gh pr list | head` are looked into part by
+part. Words before the program are passed over: `NAME=value`, `env`,
+`time`, `nohup`, `exec`, `command`, and the words of `if`, `while` and
+their like. The script given to `sh`, `bash`, `zsh`, `dash` or `ksh` with
+`-c` is looked into the same way, three shells deep. The program is known
+by its name wherever it lives, so `/opt/homebrew/bin/gh pr create` matches
+`gh pr create`.
+
+The app hears a command:
+
+- in a session drawn as a conversation, from the tool call and its result
+  in the agent's stream, Claude Code's and Codex's alike; a Codex command
+  arrives as Codex ran it, wrapped in the shell's `-lc`;
+- in a Claude Code session in a terminal, from the project's hooks, once
+  they are installed; a command that fails there is not heard, since
+  Claude Code runs no hook after a failed one.
+
+A command is not heard, and nothing is sent, when:
+
+- the hooks are not installed, or were installed by an older app, which
+  the settings show as outdated;
+- a Codex session runs in a terminal, which has no hooks;
+- the user types it in a shell of their own;
+- the session was not started by the app, or its agent has not given its
+  id yet;
+- the plugin is not running when the command finishes;
+- the command runs it out of sight of the words: an alias, a shell
+  function, a script, `eval`, `sudo`, an option before the subcommand
+  (`gh -R acme/api pr create`), a `$(...)` inside double quotes, or a shell
+  more than three deep;
+- the session stops before the command finishes;
+- more than 256 commands are running in conversations at once, when the
+  app lets go of the ones it was waiting on.
+
+## Sessions' own sections
+
+A section can be for one session instead of the whole project. It names
+the session by the agent's id:
+
+```json
+{
+  "type": "section",
+  "id": "pull-request",
+  "title": "Pull request",
+  "project": "/srv/orbit-api",
+  "session": "6f2a…",
+  "rows": []
+}
+```
+
+The changes pane shows the project's sections and those of the session in
+front. When the user moves to another session, its own sections show
+instead, and those of the session left are kept for its return. A
+session's section stands in for the project's section with the same id
+while that session is shown. A session's section naming an id the session
+events have not given lands nowhere.
+
+When a session ends, its sections and its marks go, and the plugin need
+send nothing.
+
+The app sends nothing on its own for a session another one started. A
+plugin that wants the starter to show its children's work reads
+`startedBy` and sends sections and marks for the starter itself.
+
+An action taken on a session's section carries the session's id:
+
+```json
+{
+  "type": "action",
+  "id": "a7",
+  "section": "pull-request",
+  "action": "open",
+  "row": "pr-42",
+  "input": {},
+  "project": "/srv/orbit-api",
+  "session": "6f2a…"
+}
+```
+
+and on a project's section it carries none.
+
+## Facts
+
+A row can carry facts, up to eight, each a label with an optional text and
+state, ok, busy, waiting or failed:
+
+```json
+{
+  "id": "pr-42",
+  "label": "#42 Retry with jitter",
+  "detail": "3 of 4 checks",
+  "state": "failed",
+  "facts": [
+    { "label": "lint", "text": "passed", "state": "ok" },
+    { "label": "test", "text": "2 failed", "state": "failed" },
+    { "label": "review", "text": "1 approval", "state": "waiting" }
+  ]
+}
+```
+
+A row with facts has a chevron and opens below itself to list them, each
+with the same dot a row has. A click or Enter opens and closes it, Right
+opens it, Left closes it; its default action is under the row's own
+buttons. Several rows can be open at once, and a row stays open while the
+plugin sends it again. An unknown state is drawn as none.
+
+## Marks
+
+A plugin can put one mark on a session's row: an icon, a count and a state.
+
+```json
+{
+  "type": "mark",
+  "project": "/srv/orbit-api",
+  "session": "6f2a…",
+  "icon": "pull-request",
+  "count": 2,
+  "state": "failed",
+  "label": "2 pull requests, 1 failing"
+}
+```
+
+The icon is one of `pull-request`, `branch`, `issue`, `check`, `comment` or
+`dot`; any other is drawn as `dot`. The count is left out below 1. The
+state tints the mark: ok and none stay the quiet colour of the row's
+second line, busy a little darker, waiting the accent and failed the
+colour of a deletion. The label is what hovering it says, the plugin's
+name and the count without one.
+
+A mark sits at the end of the row's second line, and a row with a mark and
+nothing else to say grows that line for it. A new mark from the same
+plugin for the same session replaces the last one. A mark with no icon
+takes it away, and so does the plugin stopping or the session ending.
+
+## Web addresses
+
+An action can open a web address in the user's browser:
+
+```json
+{ "type": "open_url", "project": "/srv/orbit-api", "url": "https://github.com/acme/orbit-api/pull/42" }
+```
+
+It opens only an `http` or `https` address, and only while one of the
+plugin's actions waits for its result, so the browser opens because the
+user asked something of the plugin and at no other time. Sent at any other
+moment, it is dropped.
+
 ## Tools
 
 A plugin's tools are listed on the tool server after the app's own and the
@@ -269,8 +500,8 @@ nothing but View, which opens the plugin's page; the actions appear once it
 is open, and a group's appear once the group is. The title and the detail
 beside it keep their text, so the actions a narrow pane has no room for
 are found under a "⋯" button at the end of the line. Enter on a row runs
-its default action; the rest show on hover and under the cursor, as the
-stop button on a process does. The tree's cursor walks a plugin's rows and
+its default action, or opens the row when it has facts; the other actions
+show on hover and under the cursor, as the stop button on a process does. The tree's cursor walks a plugin's rows and
 its group lines as it walks the others.
 
 ![The git plugin's fold under the tree: the branch and its standing beside the title, a row per changed file, and the actions the pane has no room for under a menu.](plugin-fold.png)
@@ -301,6 +532,9 @@ A plugin runs on the machine the app does, and hears about every project
 open there, a project on another machine among them. Its rows and its page
 come home the way everything else from a remote does, with the host put
 back on the paths it names, and what it runs to find them out runs here.
+Its marks and web addresses come home the same way, and a session on
+another machine is told with its folder, its starter and its worktree as
+one here is.
 The daemon on the other machine runs no plugins of its own.
 
 ## Writing one

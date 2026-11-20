@@ -221,6 +221,13 @@ export function summary(plugin: PluginInfo): string {
   return parts.join(", ");
 }
 
+/** The shell commands the plugin hears sessions run, as its row says them,
+    or null when it hears none. */
+export function listensFor(plugin: PluginInfo): string | null {
+  const commands = plugin.commands ?? [];
+  return commands.length === 0 ? null : `Hears when a session runs ${commands.join(", ")}`;
+}
+
 /** The state as the row reads it. */
 export function stateLabel(plugin: PluginInfo): string {
   switch (plugin.state) {

@@ -75,6 +75,9 @@ interface Open {
   /** The way its agent's setting had it due to move to and it had not yet,
       which it starts as once it is woken. */
   moves?: SessionKind;
+  /** It runs in a worktree the app made for it. A record from before says
+      nothing, which reads as not. */
+  made?: boolean;
 }
 
 /** The way a row is due to move to and has not yet, as the record keeps
@@ -96,7 +99,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind, handle, spoken, token, own, moves } =
+  const { project, id, agent, startIn, model, account, kind, handle, spoken, token, own, moves, made } =
     entry as Record<string, unknown>;
   return (
     typeof project === "string" &&
@@ -110,7 +113,8 @@ function isOpenEntry(entry: unknown): entry is Open {
     (spoken === undefined || typeof spoken === "boolean") &&
     (token === undefined || (typeof token === "string" && token !== "")) &&
     (own === undefined || typeof own === "boolean") &&
-    (moves === undefined || moves === "terminal" || moves === "integrated")
+    (moves === undefined || moves === "terminal" || moves === "integrated") &&
+    (made === undefined || typeof made === "boolean")
   );
 }
 
@@ -203,6 +207,7 @@ export function reopen(
       running,
       entry.own === true,
     );
+    row.madeTree = entry.made === true;
     if (entry.moves !== undefined) recordMove(row.key, entry.moves);
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
@@ -284,6 +289,7 @@ export function reopen(
             account: session.account,
             kind: session.kind,
             ...(session.ownWay ? { own: true } : {}),
+            ...(session.madeTree ? { made: true } : {}),
             ...movesOf(session),
             ...(session.kind === "integrated"
               ? { handle: handleOf(session.key), spoken: session.engaged, token: session.token }

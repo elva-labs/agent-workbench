@@ -2787,6 +2787,7 @@ async function startFitted(
     account,
     null,
   );
+  session.madeTree = startIn !== null;
   // It begins in its starter's mode, the narrower of the one asked about
   // and the one now where the starter's changed meanwhile.
   session.modeGiven = narrowerOf(agent, given, givenMode(callingSession(request), agent));
@@ -3405,6 +3406,8 @@ async function resumeSession(
       entry.account ?? null,
       null,
     );
+    // A started session runs in a worktree only when one was made for it.
+    session.madeTree = worktree !== null;
     conductor.startedBy[session.key] = caller;
     // It has a row again, so why the last one went is past.
     const kept = remembered(caller, id);
