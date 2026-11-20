@@ -47,9 +47,12 @@ describe("what gives way in a row", () => {
     // drawn; inside it once the first step is taken.
     last.getBoundingClientRect = () => ({ right: node.dataset.fit === "" ? 940.4 : 780 }) as DOMRect;
     node.style.paddingRight = "12px";
+    // Computed style is read from the document, as in a browser.
+    document.body.append(node);
     const action = fits(node, steps);
     expect(node.dataset.fit).toBe("chrome");
     action.destroy();
+    node.remove();
   });
 
   it("gives parts back when the row has room again", () => {

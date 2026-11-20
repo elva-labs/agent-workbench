@@ -21,6 +21,8 @@ function mermaid(): Promise<Mermaid> {
         securityLevel: "strict",
         theme: resolvedTheme() === "dark" ? "dark" : "neutral",
         fontFamily: "inherit",
+        layout: "dagre",
+        look: "classic",
       });
       return api;
     });

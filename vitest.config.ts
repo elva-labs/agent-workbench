@@ -7,7 +7,7 @@ import path from "node:path";
 // than through SvelteKit: there is no router to exercise, and skipping the kit
 // plugin keeps $lib the only alias the tests need.
 export default defineConfig({
-  plugins: [svelte({ hot: false }), svelteTesting()],
+  plugins: [svelte({ compilerOptions: { hmr: false } }), svelteTesting()],
   resolve: {
     alias: {
       $lib: path.resolve("./src/lib"),

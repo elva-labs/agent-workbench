@@ -282,6 +282,43 @@ test.describe("a long conversation", () => {
     await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
   });
 
+  test("keeps the place the view was moved to, not by the user, when the type size changes", async ({ page }) => {
+    await openLong(page);
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+    // Moved as a screen reader's cursor or a find bar would move it: the
+    // thread still follows, and goes back to the foot only for what comes
+    // next, not for the rows reflowing around the view.
+    await thread(page).evaluate((node) => (node.scrollTop = node.scrollHeight / 2));
+    await expect.poll(() => covered(page)).toBe(true);
+    await expect.poll(() => fromFoot(page)).toBeGreaterThan(5000);
+    const rows = page.getByTestId("thread-rows");
+    await expect(rows).toHaveCSS("font-size", "13.5px");
+    const before = await markTop(page);
+    // Told of the rows' heights in the smaller type by an observer made
+    // after the thread's, so right after the thread is; the thread draws
+    // the rows for them at the frame after, before this observer's.
+    await thread(page).evaluate((node) => {
+      const rows = node.querySelector<HTMLElement>("[data-testid='thread-rows']")!;
+      (node as HTMLElement & { redrawn?: Promise<void> }).redrawn = new Promise((done) => {
+        const watcher = new ResizeObserver(() => {
+          if (getComputedStyle(rows).fontSize !== "12.5px") return;
+          watcher.disconnect();
+          requestAnimationFrame(() => done());
+        });
+        watcher.observe(rows);
+      });
+    });
+    await switchLook(page, "terminal");
+    await expect(rows).toHaveCSS("font-size", "12.5px");
+    await thread(page).evaluate((node) => (node as HTMLElement & { redrawn?: Promise<void> }).redrawn);
+    await expect.poll(async () => Math.abs((await markedAt(page)) - before)).toBeLessThan(2);
+    await expect.poll(() => covered(page)).toBe(true);
+    await expect(page.getByText(`Reply ${TURNS},`)).toHaveCount(0);
+    await agent(page, `f.turn("${H}", "One more reply, after the type changed.");`);
+    await expect(thread(page).getByText("One more reply, after the type changed.")).toBeInViewport();
+    await expect.poll(() => fromFoot(page)).toBeLessThan(2);
+  });
+
   test("goes to the first and the last with Home and End on the thread itself", async ({ page }) => {
     await openLong(page);
     await thread(page).focus();

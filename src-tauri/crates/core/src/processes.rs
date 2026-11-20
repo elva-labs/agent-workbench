@@ -44,7 +44,10 @@ pub struct Processes {
 impl Default for Processes {
     fn default() -> Self {
         Self {
-            system: Mutex::new((System::new(), None)),
+            system: Mutex::new((
+                System::new().expect("the process table is readable on macOS, Linux and Windows"),
+                None,
+            )),
         }
     }
 }

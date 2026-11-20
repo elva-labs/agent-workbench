@@ -22,14 +22,14 @@ dunce = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 portable-pty = "0.9"
-git2 = { version = "0.20", default-features = false }
+git2 = { version = "0.21", default-features = false }
 notify = "8"
 uuid = { version = "1", features = ["v4"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
-base64 = "0.22"
-if-addrs = "0.13"
-toml_edit = "0.22"
-sysinfo = { version = "0.39", default-features = false, features = ["system"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
+base64 = "0.23"
+if-addrs = "0.15"
+toml_edit = "0.25"
+sysinfo = { version = "0.40", default-features = false, features = ["system"] }
 url = "2.5.8"
 
 [target.'cfg(unix)'.dependencies]

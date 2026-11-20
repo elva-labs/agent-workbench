@@ -839,7 +839,7 @@ export function startMode(session: Session, link: Link): string | undefined {
   if (session.resumedFrom !== null) return modeOf(session.resumedFrom) ?? undefined;
   // One reopened before anything was said in it starts in the mode kept
   // for the conversation it leaves.
-  return given ?? (session.id === null ? undefined : (modeOf(session.id) ?? undefined)) ?? carried;
+  return given ?? (session.id === null ? undefined : modeOf(session.id)) ?? carried;
 }
 
 /** The effort a session starts at: for a new one the user started, the
