@@ -152,11 +152,10 @@ fn line_counts<'a>(
     // its lines appear. Without the second, a file the agent just created shows
     // up with an empty diff, which is the common case rather than an edge one.
     //
-    // The paths are literal. As patterns, every file the diff walks is
-    // matched against every changed path in turn, which is quadratic: a
-    // project with a few thousand new files spends seconds of CPU on it each
-    // time status is read. As literal paths they are a sorted list the walk
-    // looks each file up in, and folders holding none of them are skipped.
+    // The paths are literal, so the walk looks each file up in them as a
+    // sorted list and skips folders holding none of them. That keeps one
+    // status read linear in the files a project holds, thousands of new ones
+    // included.
     options
         .include_untracked(true)
         .recurse_untracked_dirs(true)
@@ -202,19 +201,25 @@ fn line_counts<'a>(
 /// How far into a file git looks for a NUL byte to call it binary.
 const BINARY_PROBE: usize = 8000;
 
+/// The size over which libgit2 calls a file binary without reading it.
+const MAX_TEXT: u64 = 512 * 1024 * 1024;
+
 /// Lines and binary-ness of a file git does not track, all of which is added
 /// lines, counted the way git counts them. Only the start of a binary file is
 /// read: a project can hold thousands of untracked screenshots, and status
 /// runs whenever the tree moves.
 fn untracked_counts(repo: &Repository, path: &str) -> (u32, u32, bool) {
-    let marked_binary = matches!(
-        repo.get_attr(Path::new(path), "diff", AttrCheckFlags::FILE_THEN_INDEX)
-            .map(AttrValue::from_string),
-        Ok(AttrValue::False)
-    );
-    if marked_binary {
-        return (0, 0, true);
-    }
+    // The `diff` attribute unset makes a file binary and set makes it text,
+    // without a look inside. A diff driver named there is probed like no
+    // attribute at all: its own `binary` setting is not read.
+    let probe = match repo
+        .get_attr(Path::new(path), "diff", AttrCheckFlags::FILE_THEN_INDEX)
+        .map(AttrValue::from_string)
+    {
+        Ok(AttrValue::False) => return (0, 0, true),
+        Ok(AttrValue::True) => false,
+        _ => true,
+    };
     let Some(full) = repo.workdir().map(|dir| dir.join(path)) else {
         return (0, 0, false);
     };
@@ -224,16 +229,20 @@ fn untracked_counts(repo: &Repository, path: &str) -> (u32, u32, bool) {
     if meta.file_type().is_symlink() {
         return (1, 0, false);
     }
-    match std::fs::File::open(&full).map(added_lines) {
+    if probe && meta.len() > MAX_TEXT {
+        return (0, 0, true);
+    }
+    match std::fs::File::open(&full).map(|file| added_lines(file, probe)) {
         Ok(Some(lines)) => (lines, 0, false),
         Ok(None) => (0, 0, true),
         Err(_) => (0, 0, false),
     }
 }
 
-/// The lines in what `reader` holds, or None when it is binary: a NUL byte
-/// in its first `BINARY_PROBE` bytes, after which nothing more is read.
-fn added_lines(mut reader: impl Read) -> Option<u32> {
+/// The lines in what `reader` holds, or None when `probe` asks and it is
+/// binary: a NUL byte in its first `BINARY_PROBE` bytes, after which nothing
+/// more is read.
+fn added_lines(mut reader: impl Read, probe: bool) -> Option<u32> {
     let mut buffer = vec![0u8; 64 * 1024];
     let mut seen = 0usize;
     let mut lines = 0u32;
@@ -251,7 +260,7 @@ fn added_lines(mut reader: impl Read) -> Option<u32> {
             Err(_) => break,
         };
         let chunk = &buffer[..read];
-        if seen < BINARY_PROBE && chunk.contains(&0) {
+        if probe && seen < BINARY_PROBE && chunk.contains(&0) {
             return None;
         }
         seen += read;
@@ -813,6 +822,7 @@ pub fn worktree_remove(project: &Path, name: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::scratch::Scratch;
+    use std::io::Write as _;
     use std::process::Command;
 
     /// A throwaway repository. Shelling out to git rather than building one
@@ -890,7 +900,7 @@ mod tests {
     #[test]
     fn counts_untracked_files_as_libgit2_diffs_them() {
         let dir = repo("untracked-counts");
-        write(&dir, ".gitattributes", "*.dat binary\n");
+        write(&dir, ".gitattributes", "*.dat binary\n*.dt diff\n");
         commit(&dir);
         write(&dir, "ends.txt", "one\ntwo\n");
         write(&dir, "open.txt", "one\ntwo");
@@ -906,11 +916,26 @@ mod tests {
             [0x89, b'P', b'N', b'G', 0, 1, 2, b'\n'],
         )
         .unwrap();
+        write(&dir, "forced.dt", "a\0b\nc\n");
+        write(&dir, "a[1]*?.txt", "glob\ncharacters\n");
+        // Text to well past the probe, then sparse to just over the size
+        // libgit2 reads.
+        let large = std::fs::File::create(dir.join("large.log")).unwrap();
+        (&large)
+            .write_all(&b"line\n".repeat(4 * BINARY_PROBE))
+            .unwrap();
+        large.set_len(MAX_TEXT + 1).unwrap();
+        let mut expected = 11;
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("ends.txt", dir.join("link")).unwrap();
+            expected += 1;
+        }
 
         let files = status(&dir).unwrap();
         let repo = Repository::open(&*dir).unwrap();
         let libgit2 = line_counts(&repo, files.iter().map(|file| file.path.as_str()));
-        assert_eq!(files.len(), 8);
+        assert_eq!(files.len(), expected);
         for file in &files {
             assert_eq!(file.status, "A", "{}", file.path);
             let (add, del, binary) = libgit2.get(&file.path).copied().unwrap_or_default();
@@ -944,7 +969,7 @@ mod tests {
             read: 0,
         };
 
-        assert_eq!(added_lines(&mut stream), None);
+        assert_eq!(added_lines(&mut stream, true), None);
         assert!(stream.read <= BINARY_PROBE, "read {} bytes", stream.read);
     }
 
