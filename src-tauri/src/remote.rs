@@ -244,7 +244,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
         }
         chord_core::plugins::PLUGIN_SECTION
         | chord_core::plugins::PLUGIN_VIEW
-        | chord_core::plugins::PLUGIN_VIEW_DATA => {
+        | chord_core::plugins::PLUGIN_VIEW_DATA
+        | chord_core::plugins::PLUGIN_MARK
+        | chord_core::plugins::PLUGIN_OPEN_URL => {
             put_back(&mut payload, "project", |path| with_host(host, path));
         }
         _ => {}
@@ -798,6 +800,39 @@ mod tests {
         );
         assert_eq!(data["project"], "ssh://lab/srv/api");
         assert_eq!(data["data"]["rows"], 2);
+    }
+
+    #[test]
+    fn a_plugin_s_mark_and_web_address_come_home_the_same_way() {
+        let mark = homeward(
+            "lab",
+            chord_core::plugins::PLUGIN_MARK,
+            json!({
+                "source": "src-1",
+                "plugin": "github",
+                "project": "/srv/api",
+                "session": "t-1",
+                "icon": "pull-request",
+                "count": 2,
+                "state": "failed"
+            }),
+        );
+        assert_eq!(mark["project"], "ssh://lab/srv/api");
+        assert_eq!(mark["session"], "t-1");
+        assert_eq!(mark["icon"], "pull-request");
+
+        let open = homeward(
+            "lab",
+            chord_core::plugins::PLUGIN_OPEN_URL,
+            json!({
+                "source": "src-1",
+                "plugin": "github",
+                "project": "/srv/api",
+                "url": "https://example.com/pull/1"
+            }),
+        );
+        assert_eq!(open["project"], "ssh://lab/srv/api");
+        assert_eq!(open["url"], "https://example.com/pull/1");
     }
 
     #[test]

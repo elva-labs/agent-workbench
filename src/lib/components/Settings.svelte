@@ -39,6 +39,7 @@
     removeSource,
     stateLabel,
     summary,
+    listensFor,
     trust,
     trusted,
     updateSource,
@@ -1025,6 +1026,7 @@
               {/if}
               {#each source.plugins as plugin (plugin.name)}
                 {@const state = rowState(source, plugin)}
+                {@const hears = listensFor(plugin)}
                 <div class="project plugin" data-testid="plugin-row" data-plugin={plugin.name}>
                   <div class="plugin-text">
                     <span class="project-name"
@@ -1032,6 +1034,9 @@
                       {#if plugin.version}<span class="version">{plugin.version}</span>{/if}</span
                     >
                     {#if plugin.description}<span class="plugin-desc">{plugin.description}</span>{/if}
+                    {#if hears !== null}
+                      <span class="plugin-meta" data-testid="plugin-listens">{hears}</span>
+                    {/if}
                     {#if state}
                       <span class="plugin-meta" data-testid="plugin-state">{state}</span>
                     {/if}
@@ -1059,7 +1064,9 @@
                   <div class="ask" data-testid="plugin-ask">
                     <p>
                       {#if fetched(source)}
-                        {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.
+                        {plugin.name} runs <code>{plugin.run[0]}</code> with your privileges: {summary(plugin)}.{#if hears !== null}
+                          {hears}, and is told that command's own words, its folder and whether it worked; its output
+                          too, unless another command in the same line prints.{/if}
                       {:else}
                         {plugin.name} is fetched from <code>{lastSegment(source.location)}</code> and runs
                         with your privileges: {plugin.description}

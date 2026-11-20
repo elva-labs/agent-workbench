@@ -113,6 +113,9 @@ export interface Session {
   /** Where the agent was started when that is not the project: the
       worktree a resumed session belongs to. */
   startIn: string | null;
+  /** `startIn` is a worktree the app made for this very session, which a
+      later session started in the same folder is not. */
+  madeTree: boolean;
   /** The first prompt, when the session was started with one: another
       session's, given to the agent on its command line. */
   prompt: string | null;
@@ -1649,6 +1652,22 @@ export function toldFor(session: Session): Told {
   };
 }
 
+/** What a start tells the core of where a session comes from, which the
+    plugins are told in turn: the agent id of the session that started it,
+    and whether it runs in a worktree made for it. */
+export function originOf(session: Session): { starter?: string; madeWorktree?: boolean } {
+  const starter = starterOf(session.key);
+  // A starter is kept by its agent id until its token is known.
+  const id =
+    starter === null
+      ? null
+      : (byToken(starter)?.id ?? sessions.all.find((row) => row.id === starter)?.id ?? null);
+  return {
+    ...(id === null ? {} : { starter: id }),
+    ...(session.madeTree && session.startIn !== null ? { madeWorktree: true } : {}),
+  };
+}
+
 /** Why a session running as a conversation cannot be made the
     orchestrator of a workflow, or null when it can: its orchestrator's
     agent is not installed here, or runs only in a terminal. */
@@ -1771,6 +1790,7 @@ export function resumeWithout(key: string): Session | null {
   close(key, true);
   const next = create(project, id, agent, startIn, null, model, account, null, kind);
   next.ownWay = ownWay;
+  next.madeTree = session.madeTree;
   handOver(key, { project, session: next.key });
   return next;
 }
@@ -1861,6 +1881,7 @@ function row(
     ownTitle: resumedFrom !== null && sessions.own[resumedFrom] === true,
     cwd: null,
     startIn,
+    madeTree: false,
     prompt,
     model,
     account,
@@ -2094,6 +2115,7 @@ export async function launch(
         mode: mode ?? undefined,
         configDir: dirFor(session.account, session.agent),
         ...told,
+        ...originOf(session),
         cols,
         rows,
       },

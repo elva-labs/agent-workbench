@@ -33,7 +33,7 @@
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
   import { folderToRead, load as loadOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import { core } from "$lib/core";
-  import { ensure as ensureHooks } from "$lib/hook.svelte";
+  import { ensure as ensureHooks, hearsChanged } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
@@ -64,6 +64,7 @@
   } from "$lib/plugins.svelte";
   import ActionInput from "$lib/components/ActionInput.svelte";
   import { cancelAction, noticed as pluginNoticed, pluginSections, sectionChanged } from "$lib/pluginSections.svelte";
+  import { markChanged } from "$lib/pluginMarks.svelte";
   import { dataArrived as pluginViewData, viewChanged as pluginViewChanged } from "$lib/pluginView.svelte";
   import { loadMedia, presented } from "$lib/media.svelte";
   import {
@@ -274,6 +275,17 @@
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginNotice((event) => pluginNoticed(event))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginMark((event) => markChanged(event))
+      .then((unlisten) => offs.push(unlisten));
+    // The core lets a plugin open an address only while an action the user
+    // started on it is under way.
+    core()
+      .onPluginOpenUrl((event) => void core().openUrl(event.url))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginHears(() => void hearsChanged(hookedProjects()))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginView((event) => pluginViewChanged(event))

@@ -15,13 +15,13 @@ use crate::show::{
     NOTIFY_REQUEST, PRESENT_REQUEST, SHOW_REQUEST,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The event a plugin's state change is told by.
 pub const PLUGIN_STATE: &str = "plugin_state";
@@ -38,6 +38,16 @@ pub const PLUGIN_VIEW: &str = "plugin_view";
 
 /// The event a message for an open page is told by.
 pub const PLUGIN_VIEW_DATA: &str = "plugin_view_data";
+
+/// The event a plugin's mark on a session's row is told by.
+pub const PLUGIN_MARK: &str = "plugin_mark";
+
+/// The event a web address a plugin opens is told by.
+pub const PLUGIN_OPEN_URL: &str = "plugin_open_url";
+
+/// The event told when an enabled plugin comes to listen for commands, or
+/// the last one stops, so the hooks are brought up to date at once.
+pub const PLUGIN_HEARS: &str = "plugin_hears";
 
 /// The manifest at a source's root.
 pub const MANIFEST: &str = "workbench-plugins.toml";
@@ -60,6 +70,10 @@ pub struct Declared {
     pub sections: Vec<String>,
     /// "wide" or "full", when the plugin has a view.
     pub view: Option<String>,
+    /// The beginnings of the shell commands the plugin is told a session
+    /// ran, each as words separated by one space.
+    #[serde(default)]
+    pub commands: Vec<String>,
 }
 
 impl Declared {
@@ -77,6 +91,7 @@ impl Declared {
             tools: Vec::new(),
             sections: Vec::new(),
             view: None,
+            commands: Vec::new(),
         }
     }
 }
@@ -229,6 +244,53 @@ pub struct Row {
     /// Which of the row's actions Enter runs.
     #[serde(default)]
     pub default: Option<String>,
+    /// What the row says once it is opened, in the order given.
+    #[serde(default, deserialize_with = "lenient_facts")]
+    pub facts: Vec<Fact>,
+}
+
+/// One line an opened row shows: a label, what it says, and how it is
+/// doing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Fact {
+    pub label: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// One of the four a row's state may be.
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+/// How many facts a row keeps.
+const FACTS: usize = 8;
+
+/// A row's facts, each one that is a fact kept and the rest dropped, so a
+/// bad fact costs itself and not its row.
+fn lenient_facts<'de, D>(deserializer: D) -> Result<Vec<Fact>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .map(|facts| {
+            facts
+                .iter()
+                .filter_map(|fact| serde_json::from_value::<Fact>(fact.clone()).ok())
+                .filter(|fact| !fact.label.is_empty())
+                .filter(|fact| {
+                    fact.state
+                        .as_deref()
+                        .is_none_or(|state| STATES.contains(&state))
+                })
+                .map(|fact| Fact {
+                    text: fact.text.filter(|text| !text.is_empty()),
+                    ..fact
+                })
+                .take(FACTS)
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// A section's rows for one project, as told to the window. Empty rows,
@@ -242,6 +304,9 @@ pub struct SectionEvent {
     /// A short line beside the title, the branch and its standing say.
     pub detail: Option<String>,
     pub project: String,
+    /// The token of the session the rows are for, or None for rows that
+    /// are the whole project's.
+    pub session: Option<String>,
     pub rows: Vec<Row>,
     pub actions: Vec<Action>,
     /// Whether the section starts folded where it is drawn as a group
@@ -275,6 +340,37 @@ pub struct ViewData {
     pub plugin: String,
     pub project: String,
     pub data: serde_json::Value,
+}
+
+/// A plugin's mark on one session's row, as told to the window. No icon
+/// is the mark gone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MarkEvent {
+    pub source: String,
+    pub plugin: String,
+    pub project: String,
+    /// The token of the session the mark is on.
+    pub session: String,
+    /// One of [`ICONS`].
+    pub icon: Option<String>,
+    pub count: Option<u32>,
+    /// One of the four a row's state may be.
+    pub state: Option<String>,
+    /// What the mark stands for, in words.
+    pub label: Option<String>,
+}
+
+/// The icons a mark may carry. The window draws each; a plugin naming
+/// another gets the last, a plain dot.
+pub const ICONS: [&str; 6] = ["pull-request", "branch", "issue", "check", "comment", "dot"];
+
+/// A web address a plugin opens in the user's browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OpenUrl {
+    pub source: String,
+    pub plugin: String,
+    pub project: String,
+    pub url: String,
 }
 
 /// What a plugin said went wrong with an action, for the window to show.
@@ -325,6 +421,8 @@ struct Running {
     complaints: Arc<Mutex<VecDeque<String>>>,
     /// Disconnects once the error output has been read to its end.
     complained: std::sync::mpsc::Receiver<()>,
+    /// The beginnings of the commands its manifest listens for.
+    commands: Vec<String>,
 }
 
 /// How many lines of a plugin's error output are kept for its row.
@@ -360,18 +458,90 @@ static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
 type Key = (String, String);
 
+/// How long after an action is sent its plugin may open a web address for
+/// it.
+const OPEN_WINDOW: Duration = Duration::from_secs(30);
+
+/// An action waiting for an answer: the plugin it went to, when, and
+/// whether that plugin has opened its one web address for it.
+struct Waiting {
+    plugin: Key,
+    sent: Instant,
+    opened: bool,
+}
+
+impl Waiting {
+    /// Whether `plugin` may open a web address for this action at `now`:
+    /// the action went to it less than `OPEN_WINDOW` ago and it has opened
+    /// none for it yet.
+    fn may_open(&self, plugin: &Key, now: Instant) -> bool {
+        &self.plugin == plugin && !self.opened && now.duration_since(self.sent) < OPEN_WINDOW
+    }
+}
+
 /// An agent's pty as the runtime follows it: the session it runs, known at
-/// the spawn or found afterwards, the token the workbench gave it, and the
-/// project it belongs to.
+/// the spawn or found afterwards, the token the workbench gave it, the
+/// project it belongs to, the folder it runs in, and the agent's id of the
+/// session that started it.
 struct Pty {
     session: Option<String>,
     token: Option<String>,
     project: String,
+    cwd: String,
+    starter: Option<String>,
+    /// Whether the app made `cwd` as a worktree for this session.
+    worktree: bool,
+    /// The branch that worktree was made on, when the app knows it.
+    branch: Option<String>,
 }
 
-/// A source, a plugin, a section of that plugin, and the project the rows
-/// are for: what one set of rows is kept under.
-type SectionKey = (String, String, String, String);
+/// A session as it starts, for [`Plugins::session_started`].
+pub struct Started<'a> {
+    /// The agent's id for the session, None for an agent that mints its
+    /// own and says it later.
+    pub session: Option<&'a str>,
+    /// What the session's tools name it by.
+    pub token: Option<&'a str>,
+    /// The project the session belongs to.
+    pub project: &'a str,
+    /// The folder it runs in: a worktree under the project, or the project.
+    pub cwd: &'a str,
+    /// The agent's id of the session that started this one, if one did.
+    pub starter: Option<&'a str>,
+    /// Whether `cwd` is a worktree the app made for this session, and not
+    /// one it merely runs in.
+    pub worktree: bool,
+    /// The branch that worktree was made on, when the app knows it.
+    pub branch: Option<&'a str>,
+}
+
+/// A shell command a session ran, for [`Plugins::command_ran`].
+pub struct Ran<'a> {
+    /// The pty or integrated run it ran in, where the source knows it.
+    pub pty: Option<&'a str>,
+    /// The agent's id for the session, where the source knows it and not
+    /// the pty.
+    pub session: Option<&'a str>,
+    /// The agent's id for the tool call, which tells one command heard
+    /// twice from two commands.
+    pub call: &'a str,
+    pub command: &'a str,
+    /// The folder it ran in, where the source says.
+    pub cwd: Option<&'a str>,
+    pub ok: bool,
+    pub output: &'a str,
+    /// Whether the source cut the output short already.
+    pub truncated: bool,
+}
+
+/// A source, a plugin, a section of that plugin, the project the rows are
+/// for, and the agent's id of the session they are for, empty for rows of
+/// the whole project: what one set of rows is kept under.
+type SectionKey = (String, String, String, String, String);
+
+/// A source, a plugin, the project, and the agent's id of the session a
+/// mark is on.
+type MarkKey = (String, String, String, String);
 
 /// A source, a plugin, and the project a page is for: what one page is
 /// kept under.
@@ -394,8 +564,10 @@ struct Inner {
     /// leaves in the viewer can be taken out of it when it goes.
     views: Mutex<HashMap<ViewKey, ViewEvent>>,
     /// The actions waiting for an answer, which tells an action's result
-    /// from a tool call's.
-    pending: Mutex<HashSet<String>>,
+    /// from a tool call's, until it comes or the plugin goes.
+    pending: Mutex<HashMap<String, Waiting>>,
+    /// The mark each plugin last put on a session's row.
+    marks: Mutex<HashMap<MarkKey, MarkEvent>>,
     /// Where the build of a plugin with no process has got to: building,
     /// or the build that failed. What a row says until a process is there.
     building: Mutex<HashMap<Key, (State, Option<String>)>>,
@@ -409,6 +581,8 @@ struct Inner {
     /// The agents' ptys, by pty id, so a session that ends is named by the
     /// session it ran. A shell has no entry.
     ptys: Mutex<HashMap<String, Pty>>,
+    /// The session and call of the commands plugins were told of last.
+    told: Mutex<VecDeque<(String, String)>>,
 }
 
 /// The sources and their processes. Shared with the threads that read a
@@ -590,6 +764,26 @@ pub fn read_manifest(
                 return Err(format!("plugin {name}: view must be wide or full"));
             }
         }
+        let mut commands = Vec::new();
+        for command in strings("commands")? {
+            let words = command.split_whitespace().collect::<Vec<_>>().join(" ");
+            if words.is_empty()
+                || words.len() > COMMAND_BEGINNING
+                || words.chars().any(char::is_control)
+            {
+                return Err(format!(
+                    "plugin {name}: the command {command:?} must be words of at most {COMMAND_BEGINNING} characters"
+                ));
+            }
+            if !commands.contains(&words) {
+                commands.push(words);
+            }
+        }
+        if commands.len() > COMMAND_BEGINNINGS {
+            return Err(format!(
+                "plugin {name}: at most {COMMAND_BEGINNINGS} commands are listened for"
+            ));
+        }
         declared.push(Declared {
             name,
             path: relative,
@@ -600,6 +794,7 @@ pub fn read_manifest(
             tools,
             sections: strings("sections")?,
             view,
+            commands,
         });
     }
     if declared.is_empty() {
@@ -754,11 +949,13 @@ impl Plugins {
                 newer: Mutex::new(HashMap::new()),
                 sections: Mutex::new(HashMap::new()),
                 views: Mutex::new(HashMap::new()),
-                pending: Mutex::new(HashSet::new()),
+                pending: Mutex::new(HashMap::new()),
+                marks: Mutex::new(HashMap::new()),
                 building: Mutex::new(HashMap::new()),
                 starting: Mutex::new(()),
                 projects: Mutex::new(Vec::new()),
                 ptys: Mutex::new(HashMap::new()),
+                told: Mutex::new(VecDeque::new()),
             }),
         }
     }
@@ -822,14 +1019,8 @@ impl Plugins {
     /// agent that mints its own id, which `session_identified` brings. The
     /// token is what the session's tools name it by, which a plugin is
     /// never shown: a call from those tools reaches it under the session.
-    pub fn session_started(
-        &self,
-        pty_id: &str,
-        session: Option<&str>,
-        token: Option<&str>,
-        project: &str,
-    ) {
-        self.inner.session_started(pty_id, session, token, project);
+    pub fn session_started(&self, pty_id: &str, started: Started) {
+        self.inner.session_started(pty_id, started);
     }
 
     /// The id an agent minted for a session of its own, once it is known.
@@ -840,6 +1031,14 @@ impl Plugins {
     /// A pty ended. One with no session on it, a shell's, says nothing.
     pub fn session_ended(&self, pty_id: &str) {
         self.inner.session_ended(pty_id);
+    }
+
+    /// A session ran a shell command. Each plugin whose manifest listens
+    /// for one of the simple commands in it is told that command alone, and
+    /// no other; a command of no session this core started, or one told
+    /// already, is told to none.
+    pub fn command_ran(&self, ran: Ran) {
+        self.inner.command_ran(ran);
     }
 
     /// Writes a line to a running plugin.
@@ -879,9 +1078,11 @@ impl Plugins {
         row: Option<&str>,
         input: &serde_json::Value,
         project: &str,
+        session: Option<&str>,
     ) -> Result<(), String> {
-        self.inner
-            .action(source_id, name, section, action, row, input, project)
+        self.inner.action(
+            source_id, name, section, action, row, input, project, session,
+        )
     }
 
     /// Hands a plugin's page's message to the plugin and comes back at
@@ -903,6 +1104,450 @@ impl Plugins {
             }),
         )
     }
+}
+
+/// The line plugins hear a session by, or None for a pty whose session is
+/// not known yet. The starter is there only for a session another started,
+/// and the branch only for a session in a worktree the app made for it.
+fn session_line(event: &str, pty: &Pty) -> Option<serde_json::Value> {
+    let session = pty.session.as_deref()?;
+    let mut line = serde_json::json!({
+        "type": "session",
+        "event": event,
+        "id": session,
+        "project": pty.project,
+        "cwd": pty.cwd,
+        "worktree": pty.worktree,
+    });
+    if let Some(starter) = &pty.starter {
+        line["startedBy"] = serde_json::json!(starter);
+    }
+    if let Some(branch) = &pty.branch {
+        line["branch"] = serde_json::json!(branch);
+    }
+    Some(line)
+}
+
+/// Whether a plugin's address is one for a web browser: http or https,
+/// with a host, and nothing a shell or the system's opener could take
+/// for something else.
+fn web_address(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    let rest = lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"));
+    rest.is_some_and(|rest| !rest.is_empty() && !rest.starts_with('/'))
+        && url.len() <= 2048
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control())
+}
+
+/// How long a command beginning in a manifest may be, and how many one
+/// plugin may list.
+const COMMAND_BEGINNING: usize = 200;
+const COMMAND_BEGINNINGS: usize = 16;
+
+/// How much of a command's output a plugin is told: the end of it, where
+/// a command says what it made.
+const COMMAND_OUTPUT: usize = 16 * 1024;
+
+/// How many commands are remembered as told, so one heard both from a
+/// conversation's stream and from a hook is told once.
+const COMMANDS_TOLD: usize = 256;
+
+/// How deep the scripts of `sh -c` and its like are looked into.
+const SHELL_DEPTH: usize = 3;
+
+/// Words a simple command can open with before the program it runs, and
+/// the words that close a compound one: the shell's own words, which run
+/// nothing, and the programs that run the command after them.
+const LEADING_WORDS: &[&str] = &[
+    "!", "{", "}", "if", "then", "elif", "else", "fi", "while", "until", "do", "done",
+];
+const RUNNERS: &[&str] = &["time", "exec", "command", "nohup", "env"];
+
+/// The options to `set` that change how the shell runs and print nothing,
+/// by their letters and by the names `-o` takes.
+const QUIET_SET_FLAGS: &[char] = &['e', 'u', 'E', 'C', 'f'];
+const QUIET_SET_OPTIONS: &[&str] = &[
+    "errexit",
+    "nounset",
+    "pipefail",
+    "errtrace",
+    "noclobber",
+    "noglob",
+];
+
+/// One simple command in a line: its words from the program on, with the
+/// quotes taken off, and its text as written from the program to its last
+/// word.
+#[derive(Debug, Clone, PartialEq)]
+struct Part {
+    /// The words from the program on, with quotes taken off; none for a
+    /// part that only sets variables or closes a compound command.
+    words: Vec<String>,
+    /// The line from the program to the last word.
+    text: String,
+    /// The line from the part's first word, the words before the program
+    /// among them.
+    whole: String,
+    /// Whether a program such as `env` or `time` stands before the program.
+    runner: bool,
+}
+
+impl Part {
+    /// Whether the command surely prints nothing of its own: `NAME=value`
+    /// words alone, `cd` to anywhere but `-`, `export` with only
+    /// `NAME=value` words, and `set` with only those and options that print
+    /// nothing. A part that expands anything, with `$`, a backquote or a
+    /// process substitution, may print what it expands in an error, and a
+    /// part a runner such as `env` or `time` opens prints of its own, so
+    /// neither is ever quiet.
+    fn quiet(&self) -> bool {
+        if self.runner
+            || ["$", "`", "<(", ">("]
+                .iter()
+                .any(|expands| self.whole.contains(expands))
+        {
+            return false;
+        }
+        let Some((program, words)) = self.words.split_first() else {
+            return true;
+        };
+        match program.as_str() {
+            "cd" => words.iter().all(|word| word != "-"),
+            "export" => !words.is_empty() && words.iter().all(|word| assignment(word)),
+            "set" => !words.is_empty() && quiet_set(words),
+            _ => false,
+        }
+    }
+}
+
+/// Whether `set` given these words prints nothing: each is `NAME=value`,
+/// or options from [`QUIET_SET_FLAGS`], `-o` naming one of
+/// [`QUIET_SET_OPTIONS`].
+fn quiet_set(words: &[String]) -> bool {
+    let mut words = words.iter();
+    while let Some(word) = words.next() {
+        if assignment(word) {
+            continue;
+        }
+        let Some(flags) = word
+            .strip_prefix(['-', '+'])
+            .filter(|flags| !flags.is_empty())
+        else {
+            return false;
+        };
+        for flag in flags.chars() {
+            let quiet = if flag == 'o' {
+                words
+                    .next()
+                    .is_some_and(|name| QUIET_SET_OPTIONS.contains(&name.as_str()))
+            } else {
+                QUIET_SET_FLAGS.contains(&flag)
+            };
+            if !quiet {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The simple commands a shell command line runs: the line is split where
+/// `;`, `&`, `|`, a newline, a parenthesis or a backquote stands outside
+/// quotes, and the words a command opens with before its program,
+/// `NAME=value` among them, are dropped, as is a command of nothing else.
+/// A heredoc's body is text and not commands. The script a shell is given
+/// with `-c` stands in for that shell, so a command an agent wraps in
+/// `zsh -lc '...'` is found inside and the wrapper is not a command of its
+/// own.
+fn command_parts(line: &str) -> Vec<Part> {
+    let mut parts = Vec::new();
+    split_command(line, 0, &mut parts);
+    parts
+}
+
+type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
+
+/// A word being read: its text, with quotes taken off, and where it
+/// starts in the line.
+struct Word {
+    text: String,
+    start: Option<usize>,
+}
+
+impl Word {
+    fn push(&mut self, at: usize, c: char) {
+        self.start.get_or_insert(at);
+        self.text.push(c);
+    }
+
+    fn end(&mut self, at: usize, words: &mut Vec<(String, usize, usize)>) {
+        if let Some(start) = self.start.take() {
+            words.push((std::mem::take(&mut self.text), start, at));
+        }
+    }
+}
+
+fn split_command(line: &str, depth: usize, parts: &mut Vec<Part>) {
+    let mut words = Vec::new();
+    let mut word = Word {
+        text: String::new(),
+        start: None,
+    };
+    let mut heredocs = Vec::new();
+    let mut chars = line.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\'' => {
+                word.start.get_or_insert(at);
+                for (_, c) in chars.by_ref() {
+                    if c == '\'' {
+                        break;
+                    }
+                    word.text.push(c);
+                }
+            }
+            '"' => {
+                word.start.get_or_insert(at);
+                double_quoted(&mut chars, &mut word.text);
+            }
+            '\\' => {
+                if let Some((next_at, next)) = chars.next() {
+                    if next != '\n' {
+                        word.start.get_or_insert(at);
+                        word.push(next_at, next);
+                    }
+                }
+            }
+            '#' if word.start.is_none() => while chars.next_if(|(_, c)| *c != '\n').is_some() {},
+            '<' if chars.peek().is_some_and(|(_, c)| *c == '<') => {
+                chars.next();
+                if chars.next_if(|(_, c)| *c == '<').is_some() {
+                    word.push(at, '<');
+                    word.text.push_str("<<");
+                } else {
+                    word.end(at, &mut words);
+                    heredocs.extend(heredoc(&mut chars));
+                }
+            }
+            '&' if word.text.ends_with(['>', '<'])
+                || chars.peek().is_some_and(|(_, c)| *c == '>') =>
+            {
+                word.push(at, c);
+            }
+            '\n' => {
+                word.end(at, &mut words);
+                end_part(line, &mut words, depth, parts);
+                skip_heredocs(&mut chars, &mut heredocs);
+            }
+            ';' | '&' | '|' | '(' | ')' | '`' => {
+                word.end(at, &mut words);
+                end_part(line, &mut words, depth, parts);
+            }
+            c if c.is_whitespace() => word.end(at, &mut words),
+            c => word.push(at, c),
+        }
+    }
+    word.end(line.len(), &mut words);
+    end_part(line, &mut words, depth, parts);
+}
+
+/// Reads a double-quoted string after its opening quote, into `word`. A
+/// heredoc opened inside a `$(...)` in it has its body read as the
+/// string's text, quotes and all, as the shell reads it.
+fn double_quoted(chars: &mut Chars, word: &mut String) {
+    let mut substitutions = 0usize;
+    let mut heredocs = Vec::new();
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.peek().map(|(_, c)| *c) {
+                Some(next @ ('"' | '\\' | '$' | '`')) => {
+                    word.push(next);
+                    chars.next();
+                }
+                Some('\n') => {
+                    chars.next();
+                }
+                _ => word.push('\\'),
+            },
+            '$' if chars.peek().is_some_and(|(_, c)| *c == '(') => {
+                substitutions += 1;
+                word.push(c);
+            }
+            ')' if substitutions > 0 => {
+                substitutions -= 1;
+                word.push(c);
+            }
+            '<' if substitutions > 0 && chars.peek().is_some_and(|(_, c)| *c == '<') => {
+                chars.next();
+                if chars.next_if(|(_, c)| *c == '<').is_some() {
+                    word.push_str("<<<");
+                } else {
+                    heredocs.extend(heredoc(chars));
+                }
+            }
+            '\n' => {
+                word.push(c);
+                skip_heredocs(chars, &mut heredocs);
+            }
+            c => word.push(c),
+        }
+    }
+}
+
+/// The word a heredoc ends at, read after its `<<`, quotes taken off, and
+/// whether its body's lines may be indented with tabs, as `<<-` allows.
+fn heredoc(chars: &mut Chars) -> Option<(String, bool)> {
+    let tabs = chars.next_if(|(_, c)| *c == '-').is_some();
+    while chars.next_if(|(_, c)| *c == ' ' || *c == '\t').is_some() {}
+    let mut end = String::new();
+    while let Some((_, c)) = chars.next_if(|(_, c)| {
+        !c.is_whitespace() && !matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`')
+    }) {
+        if !matches!(c, '\'' | '"' | '\\') {
+            end.push(c);
+        }
+    }
+    (!end.is_empty()).then_some((end, tabs))
+}
+
+/// Passes over the bodies of the heredocs a line opened, each up to the
+/// line that ends it, or to the end of the text when none does.
+fn skip_heredocs(chars: &mut Chars, heredocs: &mut Vec<(String, bool)>) {
+    for (end, tabs) in heredocs.drain(..) {
+        loop {
+            let mut body_line = String::new();
+            let mut more = false;
+            for (_, c) in chars.by_ref() {
+                if c == '\n' {
+                    more = true;
+                    break;
+                }
+                body_line.push(c);
+            }
+            let body_line = if tabs {
+                body_line.trim_start_matches('\t')
+            } else {
+                &body_line
+            };
+            if body_line == end || !more {
+                break;
+            }
+        }
+    }
+}
+
+fn end_part(
+    line: &str,
+    words: &mut Vec<(String, usize, usize)>,
+    depth: usize,
+    parts: &mut Vec<Part>,
+) {
+    let mut words = std::mem::take(words);
+    let (Some((_, first, _)), Some((_, _, end))) = (words.first(), words.last()) else {
+        return;
+    };
+    let (first, end) = (*first, *end);
+    let program = words
+        .iter()
+        .position(|(word, _, _)| {
+            let word = word.as_str();
+            !LEADING_WORDS.contains(&word) && !RUNNERS.contains(&word) && !assignment(word)
+        })
+        .unwrap_or(words.len());
+    let runner = words[..program]
+        .iter()
+        .any(|(word, _, _)| RUNNERS.contains(&word.as_str()));
+    let text = words
+        .get(program)
+        .map_or(String::new(), |(_, start, _)| line[*start..end].to_string());
+    let words: Vec<String> = words.drain(program..).map(|(word, _, _)| word).collect();
+    if depth < SHELL_DEPTH {
+        if let Some(script) = shell_script(&words) {
+            split_command(script, depth + 1, parts);
+            return;
+        }
+    }
+    parts.push(Part {
+        words,
+        text,
+        whole: line[first..end].to_string(),
+        runner,
+    });
+}
+
+/// Whether a word sets a variable for the command after it.
+fn assignment(word: &str) -> bool {
+    word.split_once('=').is_some_and(|(name, _)| {
+        let mut chars = name.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
+/// The script a shell is given to run with `-c`, as in `zsh -lc '...'`.
+fn shell_script(words: &[String]) -> Option<&str> {
+    let shell = words.first()?.rsplit('/').next()?;
+    if !matches!(shell, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        return None;
+    }
+    let mut rest = words[1..].iter();
+    while let Some(word) = rest.next() {
+        if !word.starts_with('-') || word.starts_with("--") {
+            return None;
+        }
+        if word.contains('c') {
+            return rest.next().map(String::as_str);
+        }
+    }
+    None
+}
+
+/// Whether a simple command runs what one of the beginnings names: its
+/// words begin with the beginning's words, word for word, its program
+/// known by its name wherever it lives.
+fn runs(part: &Part, beginnings: &[String]) -> bool {
+    beginnings.iter().any(|beginning| {
+        let wanted: Vec<&str> = beginning.split(' ').collect();
+        part.words.len() >= wanted.len()
+            && part
+                .words
+                .iter()
+                .zip(&wanted)
+                .enumerate()
+                .all(|(at, (word, want))| {
+                    word == want
+                        || (at == 0 && !want.contains('/') && word.rsplit('/').next() == Some(want))
+                })
+    })
+}
+
+/// The output a plugin may be told for the simple command at `heard` in a
+/// line: all of it when every other command in the line prints nothing,
+/// and none otherwise, since it is not that command's alone.
+fn output_of<'a>(parts: &[Part], heard: usize, output: &'a str) -> Option<&'a str> {
+    parts
+        .iter()
+        .enumerate()
+        .all(|(at, part)| at == heard || part.quiet())
+        .then_some(output)
+}
+
+/// The end of a command's output a plugin is told, and whether it was cut
+/// to that.
+fn output_end(output: &str) -> (&str, bool) {
+    if output.len() <= COMMAND_OUTPUT {
+        return (output, false);
+    }
+    let mut start = output.len() - COMMAND_OUTPUT;
+    while !output.is_char_boundary(start) {
+        start += 1;
+    }
+    (&output[start..], true)
 }
 
 /// Whether a watched root is in a project, or is the project itself.
@@ -976,6 +1621,7 @@ fn checked_section(
     name: &str,
     message: &serde_json::Value,
     hello: Option<&Hello>,
+    session: Option<String>,
 ) -> Option<SectionEvent> {
     let text = |key: &str| message.get(key).and_then(|value| value.as_str());
     let section = text("id").unwrap_or_default();
@@ -1008,6 +1654,7 @@ fn checked_section(
             .filter(|detail| !detail.is_empty())
             .map(str::to_string),
         project: project.to_string(),
+        session,
         rows,
         actions: checked_actions(message.get("actions")),
         folded: message
@@ -1644,15 +2291,22 @@ impl Inner {
             });
         }
         // The greeting comes before anything else the plugin is told: the
-        // app's version and the projects open on this machine.
+        // app's version and the projects open on this machine. The sessions
+        // running already follow it, each as it would have started. The
+        // sessions stay locked until the process is listed, so one starting
+        // meanwhile is told in the list or by the broadcast that follows.
         let projects = self.projects.lock().expect("plugins lock").clone();
         let hello = serde_json::json!({
             "type": "hello",
             "app": env!("CARGO_PKG_VERSION"),
             "projects": projects,
         });
+        let ptys = self.ptys.lock().expect("plugins lock");
         if let Ok(mut pipe) = stdin.lock() {
             let _ = writeln!(pipe, "{hello}");
+            for line in ptys.values().filter_map(|pty| session_line("started", pty)) {
+                let _ = writeln!(pipe, "{line}");
+            }
             let _ = pipe.flush();
         }
         {
@@ -1669,6 +2323,7 @@ impl Inner {
                     failures,
                     complaints,
                     complained,
+                    commands: declared.commands.clone(),
                 },
             );
             // A process that is still going when the next one takes its
@@ -1678,6 +2333,7 @@ impl Inner {
                 reap(old.child);
             }
         }
+        drop(ptys);
         self.tell(&source.id, name, State::Starting, None, None);
 
         // The reader: the greeting first, then whatever the plugin says,
@@ -1822,6 +2478,12 @@ impl Inner {
             }
             out
         };
+        // Its actions are answered by no one now, and the next process
+        // under its name opens nothing for them.
+        self.pending
+            .lock()
+            .expect("plugins lock")
+            .retain(|_, waiting| waiting.plugin != key);
         self.publish();
         self.forget_sections(source_id, name);
         self.forget_views(source_id, name);
@@ -1939,8 +2601,22 @@ impl Inner {
 
     /// Writes the tools out for the tool server, which reads the file as
     /// the agent asks. Written whole and moved into place, so a reader
-    /// sees one list or the other and never half of one.
+    /// sees one list or the other and never half of one. Says too whether
+    /// an enabled plugin listens for commands, for the hooks.
     fn publish(&self) {
+        let hears = self
+            .running
+            .lock()
+            .expect("plugins lock")
+            .values()
+            .any(|live| live.state != State::Off && !live.commands.is_empty());
+        if crate::hook::set_hears_commands(&self.home, hears) {
+            crate::events::emit(
+                &self.sink,
+                PLUGIN_HEARS,
+                &serde_json::json!({ "hears": hears }),
+            );
+        }
         let Ok(text) = serde_json::to_string(&self.tools()) else {
             return;
         };
@@ -2018,7 +2694,13 @@ impl Inner {
             Some(text) => text.to_string(),
             None => serde_json::to_string(value).unwrap_or_default(),
         };
-        if self.pending.lock().expect("plugins lock").remove(id) {
+        if self
+            .pending
+            .lock()
+            .expect("plugins lock")
+            .remove(id)
+            .is_some()
+        {
             if let Some(error) = message.get("error").filter(|error| !error.is_null()) {
                 crate::events::emit(
                     &self.sink,
@@ -2055,8 +2737,24 @@ impl Inner {
     fn said(&self, source_id: &str, name: &str, kind: &str, message: &serde_json::Value) {
         match kind {
             "section" => {
+                // Rows for a session name it by the agent's id; the window
+                // knows it by its token, and rows for a session not running
+                // here are for no row the window has.
+                let agent_id = message
+                    .get("session")
+                    .and_then(|session| session.as_str())
+                    .map(str::trim)
+                    .filter(|session| !session.is_empty());
+                let token = match agent_id {
+                    Some(id) => match self.token_of(id) {
+                        Some(token) => Some(token),
+                        None => return,
+                    },
+                    None => None,
+                };
                 let hello = self.greeting(source_id, name);
-                let Some(section) = checked_section(source_id, name, message, hello.as_ref())
+                let Some(section) =
+                    checked_section(source_id, name, message, hello.as_ref(), token)
                 else {
                     return;
                 };
@@ -2065,6 +2763,7 @@ impl Inner {
                     name.to_string(),
                     section.section.clone(),
                     section.project.clone(),
+                    agent_id.unwrap_or_default().to_string(),
                 );
                 self.sections
                     .lock()
@@ -2075,8 +2774,139 @@ impl Inner {
             "view" => self.viewed(source_id, name, message),
             "view_data" => self.view_data(source_id, name, message),
             "open" | "diff" | "present" | "notify" => self.requested(kind, message),
+            "mark" => self.marked(source_id, name, message),
+            "open_url" => self.open_url(source_id, name, message),
             _ => {}
         }
+    }
+
+    /// One `mark` line from a plugin: its mark on a session's row, or the
+    /// mark gone when the line has no icon. A mark on a session not running
+    /// here is for no row and is dropped.
+    fn marked(&self, source_id: &str, name: &str, message: &serde_json::Value) {
+        let text = |key: &str| {
+            message
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        // The session's own project, whatever the message names, so a
+        // session carries one mark of a plugin's.
+        let Some(session) = text("session") else {
+            return;
+        };
+        let Some((token, project)) = self.place_of(&session) else {
+            return;
+        };
+        let icon = text("icon").map(|icon| {
+            if ICONS.contains(&icon.as_str()) {
+                icon
+            } else {
+                "dot".to_string()
+            }
+        });
+        let key: MarkKey = (
+            source_id.to_string(),
+            name.to_string(),
+            project.clone(),
+            session,
+        );
+        let mark = MarkEvent {
+            source: source_id.to_string(),
+            plugin: name.to_string(),
+            project,
+            session: token,
+            count: icon.as_ref().and_then(|_| {
+                message
+                    .get("count")
+                    .and_then(|count| count.as_u64())
+                    .filter(|count| *count > 0)
+                    .map(|count| u32::try_from(count).unwrap_or(u32::MAX))
+            }),
+            state: icon
+                .as_ref()
+                .and_then(|_| text("state").filter(|state| STATES.contains(&state.as_str()))),
+            label: icon
+                .as_ref()
+                .and_then(|_| text("label"))
+                .map(|label| crate::show::one_line(&label)),
+            icon,
+        };
+        {
+            let mut marks = self.marks.lock().expect("plugins lock");
+            if mark.icon.is_some() {
+                marks.insert(key, mark.clone());
+            } else if marks.remove(&key).is_none() {
+                return;
+            }
+        }
+        crate::events::emit(&self.sink, PLUGIN_MARK, &mark);
+    }
+
+    /// The marks a plugin left go with it, or the marks on a session that
+    /// ended: each is told gone and forgotten.
+    fn forget_marks(&self, gone: impl Fn(&MarkKey) -> bool) {
+        let cleared: Vec<MarkEvent> = {
+            let mut marks = self.marks.lock().expect("plugins lock");
+            let keys: Vec<MarkKey> = marks.keys().filter(|key| gone(key)).cloned().collect();
+            keys.iter().filter_map(|key| marks.remove(key)).collect()
+        };
+        for mark in cleared {
+            crate::events::emit(
+                &self.sink,
+                PLUGIN_MARK,
+                &MarkEvent {
+                    icon: None,
+                    count: None,
+                    state: None,
+                    label: None,
+                    ..mark
+                },
+            );
+        }
+    }
+
+    /// One `open_url` line from a plugin: a web address for the user's
+    /// browser, for the action it names. Only http and https open, one for
+    /// each action, while that action waits for its result and for 30
+    /// seconds at most after it was sent, so the browser opens when the
+    /// user asked something of the plugin and at no other time.
+    fn open_url(&self, source_id: &str, name: &str, message: &serde_json::Value) {
+        let text = |key: &str| {
+            message
+                .get(key)
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        };
+        let (Some(project), Some(url), Some(action)) =
+            (text("project"), text("url"), text("action"))
+        else {
+            return;
+        };
+        if !web_address(url) {
+            return;
+        }
+        let key: Key = (source_id.to_string(), name.to_string());
+        {
+            let mut pending = self.pending.lock().expect("plugins lock");
+            match pending.get_mut(action) {
+                Some(waiting) if waiting.may_open(&key, Instant::now()) => waiting.opened = true,
+                _ => return,
+            }
+        }
+        crate::events::emit(
+            &self.sink,
+            PLUGIN_OPEN_URL,
+            &OpenUrl {
+                source: source_id.to_string(),
+                plugin: name.to_string(),
+                project: project.to_string(),
+                url: url.to_string(),
+            },
+        );
     }
 
     /// The room a plugin's view asks for and the directory its pages come
@@ -2218,13 +3048,15 @@ impl Inner {
     /// The rows a plugin left on the tree go with it: every section it had
     /// is told empty and forgotten.
     fn forget_sections(&self, source_id: &str, name: &str) {
+        self.forget_marks(|(source, plugin, _, _)| source == source_id && plugin == name);
+        self.drop_sections(|(source, plugin, _, _, _)| source == source_id && plugin == name);
+    }
+
+    /// Tells each kept section the test picks empty, and forgets it.
+    fn drop_sections(&self, gone: impl Fn(&SectionKey) -> bool) {
         let gone: Vec<SectionEvent> = {
             let mut sections = self.sections.lock().expect("plugins lock");
-            let keys: Vec<SectionKey> = sections
-                .keys()
-                .filter(|(source, plugin, _, _)| source == source_id && plugin == name)
-                .cloned()
-                .collect();
+            let keys: Vec<SectionKey> = sections.keys().filter(|key| gone(key)).cloned().collect();
             keys.iter().filter_map(|key| sections.remove(key)).collect()
         };
         for section in gone {
@@ -2364,9 +3196,10 @@ impl Inner {
         row: Option<&str>,
         input: &serde_json::Value,
         project: &str,
+        session: Option<&str>,
     ) -> Result<(), String> {
         let id = uuid::Uuid::new_v4().to_string();
-        let message = serde_json::json!({
+        let mut message = serde_json::json!({
             "type": "action",
             "id": id,
             "section": section,
@@ -2375,10 +3208,19 @@ impl Inner {
             "input": input,
             "project": project,
         });
-        self.pending
-            .lock()
-            .expect("plugins lock")
-            .insert(id.clone());
+        // The window names a session by its token; the plugin hears the
+        // agent's id, as its session lines give it.
+        if let Some(session) = session.and_then(|token| self.session_of(token)) {
+            message["session"] = serde_json::Value::String(session);
+        }
+        self.pending.lock().expect("plugins lock").insert(
+            id.clone(),
+            Waiting {
+                plugin: (source_id.to_string(), name.to_string()),
+                sent: Instant::now(),
+                opened: false,
+            },
+        );
         if let Err(error) = self.send(source_id, name, &message) {
             self.pending.lock().expect("plugins lock").remove(&id);
             return Err(error);
@@ -2443,28 +3285,43 @@ impl Inner {
         tokens.all(|other| other == token).then_some(token)
     }
 
-    fn session_started(
-        &self,
-        pty_id: &str,
-        session: Option<&str>,
-        token: Option<&str>,
-        project: &str,
-    ) {
-        self.ptys.lock().expect("plugins lock").insert(
-            pty_id.to_string(),
-            Pty {
-                session: session.map(str::to_string),
-                token: token.map(str::to_string),
-                project: project.to_string(),
-            },
-        );
-        if let Some(session) = session {
-            self.session_line("started", session, project);
+    /// The token and the project of the session with this agent id, by the
+    /// same rule as `token_of`.
+    fn place_of(&self, session: &str) -> Option<(String, String)> {
+        let ptys = self.ptys.lock().expect("plugins lock");
+        let mut places = ptys
+            .values()
+            .filter(|pty| pty.session.as_deref() == Some(session))
+            .filter_map(|pty| Some((pty.token.clone()?, pty.project.clone())));
+        let place = places.next()?;
+        places.all(|other| other == place).then_some(place)
+    }
+
+    fn session_started(&self, pty_id: &str, started: Started) {
+        let pty = Pty {
+            session: started.session.map(str::to_string),
+            token: started.token.map(str::to_string),
+            project: started.project.to_string(),
+            cwd: started.cwd.to_string(),
+            starter: started.starter.map(str::to_string),
+            worktree: started.worktree,
+            branch: started
+                .branch
+                .filter(|branch| started.worktree && !branch.is_empty())
+                .map(str::to_string),
+        };
+        let line = session_line("started", &pty);
+        self.ptys
+            .lock()
+            .expect("plugins lock")
+            .insert(pty_id.to_string(), pty);
+        if let Some(line) = line {
+            self.broadcast(&line);
         }
     }
 
     fn session_identified(&self, pty_id: &str, session: &str) {
-        let project = {
+        let line = {
             let mut ptys = self.ptys.lock().expect("plugins lock");
             let Some(pty) = ptys.get_mut(pty_id) else {
                 return;
@@ -2473,31 +3330,116 @@ impl Inner {
                 return;
             }
             pty.session = Some(session.to_string());
-            pty.project.clone()
+            session_line("started", pty)
         };
-        self.session_line("started", session, &project);
+        if let Some(line) = line {
+            self.broadcast(&line);
+        }
     }
 
+    /// A pty ended: the plugins hear the session ended, and what they put
+    /// on it, its sections and its marks, goes with it unless another pty
+    /// still runs the session.
     fn session_ended(&self, pty_id: &str) {
-        let gone = self.ptys.lock().expect("plugins lock").remove(pty_id);
-        let Some(Pty {
-            session: Some(session),
-            project,
-            ..
-        }) = gone
-        else {
+        let (gone, still) = {
+            let mut ptys = self.ptys.lock().expect("plugins lock");
+            let gone = ptys.remove(pty_id);
+            let still = gone
+                .as_ref()
+                .and_then(|pty| pty.session.as_ref())
+                .is_some_and(|id| {
+                    ptys.values()
+                        .any(|other| other.session.as_ref() == Some(id))
+                });
+            (gone, still)
+        };
+        let Some(pty) = gone else {
             return;
         };
-        self.session_line("ended", &session, &project);
+        let Some(line) = session_line("ended", &pty) else {
+            return;
+        };
+        self.broadcast(&line);
+        if still {
+            return;
+        }
+        let Some(id) = pty.session.filter(|id| !id.is_empty()) else {
+            return;
+        };
+        self.drop_sections(|(_, _, _, _, session)| session == &id);
+        self.forget_marks(|(_, _, _, session)| session == &id);
     }
 
-    fn session_line(&self, event: &str, session: &str, project: &str) {
-        self.broadcast(&serde_json::json!({
-            "type": "session",
-            "event": event,
-            "id": session,
-            "project": project,
-        }));
+    fn command_ran(&self, ran: Ran) {
+        let (session, project, cwd) = {
+            let ptys = self.ptys.lock().expect("plugins lock");
+            let pty = match ran.pty {
+                Some(id) => ptys.get(id),
+                None => ran.session.and_then(|session| {
+                    ptys.values()
+                        .find(|pty| pty.session.as_deref() == Some(session))
+                }),
+            };
+            let Some(pty) = pty else {
+                return;
+            };
+            let Some(session) = pty.session.clone().filter(|id| !id.is_empty()) else {
+                return;
+            };
+            let cwd = ran
+                .cwd
+                .filter(|cwd| !cwd.is_empty())
+                .map_or_else(|| pty.cwd.clone(), str::to_string);
+            (session, pty.project.clone(), cwd)
+        };
+        let parts = command_parts(ran.command);
+        let listening: Vec<(Arc<Mutex<ChildStdin>>, Vec<usize>)> = {
+            let running = self.running.lock().expect("plugins lock");
+            running
+                .values()
+                .filter(|live| matches!(live.state, State::Starting | State::Running))
+                .filter_map(|live| {
+                    let heard: Vec<usize> = (0..parts.len())
+                        .filter(|at| runs(&parts[*at], &live.commands))
+                        .collect();
+                    (!heard.is_empty()).then(|| (Arc::clone(&live.stdin), heard))
+                })
+                .collect()
+        };
+        if listening.is_empty() {
+            return;
+        }
+        if !ran.call.is_empty() {
+            let mut told = self.told.lock().expect("plugins lock");
+            let key = (session.clone(), ran.call.to_string());
+            if told.contains(&key) {
+                return;
+            }
+            if told.len() == COMMANDS_TOLD {
+                told.pop_front();
+            }
+            told.push_back(key);
+        }
+        for (stdin, heard) in listening {
+            for at in heard {
+                let output = output_of(&parts, at, ran.output).map(output_end);
+                let message = serde_json::json!({
+                    "type": "command",
+                    "project": project,
+                    "session": session,
+                    "cwd": cwd,
+                    "command": parts[at].text,
+                    "ok": ran.ok,
+                    "output": output.map(|(output, _)| output),
+                    "truncated": output.is_some_and(|(_, cut)| cut || ran.truncated),
+                    "withheld": output.is_none(),
+                });
+                if let Ok(mut stdin) = stdin.lock() {
+                    let _ = writeln!(stdin, "{message}");
+                    let _ = stdin.flush();
+                }
+            }
+        }
     }
 
     /// Writes a line to every plugin whose process is up.
@@ -2540,6 +3482,23 @@ mod tests {
     use super::*;
     use crate::events::testing::Recorder;
     use crate::scratch::Scratch;
+
+    /// A session starting in its project's own folder, started by no one.
+    fn started<'a>(
+        session: Option<&'a str>,
+        token: Option<&'a str>,
+        project: &'a str,
+    ) -> Started<'a> {
+        Started {
+            session,
+            token,
+            project,
+            cwd: project,
+            starter: None,
+            worktree: false,
+            branch: None,
+        }
+    }
 
     fn vars() -> HashMap<String, String> {
         HashMap::from([(
@@ -2625,6 +3584,46 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> received.txt
   case "$line" in
     *'"type":"stop"'*) exit 0;;
+  esac
+done
+"#;
+
+    /// A plugin that puts rows and a mark on the session it is told of,
+    /// writes down every line it hears, and asks to open web addresses for
+    /// an action, for none, and for one it was sent before it restarted.
+    #[cfg(unix)]
+    const SESSIONS: &str = r#"#!/bin/sh
+echo '{"type":"hello","name":"board","version":"1.0.0","sections":[{"id":"checks"}]}'
+echo '{"type":"open_url","project":"PROJECT","url":"https://example.com/early"}'
+if [ -f held.txt ]; then
+  printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/after-restart"}\n' "$(cat held.txt)"
+fi
+echo '{"type":"section","id":"checks","project":"PROJECT","session":"s-9","rows":[{"id":"stray","label":"Stray"}]}'
+echo '{"type":"mark","project":"PROJECT","session":"s-9","icon":"branch"}'
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> received.txt
+  case "$line" in
+    *'"type":"stop"'*) exit 0;;
+    *'"event":"started"'*'"id":"s-1"'*)
+      echo '{"type":"section","id":"checks","project":"PROJECT","session":"s-1","rows":[{"id":"ci","label":"CI","state":"failed","facts":[{"label":"lint","text":"2 errors","state":"failed"},{"label":"test","state":"ok"}]}]}'
+      echo '{"type":"mark","project":"PROJECT","session":"s-1","icon":"pull-request","count":2,"state":"failed","label":"  2   failing  ","extra":true}'
+      ;;
+    *'"event":"started"'*'"id":"s-2"'*)
+      echo '{"type":"mark","project":"/elsewhere","session":"s-2","icon":"rocket","count":0,"state":"odd"}'
+      ;;
+    *'"action":"hold"'*)
+      printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/' > held.txt
+      exit 1
+      ;;
+    *'"type":"action"'*)
+      id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
+      echo '{"type":"open_url","project":"PROJECT","url":"https://example.com/unnamed"}'
+      echo '{"type":"open_url","project":"PROJECT","action":"not-sent","url":"https://example.com/wrong"}'
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"file:///etc/passwd"}\n' "$id"
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/pull/1"}\n' "$id"
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/pull/2"}\n' "$id"
+      printf '{"type":"result","id":"%s"}\n' "$id"
+      ;;
   esac
 done
 "#;
@@ -3169,7 +4168,7 @@ done
 
         // The calling session's tools name it by its token; the plugin
         // hears the agent's own id, as the session events give it.
-        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/p");
+        plugins.session_started("pty-1", started(Some("s-1"), Some("t-1"), "/p"));
         let call_from = |id: &str, plugin: &str, token: &str| ToolRequest {
             id: id.to_string(),
             source: added.id.clone(),
@@ -3235,7 +4234,7 @@ sections = ["Pull request"]
         let recorder = Arc::new(Recorder::default());
         let plugins = plugins_at(&home, recorder.clone());
         // The session the plugin names in its line, by the agent's id.
-        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), &here);
+        plugins.session_started("pty-1", started(Some("s-1"), Some("t-1"), &here));
         let added = plugins.add(&here, None).unwrap();
         plugins.enable(&added.id, "board", true).unwrap();
 
@@ -3280,6 +4279,10 @@ sections = ["Pull request"]
         assert_eq!(rows[0]["state"], "ok");
         assert_eq!(rows[0]["default"], "open");
         assert_eq!(rows[0]["actions"][0]["label"], "Open");
+        // A plugin that names no session and no facts has rows that are the
+        // whole project's and open on nothing.
+        assert!(section["session"].is_null());
+        assert_eq!(rows[0]["facts"], serde_json::json!([]));
         assert_eq!(section["actions"][0]["id"], "refresh");
         assert_eq!(section["actions"][0]["input"][0]["kind"], "text");
 
@@ -3313,6 +4316,7 @@ sections = ["Pull request"]
                 Some("lint"),
                 &serde_json::json!({}),
                 &here,
+                None,
             )
             .unwrap();
         let notice = wait(PLUGIN_NOTICE, &any);
@@ -3332,6 +4336,7 @@ sections = ["Pull request"]
                 None,
                 &serde_json::json!({}),
                 &here,
+                None,
             )
             .unwrap_err();
         assert_eq!(refused, "the plugin is not running");
@@ -3528,7 +4533,15 @@ run = ["sh", "main.sh"]
                             { "id": "n", "label": "N", "kind": "odd" }
                         ]
                     }],
-                    "default": "run"
+                    "default": "run",
+                    "facts": [
+                        { "label": "CI", "text": "3 of 4 passed", "state": "busy" },
+                        { "label": "Review", "text": "" },
+                        { "label": "", "text": "nameless" },
+                        { "label": "Odd", "state": "unsure" },
+                        "not a fact",
+                        { "label": 4 }
+                    ]
                 }
             ],
             "actions": [{ "id": "refresh", "label": "Refresh" }, { "id": "nameless" }]
@@ -3543,7 +4556,7 @@ run = ["sh", "main.sh"]
             ],
             view: None,
         };
-        let section = checked_section("src-1", "board", &message, Some(&greeting)).unwrap();
+        let section = checked_section("src-1", "board", &message, Some(&greeting), None).unwrap();
         assert_eq!(section.source, "src-1");
         assert_eq!(section.plugin, "board");
         assert_eq!(section.section, "pull-request");
@@ -3559,6 +4572,38 @@ run = ["sh", "main.sh"]
         assert_eq!(section.rows[0].actions.as_ref().unwrap().len(), 1);
         assert_eq!(section.rows[0].default, None);
         assert_eq!(section.rows[1].default.as_deref(), Some("run"));
+        // A row says nothing when opened unless it names facts, and a fact
+        // that is not one is dropped without its row.
+        assert!(section.rows[0].facts.is_empty());
+        assert_eq!(
+            section.rows[1].facts,
+            [
+                Fact {
+                    label: "CI".to_string(),
+                    text: Some("3 of 4 passed".to_string()),
+                    state: Some("busy".to_string()),
+                },
+                Fact {
+                    label: "Review".to_string(),
+                    text: None,
+                    state: None,
+                },
+            ]
+        );
+        let many = serde_json::json!({
+            "id": "checks",
+            "project": "/p",
+            "rows": [{
+                "id": "a",
+                "label": "A",
+                "facts": (0..12).map(|n| serde_json::json!({ "label": format!("f{n}") })).collect::<Vec<_>>()
+            }, { "id": "b", "label": "B", "facts": "not a list" }]
+        });
+        let many = checked_section("src-1", "board", &many, None, None).unwrap();
+        assert_eq!(many.rows[0].facts.len(), FACTS);
+        assert!(many.rows[1].facts.is_empty());
+        // Rows with no session are the whole project's.
+        assert_eq!(many.session, None);
         let fields = section.rows[1].actions.as_ref().unwrap()[0]
             .input
             .as_ref()
@@ -3574,7 +4619,7 @@ run = ["sh", "main.sh"]
         // Without the greeting it stands after every section that is named
         // in one.
         assert_eq!(
-            checked_section("src-1", "board", &message, None)
+            checked_section("src-1", "board", &message, None, None)
                 .unwrap()
                 .order,
             u32::MAX
@@ -3582,13 +4627,14 @@ run = ["sh", "main.sh"]
 
         // A section is named as a tool is, and is for one project.
         let named = |id: &str| serde_json::json!({ "id": id, "project": "/p", "rows": [] });
-        assert!(checked_section("src-1", "board", &named("Pull request"), None).is_none());
-        assert!(checked_section("src-1", "board", &named(""), None).is_none());
-        assert!(checked_section("src-1", "board", &named("pull-request"), None).is_some());
+        assert!(checked_section("src-1", "board", &named("Pull request"), None, None).is_none());
+        assert!(checked_section("src-1", "board", &named(""), None, None).is_none());
+        assert!(checked_section("src-1", "board", &named("pull-request"), None, None).is_some());
         assert!(checked_section(
             "src-1",
             "board",
             &serde_json::json!({ "id": "checks" }),
+            None,
             None
         )
         .is_none());
@@ -3599,6 +4645,7 @@ run = ["sh", "main.sh"]
             "board",
             &serde_json::json!({ "id": "checks", "project": "/p", "detail": "" }),
             Some(&greeting),
+            None,
         )
         .unwrap();
         assert_eq!(untitled.title, "checks");
@@ -4151,9 +5198,9 @@ run = ["sh", "main.sh"]
 
         // A session whose id is known at the spawn, one whose agent minted
         // its own, and a shell, which is no session at all.
-        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/two");
+        plugins.session_started("pty-1", started(Some("s-1"), Some("t-1"), "/two"));
         plugins.session_ended("pty-1");
-        plugins.session_started("pty-2", None, Some("t-2"), "/three");
+        plugins.session_started("pty-2", started(None, Some("t-2"), "/three"));
         plugins.session_identified("pty-2", "s-2");
         plugins.session_ended("pty-3");
         let sessions = wait(7);
@@ -4165,6 +5212,10 @@ run = ["sh", "main.sh"]
         assert_eq!(sessions[4]["event"], "started");
         assert_eq!(sessions[4]["id"], "s-1");
         assert_eq!(sessions[4]["project"], "/two");
+        assert_eq!(sessions[4]["cwd"], "/two");
+        assert!(sessions[4].get("startedBy").is_none());
+        assert_eq!(sessions[4]["worktree"], false);
+        assert!(sessions[4].get("branch").is_none());
         assert_eq!(sessions[5]["event"], "ended");
         assert_eq!(sessions[5]["id"], "s-1");
         assert_eq!(sessions[5]["project"], "/two");
@@ -4175,12 +5226,301 @@ run = ["sh", "main.sh"]
         plugins.enable(&added.id, "ears", false).unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn puts_a_plugin_s_rows_and_mark_on_a_session_and_opens_what_an_action_asks() {
+        let home = Scratch::absent("plugins-session-home");
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "board"
+path = "github"
+description = "Session rows."
+version = "1.0.0"
+run = ["sh", "main.sh"]
+"#,
+            "session-rows",
+        );
+        let here = dunce::canonicalize(&dir)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        std::fs::write(
+            dir.join("github/main.sh"),
+            SESSIONS.replace("PROJECT", &here),
+        )
+        .unwrap();
+        let received = dir.join("github/received.txt");
+        let recorder = Arc::new(Recorder::default());
+        let plugins = plugins_at(&home, recorder.clone());
+        // Two sessions run before the plugin starts: one in a worktree of
+        // the project, and one the first started.
+        let worktree = format!("{here}/.worktrees/fix");
+        plugins.session_started(
+            "pty-1",
+            Started {
+                session: Some("s-1"),
+                token: Some("t-1"),
+                project: &here,
+                cwd: &worktree,
+                starter: None,
+                worktree: true,
+                branch: Some("fix"),
+            },
+        );
+        plugins.session_started(
+            "pty-2",
+            Started {
+                session: Some("s-2"),
+                token: Some("t-2"),
+                project: &here,
+                cwd: &here,
+                starter: Some("s-1"),
+                worktree: false,
+                branch: Some("ignored without a worktree"),
+            },
+        );
+        let added = plugins.add(&here, None).unwrap();
+        plugins.enable(&added.id, "board", true).unwrap();
+
+        let events = |event: &str| -> Vec<serde_json::Value> {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(name, _)| name == event)
+                .map(|(_, payload)| payload.clone())
+                .collect()
+        };
+        let wait = |event: &'static str, ok: &dyn Fn(&serde_json::Value) -> bool| {
+            for _ in 0..50 {
+                if let Some(payload) = events(event).into_iter().rev().find(|payload| ok(payload)) {
+                    return payload;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("nothing said {event}");
+        };
+
+        // The sessions already running are told after the greeting, with
+        // where each runs and who started it.
+        let section = wait(PLUGIN_SECTION, &|payload| payload["session"] == "t-1");
+        let mark = wait(PLUGIN_MARK, &|payload| payload["session"] == "t-1");
+        let dot = wait(PLUGIN_MARK, &|payload| payload["session"] == "t-2");
+        let told: Vec<serde_json::Value> = std::fs::read_to_string(&received)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect();
+        assert_eq!(told[0]["type"], "hello");
+        let s1 = told.iter().find(|line| line["id"] == "s-1").unwrap();
+        assert_eq!(s1["type"], "session");
+        assert_eq!(s1["event"], "started");
+        assert_eq!(s1["project"], here);
+        assert_eq!(s1["cwd"], worktree);
+        assert!(s1.get("startedBy").is_none());
+        // Made for s-1: a worktree on the branch it was made on. s-2 runs in
+        // a folder the app did not make for it, and no branch is said.
+        assert_eq!(s1["worktree"], true);
+        assert_eq!(s1["branch"], "fix");
+        let s2 = told.iter().find(|line| line["id"] == "s-2").unwrap();
+        assert_eq!(s2["startedBy"], "s-1");
+        assert_eq!(s2["cwd"], here);
+        assert_eq!(s2["worktree"], false);
+        assert!(s2.get("branch").is_none());
+
+        // The session's rows reach the window under its token, facts and
+        // all.
+        assert_eq!(section["project"], here);
+        assert_eq!(section["rows"][0]["id"], "ci");
+        assert_eq!(section["rows"][0]["facts"][0]["label"], "lint");
+        assert_eq!(section["rows"][0]["facts"][0]["text"], "2 errors");
+        assert_eq!(section["rows"][0]["facts"][0]["state"], "failed");
+        assert!(section["rows"][0]["facts"][1]["text"].is_null());
+
+        // So does its mark, on one line; an icon the app has not got is a
+        // dot, and a count of none or a state it does not know says nothing.
+        assert_eq!(mark["source"], added.id);
+        assert_eq!(mark["plugin"], "board");
+        assert_eq!(mark["project"], here);
+        assert_eq!(mark["icon"], "pull-request");
+        assert_eq!(mark["count"], 2);
+        assert_eq!(mark["state"], "failed");
+        assert_eq!(mark["label"], "2 failing");
+        assert!(mark.get("extra").is_none());
+        // Marked under another project, it lands on the session's own.
+        assert_eq!(dot["project"], here);
+        assert_eq!(dot["icon"], "dot");
+        assert!(dot["count"].is_null());
+        assert!(dot["state"].is_null());
+
+        // Rows and a mark for a session not running here are for nothing,
+        // and a web address with no action waiting opens nothing.
+        assert!(events(PLUGIN_SECTION)
+            .iter()
+            .all(|payload| payload["rows"][0]["id"] != "stray"));
+        assert!(events(PLUGIN_MARK)
+            .iter()
+            .all(|payload| payload["icon"] != "branch"));
+        assert!(events(PLUGIN_OPEN_URL).is_empty());
+
+        // While an action waits, one web address that names it opens. One
+        // that names no action, or one not sent, or that is not for a
+        // browser, or a second for the same action, does not.
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "checks",
+                "open",
+                Some("ci"),
+                &serde_json::json!({}),
+                &here,
+                Some("t-1"),
+            )
+            .unwrap();
+        let opened = wait(PLUGIN_OPEN_URL, &|_| true);
+        assert_eq!(opened["url"], "https://example.com/pull/1");
+        assert_eq!(opened["project"], here);
+        assert_eq!(opened["plugin"], "board");
+        assert_eq!(events(PLUGIN_OPEN_URL).len(), 1);
+        // The action on a session's row names that session by the agent's
+        // id, as the session lines do.
+        let action = std::fs::read_to_string(&received)
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|line| line["type"] == "action")
+            .unwrap();
+        assert_eq!(action["session"], "s-1");
+        assert_eq!(action["row"], "ci");
+
+        // The session ends, and its rows and mark go with it; the other
+        // session's mark stays.
+        plugins.session_ended("pty-1");
+        let gone = wait(PLUGIN_SECTION, &|payload| {
+            payload["session"] == "t-1" && payload["rows"] == serde_json::json!([])
+        });
+        assert_eq!(gone["section"], "checks");
+        let cleared = wait(PLUGIN_MARK, &|payload| {
+            payload["session"] == "t-1" && payload["icon"].is_null()
+        });
+        assert!(cleared["count"].is_null());
+        assert!(events(PLUGIN_MARK)
+            .iter()
+            .all(|payload| payload["session"] != "t-2" || !payload["icon"].is_null()));
+
+        // An action the plugin holds unanswered when it dies opens nothing
+        // for the process that starts in its place.
+        let hellos = || {
+            std::fs::read_to_string(&received)
+                .unwrap()
+                .matches(r#""type":"hello""#)
+                .count()
+        };
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "checks",
+                "hold",
+                None,
+                &serde_json::json!({}),
+                &here,
+                None,
+            )
+            .unwrap();
+        for _ in 0..50 {
+            if hellos() == 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(hellos(), 2, "the plugin was not started again");
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "checks",
+                "open",
+                Some("ci"),
+                &serde_json::json!({}),
+                &here,
+                None,
+            )
+            .unwrap();
+        wait(PLUGIN_OPEN_URL, &|payload| {
+            payload["url"] == "https://example.com/pull/1" && events(PLUGIN_OPEN_URL).len() == 2
+        });
+        let opened: Vec<serde_json::Value> = events(PLUGIN_OPEN_URL)
+            .iter()
+            .map(|payload| payload["url"].clone())
+            .collect();
+        assert_eq!(
+            opened,
+            ["https://example.com/pull/1", "https://example.com/pull/1"]
+        );
+
+        // The plugin stops, and its mark on the other session goes too.
+        let cleared = || {
+            events(PLUGIN_MARK)
+                .iter()
+                .filter(|payload| payload["session"] == "t-2" && payload["icon"].is_null())
+                .count()
+        };
+        let before = cleared();
+        plugins.enable(&added.id, "board", false).unwrap();
+        for _ in 0..50 {
+            if cleared() > before {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(cleared() > before, "the mark stayed");
+    }
+
+    #[test]
+    fn an_action_lets_its_own_plugin_open_one_web_address_for_30_seconds() {
+        let board: Key = ("source".into(), "board".into());
+        let other: Key = ("source".into(), "other".into());
+        let sent = Instant::now();
+        let mut waiting = Waiting {
+            plugin: board.clone(),
+            sent,
+            opened: false,
+        };
+        assert!(waiting.may_open(&board, sent + Duration::from_secs(29)));
+        assert!(!waiting.may_open(&other, sent));
+        assert!(!waiting.may_open(&board, sent + OPEN_WINDOW));
+        waiting.opened = true;
+        assert!(!waiting.may_open(&board, sent));
+    }
+
+    #[test]
+    fn a_web_address_is_http_or_https_with_a_host_and_nothing_else() {
+        assert!(web_address("https://github.com/elva-labs/chord/pull/1"));
+        assert!(web_address("http://localhost:3000/x?y=1#z"));
+        assert!(web_address("HTTPS://example.com"));
+        assert!(!web_address("https://"));
+        assert!(!web_address("https:///etc/passwd"));
+        assert!(!web_address("file:///etc/passwd"));
+        assert!(!web_address("javascript:alert(1)"));
+        assert!(!web_address("ftp://example.com"));
+        assert!(!web_address("https://example.com/a b"));
+        assert!(!web_address("https://example.com/\n"));
+        assert!(!web_address(&format!(
+            "https://example.com/{}",
+            "a".repeat(2048)
+        )));
+    }
+
     #[test]
     fn names_a_session_to_the_window_by_its_token_never_its_id() {
         let home = Scratch::absent("plugins-token-of-home");
         let plugins = plugins_at(&home, Arc::new(Recorder::default()));
-        plugins.session_started("pty-1", Some("s-1"), Some("t-1"), "/p");
-        plugins.session_started("pty-2", None, Some("t-2"), "/p");
+        plugins.session_started("pty-1", started(Some("s-1"), Some("t-1"), "/p"));
+        plugins.session_started("pty-2", started(None, Some("t-2"), "/p"));
         assert_eq!(plugins.inner.token_of("s-1").as_deref(), Some("t-1"));
         // An id the core has not learned yet, or never ran, names none,
         // and neither does a token passed off as an id.
@@ -4189,12 +5529,438 @@ run = ["sh", "main.sh"]
         plugins.session_identified("pty-2", "s-2");
         assert_eq!(plugins.inner.token_of("s-2").as_deref(), Some("t-2"));
         // Two running sessions found to have one id name neither.
-        plugins.session_started("pty-3", Some("s-1"), Some("t-3"), "/p");
+        plugins.session_started("pty-3", started(Some("s-1"), Some("t-3"), "/p"));
         assert_eq!(plugins.inner.token_of("s-1"), None);
         plugins.session_ended("pty-3");
         assert_eq!(plugins.inner.token_of("s-1").as_deref(), Some("t-1"));
         // A session that has ended names none.
         plugins.session_ended("pty-1");
         assert_eq!(plugins.inner.token_of("s-1"), None);
+    }
+
+    /// Whether a command line runs one of the beginnings.
+    fn line_runs(line: &str, beginnings: &[&str]) -> bool {
+        let beginnings: Vec<String> = beginnings.iter().map(|b| b.to_string()).collect();
+        command_parts(line)
+            .iter()
+            .any(|part| runs(part, &beginnings))
+    }
+
+    #[test]
+    fn hears_a_command_wherever_it_stands_in_a_line_and_nothing_else() {
+        let create = ["gh pr create"];
+        for line in [
+            "gh pr create",
+            "gh pr create --fill --base main",
+            "cd ../x && gh pr create --fill",
+            "git push -u origin HEAD; gh pr create",
+            "gh pr create --fill | tee out.txt",
+            "git push || gh pr create",
+            "(cd x && gh pr create)",
+            "echo $(gh pr create --fill)",
+            "echo `gh pr create`",
+            "FOO=1 GH_HOST=github.com gh pr create",
+            "env GH_TOKEN=x gh pr create",
+            "time gh pr create",
+            "/usr/local/bin/gh pr create",
+            "gh   pr\tcreate",
+            "gh 'pr' \"create\" --title 'A title; with | stuff'",
+            "gh pr \\\n  create --fill",
+            "git add -A\ngh pr create",
+            "if true; then gh pr create; fi",
+            "/bin/zsh -lc 'gh pr create --fill'",
+            "bash -c \"cd x && gh pr create --title \\\"x\\\"\"",
+            "sh -c 'sh -c \"gh pr create\"'",
+        ] {
+            assert!(line_runs(line, &create), "{line:?} was not heard");
+        }
+        for line in [
+            "",
+            "gh pr createx",
+            "gh pr list",
+            "gh pr",
+            "gh issue create",
+            "echo gh pr create",
+            "echo \"gh pr create\"",
+            "echo 'cd x && gh pr create'",
+            "git commit -m 'then gh pr create'",
+            "# gh pr create",
+            "ls # ; gh pr create",
+            "ghx pr create",
+            "/usr/local/bin/ghx pr create",
+            "zsh -lc",
+            "grep 'gh pr create' notes.txt",
+            "cat > notes.md <<EOF\ngh pr create --fill\nEOF",
+            "cat > notes.md <<-'EOF'\n\tgh pr create\n\tEOF",
+            "cat <<A <<\"B\"\ngh pr create\nA\ngh pr create\nB",
+            "git commit -m \"$(cat <<'EOF'\nSay \"hi\"\ngh pr create\nEOF\n)\"",
+            "cat <<EOF\ngh pr create, never ended",
+        ] {
+            assert!(!line_runs(line, &create), "{line:?} was heard");
+        }
+        // After a heredoc's body, the line goes on as commands.
+        assert!(line_runs(
+            "cat > notes.md <<EOF\nx\nEOF\ngh pr create",
+            &create
+        ));
+        assert!(line_runs("cat <<< 'x'; gh pr create", &create));
+        assert!(line_runs(
+            "gh pr create --title \"x\" --body \"$(cat <<'EOF'\nSays \"hi\" twice \"\nEOF\n)\" && gh pr view",
+            &create
+        ));
+        // A beginning that names a path matches that path only.
+        assert!(line_runs("/opt/gh pr create", &["/opt/gh pr create"]));
+        assert!(!line_runs("gh pr create", &["/opt/gh pr create"]));
+        // Any of several beginnings will do, and none is none.
+        assert!(line_runs(
+            "gh pr merge 7 --squash",
+            &["gh pr create", "gh pr merge"]
+        ));
+        assert!(!line_runs("gh pr create", &[]));
+    }
+
+    #[test]
+    fn tells_a_command_s_own_words_and_its_output_only_when_no_other_command_prints() {
+        let heard = |line: &str| -> Vec<(String, bool)> {
+            let parts = command_parts(line);
+            let create = ["gh pr create".to_string()];
+            (0..parts.len())
+                .filter(|at| runs(&parts[*at], &create))
+                .map(|at| {
+                    (
+                        parts[at].text.clone(),
+                        output_of(&parts, at, "out").is_some(),
+                    )
+                })
+                .collect()
+        };
+        let own = |text: &str| vec![(text.to_string(), true)];
+        let withheld = |text: &str| vec![(text.to_string(), false)];
+        assert_eq!(heard("gh pr create --fill"), own("gh pr create --fill"));
+        assert_eq!(
+            heard("GH_TOKEN=x FOO=\"a b\" gh pr create --title 'A; b'"),
+            own("gh pr create --title 'A; b'")
+        );
+        assert_eq!(heard("env GH_TOKEN=x gh pr create"), own("gh pr create"));
+        assert_eq!(
+            heard("bash -lc 'cd api && gh pr create --fill'"),
+            own("gh pr create --fill")
+        );
+        assert_eq!(
+            heard("cd x; export A=1 B='b c'; X=2; set -e; set -euo pipefail; set +e; gh pr create"),
+            own("gh pr create")
+        );
+        assert_eq!(heard("gh pr create 2>&1"), own("gh pr create 2>&1"));
+        assert_eq!(
+            heard("gh pr create --body-file - <<'EOF'\nbody; rm -rf x\nEOF"),
+            own("gh pr create --body-file -")
+        );
+        assert_eq!(heard("if gh pr create; then cd x; fi"), own("gh pr create"));
+        for (line, text) in [
+            ("git push && gh pr create", "gh pr create"),
+            ("gh pr create | tail -1", "gh pr create"),
+            ("export; gh pr create", "gh pr create"),
+            ("set; gh pr create", "gh pr create"),
+            ("export -p; gh pr create", "gh pr create"),
+            ("export A=1 -p; gh pr create", "gh pr create"),
+            ("export A=\"$(cat .env)\"; gh pr create", "gh pr create"),
+            ("export A=$'x'; gh pr create", "gh pr create"),
+            ("set -x; T=secret gh pr create", "gh pr create"),
+            ("set -v; gh pr create", "gh pr create"),
+            ("set -o; gh pr create", "gh pr create"),
+            ("set +o; gh pr create", "gh pr create"),
+            ("set -o xtrace; gh pr create", "gh pr create"),
+            ("set -ex; gh pr create", "gh pr create"),
+            ("pushd y; gh pr create", "gh pr create"),
+            ("popd; gh pr create", "gh pr create"),
+            ("cd -; gh pr create", "gh pr create"),
+            ("cd \"`cat .env`\"; gh pr create", "gh pr create"),
+            ("X=${B:?$TOKEN}; gh pr create", "gh pr create"),
+            ("A=${B:?$TOKEN} cd x; gh pr create", "gh pr create"),
+            ("export A=${B:?$TOKEN}; gh pr create", "gh pr create"),
+            ("cd \"$DIR\"; gh pr create", "gh pr create"),
+            ("cd <(cat .env); gh pr create", "gh pr create"),
+            ("env; gh pr create", "gh pr create"),
+            ("env A=1; gh pr create", "gh pr create"),
+            ("time cd x; gh pr create", "gh pr create"),
+            ("echo $(gh pr create)", "gh pr create"),
+            ("zsh -lc 'cat .env; gh pr create'", "gh pr create"),
+        ] {
+            assert_eq!(heard(line), withheld(text), "{line:?}");
+        }
+        // Two heard in one line print beside each other.
+        assert_eq!(
+            heard("gh pr create -t a; gh pr create -t b"),
+            vec![
+                ("gh pr create -t a".to_string(), false),
+                ("gh pr create -t b".to_string(), false)
+            ]
+        );
+    }
+
+    #[test]
+    fn tells_the_end_of_a_long_output_and_never_splits_a_character() {
+        let short = "https://github.com/o/r/pull/7\n";
+        assert_eq!(output_end(short), (short, false));
+        let exact = "a".repeat(COMMAND_OUTPUT);
+        assert_eq!(output_end(&exact), (exact.as_str(), false));
+
+        let long = format!("{}{short}", "é".repeat(COMMAND_OUTPUT));
+        let (end, cut) = output_end(&long);
+        assert!(cut);
+        assert!(end.len() <= COMMAND_OUTPUT);
+        assert!(end.len() >= COMMAND_OUTPUT - 1);
+        assert!(end.ends_with(short));
+        assert!(end.starts_with('é'));
+    }
+
+    #[test]
+    fn reads_the_commands_a_manifest_listens_for() {
+        let dir = source_with(
+            "[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\", \"main.sh\"]\ncommands = [\"gh pr create\", \"  gh   pr\\tmerge \", \"gh pr create\"]\n",
+            "listens",
+        );
+        let declared = read_manifest(&dir, &vars()).unwrap();
+        assert_eq!(declared[0].commands, ["gh pr create", "gh pr merge"]);
+
+        let none = source_with(GOOD, "listens-for-nothing");
+        assert!(read_manifest(&none, &vars()).unwrap()[0]
+            .commands
+            .is_empty());
+
+        let many = (0..=COMMAND_BEGINNINGS)
+            .map(|at| format!("\"tool {at}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let wrong = [
+            ("[\"   \"]".to_string(), "must be words"),
+            (
+                format!("[\"{}\"]", "a".repeat(COMMAND_BEGINNING + 1)),
+                "must be words",
+            ),
+            ("[\"gh\\u0007 pr\"]".to_string(), "must be words"),
+            (format!("[{many}]"), "at most 16 commands"),
+            ("\"gh pr create\"".to_string(), "commands"),
+        ];
+        for (commands, expected) in wrong {
+            let manifest = format!(
+                "[[plugin]]\nname = \"github\"\npath = \"github\"\nrun = [\"sh\", \"main.sh\"]\ncommands = {commands}\n"
+            );
+            let dir = source_with(&manifest, "listens-wrong");
+            let error = read_manifest(&dir, &vars()).unwrap_err();
+            assert!(error.contains(expected), "{commands} gave {error:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tells_a_plugin_only_the_commands_it_listens_for_once_each() {
+        let home = Scratch::absent("plugins-commands-home");
+        let dir = source_with(
+            r#"
+[[plugin]]
+name = "ears"
+path = "github"
+run = ["sh", "main.sh"]
+commands = ["gh pr create", "gh pr merge"]
+
+[[plugin]]
+name = "old"
+path = "old"
+run = ["sh", "main.sh"]
+"#,
+            "commands",
+        );
+        std::fs::create_dir_all(dir.join("old")).unwrap();
+        std::fs::write(dir.join("github/main.sh"), RECORDS).unwrap();
+        std::fs::write(dir.join("old/main.sh"), RECORDS).unwrap();
+        let heard = |plugin: &str| -> Vec<serde_json::Value> {
+            std::fs::read_to_string(dir.join(plugin).join("received.txt"))
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| serde_json::from_str(line).ok())
+                .collect()
+        };
+        let wait = |plugin: &str, ok: &dyn Fn(&[serde_json::Value]) -> bool| {
+            for _ in 0..50 {
+                if ok(&heard(plugin)) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            panic!("{plugin} heard {:?}", heard(plugin));
+        };
+        let commands = |plugin: &str| -> Vec<serde_json::Value> {
+            heard(plugin)
+                .into_iter()
+                .filter(|line| line["type"] == "command")
+                .collect()
+        };
+
+        let recorder = Arc::new(Recorder::default());
+        let plugins = plugins_at(&home, recorder.clone());
+        let hears = || -> Vec<serde_json::Value> {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(event, _)| event == PLUGIN_HEARS)
+                .map(|(_, payload)| payload["hears"].clone())
+                .collect()
+        };
+        plugins.set_projects(vec!["/p".to_string()]);
+        plugins.session_started(
+            "pty-1",
+            Started {
+                session: Some("s-1"),
+                token: Some("t-1"),
+                project: "/p",
+                cwd: "/p/.claude/worktrees/fix",
+                starter: None,
+                worktree: true,
+                branch: Some("fix"),
+            },
+        );
+        let added = plugins.add(dir.to_string_lossy().as_ref(), None).unwrap();
+        plugins.enable(&added.id, "ears", true).unwrap();
+        plugins.enable(&added.id, "old", true).unwrap();
+        for plugin in ["github", "old"] {
+            wait(plugin, &|lines| {
+                lines.iter().any(|line| line["type"] == "hello")
+            });
+        }
+        assert!(crate::hook::hears_commands(&home));
+        // Told once, when the first comes to listen.
+        assert_eq!(hears(), vec![serde_json::json!(true)]);
+
+        let address = "https://github.com/o/r/pull/7\n";
+        let long = format!("{}{address}", "é".repeat(COMMAND_OUTPUT));
+        let ran = |pty, session, call, command, cwd, ok, output| Ran {
+            pty,
+            session,
+            call,
+            command,
+            cwd,
+            ok,
+            output,
+            truncated: false,
+        };
+        // Heard from a conversation's stream, in a folder of its own, beside
+        // a command that prints nothing.
+        plugins.command_ran(ran(
+            Some("pty-1"),
+            None,
+            "call-1",
+            "cd x && GH_TOKEN=secret gh pr create --fill",
+            Some("/p/x"),
+            true,
+            &long,
+        ));
+        // The same call heard again from a hook, by the session's id.
+        plugins.command_ran(ran(
+            None,
+            Some("s-1"),
+            "call-1",
+            "cd x && GH_TOKEN=secret gh pr create --fill",
+            Some("/p/x"),
+            true,
+            address,
+        ));
+        // Commands no plugin listens for, one of them only the body of a
+        // heredoc.
+        for (call, command) in [
+            ("call-2", "gh pr list"),
+            ("call-3", "echo gh pr create"),
+            ("call-4", "gh pr createx"),
+            (
+                "call-8",
+                "cat > notes.md <<'EOF'\ngh pr create --fill\nEOF\ngit status",
+            ),
+        ] {
+            plugins.command_ran(ran(Some("pty-1"), None, call, command, None, true, ""));
+        }
+        // A session, and a pty, the core does not know.
+        plugins.command_ran(ran(
+            None,
+            Some("s-x"),
+            "call-5",
+            "gh pr create",
+            None,
+            true,
+            "",
+        ));
+        plugins.command_ran(ran(
+            Some("pty-x"),
+            None,
+            "call-6",
+            "gh pr create",
+            None,
+            true,
+            "",
+        ));
+        // One that failed, wrapped in a shell, with no folder of its own.
+        plugins.command_ran(ran(
+            None,
+            Some("s-1"),
+            "call-7",
+            "/bin/zsh -lc 'gh pr merge 7 --squash'",
+            None,
+            false,
+            "not mergeable\n",
+        ));
+        // One beside commands that print, whose output is not its own.
+        plugins.command_ran(ran(
+            Some("pty-1"),
+            None,
+            "call-9",
+            "export GH_TOKEN=secret; curl -H \"Authorization: secret\" api && gh pr create --fill",
+            None,
+            true,
+            "{\"token\": \"secret\"}\nhttps://github.com/o/r/pull/8\n",
+        ));
+
+        wait("github", &|_| commands("github").len() >= 3);
+        // Both stop, and what each heard before the stop is all it heard.
+        plugins.enable(&added.id, "ears", false).unwrap();
+        plugins.enable(&added.id, "old", false).unwrap();
+        for plugin in ["github", "old"] {
+            wait(plugin, &|lines| {
+                lines.iter().any(|line| line["type"] == "stop")
+            });
+        }
+        assert!(commands("old").is_empty(), "{:?}", commands("old"));
+        assert!(!crate::hook::hears_commands(&home));
+        assert_eq!(
+            hears(),
+            vec![serde_json::json!(true), serde_json::json!(false)]
+        );
+        let told = commands("github");
+        assert_eq!(told.len(), 3, "{told:?}");
+        assert_eq!(told[0]["project"], "/p");
+        assert_eq!(told[0]["session"], "s-1");
+        assert_eq!(told[0]["cwd"], "/p/x");
+        assert_eq!(told[0]["command"], "gh pr create --fill");
+        assert_eq!(told[0]["ok"], true);
+        assert_eq!(told[0]["truncated"], true);
+        assert_eq!(told[0]["withheld"], false);
+        let output = told[0]["output"].as_str().unwrap();
+        assert!(output.len() <= COMMAND_OUTPUT);
+        assert!(output.ends_with(address));
+        assert_eq!(told[1]["session"], "s-1");
+        assert_eq!(told[1]["cwd"], "/p/.claude/worktrees/fix");
+        assert_eq!(told[1]["command"], "gh pr merge 7 --squash");
+        assert_eq!(told[1]["ok"], false);
+        assert_eq!(told[1]["output"], "not mergeable\n");
+        assert_eq!(told[1]["truncated"], false);
+        assert_eq!(told[1]["withheld"], false);
+        assert_eq!(told[2]["command"], "gh pr create --fill");
+        assert_eq!(told[2]["output"], serde_json::Value::Null);
+        assert_eq!(told[2]["truncated"], false);
+        assert_eq!(told[2]["withheld"], true);
+        // Nothing of the rest of a line reaches the plugin.
+        for line in &told {
+            assert!(!line.to_string().contains("secret"), "{line}");
+        }
     }
 }

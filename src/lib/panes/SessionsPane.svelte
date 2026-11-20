@@ -74,6 +74,7 @@
   import { isInstalled } from "$lib/hook.svelte";
   import { hostOf, openRemote } from "$lib/remote.svelte";
   import { openResume } from "$lib/resume.svelte";
+  import { treeMadeFor } from "$lib/conductor.svelte";
   import { hasNotes, openNotes } from "$lib/notes";
   import { tokensText, wholeOf } from "$lib/goingOn.svelte";
   import { resumesWords } from "$lib/autoResume.svelte";
@@ -110,6 +111,7 @@
   import { showCall } from "$lib/callShown.svelte";
   import Plain from "$lib/components/conversation/Plain.svelte";
   import Icon from "$lib/components/conversation/Icon.svelte";
+  import { markLabel, marksOf, shownMarks } from "$lib/pluginMarks.svelte";
 
   /** Whether more than one agent is installed to choose between. */
   let several = $derived(installed().length > 1);
@@ -1279,10 +1281,12 @@
   }
 
   /** A past session resumes where it ran: in its worktree when it had
-      one, and under the account it ran under. */
+      one, and under the account it ran under. A worktree the app made for
+      it is still its own. */
   function resume(path: string, transcript: HistoryEntry) {
     touch(path);
-    create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
+    const session = create(path, transcript.id, transcript.agent, transcript.cwd ?? null, null, null, transcript.account);
+    session.madeTree = treeMadeFor(transcript.id, transcript.cwd ?? null);
     focusPane("agent");
   }
 
@@ -1728,6 +1732,9 @@
             ? stays!.line
             : subsSaid))}
   {@const owned = session.note !== null && !folded}
+  <!-- What plugins mark the session with, quietly on its second line
+       before what stands at its end. -->
+  {@const marks = marksOf(session.token)}
   <div
     class="session"
     class:on={sessions.active === session.key}
@@ -1737,7 +1744,7 @@
   >
     <button
       class="row line"
-      class:two={line !== null}
+      class:two={line !== null || marks.length > 0}
       tabindex="-1"
       onclick={() => choose(session.key)}
       oncontextmenu={(e) => openSessionMenu(session.key, e)}
@@ -1761,8 +1768,11 @@
         >
         <span class="when" data-testid="session-when">{since(lastChanged(session), now)}</span>
       </span>
-      {#if line !== null}
+      {#if line !== null || marks.length > 0}
         <span class="second">
+          {#if line === null}
+            <span class="note"></span>
+          {:else}
           <span
             class="note"
             class:asking={owned
@@ -1787,6 +1797,19 @@
                   ? "subagent-summary"
                   : "orchestrator-summary"}>{line}</span
           >
+          {/if}
+          {#each shownMarks(marks) as mark (mark.plugin)}
+            <span
+              class="plugin-mark"
+              data-state={mark.state ?? "none"}
+              data-plugin={mark.plugin}
+              title={markLabel(mark)}
+              data-testid="plugin-mark"
+              ><Icon name={mark.icon} size={12} />{#if mark.count !== null}<span class="plugin-mark-count"
+                  >{mark.count}</span
+                >{/if}</span
+            >
+          {/each}
           {#if news.length > 0}
             <!-- What it has not heard from the sessions it started, while it
                  is idle with no wait held, quietly where the model stands.
@@ -1840,7 +1863,9 @@
       <span class="state told"
         >{stateWord(session)}{#if news.length > 0}, {newsWords(news)}{/if}{#if woken !== null}, woken by {wokenWords(
             woken,
-          ).name ?? wokenWords(woken).count}{/if}{#if stays !== null && !staysSaid}, {stays.line}{/if}</span
+          ).name ?? wokenWords(woken).count}{/if}{#if stays !== null && !staysSaid}, {stays.line}{/if}{#each marks as mark (mark.plugin)}, {markLabel(
+            mark,
+          )}{/each}</span
       >
     </button>
     {#if kids.length > 0}
@@ -3264,6 +3289,36 @@
     padding-left: 10px;
     white-space: nowrap;
     color: var(--ink-3);
+  }
+
+  /* A plugin's mark: its icon and count, as quiet as the model while all
+     is well, and a step stronger in the colour of what needs the user when
+     something failed or waits on them. Marks never shrink; the line beside
+     them gives way first, and a row draws two at most. */
+  .plugin-mark {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: 3px;
+    padding-left: 8px;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-3);
+  }
+
+  .plugin-mark[data-state="busy"] {
+    color: var(--ink-2);
+  }
+
+  .plugin-mark[data-state="waiting"] {
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .plugin-mark[data-state="failed"] {
+    color: var(--del);
+    font-weight: 600;
   }
 
   /* What woke a starter gives way before the line beside it, down to
