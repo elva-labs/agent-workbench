@@ -28,13 +28,13 @@ use crate::show::{
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// What every session is told before how its turns end: the viewer and
-/// its tools. A macro, as the parts below are, so each set
-/// of instructions is one constant rather than something put together at
-/// run time.
+/// What every session is told before how its turns end: the viewer, its
+/// tools, and the commands the user runs themselves. A macro, as the parts
+/// below are, so each set of instructions is one constant rather than
+/// something put together at run time.
 macro_rules! instructions_head {
     () => {
-        "The user works in Chord, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. "
+        "The user works in Chord, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. The user can run a shell command themselves by typing `! <command>` as their message, and its output then comes to you as context. When you want the user to run something themselves, a login or something that needs their approval, write it as `! <command>` in a code span or on a code block line of its own. "
     };
 }
 
@@ -2272,6 +2272,23 @@ mod tests {
             assert!(!properties.contains_key(name), "{name} is the user's alone");
         }
         assert!(INSTRUCTIONS.contains("settings_change"));
+    }
+
+    #[test]
+    fn every_session_is_told_how_the_user_runs_a_command_and_how_to_offer_one() {
+        for told in [
+            INSTRUCTIONS,
+            WOKEN_INSTRUCTIONS,
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
+            assert!(told.contains("by typing `! <command>` as their message, and its output then comes to you as context"));
+            assert!(told.contains(
+                "write it as `! <command>` in a code span or on a code block line of its own"
+            ));
+        }
     }
 
     #[test]
