@@ -673,6 +673,61 @@ fn offered(source: &KnownSource) -> SourceInfo {
     }
 }
 
+/// An address with what does not tell repositories apart taken off: case,
+/// a trailing slash and a trailing `.git`.
+fn same_address(address: &str) -> String {
+    let trimmed = address.trim().trim_end_matches('/');
+    trimmed
+        .strip_suffix(".git")
+        .unwrap_or(trimmed)
+        .to_lowercase()
+}
+
+/// Carries a fetched known source that was stored under one of its former
+/// addresses to the current one: the checkout's remote first, then the
+/// stored location. The source keeps its id, so its enabled plugins and
+/// remembered builds stay with it. A step that fails leaves the source
+/// on the address it had, and the next start tries again.
+fn move_to_current_addresses(root: &Path, stored: &mut Stored, known: &[KnownSource]) {
+    for at in 0..stored.sources.len() {
+        let source = &stored.sources[at];
+        if source.kind != "git" {
+            continue;
+        }
+        let Some(listed) =
+            crate::known::suffix(&source.id).and_then(|name| known.iter().find(|k| k.id == name))
+        else {
+            continue;
+        };
+        let here = same_address(&source.location);
+        if here == same_address(&listed.repository)
+            || !listed.former.iter().any(|f| same_address(f) == here)
+        {
+            continue;
+        }
+        let checkout = root.join(&source.id).join("repo");
+        let Ok(remote) = git(&checkout, &["remote", "get-url", "origin"]) else {
+            continue;
+        };
+        let set = |url: &str| git(&checkout, &["remote", "set-url", "origin", "--", url]);
+        if set(&listed.repository).is_err() {
+            continue;
+        }
+        let before = std::mem::replace(&mut stored.sources[at].location, listed.repository.clone());
+        if write_state(root, stored).is_err() {
+            stored.sources[at].location = before;
+            let _ = set(&remote);
+        }
+    }
+}
+
+fn write_state(root: &Path, stored: &Stored) -> Result<(), String> {
+    std::fs::create_dir_all(root).map_err(|e| format!("could not create {root:?}: {e}"))?;
+    let text = serde_json::to_string_pretty(stored).map_err(|e| e.to_string())?;
+    std::fs::write(root.join("state.json"), text)
+        .map_err(|e| format!("could not write the plugin state: {e}"))
+}
+
 impl Plugins {
     /// The sources' directory is under the app's own in the home.
     pub fn new(home: &Path, sink: Arc<dyn Sink>) -> Self {
@@ -683,10 +738,11 @@ impl Plugins {
     /// than read from the app's own list.
     fn with_known(home: &Path, sink: Arc<dyn Sink>, known: Vec<KnownSource>) -> Self {
         let root = crate::home::dir(home).join("plugins");
-        let stored = std::fs::read_to_string(root.join("state.json"))
+        let mut stored: Stored = std::fs::read_to_string(root.join("state.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
+        move_to_current_addresses(&root, &mut stored, &known);
         Self {
             inner: Arc::new(Inner {
                 home: home.to_path_buf(),
@@ -996,11 +1052,7 @@ fn page_path(dir: &Path, path: &str) -> Option<PathBuf> {
 
 impl Inner {
     fn save(&self, stored: &Stored) -> Result<(), String> {
-        std::fs::create_dir_all(&self.root)
-            .map_err(|e| format!("could not create {:?}: {e}", self.root))?;
-        let text = serde_json::to_string_pretty(stored).map_err(|e| e.to_string())?;
-        std::fs::write(self.root.join("state.json"), text)
-            .map_err(|e| format!("could not write the plugin state: {e}"))
+        write_state(&self.root, stored)
     }
 
     /// Where a source's files are: its clone, or the directory itself.
@@ -3659,6 +3711,148 @@ run = ["sh", "main.sh"]
         assert!(listed[0].known);
         assert_eq!(listed[0].commit, None);
         assert_eq!(listed[0].plugins[0].declared.description, "Pull requests.");
+    }
+
+    /// A list naming one source, `labs`, at `repository`, with `former`
+    /// addresses.
+    fn labs_list(repository: &str, former: &[&str]) -> Vec<KnownSource> {
+        let former: Vec<String> = former.iter().map(|f| format!("\"{f}\"")).collect();
+        let list = format!(
+            "[[source]]\nid = \"labs\"\nrepository = \"{repository}\"\nformer = [{}]\nref = \"main\"\n\n\
+             [[source.plugin]]\nname = \"github\"\ndescription = \"Pull requests.\"\n",
+            former.join(", ")
+        );
+        crate::known::known_from(&list).unwrap()
+    }
+
+    /// The state file of a home, read back.
+    fn state_of(home: &Path) -> serde_json::Value {
+        let text =
+            std::fs::read_to_string(crate::home::dir(home).join("plugins/state.json")).unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    /// A home with `known-labs` fetched from `old`, with a plugin enabled
+    /// and a build remembered, and the commit it was built at.
+    #[cfg(unix)]
+    fn home_fetched_from(old: &str, name: &str) -> (Scratch, String) {
+        let home = Scratch::absent(name);
+        let plugins =
+            Plugins::with_known(&home, Arc::new(Recorder::default()), labs_list(old, &[]));
+        let fetched = plugins.fetch("known-labs").unwrap();
+        let commit = fetched.commit.unwrap();
+        let path = crate::home::dir(&home).join("plugins/state.json");
+        let mut state = state_of(&home);
+        state["sources"][0]["enabled"] = serde_json::json!(["github"]);
+        state["sources"][0]["built"] = serde_json::json!({ "github": commit });
+        std::fs::write(&path, state.to_string()).unwrap();
+        (home, commit)
+    }
+
+    #[cfg(unix)]
+    fn remote_of(home: &Path) -> String {
+        let repo = crate::home::dir(home).join("plugins/known-labs/repo");
+        git(&repo, &["remote", "get-url", "origin"]).unwrap()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_source_stored_under_a_former_address_moves_to_the_current_one() {
+        let old_upstream = upstream_with(GOOD, "moves-old");
+        let new_upstream = upstream_with(GOOD, "moves-new");
+        let old = format!("file://{}", old_upstream.display());
+        let new = format!("file://{}", new_upstream.display());
+        let (home, commit) = home_fetched_from(&old, "plugins-moves-home");
+        assert_eq!(remote_of(&home), old);
+
+        let plugins = Plugins::with_known(
+            &home,
+            Arc::new(Recorder::default()),
+            labs_list(&new, &[&old]),
+        );
+        let state = state_of(&home);
+        assert_eq!(state["sources"].as_array().unwrap().len(), 1);
+        assert_eq!(state["sources"][0]["id"], "known-labs");
+        assert_eq!(state["sources"][0]["location"], new);
+        assert_eq!(
+            state["sources"][0]["enabled"],
+            serde_json::json!(["github"])
+        );
+        assert_eq!(state["sources"][0]["built"]["github"], commit);
+        assert_eq!(remote_of(&home), new);
+        let listed = plugins.list();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].location, new);
+        assert!(listed[0].plugins[0].enabled);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_source_already_on_the_current_address_is_left_alone() {
+        let old_upstream = upstream_with(GOOD, "stays-old");
+        let new_upstream = upstream_with(GOOD, "stays-new");
+        let old = format!("file://{}", old_upstream.display());
+        let new = format!("file://{}", new_upstream.display());
+        let (home, _) = home_fetched_from(&new, "plugins-stays-home");
+        let path = crate::home::dir(&home).join("plugins/state.json");
+        let before = std::fs::read_to_string(&path).unwrap();
+        Plugins::with_known(
+            &home,
+            Arc::new(Recorder::default()),
+            labs_list(&new, &[&old]),
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
+        assert_eq!(remote_of(&home), new);
+        // An address the list does not name as a former one is left too.
+        let other = format!("{new}-other");
+        let (home, _) = home_fetched_from(&old, "plugins-stays-other-home");
+        Plugins::with_known(&home, Arc::new(Recorder::default()), labs_list(&other, &[]));
+        assert_eq!(state_of(&home)["sources"][0]["location"], old);
+        assert_eq!(remote_of(&home), old);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_move_that_fails_leaves_the_source_on_its_old_address() {
+        let old_upstream = upstream_with(GOOD, "fails-old");
+        let old = format!("file://{}", old_upstream.display());
+        let new = "file:///nowhere/new".to_string();
+
+        // The checkout is gone, so its remote cannot be changed.
+        let (home, commit) = home_fetched_from(&old, "plugins-fails-home");
+        std::fs::remove_dir_all(crate::home::dir(&home).join("plugins/known-labs/repo")).unwrap();
+        Plugins::with_known(
+            &home,
+            Arc::new(Recorder::default()),
+            labs_list(&new, &[&old]),
+        );
+        let state = state_of(&home);
+        assert_eq!(state["sources"][0]["location"], old);
+        assert_eq!(
+            state["sources"][0]["enabled"],
+            serde_json::json!(["github"])
+        );
+        assert_eq!(state["sources"][0]["built"]["github"], commit);
+
+        // The state cannot be written, so the remote goes back.
+        let (home, _) = home_fetched_from(&old, "plugins-fails-write-home");
+        let path = crate::home::dir(&home).join("plugins/state.json");
+        let mut mode = std::fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o444);
+        std::fs::set_permissions(&path, mode).unwrap();
+        let readonly = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .is_err();
+        Plugins::with_known(
+            &home,
+            Arc::new(Recorder::default()),
+            labs_list(&new, &[&old]),
+        );
+        if readonly {
+            assert_eq!(state_of(&home)["sources"][0]["location"], old);
+            assert_eq!(remote_of(&home), old);
+        }
     }
 
     #[test]

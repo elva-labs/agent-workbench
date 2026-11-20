@@ -88,6 +88,13 @@ reads the file and fails on an entry that is missing anything, whose id
 is not a plain identifier, or that names a plugin twice, so a list the
 app cannot use never ships.
 
+An entry whose repository has moved lists its former addresses. A source
+fetched under one of them is moved to the current address when the app
+starts: the clone's remote and the stored location change together, and
+the source stays the same source, with its plugins turned on and its
+builds remembered. A move that fails leaves the source on the address it
+had, and the next start tries again.
+
 What a reviewer looks at is the source itself: that its manifest
 validates, that each plugin does what its line says it does, and that no
 plugin is named as one in another listed source is. A listed plugin runs

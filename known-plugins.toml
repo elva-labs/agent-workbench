@@ -1,11 +1,13 @@
 # Sources of plugins the workbench offers from the first launch. Each is a
 # git repository with a workbench-plugins.toml at its root; the plugins
 # named here are the ones that manifest declares, in the words it uses.
+# A source whose repository has moved lists its former addresses.
 # How a source joins the list is in docs/plugins.md.
 
 [[source]]
 id = "elva-labs"
-repository = "https://github.com/elva-labs/agent-workbench-plugins"
+repository = "https://github.com/elva-labs/chord-plugins"
+former = ["https://github.com/elva-labs/agent-workbench-plugins"]
 ref = "main"
 
 [[source.plugin]]

@@ -5,7 +5,9 @@
 //! and one line of each plugin that source's manifest declares, so the
 //! settings can offer a plugin before anything has been fetched. The
 //! manifest is the truth once the source is there; the list is what the
-//! app says until then.
+//! app says until then. A source whose repository has moved names its
+//! former addresses, so an install that stored one is carried to the
+//! current address.
 
 /// A plugin a known source declares, as the list names it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +22,9 @@ pub struct KnownSource {
     /// The last part of the source's stored id, which is fixed.
     pub id: String,
     pub repository: String,
+    /// The addresses the repository had before, which an install made
+    /// under one of them is moved off.
+    pub former: Vec<String>,
     pub reference: Option<String>,
     pub plugins: Vec<KnownPlugin>,
 }
@@ -68,6 +73,20 @@ pub fn known_from(text: &str) -> Result<Vec<KnownSource>, String> {
         };
         let id = string("id")?;
         let repository = string("repository")?;
+        let former = match table.get("former") {
+            None => Vec::new(),
+            Some(item) => item
+                .as_array()
+                .ok_or_else(|| format!("the former addresses of {id} are not a list"))?
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("a former address of {id} is not text"))
+                })
+                .collect::<Result<_, _>>()?,
+        };
         let reference = table
             .get("ref")
             .and_then(|item| item.as_str())
@@ -93,6 +112,7 @@ pub fn known_from(text: &str) -> Result<Vec<KnownSource>, String> {
         sources.push(KnownSource {
             id,
             repository,
+            former,
             reference,
             plugins,
         });
@@ -176,6 +196,11 @@ mod tests {
         let sources = known_from(whole).unwrap();
         assert_eq!(sources[0].reference.as_deref(), Some("main"));
         assert_eq!(sources[0].plugins[0].name, "p");
+        assert!(sources[0].former.is_empty());
+        let moved = whole.replace("ref = ", "former = [\"o1\", \"o2\"]\nref = ");
+        assert_eq!(known_from(&moved).unwrap()[0].former, ["o1", "o2"]);
+        assert!(known_from(&whole.replace("ref = ", "former = \"o1\"\nref = ")).is_err());
+        assert!(known_from(&whole.replace("ref = ", "former = [1]\nref = ")).is_err());
         assert_eq!(stored_id("a"), "known-a");
         assert_eq!(suffix("known-a"), Some("a"));
         assert_eq!(suffix("src-1"), None);
