@@ -52,7 +52,10 @@ while IFS= read -r step || [ -n "$step" ]; do
     "die") kill -9 $$ ;;
     "err "*) printf '%s\n' "${step#err }" >&2 ;;
     "bg "*) sh -c "${step#bg }" & printf '%s\n' "$!" > "$dir/bg" ;;
-    "shell "*) set -m; sh -c "${step#shell }" & set +m ;;
+    # Job control would give the job a group only where the shell allows it
+    # without a terminal, which dash does not; perl makes the group, then
+    # becomes the command's shell under the same pid.
+    "shell "*) perl -e 'setpgrp(0, 0); exec @ARGV' sh -c "${step#shell }" & ;;
     "await "*) while [ ! -e "$dir/${step#await }" ]; do sleep 0.05; done ;;
     "drain") while IFS= read -r got <&3; do printf '%s\n' "$got" >> "$dir/stdin"; done ;;
   esac
