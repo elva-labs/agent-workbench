@@ -1229,7 +1229,7 @@ describe("SessionsPane", () => {
       transcript("left-3", 5),
     ];
     for (const id of ["left-1", "left-2", "left-3"]) reopened("/repo", id, "claude-code", null, null, null);
-    localStorage.setItem("workbench.mine", JSON.stringify({ "/repo": ["left-1", "left-2", "left-3", "past-1", "past-2"] }));
+    localStorage.setItem("chord.mine", JSON.stringify({ "/repo": ["left-1", "left-2", "left-3", "past-1", "past-2"] }));
     loadRemembered();
 
     render(SessionsPane);
@@ -1348,7 +1348,7 @@ describe("SessionsPane", () => {
       },
     ];
     localStorage.setItem(
-      "workbench.mine",
+      "chord.mine",
       JSON.stringify({ "/repo": ["abc-123"] }),
     );
     loadRemembered();
@@ -1925,7 +1925,7 @@ describe("ChangesPane without git", () => {
   // The orchestrator folder is no open project, so the pane has nothing
   // of it to watch, and says why rather than an empty tree alone.
   it("says the orchestrator folder is no project to show changes for", async () => {
-    const folder = "/home/ada/.agent-workbench/orchestrator";
+    const folder = "/home/ada/.chord/orchestrator";
     resetFolder(folder);
     try {
       workspace.active = folder;

@@ -106,7 +106,7 @@ for (const look of ["modern", "terminal"] as const) {
       await roomMatches(page);
       // The running line.
       await say(page, "Go ahead, and wait for the review");
-      await agent(page, `f.startTurn("${H}"); f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`);
+      await agent(page, `f.startTurn("${H}"); f.startTool("${H}", "mcp__chord__wait", {}, { kind: "mcp" });`);
       await expect(page.getByTestId("now")).toBeVisible();
       await roomMatches(page);
       // A message waiting for the turn.

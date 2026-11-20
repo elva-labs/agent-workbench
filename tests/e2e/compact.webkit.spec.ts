@@ -232,7 +232,7 @@ test("keeps the setting across a reload, and leaves the fold and the width as th
   await page.addInitScript(() => {
     if (sessionStorage.getItem("laid") !== null) return;
     sessionStorage.setItem("laid", "yes");
-    localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 340 }));
+    localStorage.setItem("chord.layout", JSON.stringify({ sessions: 340 }));
   });
   await page.goto("/");
   const pane = "section[data-pane='sessions']";
@@ -489,7 +489,7 @@ test("puts the menu button at the start of the leading header off macOS", async 
 test("peeks over the focused card's mark while reviewing", async ({ page }) => {
   await installFakeCore(page, { settings: { appearance: "light" } });
   // A pane wide enough to reach well over the agent's card.
-  await page.addInitScript(() => localStorage.setItem("workbench.layout", JSON.stringify({ sessions: 420 })));
+  await page.addInitScript(() => localStorage.setItem("chord.layout", JSON.stringify({ sessions: 420 })));
   await page.goto("/");
   await expect(page.locator(AGENT)).toBeVisible();
   await page.getByTestId("new-session").click();

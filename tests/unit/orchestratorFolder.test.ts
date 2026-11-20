@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 /** Where the core says the folder is, and what the window asked it to do
     there. */
 const fake = {
-  dir: "/home/ada/.agent-workbench/orchestrator" as string | null,
+  dir: "/home/ada/.chord/orchestrator" as string | null,
   asked: [] as string[],
 };
 
@@ -57,7 +57,7 @@ import {
   workspace,
 } from "$lib/workspace.svelte";
 
-const DIR = "/home/ada/.agent-workbench/orchestrator";
+const DIR = "/home/ada/.chord/orchestrator";
 const A = "/home/ada/dev/one";
 /** A link to the folder from elsewhere. */
 const LINKED = "/home/ada/notes/orchestrator";
@@ -139,7 +139,7 @@ describe("the orchestrator folder", () => {
     expect(sessions.all).not.toContain(resumed);
     expect(workspace.active).toBe(A);
     expect(folderShown(A)).toBeNull();
-    expect(JSON.parse(localStorage.getItem("workbench.orchestratorFolder")!)).toEqual({ closed: true });
+    expect(JSON.parse(localStorage.getItem("chord.orchestratorFolder")!)).toEqual({ closed: true });
 
     // A row of it, as when the version before ran it since, shows it.
     create(DIR, "old-1", "claude-code", null);
@@ -154,7 +154,7 @@ describe("the orchestrator folder", () => {
     expect(await openPath(DIR)).toBe(true);
     expect(workspace.open.map((project) => project.path)).toEqual([A]);
     expect(orchestratorFolder.closed).toBe(false);
-    expect(localStorage.getItem("workbench.orchestratorFolder")).toBeNull();
+    expect(localStorage.getItem("chord.orchestratorFolder")).toBeNull();
     expect(workspace.active).toBe(DIR);
     expect(folderShown(DIR)).toBe(DIR);
 
@@ -172,7 +172,7 @@ describe("the orchestrator folder", () => {
     settleFolder();
     expect(workspace.open.map((project) => project.path)).toEqual([A]);
     expect(workspace.active).toBe(DIR);
-    expect(JSON.parse(localStorage.getItem("workbench.workspace")!)).toEqual({ open: [A], active: DIR });
+    expect(JSON.parse(localStorage.getItem("chord.workspace")!)).toEqual({ open: [A], active: DIR });
   });
 
   // Its past sessions are what draw it among the projects, so they are

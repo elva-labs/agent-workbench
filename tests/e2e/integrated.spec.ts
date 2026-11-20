@@ -8,7 +8,7 @@ test("the fake core runs a scripted integrated session behind the seam", async (
   await installFakeCore(page, { open: [PROJECT] });
   await page.goto("/");
   const heard = await page.evaluate(async (project) => {
-    const seam = window.__WORKBENCH_CORE__!;
+    const seam = window.__CHORD_CORE__!;
     const events: { type: string; id: string; messages?: string[] }[] = [];
     await seam.onIntegratedEvent((event) => events.push(event));
     const { id } = await seam.integratedStart({ agent: "claude-code", project });

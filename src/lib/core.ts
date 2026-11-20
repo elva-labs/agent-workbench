@@ -2806,13 +2806,13 @@ declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
     /** Set by the end-to-end tests before the app loads. */
-    __WORKBENCH_CORE__?: Core;
+    __CHORD_CORE__?: Core;
   }
 }
 
 export function core(): Core {
   if (typeof window === "undefined") return detachedCore;
-  if (window.__WORKBENCH_CORE__) return window.__WORKBENCH_CORE__;
+  if (window.__CHORD_CORE__) return window.__CHORD_CORE__;
   if (window.__TAURI_INTERNALS__) return tauriCore;
   return detachedCore;
 }

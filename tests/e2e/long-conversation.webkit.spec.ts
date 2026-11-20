@@ -132,7 +132,7 @@ test.describe("a long conversation", () => {
       transcripts: [{ id: PAST, modified: Math.floor(now / 1000) - 60, size: 100, title: "Question 1" }],
     });
     await page.addInitScript(
-      ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+      ({ project, past }) => localStorage.setItem("chord.mine", JSON.stringify({ [project]: [past] })),
       { project: PROJECT, past: PAST },
     );
     await page.goto("/");

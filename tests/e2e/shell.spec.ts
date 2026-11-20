@@ -31,9 +31,9 @@ function columnsOf(page: Page) {
     () =>
       (
         window as unknown as {
-          __WORKBENCH_TERMINALS__?: Record<string, { cols: number }>;
+          __CHORD_TERMINALS__?: Record<string, { cols: number }>;
         }
-      ).__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+      ).__CHORD_TERMINALS__?.["s1"]?.cols ?? 0,
   );
 }
 
@@ -1599,7 +1599,7 @@ test.describe("the file viewer", () => {
     expect(after).toBeGreaterThan(before + 40);
     const stored = await page.evaluate(
       () =>
-        JSON.parse(localStorage.getItem("workbench.layout") ?? "{}").mediaShare,
+        JSON.parse(localStorage.getItem("chord.layout") ?? "{}").mediaShare,
     );
     expect(stored).toBeGreaterThan(0.3);
   });

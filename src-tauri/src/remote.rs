@@ -11,10 +11,10 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use chord_core::client::{Connection, CLOSED};
+use chord_core::env;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
-use workbench_core::client::{Connection, CLOSED};
-use workbench_core::env;
 
 use crate::ssh;
 
@@ -133,7 +133,7 @@ pub fn snapshot_homeward(host: &str, mut snapshot: Value) -> Value {
         for request in requests {
             *request = homeward(
                 host,
-                workbench_core::integrated::INTEGRATED_EVENT,
+                chord_core::integrated::INTEGRATED_EVENT,
                 request.take(),
             );
         }
@@ -147,11 +147,7 @@ pub fn history_homeward(host: &str, mut history: Value) -> Value {
     if let Some(items) = history.get_mut("items").and_then(Value::as_array_mut) {
         for item in items {
             if let Some(event) = item.get_mut("event") {
-                *event = homeward(
-                    host,
-                    workbench_core::integrated::INTEGRATED_EVENT,
-                    event.take(),
-                );
+                *event = homeward(host, chord_core::integrated::INTEGRATED_EVENT, event.take());
             }
         }
     }
@@ -187,13 +183,11 @@ pub fn went_back_homeward(host: &str, went: Value) -> Value {
 /// a pty or a path.
 pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
     match event {
-        workbench_core::pty::SESSION_ENDED => {
-            put_back(&mut payload, "id", |id| with_host_id(host, id))
-        }
-        workbench_core::SESSION_IDENTIFIED => {
+        chord_core::pty::SESSION_ENDED => put_back(&mut payload, "id", |id| with_host_id(host, id)),
+        chord_core::SESSION_IDENTIFIED => {
             put_back(&mut payload, "ptyId", |id| with_host_id(host, id))
         }
-        workbench_core::integrated::INTEGRATED_EVENT => {
+        chord_core::integrated::INTEGRATED_EVENT => {
             put_back(&mut payload, "id", |id| with_host_id(host, id));
             put_back(&mut payload, "path", |path| with_host(host, path));
             if payload["type"] == "rewound" {
@@ -206,12 +200,12 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
                 }
             }
         }
-        workbench_core::watch::GIT_CHANGED => {
+        chord_core::watch::GIT_CHANGED => {
             if let Some(root) = payload.as_str() {
                 return Value::String(with_host(host, root));
             }
         }
-        workbench_core::watch::SHOWN_CHANGED => {
+        chord_core::watch::SHOWN_CHANGED => {
             if let Some(files) = payload.as_array() {
                 return Value::Array(
                     files
@@ -222,23 +216,23 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
                 );
             }
         }
-        workbench_core::show::SHOW_REQUEST => {
+        chord_core::show::SHOW_REQUEST => {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
-        workbench_core::show::TERMINAL_REQUEST
-        | workbench_core::show::NOTIFY_REQUEST
-        | workbench_core::show::CONDUCT_REQUEST
-        | workbench_core::show::CONDUCT_CANCEL
-        | workbench_core::show::BROWSER_REQUEST
-        | workbench_core::show::SETTINGS_REQUEST => {
+        chord_core::show::TERMINAL_REQUEST
+        | chord_core::show::NOTIFY_REQUEST
+        | chord_core::show::CONDUCT_REQUEST
+        | chord_core::show::CONDUCT_CANCEL
+        | chord_core::show::BROWSER_REQUEST
+        | chord_core::show::SETTINGS_REQUEST => {
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
-        workbench_core::show::DIFF_REQUEST => {
+        chord_core::show::DIFF_REQUEST => {
             put_back(&mut payload, "path", |path| with_host(host, path));
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
-        workbench_core::show::PRESENT_REQUEST => {
+        chord_core::show::PRESENT_REQUEST => {
             if let Some(files) = payload.get_mut("files").and_then(Value::as_array_mut) {
                 for file in files.iter_mut() {
                     if let Some(path) = file.as_str() {
@@ -248,9 +242,9 @@ pub fn homeward(host: &str, event: &str, mut payload: Value) -> Value {
             }
             put_back(&mut payload, "cwd", |path| with_host(host, path));
         }
-        workbench_core::plugins::PLUGIN_SECTION
-        | workbench_core::plugins::PLUGIN_VIEW
-        | workbench_core::plugins::PLUGIN_VIEW_DATA => {
+        chord_core::plugins::PLUGIN_SECTION
+        | chord_core::plugins::PLUGIN_VIEW
+        | chord_core::plugins::PLUGIN_VIEW_DATA => {
             put_back(&mut payload, "project", |path| with_host(host, path));
         }
         _ => {}
@@ -280,7 +274,7 @@ impl Remotes {
 
     /// The app's own files for remotes, under the user's home.
     pub fn files(&self) -> Result<ssh::Files, String> {
-        let home = workbench_core::api::home_directory().ok_or("no home directory")?;
+        let home = chord_core::api::home_directory().ok_or("no home directory")?;
         Ok(ssh::Files::new(&home))
     }
 
@@ -300,7 +294,7 @@ impl Remotes {
         // and its key can run nothing else; a host from the ssh
         // configuration gets the daemon put there when it is missing.
         let files = self.files()?;
-        if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_none() && !files.is_saved(host) {
+        if std::env::var_os("CHORD_REMOTE_COMMAND").is_none() && !files.is_saved(host) {
             let resources = self.app.path().resource_dir().ok();
             ssh::ensure_daemon(host, resources.as_deref())?;
         }
@@ -359,7 +353,7 @@ fn open(app: &AppHandle, host: &str, files: &ssh::Files) -> Result<Arc<Connectio
     let Some(saved) = files.saved_target(host) else {
         return open_at(app, host, files, None);
     };
-    if std::env::var_os("WORKBENCH_REMOTE_COMMAND").is_some() {
+    if std::env::var_os("CHORD_REMOTE_COMMAND").is_some() {
         return open_at(app, host, files, None);
     }
     let addresses = saved.addresses();
@@ -417,16 +411,16 @@ fn open_at(
         Box::new(move |event, payload| {
             if event == CLOSED {
                 for lost in integrated_lost(&name, &payload) {
-                    let _ = app.emit(workbench_core::integrated::INTEGRATED_EVENT, lost);
+                    let _ = app.emit(chord_core::integrated::INTEGRATED_EVENT, lost);
                 }
                 let _ = app.emit(REMOTE_CLOSED, json!({ "host": name, "reason": payload }));
-            } else if event == workbench_core::integrated::INTEGRATED_EVENT {
+            } else if event == chord_core::integrated::INTEGRATED_EVENT {
                 let payload = homeward(&name, event, payload);
                 integrated_heard(&name, &payload);
                 let _ = app.emit(event, payload);
-            } else if event == workbench_core::settings::SETTINGS_CHANGED
-                || event == workbench_core::settings::SETTINGS_MISSING
-                || event == workbench_core::styles::USER_STYLES_CHANGED
+            } else if event == chord_core::settings::SETTINGS_CHANGED
+                || event == chord_core::settings::SETTINGS_MISSING
+                || event == chord_core::styles::USER_STYLES_CHANGED
             {
                 // The window follows the settings of the machine it runs on,
                 // never another's.
@@ -448,7 +442,7 @@ fn open_at(
             if theirs != env!("CARGO_PKG_VERSION") {
                 connection.close();
                 return Err(format!(
-                    "{host} runs agent-workbench-remote {theirs} and this app is {}; update it there",
+                    "{host} runs daemon {theirs} and this app is {}; update chord-remote there",
                     env!("CARGO_PKG_VERSION")
                 ));
             }
@@ -467,21 +461,21 @@ pub fn transport_for_test(host: &str, files: &ssh::Files) -> Command {
 /// The process that carries the conversation. ssh, with the user's login
 /// environment so the agent and its keys are the user's own, and the app's
 /// own key for a host the app set up; or, for a test, whatever
-/// `WORKBENCH_REMOTE_COMMAND` names, `{host}` replaced.
+/// `CHORD_REMOTE_COMMAND` names, `{host}` replaced.
 fn transport(
     host: &str,
     files: &ssh::Files,
     at: Option<(&ssh::Saved, &str)>,
 ) -> Result<Command, String> {
     let vars = &env::environment().vars;
-    if let Ok(template) = std::env::var("WORKBENCH_REMOTE_COMMAND") {
+    if let Ok(template) = std::env::var("CHORD_REMOTE_COMMAND") {
         let parts: Vec<String> = template
             .split_whitespace()
             .map(|part| part.replace("{host}", host))
             .collect();
         let (program, args) = parts
             .split_first()
-            .ok_or("WORKBENCH_REMOTE_COMMAND names no program")?;
+            .ok_or("CHORD_REMOTE_COMMAND names no program")?;
         let mut command = Command::new(program);
         command.args(args).envs(vars);
         return Ok(command);
@@ -691,7 +685,7 @@ mod tests {
     fn a_conduct_call_comes_home_with_the_host_on_where_it_was_made() {
         let call = homeward(
             "lab",
-            workbench_core::show::CONDUCT_REQUEST,
+            chord_core::show::CONDUCT_REQUEST,
             json!({
                 "id": "c-1",
                 "tool": "start",
@@ -709,7 +703,7 @@ mod tests {
     fn a_cancelled_conduct_call_comes_home_with_the_host_on_where_it_was_made() {
         let call = homeward(
             "lab",
-            workbench_core::show::CONDUCT_CANCEL,
+            chord_core::show::CONDUCT_CANCEL,
             json!({ "id": "c-1", "cwd": "/srv/api" }),
         );
         assert_eq!(call["cwd"], "ssh://lab/srv/api");
@@ -720,7 +714,7 @@ mod tests {
     fn a_browser_call_comes_home_with_the_host_on_where_it_was_made() {
         let call = homeward(
             "lab",
-            workbench_core::show::BROWSER_REQUEST,
+            chord_core::show::BROWSER_REQUEST,
             json!({
                 "id": "b-1",
                 "tool": "browser_open",
@@ -739,7 +733,7 @@ mod tests {
     fn a_settings_call_comes_home_with_the_host_on_where_it_was_made() {
         let call = homeward(
             "lab",
-            workbench_core::show::SETTINGS_REQUEST,
+            chord_core::show::SETTINGS_REQUEST,
             json!({
                 "id": "s-1",
                 "tool": "settings_change",
@@ -757,7 +751,7 @@ mod tests {
     fn a_plugin_s_rows_come_home_with_their_project_s_host_on() {
         let section = homeward(
             "lab",
-            workbench_core::plugins::PLUGIN_SECTION,
+            chord_core::plugins::PLUGIN_SECTION,
             json!({
                 "source": "src-1",
                 "plugin": "github",
@@ -777,7 +771,7 @@ mod tests {
     fn a_plugin_s_page_and_its_data_come_home_the_same_way() {
         let view = homeward(
             "lab",
-            workbench_core::plugins::PLUGIN_VIEW,
+            chord_core::plugins::PLUGIN_VIEW,
             json!({
                 "source": "src-1",
                 "plugin": "graph",
@@ -794,7 +788,7 @@ mod tests {
 
         let data = homeward(
             "lab",
-            workbench_core::plugins::PLUGIN_VIEW_DATA,
+            chord_core::plugins::PLUGIN_VIEW_DATA,
             json!({
                 "source": "src-1",
                 "plugin": "graph",
@@ -834,17 +828,17 @@ mod tests {
         ));
         assert!(!unreachable("ada@lab: Permission denied (publickey)."));
         assert!(!unreachable(
-            "lab runs agent-workbench-remote 0.1.1 and this app is 0.1.2; update it there"
+            "lab runs daemon 0.1.1 and this app is 0.1.2; update chord-remote there"
         ));
     }
 
     #[test]
     fn the_test_transport_is_whatever_the_variable_names() {
-        let home = workbench_core::scratch::Scratch::absent("remote-none");
+        let home = chord_core::scratch::Scratch::absent("remote-none");
         let files = ssh::Files::new(&home);
-        std::env::set_var("WORKBENCH_REMOTE_COMMAND", "/bin/echo hello {host}");
+        std::env::set_var("CHORD_REMOTE_COMMAND", "/bin/echo hello {host}");
         let command = transport("lab", &files, None).unwrap();
-        std::env::remove_var("WORKBENCH_REMOTE_COMMAND");
+        std::env::remove_var("CHORD_REMOTE_COMMAND");
         assert_eq!(command.get_program(), "/bin/echo");
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
         assert_eq!(args, ["hello", "lab"]);

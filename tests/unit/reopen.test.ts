@@ -63,7 +63,7 @@ vi.mock("$lib/core", () => ({
 
 const A = "/home/ada/dev/one";
 const B = "/home/ada/dev/two";
-const KEY = "workbench.open";
+const KEY = "chord.open";
 
 const repo = (path: string) => ({ path, name: path, repository: path, isGit: true });
 
@@ -266,7 +266,7 @@ describe("coming back", () => {
     let gone: (error: Error) => void = () => {};
     snapshots.answer = () => new Promise((_, reject) => (gone = reject));
     localStorage.setItem(
-      "workbench.waiting",
+      "chord.waiting",
       JSON.stringify({ kid: { unread: true, note: "Fixed it", notice: null, at: Date.now() } }),
     );
     localStorage.setItem(
@@ -330,7 +330,7 @@ describe("coming back", () => {
   });
 
   it("brings back the orchestrator folder's sessions once it is known, though it is not an open project", async () => {
-    const ORCHESTRATOR = "/home/ada/.agent-workbench/orchestrator";
+    const ORCHESTRATOR = "/home/ada/.chord/orchestrator";
     onRecord([entry(ORCHESTRATOR, "conductor"), entry("/gone", "one"), entry(A, "two")], null);
     let know: (dir: string | null) => void = () => {};
     stop = reopen(new Map(), new Promise((resolve) => (know = resolve)));
@@ -427,7 +427,7 @@ describe("a project on another machine", () => {
   async function restoring(active: string, front: string) {
     resetWorkspace();
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: [A, R], active: front }),
     );
     localStorage.setItem(
@@ -491,7 +491,7 @@ describe("a project on another machine", () => {
   it("starts nothing in front while it waits with no sessions on record", async () => {
     resetWorkspace();
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: [A, R], active: R }),
     );
     localStorage.setItem(

@@ -553,10 +553,10 @@ mod tests {
         // A call of the agent's tools it put in the background is work of
         // its own as well, as a wait on the sessions it started is.
         let waiting = classify(
-            r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"k1","type":"MCP task","status":"running","description":"agent-workbench/wait","server":"agent-workbench","tool":"wait"}]}"#,
+            r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"k1","type":"MCP task","status":"running","description":"chord/wait","server":"chord","tool":"wait"}]}"#,
         )
         .unwrap();
-        assert_eq!(waiting.background, ["agent-workbench/wait"]);
+        assert_eq!(waiting.background, ["chord/wait"]);
         // Nothing left running says nothing.
         let done = classify(
             r#"{"session_id":"s1","hook_event_name":"Stop","background_tasks":[{"id":"b1","type":"shell","status":"completed","description":"Build"}]}"#,

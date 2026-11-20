@@ -103,14 +103,14 @@ export const INTERFACE_FONTS: FontInfo<SansName>[] = [
   { name: "inter", label: "Inter", family: "var(--sans-inter)", hint: "" },
 ];
 
-const KEY = "workbench.theme";
-const PALETTE_KEY = "workbench.palette";
-const LOOK_KEY = "workbench.look";
-const MONO_KEY = "workbench.mono";
-const SANS_KEY = "workbench.sans";
-const THEMES_KEY = "workbench.themes";
-const BACKGROUNDS_KEY = "workbench.backgrounds";
-const CARDS_KEY = "workbench.cards";
+const KEY = "chord.theme";
+const PALETTE_KEY = "chord.palette";
+const LOOK_KEY = "chord.look";
+const MONO_KEY = "chord.mono";
+const SANS_KEY = "chord.sans";
+const THEMES_KEY = "chord.themes";
+const BACKGROUNDS_KEY = "chord.backgrounds";
+const CARDS_KEY = "chord.cards";
 
 export const theme = $state<{
   choice: ThemeChoice;

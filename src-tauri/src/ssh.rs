@@ -3,7 +3,7 @@
 //! Two doors. A host the user already reaches with their own ssh setup needs
 //! nothing: the user's ssh client, the user's login environment, and the
 //! daemon put there over the same connection when it is missing. Any other
-//! machine pairs by a token from `agent-workbench-remote connect` run there,
+//! machine pairs by a token from `chord-remote connect` run there,
 //! which brings its own key, address, user and host key; the app keeps the
 //! key and reaches the machine with it from then on.
 
@@ -11,14 +11,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use chord_core::env;
+use chord_core::pair::Pairing;
 use serde::{Deserialize, Serialize};
-use workbench_core::env;
-use workbench_core::pair::Pairing;
 
 /// Where the daemon goes on a machine the app installs it on, relative to
 /// the home there.
-pub const DAEMON_DIR: &str = ".agent-workbench/bin";
-pub const DAEMON_NAME: &str = "agent-workbench-remote";
+pub const DAEMON_DIR: &str = ".chord/bin";
+pub const DAEMON_NAME: &str = "chord-remote";
 
 /// A machine paired by token. It is its host key: the name is what paths
 /// carry and never changes, the address is where it is reached today, and
@@ -107,7 +107,7 @@ pub struct Files {
 impl Files {
     pub fn new(home: &Path) -> Self {
         Self {
-            dir: home.join(".agent-workbench"),
+            dir: chord_core::home::dir(home),
         }
     }
 
@@ -407,7 +407,7 @@ const BUNDLED_DAEMONS: &str = "resources/remote";
 /// Where a daemon build for a target is on this machine, when one is:
 /// named outright for a developer, or bundled with the app.
 pub fn daemon_build(target: &str, resources: Option<&Path>) -> Option<PathBuf> {
-    if let Some(named) = std::env::var_os("WORKBENCH_REMOTE_BIN") {
+    if let Some(named) = std::env::var_os("CHORD_REMOTE_BIN") {
         let named = PathBuf::from(named);
         if named.is_file() {
             return Some(named);
@@ -452,7 +452,7 @@ pub fn ensure_local_daemon(home: &Path, resources: Option<&Path>) -> Result<(), 
     let Some(source) = daemon_build(target, resources) else {
         return Ok(());
     };
-    let destination = workbench_core::hook::daemon_path(home);
+    let destination = chord_core::hook::daemon_path(home);
     let current = Command::new(&destination)
         .arg("version")
         .output()
@@ -468,7 +468,7 @@ pub fn ensure_local_daemon(home: &Path, resources: Option<&Path>) -> Result<(), 
     let staged = destination.with_extension("new");
     // Copied by a process of its own, so no session this app starts
     // meanwhile can hold the daemon open for writing as a hook starts it.
-    workbench_core::executable::copy(&source, &staged)
+    chord_core::executable::copy(&source, &staged)
         .map_err(|e| format!("could not copy the daemon to {}: {e}", staged.display()))?;
     std::fs::rename(&staged, &destination)
         .map_err(|e| format!("could not put the daemon at {}: {e}", destination.display()))?;
@@ -557,7 +557,8 @@ pub fn run(target: &str, script: &str, stdin: Option<&[u8]>) -> Result<String, S
 
 /// Makes sure a host the user's own ssh reaches has the daemon, at the
 /// version of this app, putting it there over the connection if it does
-/// not. Says which build the machine needs when there is none to send.
+/// not, and has it move over an install made under the app's earlier name.
+/// Says which build the machine needs when there is none to send.
 pub fn ensure_daemon(target: &str, resources: Option<&Path>) -> Result<(), String> {
     let probe = format!(
         "if [ -x \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}\" ]; then \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}\" version; else echo missing; fi; uname -sm"
@@ -572,12 +573,12 @@ pub fn ensure_daemon(target: &str, resources: Option<&Path>) -> Result<(), Strin
     let build = daemon_target(uname)
         .ok_or_else(|| format!("no daemon build for a machine reporting {uname:?}"))?;
     let source = daemon_build(build, resources).ok_or_else(|| {
-        format!("this app has no daemon build for {build}; set WORKBENCH_REMOTE_BIN to one")
+        format!("this app has no daemon build for {build}; set CHORD_REMOTE_BIN to one")
     })?;
     let bytes =
         std::fs::read(&source).map_err(|e| format!("could not read {}: {e}", source.display()))?;
     let install = format!(
-        "umask 077; mkdir -p \"$HOME/{DAEMON_DIR}\" && cat > \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" && chmod +x \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" && mv \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}\""
+        "umask 077; mkdir -p \"$HOME/{DAEMON_DIR}\" && cat > \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" && chmod +x \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" && mv \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}.new\" \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}\" && \"$HOME/{DAEMON_DIR}/{DAEMON_NAME}\" migrate >/dev/null"
     );
     run(target, &install, Some(&bytes))?;
     Ok(())
@@ -586,8 +587,8 @@ pub fn ensure_daemon(target: &str, resources: Option<&Path>) -> Result<(), Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chord_core::scratch::Scratch;
     use std::cell::Cell;
-    use workbench_core::scratch::Scratch;
 
     // The check is a subprocess; thirty projects asking is one.
     #[test]
@@ -797,7 +798,7 @@ mod tests {
         std::fs::create_dir_all(&folder).unwrap();
         let bundled = folder.join(DAEMON_NAME);
         std::fs::write(&bundled, "").unwrap();
-        std::env::remove_var("WORKBENCH_REMOTE_BIN");
+        std::env::remove_var("CHORD_REMOTE_BIN");
         assert_eq!(daemon_build("linux-x86_64", Some(&dir)), Some(bundled));
         assert_eq!(daemon_build("linux-aarch64", Some(&dir)), None);
         assert_eq!(daemon_build("linux-x86_64", None), None);

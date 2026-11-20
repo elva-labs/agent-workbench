@@ -42,7 +42,7 @@ import {
  * screen is not read by being put there.
  */
 
-const KEY = "workbench.open";
+const KEY = "chord.open";
 
 /** A row as it is remembered: enough to resume it where it ran. */
 interface Open {

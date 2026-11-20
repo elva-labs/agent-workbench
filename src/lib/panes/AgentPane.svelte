@@ -57,7 +57,7 @@
   /** Asks the machine which agents there are to run. Asked once on open,
       and again on request: installing one should not need a restart. */
   function detect() {
-    const hasCore = Boolean(window.__WORKBENCH_CORE__ || window.__TAURI_INTERNALS__);
+    const hasCore = Boolean(window.__CHORD_CORE__ || window.__TAURI_INTERNALS__);
     for (const id of AGENTS) {
       core()
         .detect(id)

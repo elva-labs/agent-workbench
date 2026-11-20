@@ -399,7 +399,7 @@ impl Limits {
     /// nowhere without a home.
     pub fn new(home: Option<&Path>) -> Self {
         Self::with(
-            home.map(|home| home.join(".agent-workbench").join(LIMITS_FILE)),
+            home.map(|home| crate::home::dir(home).join(LIMITS_FILE)),
             Box::new(now_seconds),
         )
     }

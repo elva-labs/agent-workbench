@@ -55,7 +55,7 @@ pub fn take_opened(launches: State<'_, Launches>) -> Vec<String> {
 /// it.
 pub fn on_event(app: &AppHandle, event: RunEvent) {
     if let RunEvent::Exit = event {
-        if let Some(core) = app.try_state::<std::sync::Arc<workbench_core::Core>>() {
+        if let Some(core) = app.try_state::<std::sync::Arc<chord_core::Core>>() {
             core.integrated_stop_all();
         }
         return;
@@ -90,7 +90,7 @@ pub fn single_instance() -> tauri::plugin::TauriPlugin<tauri::Wry> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use workbench_core::scratch::Scratch;
+    use chord_core::scratch::Scratch;
 
     fn temp(name: &str) -> Scratch {
         Scratch::new(name)
@@ -107,7 +107,7 @@ mod tests {
         std::fs::write(dir.join("notes.txt"), "").unwrap();
         let elsewhere = temp("workbench-launch-elsewhere");
         let named = args(&[
-            "agent-workbench",
+            "chord",
             "project",
             "notes.txt",
             "--verbose",
@@ -124,7 +124,7 @@ mod tests {
     fn a_dot_is_where_the_command_ran() {
         let dir = temp("workbench-launch-dot");
         assert_eq!(
-            folders(args(&["agent-workbench", "."]), &dir),
+            folders(args(&["chord", "."]), &dir),
             vec![dir.to_path_buf()]
         );
     }

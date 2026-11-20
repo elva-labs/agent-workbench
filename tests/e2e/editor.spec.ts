@@ -422,7 +422,7 @@ for (const linux of [false, true]) {
         if (sessionStorage.getItem("seeded") !== null) return;
         sessionStorage.setItem("seeded", "1");
         localStorage.setItem(
-          "workbench.layout",
+          "chord.layout",
           JSON.stringify({ editing: true, editTree: 300, editAgent: 500, editAgentDragged: true }),
         );
       });
@@ -432,8 +432,8 @@ for (const linux of [false, true]) {
       const cols = () =>
         page.evaluate(
           () =>
-            (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
-              .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+            (window as unknown as { __CHORD_TERMINALS__?: Record<string, { cols: number }> })
+              .__CHORD_TERMINALS__?.["s1"]?.cols ?? 0,
         );
       await expect.poll(cols).toBeGreaterThan(0);
 
@@ -521,8 +521,8 @@ for (const linux of [false, true]) {
       const cols = () =>
         page.evaluate(
           () =>
-            (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, { cols: number }> })
-              .__WORKBENCH_TERMINALS__?.["s1"]?.cols ?? 0,
+            (window as unknown as { __CHORD_TERMINALS__?: Record<string, { cols: number }> })
+              .__CHORD_TERMINALS__?.["s1"]?.cols ?? 0,
         );
       const resizes = () =>
         page.evaluate(() => (window as unknown as { __resizes?: unknown[] }).__resizes?.length ?? 0);
@@ -1036,7 +1036,7 @@ test.describe("questions before anything unsaved goes", () => {
     await treeRow(page, "README.md").click();
     await typeAtEnd(page, "mine");
     await page.evaluate(() =>
-      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+      (window as unknown as { __CHORD_CORE__: { windowControl: (a: string) => Promise<void> } }).__CHORD_CORE__.windowControl("close"),
     );
     const strip = page.getByTestId("close-window");
     await expect(strip).toContainText("Close the window with unsaved edits?");
@@ -1304,7 +1304,7 @@ test.describe("a file the disk no longer gives back", () => {
 
   test("says deleted when it is gone, with Keep mine and Close without saving", async ({ page }) => {
     await page.evaluate(async () => {
-      const core = (window as unknown as { __WORKBENCH_CORE__: { pathDelete: (r: string, p: string) => Promise<void> } }).__WORKBENCH_CORE__;
+      const core = (window as unknown as { __CHORD_CORE__: { pathDelete: (r: string, p: string) => Promise<void> } }).__CHORD_CORE__;
       await core.pathDelete("/home/ada/dev/demo", "README.md");
       (window as unknown as { __shownChanged: (files: string[]) => void }).__shownChanged(["/home/ada/dev/demo/README.md"]);
     });
@@ -1679,8 +1679,8 @@ test.describe("the question's three buttons", () => {
       await installFakeCore(at, TERMINAL);
       if (sessions !== null) {
         await at.addInitScript((sessions) => {
-          const saved = JSON.parse(localStorage.getItem("workbench.layout") ?? "{}");
-          localStorage.setItem("workbench.layout", JSON.stringify({ ...saved, sessions, editing: true }));
+          const saved = JSON.parse(localStorage.getItem("chord.layout") ?? "{}");
+          localStorage.setItem("chord.layout", JSON.stringify({ ...saved, sessions, editing: true }));
         }, sessions);
       }
       await at.goto("/");
@@ -2010,7 +2010,7 @@ test.describe("an integrated session beside the editor", () => {
     await treeRow(page, "README.md").dblclick();
     await typeAtEnd(page, "mine");
     await page.evaluate(() =>
-      (window as unknown as { __WORKBENCH_CORE__: { windowControl: (a: string) => Promise<void> } }).__WORKBENCH_CORE__.windowControl("close"),
+      (window as unknown as { __CHORD_CORE__: { windowControl: (a: string) => Promise<void> } }).__CHORD_CORE__.windowControl("close"),
     );
     const strip = page.getByTestId("close-window");
     await expect(strip).toContainText("Close the window with unsaved edits?");

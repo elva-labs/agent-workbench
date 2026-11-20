@@ -39,7 +39,7 @@ pub static CLAUDE_STREAM: ClaudeStream = ClaudeStream;
 /// The name the workbench's tool server goes by, the same as when it is
 /// written into the agent's own configuration, so its tools are named the
 /// same either way.
-const TOOL_SERVER: &str = "agent-workbench";
+const TOOL_SERVER: &str = "chord";
 
 /// The agent's id, as a start names it, on the limits it reports.
 pub(crate) const AGENT: &str = "claude-code";
@@ -307,7 +307,7 @@ impl Protocol for ClaudeStream {
 /// in the system's temporary folder. It goes when the session ends.
 fn private_file(what: &str, extension: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
-        "agent-workbench-{what}-{}.{extension}",
+        "chord-{what}-{}.{extension}",
         uuid::Uuid::new_v4().simple()
     ))
 }
@@ -3131,7 +3131,7 @@ mod tests {
             ("Glob", ToolKind::Search),
             ("WebFetch", ToolKind::Web),
             ("Agent", ToolKind::Agent),
-            ("mcp__agent-workbench__show", ToolKind::Mcp),
+            ("mcp__chord__show", ToolKind::Mcp),
             ("Skill", ToolKind::Other),
         ] {
             assert_eq!(tool_kind(name), kind, "{name}");

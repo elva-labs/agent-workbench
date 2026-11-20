@@ -190,7 +190,7 @@ async function toStarter(page: Page) {
 }
 
 const layoutKept = (page: Page) =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("workbench.layout") ?? "{}") as Record<string, unknown>);
+  page.evaluate(() => JSON.parse(localStorage.getItem("chord.layout") ?? "{}") as Record<string, unknown>);
 
 /** The demo project's own session on screen, following the workflow when
     asked to, with nothing started yet. */

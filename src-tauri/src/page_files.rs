@@ -15,17 +15,17 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use chord_core::page_files::{PageFile, PageFileWire};
+use chord_core::Core;
 use serde_json::json;
 use tauri::http::{header, Request, Response, StatusCode};
 use tauri::{AppHandle, Manager, State, UriSchemeContext, UriSchemeResponder, Wry};
 use tokio::sync::{Semaphore, SemaphorePermit};
-use workbench_core::page_files::{PageFile, PageFileWire};
-use workbench_core::Core;
 
 use crate::remote::{route, Remotes, Route};
 
 /// The scheme the files are served under.
-pub const SCHEME: &str = "awb-page";
+pub const SCHEME: &str = "chord-page";
 
 /// What a document served under the scheme may do, should one ever be
 /// opened as a page of its own, an SVG above all: run nothing and load

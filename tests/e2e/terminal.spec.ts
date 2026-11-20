@@ -209,8 +209,8 @@ test("zooms the shell that has the keyboard, and only that one", async ({ page }
   await expect(page.locator(ROW)).toHaveCount(1);
   const grid = (key: string) =>
     page.evaluate((key) => {
-      const terminal = (window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, any> })
-        .__WORKBENCH_TERMINALS__?.[key];
+      const terminal = (window as unknown as { __CHORD_TERMINALS__?: Record<string, any> })
+        .__CHORD_TERMINALS__?.[key];
       return terminal ? { cols: terminal.cols, size: terminal.options.fontSize } : null;
     }, key);
   // The grid is fitted once the panel has slid up and stopped.

@@ -26,12 +26,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chord_core::account::Dirs;
+use chord_core::{Core, Output, Sink};
 use serde::Serialize;
 use serde_json::{json, Value};
 use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
-use workbench_core::account::Dirs;
-use workbench_core::{Core, Output, Sink};
 
 use remote::{route, with_host, with_host_id, Remotes, Route};
 
@@ -267,7 +267,7 @@ async fn integrated_send(
     id: String,
     message: String,
     text: String,
-    images: Option<Vec<workbench_core::integrated::Image>>,
+    images: Option<Vec<chord_core::integrated::Image>>,
 ) -> Result<Value, String> {
     let images = images.unwrap_or_default();
     let (named, sent, typed) = (message.clone(), images.clone(), text.clone());
@@ -360,7 +360,7 @@ async fn integrated_answer(
     remotes: State<'_, Arc<Remotes>>,
     id: String,
     request: String,
-    choice: workbench_core::integrated::Choice,
+    choice: chord_core::integrated::Choice,
     message: Option<String>,
 ) -> Result<Value, String> {
     let (asked, said) = (request.clone(), message.clone());
@@ -1278,7 +1278,7 @@ async fn usage_log(
         },
         move |core, rest| {
             let project = PathBuf::from(rest);
-            let read = transcript.as_ref().map(|of| workbench_core::api::UsageTranscript {
+            let read = transcript.as_ref().map(|of| chord_core::api::UsageTranscript {
                 project: &project,
                 cwd: of.cwd.as_deref().map(Path::new),
                 session: &of.session,
@@ -1346,7 +1346,7 @@ async fn set_selection(
     core: State<'_, Arc<Core>>,
     remotes: State<'_, Arc<Remotes>>,
     project: String,
-    selection: Option<workbench_core::selection::Selection>,
+    selection: Option<chord_core::selection::Selection>,
 ) -> Result<Value, String> {
     let sent = selection.clone();
     routed(
@@ -2091,7 +2091,7 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
     let remotes = Arc::clone(&remotes);
     blocking(move || {
         let files = remotes.files()?;
-        let home = workbench_core::api::home_directory().ok_or("no home directory")?;
+        let home = chord_core::api::home_directory().ok_or("no home directory")?;
         let saved: Vec<Value> = files
             .saved()
             .into_iter()
@@ -2107,7 +2107,7 @@ async fn remote_hosts(remotes: State<'_, Arc<Remotes>>) -> Result<Value, String>
     .await
 }
 
-/// Takes in the token `agent-workbench-remote connect` printed on a
+/// Takes in the token `chord-remote connect` printed on a
 /// machine: keeps its key and host key, remembers the machine, and opens
 /// the connection. Gives back the target that names the machine in paths.
 #[tauri::command]
@@ -2172,8 +2172,41 @@ async fn remote_dirs(
     .await
 }
 
+/// Moves an install made under the app's earlier name over before anything
+/// reads its folder, and says how it went when one was moved. A move that
+/// fails leaves the app on the folder that holds its files, and is tried
+/// again on the next start.
+fn migrate() -> Option<Result<(), String>> {
+    let home = chord_core::api::home_directory()?;
+    if !chord_core::migrate::on_start() || !chord_core::migrate::needed(&home) {
+        return None;
+    }
+    let env = &chord_core::env::environment().vars;
+    let moved = chord_core::migrate::run(&home, None, env).map(|_| ());
+    if let Err(error) = &moved {
+        eprintln!("moving the earlier install over: {error}");
+    }
+    Some(moved)
+}
+
+/// Says a move of the earlier install that did not go through, in a
+/// dialog, once the window is there.
+fn tell_move_failed(app: &tauri::AppHandle, error: &str) {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+    let mut message = error.to_string();
+    if let Some(first) = message.get(..1) {
+        message.replace_range(..1, &first.to_uppercase());
+    }
+    app.dialog()
+        .message(format!("{message}."))
+        .title("Moving to Chord's names")
+        .kind(MessageDialogKind::Warning)
+        .show(|_| {});
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let moved = migrate();
     let builder = tauri::Builder::default();
     // The single instance plugin has to be the first one registered. A
     // debug build goes without: it has the installed app's identifier, and
@@ -2196,7 +2229,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .setup(|app| {
+        .setup(move |app| {
             let core = Arc::new(Core::new(Arc::new(TauriSink(app.handle().clone()))));
             if let Err(error) = core.start() {
                 eprintln!("session log: {error}");
@@ -2204,9 +2237,24 @@ pub fn run() {
             if let Err(error) = core.watch_settings() {
                 eprintln!("settings: {error}");
             }
+            let local_daemon = Arc::new(ssh::LocalDaemon::default());
+            if let Some(moved) = &moved {
+                // The entries the move renamed run the daemon under its new
+                // name, which is put in place now rather than with the
+                // first project's status.
+                let (handle, core, daemon) = (
+                    app.handle().clone(),
+                    Arc::clone(&core),
+                    Arc::clone(&local_daemon),
+                );
+                std::thread::spawn(move || ensure_daemon_here(&handle, &core, &daemon));
+                if let Err(error) = moved {
+                    tell_move_failed(app.handle(), error);
+                }
+            }
             app.manage(core);
             app.manage(Arc::new(Remotes::new(app.handle().clone())));
-            app.manage(Arc::new(ssh::LocalDaemon::default()));
+            app.manage(local_daemon);
             app.manage(Arc::new(browser::Browser::default()));
             app.manage(Arc::new(browser_keys::Keys::default()));
             app.manage(Arc::new(leaving::Leaving::default()));

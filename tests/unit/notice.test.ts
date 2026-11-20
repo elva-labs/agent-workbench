@@ -25,9 +25,9 @@ vi.mock("$lib/core", () => ({
 
 /** A setup from before the choice: a workspace on record, hooks off. */
 function existingSetup() {
-  localStorage.setItem("workbench.workspace", JSON.stringify({ open: [] }));
+  localStorage.setItem("chord.workspace", JSON.stringify({ open: [] }));
   localStorage.setItem(
-    "workbench.hooks",
+    "chord.hooks",
     JSON.stringify({ everywhere: false, overrides: {} }),
   );
 }
@@ -76,7 +76,7 @@ describe("the hooks notice", () => {
 
   it("survives storage that is not what it wrote", () => {
     existingSetup();
-    localStorage.setItem("workbench.notices", "nonsense");
+    localStorage.setItem("chord.notices", "nonsense");
     loadHooks();
     loadNotices();
     expect(hooksNoticeDue()).toBe(true);

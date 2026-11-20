@@ -243,16 +243,16 @@ export function carriedFor(session: Session): Carried | null {
   };
 }
 
-const MINE_KEY = "workbench.mine";
-const NAMES_KEY = "workbench.names";
-const OWN_NAMES_KEY = "workbench.ownNames";
-const TOKENS_KEY = "workbench.tokens";
-const PREFERRED_KEY = "workbench.agents";
-const WORKFLOWS_KEY = "workbench.workflows";
-const WAITING_KEY = "workbench.waiting";
+const MINE_KEY = "chord.mine";
+const NAMES_KEY = "chord.names";
+const OWN_NAMES_KEY = "chord.ownNames";
+const TOKENS_KEY = "chord.tokens";
+const PREFERRED_KEY = "chord.agents";
+const WORKFLOWS_KEY = "chord.workflows";
+const WAITING_KEY = "chord.waiting";
 /** The record of the rows open at the last quit, whose flag says the
     version that last wrote it kept what waits on the user too. */
-const OPEN_KEY = "workbench.open";
+const OPEN_KEY = "chord.open";
 
 /** What an unread row is brought back with after a restart or a reload,
     by its session's id: that it waits on the user, the line under its

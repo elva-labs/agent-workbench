@@ -1,7 +1,7 @@
 //! The daemon as an MCP server: what the agent calls to show the user a
 //! place in a file.
 //!
-//! `agent-workbench-remote mcp` speaks the Model Context Protocol over
+//! `chord-remote mcp` speaks the Model Context Protocol over
 //! stdin and stdout, one JSON-RPC message a line, and offers the app's own
 //! tools, the tools one session starts and directs the others with, and
 //! the tools of the plugins running here. A call appends a request to the
@@ -1014,7 +1014,7 @@ pub fn handle_with(
         "initialize" => Ok(json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": { "tools": {} },
-            "serverInfo": { "name": "agent-workbench", "version": env!("CARGO_PKG_VERSION") },
+            "serverInfo": { "name": "chord", "version": env!("CARGO_PKG_VERSION") },
             "instructions": instructions(),
         })),
         "ping" => Ok(json!({})),
@@ -1178,7 +1178,7 @@ const PROMPT_GRACE: Duration = Duration::from_millis(300);
 /// The most of the hook's input that is read; the rest is drained unread.
 const PROMPT_INPUT: u64 = 1024 * 1024;
 
-/// `agent-workbench-remote reports`, run by a session's prompt hook as the
+/// `chord-remote reports`, run by a session's prompt hook as the
 /// user's message goes in: prints what the sessions it started did since
 /// it last looked, for the agent to read ahead of the user's words, or
 /// nothing.
@@ -3149,7 +3149,7 @@ mod tests {
     #[test]
     fn the_prompt_hook_asks_only_for_a_session_the_workbench_started_while_a_window_is_there() {
         let home = home("prompt-gate");
-        std::fs::create_dir_all(home.join(".agent-workbench")).unwrap();
+        std::fs::create_dir_all(home.join(".chord")).unwrap();
         let quick = Duration::from_millis(300);
         assert_eq!(
             prompt_output(&home, Path::new("/p"), "{}", None, None, quick),

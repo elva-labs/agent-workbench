@@ -375,11 +375,11 @@ beforeEach(() => {
   standing = {};
   past = {};
   calls = 0;
-  localStorage.removeItem("workbench.started");
-  localStorage.removeItem("workbench.runs");
-  localStorage.removeItem("workbench.tokens");
-  localStorage.removeItem("workbench.carried");
-  localStorage.removeItem("workbench.later");
+  localStorage.removeItem("chord.started");
+  localStorage.removeItem("chord.runs");
+  localStorage.removeItem("chord.tokens");
+  localStorage.removeItem("chord.carried");
+  localStorage.removeItem("chord.later");
   workspace.open.push(repo(A), repo(B));
 });
 
@@ -440,7 +440,7 @@ describe("the projects tool", () => {
   // A version that let the orchestrator folder be opened as a project may
   // have left it among the open ones: it is no project to start in.
   it("leaves out the orchestrator folder, even among the open projects", async () => {
-    const folder = "/home/ada/.agent-workbench/orchestrator";
+    const folder = "/home/ada/.chord/orchestrator";
     resetFolder(folder);
     workspace.open.push(repo(folder));
     try {
@@ -1906,7 +1906,7 @@ describe("a session named by the start of its id", () => {
     await sending;
     expect(last().content).toBe(`Sent to session ${TWO}. Call wait to hear what it does next.`);
     resetGoingOn();
-    localStorage.removeItem("workbench.wentOn");
+    localStorage.removeItem("chord.wentOn");
   });
 
   it("resumes one of the caller's own by the start of its id", async () => {
@@ -3802,10 +3802,10 @@ describe("what a caller started, between runs", () => {
   });
 
   it("reads a corrupt record as nothing started", () => {
-    localStorage.setItem("workbench.started", "{not json");
+    localStorage.setItem("chord.started", "{not json");
     expect(() => loadStarted()).not.toThrow();
     localStorage.setItem(
-      "workbench.started",
+      "chord.started",
       JSON.stringify({
         "caller-1": [
           { id: "ok", project: A, worktree: null, agent: "codex", name: null },
@@ -4329,10 +4329,10 @@ describe("starting in a workflow's shape", () => {
     expect(lines[1]).toContain('step "Review" round 1, reviewing session w1');
 
     // After a restart the record says the same of the sessions that went.
-    const record = localStorage.getItem("workbench.runs");
+    const record = localStorage.getItem("chord.runs");
     resetSessions();
     resetConductor();
-    localStorage.setItem("workbench.runs", record!);
+    localStorage.setItem("chord.runs", record!);
     loadStarted();
     loadRemembered();
     orchestrating();
@@ -5075,7 +5075,7 @@ describe("starting in a workflow's shape", () => {
 
   it("reads rounds kept under a step's name in any case as one count", () => {
     localStorage.setItem(
-      "workbench.runs",
+      "chord.runs",
       JSON.stringify({ orch: { places: {}, rounds: { "Review\nw1": 2, "review\nw1": 1 } } }),
     );
     loadStarted();
@@ -5345,7 +5345,7 @@ describe("starting in a workflow's shape", () => {
 
 describe("sessions told apart by their tokens", () => {
   beforeEach(() => {
-    for (const key of ["workbench.mine", "workbench.names", "workbench.workflows", "workbench.agents"])
+    for (const key of ["chord.mine", "chord.names", "chord.workflows", "chord.agents"])
       localStorage.removeItem(key);
   });
 
@@ -5433,8 +5433,8 @@ describe("sessions told apart by their tokens", () => {
     },
   };
   function keptByAnEarlierVersion() {
-    localStorage.setItem("workbench.started", JSON.stringify(keptOld.started));
-    localStorage.setItem("workbench.runs", JSON.stringify(keptOld.runs));
+    localStorage.setItem("chord.started", JSON.stringify(keptOld.started));
+    localStorage.setItem("chord.runs", JSON.stringify(keptOld.runs));
     restartedWithTokens();
   }
   const stored = (key: string) => JSON.parse(localStorage.getItem(key) ?? "{}") as Record<string, unknown>;
@@ -5462,16 +5462,16 @@ describe("sessions told apart by their tokens", () => {
     // review's limit and the session last seen at rest are the token's.
     expect(conductor.started[token].map((known) => known.id)).toEqual(["kid-old"]);
     expect(roundsOf(token, "Review", "kid-old")).toBe(2);
-    expect(stored("workbench.runs")[token]).toEqual(keptOld.runs["orch-old"]);
+    expect(stored("chord.runs")[token]).toEqual(keptOld.runs["orch-old"]);
     await handle(raw("sessions", {}, { session: token }));
     expect(last().content).toContain("kid-old");
     // The id's list stays as it was, for the version before; no version
     // reads the id's run, which goes.
-    expect(stored("workbench.started")["orch-old"]).toEqual(keptOld.started["orch-old"]);
-    expect(stored("workbench.runs")["orch-old"]).toBeUndefined();
+    expect(stored("chord.started")["orch-old"]).toEqual(keptOld.started["orch-old"]);
+    expect(stored("chord.runs")["orch-old"]).toBeUndefined();
     // The version with tokens before this one finds the token kept by the
     // id and what moved under the token.
-    expect((stored("workbench.started")[token] as { id: string }[]).map((known) => known.id)).toEqual(["kid-old"]);
+    expect((stored("chord.started")[token] as { id: string }[]).map((known) => known.id)).toEqual(["kid-old"]);
     // The id calls as no one, whichever tool, and the prompt hook gets no
     // note for it.
     for (const request of everyCall("orch-old")) {
@@ -5521,13 +5521,13 @@ describe("sessions told apart by their tokens", () => {
     keptByAnEarlierVersion();
     // The token was kept and the list moved, and the window went before
     // the runs did; a round was counted under the token since.
-    localStorage.setItem("workbench.tokens", JSON.stringify({ "orch-old": { token: "tok-1", project: A } }));
+    localStorage.setItem("chord.tokens", JSON.stringify({ "orch-old": { token: "tok-1", project: A } }));
     localStorage.setItem(
-      "workbench.started",
+      "chord.started",
       JSON.stringify({ ...keptOld.started, "tok-1": [kidOld] }),
     );
     localStorage.setItem(
-      "workbench.runs",
+      "chord.runs",
       JSON.stringify({ ...keptOld.runs, "tok-1": { places: {}, rounds: { "review\nkid-old": 3 } } }),
     );
     restartedWithTokens();
@@ -5563,19 +5563,19 @@ describe("sessions told apart by their tokens", () => {
   it("loses nothing and doubles nothing when a second window moves the same session", async () => {
     keptByAnEarlierVersion();
     const before = {
-      started: localStorage.getItem("workbench.started")!,
-      runs: localStorage.getItem("workbench.runs")!,
-      tokens: localStorage.getItem("workbench.tokens"),
+      started: localStorage.getItem("chord.started")!,
+      runs: localStorage.getItem("chord.runs")!,
+      tokens: localStorage.getItem("chord.tokens"),
     };
     // One window resumes it and writes what it moved.
     const mine = create(A, "orch-old", "claude-code", null, null, null, null, null);
     cameUp(mine.key, "pty-1", "orch-old");
-    const ours = { started: localStorage.getItem("workbench.started")!, runs: localStorage.getItem("workbench.runs")! };
+    const ours = { started: localStorage.getItem("chord.started")!, runs: localStorage.getItem("chord.runs")! };
     // A second window read the storage before that, and resumes it too.
-    localStorage.setItem("workbench.started", before.started);
-    localStorage.setItem("workbench.runs", before.runs);
-    if (before.tokens === null) localStorage.removeItem("workbench.tokens");
-    else localStorage.setItem("workbench.tokens", before.tokens);
+    localStorage.setItem("chord.started", before.started);
+    localStorage.setItem("chord.runs", before.runs);
+    if (before.tokens === null) localStorage.removeItem("chord.tokens");
+    else localStorage.setItem("chord.tokens", before.tokens);
     restartedWithTokens();
     const theirs = create(A, "orch-old", "claude-code", null, null, null, null, null);
     cameUp(theirs.key, "pty-2", "orch-old");
@@ -5584,11 +5584,11 @@ describe("sessions told apart by their tokens", () => {
     expect(theirs.token).not.toBe("orch-old");
     // Each window moved the run to its own token, once.
     expect(roundsOf(theirs.token, "Review", "kid-old")).toBe(2);
-    expect(stored("workbench.runs")["orch-old"]).toBeUndefined();
+    expect(stored("chord.runs")["orch-old"]).toBeUndefined();
     // The first window writes its list over the second's: the token the
     // second kept has lost its copy, and the next start puts it back,
     // once.
-    localStorage.setItem("workbench.started", ours.started);
+    localStorage.setItem("chord.started", ours.started);
     restartedWithTokens();
     const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
     expect(back.token).toBe(theirs.token);
@@ -5630,14 +5630,14 @@ describe("sessions told apart by their tokens", () => {
 
   it("moves the worktrees its starts made to the token, and keeps them from the id", () => {
     const made = [{ project: B, path: `${B}/.worktrees/old-fix` }];
-    localStorage.setItem("workbench.trees", JSON.stringify({ "orch-old": made }));
+    localStorage.setItem("chord.trees", JSON.stringify({ "orch-old": made }));
     keptByAnEarlierVersion();
     expect(treesMadeBy("orch-old")).toEqual(made);
     const back = create(A, "orch-old", "claude-code", null, null, null, null, null);
     cameUp(back.key, "pty-back", "orch-old");
     expect(treesMadeBy(back.token)).toEqual(made);
     expect(treesMadeBy("orch-old")).toEqual([]);
-    expect(stored("workbench.trees")).toEqual({ [back.token]: made });
+    expect(stored("chord.trees")).toEqual({ [back.token]: made });
   });
 
   it("moves a standing answer to the token, so one taken back there does not come back", async () => {
@@ -5790,9 +5790,9 @@ describe("sessions told apart by their tokens", () => {
 
   it("carries what an earlier version kept under a folder to the one Codex session open there", async () => {
     const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
-    localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")], [B]: [entry("kid-b")] }));
+    localStorage.setItem("chord.started", JSON.stringify({ [A]: [entry("kid-a")], [B]: [entry("kid-b")] }));
     localStorage.setItem(
-      "workbench.runs",
+      "chord.runs",
       JSON.stringify({
         [A]: { places: { "kid-a": { step: "Work", kind: "work", piece: "kid-a", round: null, work: null } }, rounds: {} },
       }),
@@ -5806,13 +5806,13 @@ describe("sessions told apart by their tokens", () => {
       { project: B, id: "codex-b2", agent: "codex", startIn: null },
       { project: B, id: "claude-b", agent: "claude-code", startIn: null },
     ]);
-    const kept = JSON.parse(localStorage.getItem("workbench.started")!) as Record<string, { id: string }[]>;
+    const kept = JSON.parse(localStorage.getItem("chord.started")!) as Record<string, { id: string }[]>;
     expect(kept["codex-a"].map((known) => known.id)).toEqual(["kid-a"]);
     // The folder's own copy stays, for the version before to read.
     expect(kept[A].map((known) => known.id)).toEqual(["kid-a"]);
     expect(kept["codex-b1"]).toBeUndefined();
     expect(kept["codex-b2"]).toBeUndefined();
-    expect(JSON.parse(localStorage.getItem("workbench.runs")!)["codex-a"].places["kid-a"].step).toBe("Work");
+    expect(JSON.parse(localStorage.getItem("chord.runs")!)["codex-a"].places["kid-a"].step).toBe("Work");
     // The session comes back under a token of its own, and what it
     // started is its.
     const back = create(A, "codex-a", "codex", null, null, null, null, null);
@@ -5871,7 +5871,7 @@ describe("sessions told apart by their tokens", () => {
       { project: B, tokens: ["kid-token"] },
     ]);
     expect(conductor.runs[tok(token)]).toBeUndefined();
-    expect(JSON.parse(localStorage.getItem("workbench.runs") ?? "{}")).not.toHaveProperty(token);
+    expect(JSON.parse(localStorage.getItem("chord.runs") ?? "{}")).not.toHaveProperty(token);
     expect(sessions.tokens["orch-id"]).toBeUndefined();
   });
 
@@ -5906,15 +5906,15 @@ describe("sessions told apart by their tokens", () => {
     expect(sessions.tokens["orch-old"]).toBeUndefined();
     expect(conductor.runs[token]).toBeUndefined();
     expect(conductor.runs["orch-old"]).toBeUndefined();
-    expect(stored("workbench.runs")).toEqual({});
-    expect(stored("workbench.tokens")).toEqual({});
+    expect(stored("chord.runs")).toEqual({});
+    expect(stored("chord.tokens")).toEqual({});
   });
 
   it("looks at a folder once: one left as it was is not carried to the session open there at a later quit", async () => {
     const entry = (id: string) => ({ id, project: B, worktree: null, agent: "codex", name: null });
-    localStorage.setItem("workbench.started", JSON.stringify({ [A]: [entry("kid-a")] }));
+    localStorage.setItem("chord.started", JSON.stringify({ [A]: [entry("kid-a")] }));
     localStorage.setItem(
-      "workbench.runs",
+      "chord.runs",
       JSON.stringify({ [A]: { places: { "kid-a": { step: "Work", kind: "work", piece: "kid-a", round: null, work: null } }, rounds: {} } }),
     );
     restartedWithTokens();
@@ -6084,7 +6084,7 @@ describe("an agent the workbench did not start", () => {
 
   it("finds nothing in what an earlier version kept under its bare folder", async () => {
     localStorage.setItem(
-      "workbench.started",
+      "chord.started",
       JSON.stringify({ [A]: [{ id: "kid-old", project: B, worktree: null, agent: "claude-code", name: null }] }),
     );
     restarted();
@@ -6758,7 +6758,7 @@ describe("a call that waits on the user", () => {
     close(row.key);
     flushSync();
     expect(conductor.later).toEqual({});
-    expect(JSON.parse(localStorage.getItem("workbench.later")!)).toEqual({});
+    expect(JSON.parse(localStorage.getItem("chord.later")!)).toEqual({});
   });
 
   it("says after the window came back that a start in front of the user was not done, and one under way may not have been", async () => {

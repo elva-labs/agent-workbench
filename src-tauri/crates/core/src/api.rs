@@ -1952,7 +1952,7 @@ impl Core {
 
 /// Where the `orchestrator` folder sits under a home directory.
 fn orchestrator_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("orchestrator")
+    crate::home::dir(home).join("orchestrator")
 }
 
 /// The mode an integrated session is started in: the one the window named,
@@ -2050,7 +2050,7 @@ impl Drop for SessionFiles {
 
 /// Where the files sessions read while they run are kept.
 fn sessions_dir(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("sessions")
+    crate::home::dir(home).join("sessions")
 }
 
 /// How long a lock file is left alone after it is made, so one whose
@@ -2253,7 +2253,7 @@ mod tests {
         let dir = core_at(&home).orchestrator_dir().unwrap();
         assert_eq!(
             PathBuf::from(&dir),
-            home.join(".agent-workbench").join("orchestrator")
+            home.join(".chord").join("orchestrator")
         );
         assert!(!PathBuf::from(&dir).exists());
     }
@@ -2796,9 +2796,7 @@ mod tests {
             std::fs::read_to_string(account::claude_json(&home, None, &HashMap::new())).unwrap();
         let state: serde_json::Value = serde_json::from_str(&state).unwrap();
         let key = tree.to_string_lossy().to_string();
-        assert!(state["projects"][&key]["mcpServers"]
-            .get("agent-workbench")
-            .is_none());
+        assert!(state["projects"][&key]["mcpServers"].get("chord").is_none());
         assert!(hooked(&project), "the project keeps its own");
     }
 

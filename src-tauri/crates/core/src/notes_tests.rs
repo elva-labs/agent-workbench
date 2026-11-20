@@ -26,7 +26,7 @@ fn the_store_is_in_the_workbench_directory_and_the_users_alone() {
     let notes = Notes::open(home.path()).unwrap();
     notes.add("a", &note("One", "First."), 0).unwrap();
     let page = kept(home.path(), "a", true).unwrap().page.unwrap();
-    let dir = home.path().join(".agent-workbench").join("notes");
+    let dir = home.path().join(".chord").join("notes");
     assert!(dir.join(FILE).is_file());
     assert!(Path::new(&page).starts_with(&dir));
     assert!(!home.path().join(FILE).exists());
@@ -252,7 +252,7 @@ fn a_page_path_keeps_to_the_folder() {
     assert_eq!(
         page_path(home, "../x"),
         Path::new("/home")
-            .join(".agent-workbench")
+            .join(".chord")
             .join("notes")
             .join("___x")
             .join(PAGE_NAME)

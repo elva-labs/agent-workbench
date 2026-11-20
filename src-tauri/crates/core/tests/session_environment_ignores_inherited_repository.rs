@@ -8,15 +8,15 @@ use std::io::Read;
 use std::path::Path;
 use std::process::Command;
 
+use chord_core::adapter::{prepare_process, process};
+use chord_core::env::environment;
+use chord_core::scratch::Scratch;
+use chord_core::shell;
 use portable_pty::{native_pty_system, PtySize};
-use workbench_core::adapter::{prepare_process, process};
-use workbench_core::env::environment;
-use workbench_core::scratch::Scratch;
-use workbench_core::shell;
 
 const SCRIPT: &str =
     "for name in GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_NAMESPACE \
-GIT_COMMON_DIR WORKBENCH_UNRELATED GIT_AUTHOR_NAME GIT_CONFIG_COUNT; do \
+GIT_COMMON_DIR CHORD_UNRELATED GIT_AUTHOR_NAME GIT_CONFIG_COUNT; do \
 eval \"value=\\${$name+set}\"; echo \"$name=${value:-unset}\"; done; \
 echo \"TOPLEVEL=$(git rev-parse --show-toplevel)\"; git commit -q --allow-empty -m child";
 
@@ -94,7 +94,7 @@ fn assert_only_the_repository_is_dropped(output: &str, project: &Path) {
     ] {
         assert_eq!(seen[name], "unset", "{name} reached the child: {output}");
     }
-    assert_eq!(seen["WORKBENCH_UNRELATED"], "set", "{output}");
+    assert_eq!(seen["CHORD_UNRELATED"], "set", "{output}");
     assert_eq!(seen["GIT_AUTHOR_NAME"], "set", "{output}");
     assert_eq!(seen["GIT_CONFIG_COUNT"], "set", "{output}");
 }
@@ -163,7 +163,7 @@ fn processes_a_session_starts_do_not_see_the_callers_repository() {
     std::env::set_var("GIT_OBJECT_DIRECTORY", dot.join("objects"));
     std::env::set_var("GIT_NAMESPACE", "decoy");
     std::env::set_var("GIT_COMMON_DIR", &dot);
-    std::env::set_var("WORKBENCH_UNRELATED", "kept");
+    std::env::set_var("CHORD_UNRELATED", "kept");
     std::env::set_var("GIT_AUTHOR_NAME", "Ada");
     std::env::set_var("GIT_CONFIG_COUNT", "0");
 

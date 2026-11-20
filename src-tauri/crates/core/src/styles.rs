@@ -24,7 +24,7 @@ pub const USER_STYLES_CHANGED: &str = "user_styles_changed";
 pub const MOST_BYTES: usize = 256 * 1024;
 
 pub fn styles_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("user.css")
+    crate::home::dir(home).join("user.css")
 }
 
 /// The sheet as the window is handed it: the text, or none and the reason.

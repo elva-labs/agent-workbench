@@ -265,7 +265,7 @@ test.describe("where a divider between panes meets the one over the terminal pan
     await page.mouse.up();
     expect((await box(page, CHANGES)).width).toBeCloseTo(changes.width - 30, 0);
     expect((await panel.boundingBox())!.height).toBeCloseTo(height + 40, 0);
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("workbench.layout") ?? "{}"));
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem("chord.layout") ?? "{}"));
     expect(stored.terminal).toBeCloseTo(height + 40, 0);
     const moved = (await junction.boundingBox())!;
     await page.mouse.dblclick(moved.x + moved.width / 2, moved.y + moved.height / 2);

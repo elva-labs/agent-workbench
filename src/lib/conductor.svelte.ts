@@ -635,10 +635,10 @@ export interface Run {
   rested?: string[];
 }
 
-const STARTED_KEY = "workbench.started";
-const RUNS_KEY = "workbench.runs";
-const CARRIED_KEY = "workbench.carried";
-const TREES_KEY = "workbench.trees";
+const STARTED_KEY = "chord.started";
+const RUNS_KEY = "chord.runs";
+const CARRIED_KEY = "chord.carried";
+const TREES_KEY = "chord.trees";
 
 export const conductor = $state({
   asking: null as Ask | null,
@@ -1329,7 +1329,7 @@ function later(request: ConductRequest, entry: { caller: string; same: string; w
   });
 }
 
-const LATER_KEY = "workbench.later";
+const LATER_KEY = "chord.later";
 
 /** What a call answered before it was done comes to once the window that
     held it was closed or reloaded first: the question went with it, so it

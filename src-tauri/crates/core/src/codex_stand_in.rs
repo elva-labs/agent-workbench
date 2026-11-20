@@ -60,7 +60,7 @@ const THREAD: &str = "019a0000-0000-7000-8000-000000000001";
 fn opening(account: &str) -> String {
     [
         r#"expect "method":"initialize","#,
-        r#"reply {"id":@ID@,"result":{"userAgent":"agent-workbench/0.169.0 (stand-in)","codexHome":"/h","platformFamily":"unix","platformOs":"macos"}}"#,
+        r#"reply {"id":@ID@,"result":{"userAgent":"chord/0.169.0 (stand-in)","codexHome":"/h","platformFamily":"unix","platformOs":"macos"}}"#,
         r#"expect "method":"initialized""#,
         r#"expect "method":"account/read""#,
         &format!(r#"reply {{"id":@ID@,"result":{account}}}"#),
@@ -138,7 +138,7 @@ fn start_with(name: &str, scenario: &str, adjust: impl FnOnce(&mut Launch)) -> H
             "FAKE_CODEX_SCENARIO".to_string(),
             dir.join("scenario").to_string_lossy().to_string(),
         ),
-        ("WORKBENCH_SESSION".to_string(), "the-parent".to_string()),
+        ("CHORD_SESSION".to_string(), "the-parent".to_string()),
     ]);
     let recorder = Arc::new(Recorder::default());
     let sessions = Arc::new(Sessions::default());
@@ -461,7 +461,7 @@ fn a_session_starts_a_thread_streams_a_turn_and_stops_cleanly() {
 
 #[test]
 fn the_account_s_home_and_the_tool_server_go_with_the_session() {
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let home = PathBuf::from("/home/ada/.codex-work");
     let h = start_with(
         "command",
@@ -481,8 +481,8 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
     let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
     let has = |line: &str| env.lines().any(|l| l == line);
     assert!(has(&format!("CODEX_HOME={}", home.display())), "{env}");
-    assert!(has("WORKBENCH_SESSION=token-old"), "{env}");
-    assert!(has("WORKBENCH_ROLE=orchestrator"), "{env}");
+    assert!(has("CHORD_SESSION=token-old"), "{env}");
+    assert!(has("CHORD_ROLE=orchestrator"), "{env}");
     let resume = &h.sent("thread/resume")[0]["params"];
     assert_eq!(resume["threadId"], "019a-old");
     assert_eq!(resume["model"], "gpt-b");
@@ -494,11 +494,11 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
         .map(|tool| (tool.to_string(), json!({"approval_mode": "approve"})))
         .collect();
     assert_eq!(
-        resume["config"]["mcp_servers"]["agent_workbench"],
+        resume["config"]["mcp_servers"]["chord"],
         json!({
             "command": server.to_string_lossy(),
             "args": ["mcp"],
-            "env": {"WORKBENCH_SESSION": "token-old", "WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"},
+            "env": {"CHORD_SESSION": "token-old", "CHORD_ROLE": "orchestrator", "CHORD_VIEW": "conversation"},
             "tools": approved,
             "tool_timeout_sec": crate::adapter::CODEX_TOOL_SECONDS,
         })
@@ -508,7 +508,7 @@ fn the_account_s_home_and_the_tool_server_go_with_the_session() {
 
 #[test]
 fn a_session_under_a_workflow_is_told_it_in_the_thread_and_delegates_only_through_start() {
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let told = "1. Direct the work.\n2. Say \"done\" when it is.";
     let no_subagents = json!({
         "multi_agent": false,
@@ -549,8 +549,8 @@ fn a_session_under_a_workflow_is_told_it_in_the_thread_and_delegates_only_throug
         // terminal session is started with, as the tables they name.
         assert_eq!(params["config"]["features"], no_subagents, "{method}");
         assert_eq!(
-            params["config"]["mcp_servers"]["agent_workbench"]["env"],
-            json!({"WORKBENCH_SESSION": "token-flow", "WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"}),
+            params["config"]["mcp_servers"]["chord"]["env"],
+            json!({"CHORD_SESSION": "token-flow", "CHORD_ROLE": "orchestrator", "CHORD_VIEW": "conversation"}),
             "{method}"
         );
         // Nothing of the workflow is on the command line, so a command
@@ -558,10 +558,7 @@ fn a_session_under_a_workflow_is_told_it_in_the_thread_and_delegates_only_throug
         let args = std::fs::read_to_string(h.dir.join("args")).unwrap();
         assert_eq!(args.trim(), "app-server");
         let env = std::fs::read_to_string(h.dir.join("env")).unwrap();
-        assert!(
-            env.lines().any(|l| l == "WORKBENCH_ROLE=orchestrator"),
-            "{env}"
-        );
+        assert!(env.lines().any(|l| l == "CHORD_ROLE=orchestrator"), "{env}");
         h.stop();
     }
 
@@ -735,8 +732,8 @@ fn a_command_a_file_change_an_mcp_call_a_plan_and_the_diff() {
         item("item/started", "turn-1", r#"{"type":"fileChange","id":"fc","changes":[],"status":"inProgress"}"#),
         item("item/completed", "turn-1", r#"{"type":"fileChange","id":"fc","status":"completed","changes":[{"path":"/w/new.txt","kind":{"type":"add"},"diff":"hi\n"},{"path":"/w/a.txt","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-a\n+A\n"},{"path":"/w/b.txt","kind":{"type":"delete"},"diff":"b\n"},{"path":"/w/c.txt","kind":{"type":"update","move_path":"/w/d.txt"},"diff":""}]}"#),
         notify("turn/diff/updated", r#"{"turnId":"turn-1","diff":"diff --git a/a.txt b/a.txt\n"}"#),
-        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"mcp","server":"agent_workbench","tool":"notify","arguments":{"text":"done"},"status":"inProgress"}"#),
-        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"mcp","server":"agent_workbench","tool":"notify","status":"completed","result":{"content":[{"type":"text","text":"told"}]}}"#),
+        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"mcp","server":"chord","tool":"notify","arguments":{"text":"done"},"status":"inProgress"}"#),
+        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"mcp","server":"chord","tool":"notify","status":"completed","result":{"content":[{"type":"text","text":"told"}]}}"#),
         done("turn-1", "completed"),
         "drain".into(),
     ]
@@ -772,7 +769,7 @@ fn a_command_a_file_change_an_mcp_call_a_plan_and_the_diff() {
         .find(|e| e["type"] == "toolStarted" && e["call"] == "mcp")
         .unwrap();
     assert_eq!(mcp["kind"], "mcp");
-    assert_eq!(mcp["name"], "mcp__agent_workbench__notify");
+    assert_eq!(mcp["name"], "mcp__chord__notify");
     assert_eq!(finished("mcp")["output"], "told");
     let plan = events.iter().find(|e| e["type"] == "plan").unwrap();
     assert_eq!(
@@ -877,24 +874,24 @@ fn a_workbench_tool_off_the_list_asks_in_the_conversation() {
     let scenario = [
         ready_scenario(),
         take("turn-1"),
-        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"agent_workbench","tool":"notify","arguments":{"text":"done"},"status":"inProgress"}"#),
-        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"agent_workbench","tool":"notify","status":"completed","result":{"content":[{"type":"text","text":"told"}]}}"#),
-        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"agent_workbench","tool":"browser_open","arguments":{"url":"https://example.com"},"status":"inProgress"}"#),
-        ask(7, "mcpServer/elicitation/request", r#"{"turnId":"turn-1","serverName":"agent_workbench","mode":"form","message":"Allow the agent_workbench MCP server to run tool \"browser_open\"?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_name":"browser_open","tool_params":{"url":"https://example.com"}}}"#),
+        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"chord","tool":"notify","arguments":{"text":"done"},"status":"inProgress"}"#),
+        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"told","server":"chord","tool":"notify","status":"completed","result":{"content":[{"type":"text","text":"told"}]}}"#),
+        item("item/started", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"chord","tool":"browser_open","arguments":{"url":"https://example.com"},"status":"inProgress"}"#),
+        ask(7, "mcpServer/elicitation/request", r#"{"turnId":"turn-1","serverName":"chord","mode":"form","message":"Allow the chord MCP server to run tool \"browser_open\"?","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call","persist":["session","always"],"tool_name":"browser_open","tool_params":{"url":"https://example.com"}}}"#),
         r#"expect "id":7"#.into(),
-        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"agent_workbench","tool":"browser_open","status":"completed","result":{"content":[{"type":"text","text":"opened"}]}}"#),
+        item("item/completed", "turn-1", r#"{"type":"mcpToolCall","id":"open","server":"chord","tool":"browser_open","status":"completed","result":{"content":[{"type":"text","text":"opened"}]}}"#),
         done("turn-1", "completed"),
         "drain".into(),
     ]
     .join("\n");
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let h = start_with("off-the-list", &scenario, |launch| {
         launch.token = Some("token-1");
         launch.mode = Some("read-only");
         launch.tool_server = Some(Box::leak(server.clone().into_boxed_path()));
     });
     h.until_type("ready");
-    let entry = &h.sent("thread/start")[0]["params"]["config"]["mcp_servers"]["agent_workbench"];
+    let entry = &h.sent("thread/start")[0]["params"]["config"]["mcp_servers"]["chord"];
     assert_eq!(entry["tools"]["notify"]["approval_mode"], "approve");
     assert!(entry["tools"].get("browser_open").is_none(), "{entry}");
     assert!(
@@ -905,7 +902,7 @@ fn a_workbench_tool_off_the_list_asks_in_the_conversation() {
     h.send("open the page");
     let asked = h.until(|e| e["type"] == "permissionAsked");
     let asked = asked.last().unwrap().clone();
-    assert_eq!(asked["tool"], "mcp__agent_workbench__browser_open");
+    assert_eq!(asked["tool"], "mcp__chord__browser_open");
     assert_eq!(asked["call"], "open");
     assert_eq!(asked["input"], json!({"url": "https://example.com"}));
     let offered: Vec<&str> = asked["choices"]
@@ -1467,7 +1464,7 @@ fn a_handshake_that_fails_ends_the_session_with_a_plain_error() {
 
     let scenario = [
         r#"expect "method":"initialize","#,
-        r#"reply {"id":@ID@,"result":{"userAgent":"agent-workbench/0.100.0 (old)"}}"#,
+        r#"reply {"id":@ID@,"result":{"userAgent":"chord/0.100.0 (old)"}}"#,
         "drain",
     ]
     .join("\n");
@@ -1486,7 +1483,7 @@ fn a_handshake_that_fails_ends_the_session_with_a_plain_error() {
     let scenario = [
         r#"expect "method":"initialize","#,
         "sleep 0.3",
-        r#"reply {"id":@ID@,"result":{"userAgent":"agent-workbench/0.169.0"}}"#,
+        r#"reply {"id":@ID@,"result":{"userAgent":"chord/0.169.0"}}"#,
         r#"expect "method":"thread/start""#,
         r#"reply {"id":@ID@,"error":{"code":-32600,"message":"bad model"}}"#,
         "drain",
@@ -1760,7 +1757,7 @@ done
 
 /// The real `codex app-server` on PATH, under a home of its own, against
 /// the stand-in for the model above: no login and no network. Run by hand:
-/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+/// `cargo test -p chord-core real_codex -- --ignored --nocapture`.
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
@@ -1995,7 +1992,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
     let env = std::fs::read_to_string(base.join("server-env")).unwrap_or_default();
     println!(
         "the tool server had the session's token: {}",
-        env.lines().any(|l| l == "WORKBENCH_SESSION=token-real")
+        env.lines().any(|l| l == "CHORD_SESSION=token-real")
     );
     // The resumed thread has the same approvals: a listed tool runs with
     // no question, and one off the list asks again, docked. Refused, it
@@ -2042,7 +2039,7 @@ fn real_codex_holds_turns_approvals_an_interrupt_and_a_resume() {
 /// stand-in for the model: what the model is given with the instructions
 /// and Codex's subagent tools turned off, on a fresh thread and on its
 /// resumes, beside a thread under no workflow. Run by hand:
-/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+/// `cargo test -p chord-core real_codex -- --ignored --nocapture`.
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools() {
@@ -2175,7 +2172,7 @@ fn real_codex_under_a_workflow_reads_its_instructions_and_has_no_subagent_tools(
 /// end, a question that resolves itself, an approval withdrawn at the
 /// turn's end, and a message Codex refuses. The events go to a file the
 /// window's tests replay, so the view is tried against what the driver
-/// says rather than a guess at it. `WORKBENCH_WRITE_FIXTURES=1` writes the
+/// says rather than a guess at it. `CHORD_WRITE_FIXTURES=1` writes the
 /// file anew; otherwise the events must match it.
 #[test]
 fn the_events_a_window_replays_are_the_ones_the_driver_emits() {
@@ -2247,7 +2244,7 @@ fn the_events_a_window_replays_are_the_ones_the_driver_emits() {
     let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../tests/fixtures/codex-session.json");
     let written = serde_json::to_string_pretty(&events).unwrap() + "\n";
-    if std::env::var("WORKBENCH_WRITE_FIXTURES").is_ok() {
+    if std::env::var("CHORD_WRITE_FIXTURES").is_ok() {
         std::fs::write(&file, &written).unwrap();
     }
     let kept = std::fs::read_to_string(&file).unwrap_or_default();
@@ -2297,7 +2294,7 @@ fn read_stdin(dir: &Path) -> Vec<Value> {
 const HISTORY_OPENING: &str = concat!(
     r#"expect "method":"initialize","#,
     "\n",
-    r#"reply {"id":@ID@,"result":{"userAgent":"agent-workbench/0.169.0 (stand-in)"}}"#,
+    r#"reply {"id":@ID@,"result":{"userAgent":"chord/0.169.0 (stand-in)"}}"#,
     "\n",
     r#"expect "method":"initialized""#,
 );
@@ -2337,7 +2334,7 @@ fn a_history_is_read_through_an_app_server_of_its_own_under_the_account_s_home()
         .filter_map(|line| line["method"].as_str())
         .collect();
     assert_eq!(asked, ["initialize", "initialized", "thread/turns/list"]);
-    assert_eq!(read[0]["params"]["clientInfo"]["name"], "agent-workbench");
+    assert_eq!(read[0]["params"]["clientInfo"]["name"], "chord");
     assert_eq!(read[2]["params"]["threadId"], THREAD);
     // The stand-in reads the rest of what it is sent after its answer.
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -2465,7 +2462,7 @@ fn a_codex_that_does_not_answer_or_ends_is_an_error_in_time() {
 /// events under the same ids, while the session still runs and once it
 /// has ended, read under a home that names no model provider it could
 /// sign in to; and a turn read while it runs is left open. Run by hand:
-/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+/// `cargo test -p chord-core real_codex -- --ignored --nocapture`.
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
@@ -2717,7 +2714,7 @@ fn real_codex_reads_back_what_a_session_heard_under_the_same_ids() {
 /// against the stand-in for the model: its messages under the ids the
 /// window gave them, its turns and what the agent said, though Codex gives
 /// that under ids of its own and keeps no commands for it. Run by hand:
-/// `cargo test -p workbench-core real_codex -- --ignored --nocapture`.
+/// `cargo test -p chord-core real_codex -- --ignored --nocapture`.
 #[test]
 #[ignore = "runs the real codex app-server on PATH"]
 fn real_codex_reads_back_a_thread_kept_the_older_way() {

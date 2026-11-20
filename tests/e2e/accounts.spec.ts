@@ -212,7 +212,7 @@ test.describe("a past session under another account", () => {
     });
     await page.addInitScript(
       ({ project }) => {
-        localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ["work-1"] }));
+        localStorage.setItem("chord.mine", JSON.stringify({ [project]: ["work-1"] }));
       },
       { project: PROJECT },
     );

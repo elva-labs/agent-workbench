@@ -440,7 +440,7 @@ describe("the board for any session", () => {
     expect(boardOf(fix)).toBeNull();
 
     // A session in the orchestrator folder is a session like any other.
-    const top = live("/home/ada/.agent-workbench/orchestrator", "pty-3", "sid-3");
+    const top = live("/home/ada/.chord/orchestrator", "pty-3", "sid-3");
     startedIn(A, top, "pty-4", "sid-4");
     expect(boardOf(top)).toBe(top);
   });

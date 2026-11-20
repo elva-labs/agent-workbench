@@ -89,12 +89,12 @@ const drawn = (page: Page, text: string) =>
     const registry =
       (
         window as unknown as {
-          __WORKBENCH_TERMINALS__?: Record<
+          __CHORD_TERMINALS__?: Record<
             string,
             { buffer: { active: Buffer } }
           >;
         }
-      ).__WORKBENCH_TERMINALS__ ?? {};
+      ).__CHORD_TERMINALS__ ?? {};
     return Object.values(registry).some((terminal) => {
       const active = terminal.buffer.active;
       for (let index = 0; index < active.length; index += 1)

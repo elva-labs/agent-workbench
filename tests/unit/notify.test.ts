@@ -154,7 +154,7 @@ describe("the words", () => {
   });
 
   it("name the orchestrator folder by its name, as the pane does", () => {
-    const session = live("/home/ada/.agent-workbench/orchestrator", "pty-1");
+    const session = live("/home/ada/.chord/orchestrator", "pty-1");
     session.title = "release";
     expect(titleFor(session)).toBe("orchestrator · release");
   });

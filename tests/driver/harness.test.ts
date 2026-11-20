@@ -97,8 +97,8 @@ describe("the driver harness", () => {
     const home = mkdtempSync(join(tmpdir(), "workbench-harness-"));
     homes.push(home);
     const waiting = waitForHeartbeat(home, 10_000);
-    mkdirSync(join(home, ".agent-workbench"));
-    writeFileSync(join(home, ".agent-workbench", "answering"), "0.0.0");
+    mkdirSync(join(home, ".chord"));
+    writeFileSync(join(home, ".chord", "answering"), "0.0.0");
     await expect(waiting).resolves.toBeUndefined();
   });
 
@@ -106,7 +106,7 @@ describe("the driver harness", () => {
     const home = mkdtempSync(join(tmpdir(), "workbench-harness-"));
     homes.push(home);
     await expect(waitForHeartbeat(home, 500)).rejects.toThrow(
-      `the app wrote no heartbeat at ${join(home, ".agent-workbench", "answering")}`,
+      `the app wrote no heartbeat at ${join(home, ".chord", "answering")}`,
     );
   });
 

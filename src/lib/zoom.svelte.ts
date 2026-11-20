@@ -14,7 +14,7 @@ export const MAX_SIZE = 24;
 /** How many sessions' sizes the storage keeps. */
 export const MOST_KEPT = 200;
 
-const KEY = "workbench.zoom";
+const KEY = "chord.zoom";
 
 interface Kept {
   size: number;

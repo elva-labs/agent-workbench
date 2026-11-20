@@ -310,9 +310,9 @@
     // the channel actually land on screen; the WebGL renderer draws to a
     // canvas rather than to the DOM. The browser tier runs on a fake core and
     // the driver tier on the real binary, so it is always there.
-    const registry = window as unknown as { __WORKBENCH_TERMINALS__?: Record<string, Terminal> };
-    registry.__WORKBENCH_TERMINALS__ ??= {};
-    registry.__WORKBENCH_TERMINALS__[id] = terminal;
+    const registry = window as unknown as { __CHORD_TERMINALS__?: Record<string, Terminal> };
+    registry.__CHORD_TERMINALS__ ??= {};
+    registry.__CHORD_TERMINALS__[id] = terminal;
 
     spawn();
 

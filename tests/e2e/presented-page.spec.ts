@@ -13,7 +13,7 @@ import { PROJECT, installFakeCore } from "./fake";
 const PAGE = `${PROJECT}/out/report.html`;
 const TOKEN = Buffer.from(PAGE).toString("base64").replace(/[^a-z0-9]/gi, "");
 /** An address in a drawing of the page's folder: the drawing, the file. */
-const DRAWN = new RegExp(`^http://awb-page\\.localhost/${TOKEN}-(\\d+)/(.*)$`);
+const DRAWN = new RegExp(`^http://chord-page\\.localhost/${TOKEN}-(\\d+)/(.*)$`);
 const SHOT = "after-owner-modern-dark-100-window.jpg";
 
 /** A screenshot's shape, 1600 wide unless it is made again. */
@@ -53,7 +53,7 @@ addEventListener("load", function () {
     shot is served at `shotWidth`, which a test changes to make it again. */
 async function serve(page: Page) {
   const asked = { files: [] as string[], remote: [] as string[], shotWidth: 1600 };
-  await page.route("http://awb-page.localhost/**", (route) => {
+  await page.route("http://chord-page.localhost/**", (route) => {
     const url = route.request().url();
     asked.files.push(url);
     const file = DRAWN.exec(url)?.[2];

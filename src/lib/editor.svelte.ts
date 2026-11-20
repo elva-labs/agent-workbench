@@ -1598,7 +1598,7 @@ export function followOwner() {
   tellUnsaved();
 }
 
-const SIZE_KEY = "workbench.editorSize";
+const SIZE_KEY = "chord.editorSize";
 
 /** The editor's text size as the window last had it. */
 export function loadEditorSize() {

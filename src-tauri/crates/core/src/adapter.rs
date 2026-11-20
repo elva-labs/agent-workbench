@@ -45,7 +45,7 @@ pub struct LaunchCtx<'a> {
     /// the process is up: one it chose, or the one it resumes.
     pub session: Option<&'a str>,
     /// The token the workbench chose for the session: given to the agent's
-    /// environment as `WORKBENCH_SESSION`, which the agent passes on to the
+    /// environment as `CHORD_SESSION`, which the agent passes on to the
     /// tool server it starts, so every call the server makes names the
     /// session it came from.
     pub token: Option<&'a str>,
@@ -126,8 +126,8 @@ pub const CODEX_NO_SUBAGENTS: &[&str] = &[
 ];
 
 /// The name the tool server goes by, to Claude Code and to Codex.
-pub const SERVER_NAME: &str = "agent-workbench";
-pub const CODEX_SERVER_KEY: &str = "agent_workbench";
+pub const SERVER_NAME: &str = "chord";
+pub const CODEX_SERVER_KEY: &str = "chord";
 
 /// The setting of a Codex server's entry that says whether all of its
 /// tools ask before they run, from Codex 0.122.0, and the value that lets
@@ -157,11 +157,11 @@ pub const CODEX_TOOL_SECONDS: u64 = crate::mcp::WATCH_CAP.as_secs() + 60;
 
 /// The variable that names the session to the tools the agent starts: the
 /// token the workbench chose for it.
-pub const SESSION_VAR: &str = "WORKBENCH_SESSION";
+pub const SESSION_VAR: &str = "CHORD_SESSION";
 
 /// The variable that says what the session is for, when it is for anything
 /// in particular. Only the orchestrator has a role.
-pub const ROLE_VAR: &str = "WORKBENCH_ROLE";
+pub const ROLE_VAR: &str = "CHORD_ROLE";
 
 /// The one role there is.
 pub const ORCHESTRATOR_ROLE: &str = "orchestrator";
@@ -169,7 +169,7 @@ pub const ORCHESTRATOR_ROLE: &str = "orchestrator";
 /// The variable that says how the user sees the session, when it is not a
 /// terminal: the agent's own view there draws its turns, and what it is
 /// told of them follows.
-pub const VIEW_VAR: &str = "WORKBENCH_VIEW";
+pub const VIEW_VAR: &str = "CHORD_VIEW";
 
 /// The view of a session the workbench draws as a conversation.
 pub const CONVERSATION_VIEW: &str = "conversation";
@@ -229,7 +229,7 @@ pub trait AgentAdapter: Send + Sync {
 /// session index reads, and it points its messaging socket at the parent.
 ///
 /// `CLAUDECODE` marks a process as running inside Claude Code, and the
-/// agent refuses or misbehaves under it. `WORKBENCH_SESSION` names the
+/// agent refuses or misbehaves under it. `CHORD_SESSION` names the
 /// parent's own session to its tools; a session of the workbench's gets its
 /// own token instead.
 ///
@@ -784,7 +784,7 @@ mod tests {
             .flat_map(|tool| {
                 [
                     "-c".to_string(),
-                    format!("mcp_servers.agent_workbench.tools.{tool}.approval_mode=\"approve\""),
+                    format!("mcp_servers.chord.tools.{tool}.approval_mode=\"approve\""),
                 ]
             })
             .collect()
@@ -1105,9 +1105,9 @@ mod tests {
             crate::executable::write(&bin, "#!/bin/sh\n").unwrap();
         }
         let vars = vars_with_path(&dir);
-        let server = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
-        let told = Path::new("/home/ada/.agent-workbench/sessions/abc.md");
-        let named = Path::new("/home/ada/.agent-workbench/sessions/abc.json");
+        let server = Path::new("/home/ada/.chord/bin/chord-remote");
+        let told = Path::new("/home/ada/.chord/sessions/abc.md");
+        let named = Path::new("/home/ada/.chord/sessions/abc.json");
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
@@ -1143,7 +1143,7 @@ mod tests {
                 first,
                 "abc",
                 "--mcp-config",
-                "/home/ada/.agent-workbench/sessions/abc.json",
+                "/home/ada/.chord/sessions/abc.json",
                 "--disallowedTools",
                 "Agent",
                 "Workflow",
@@ -1151,7 +1151,7 @@ mod tests {
                 "ListAgents",
                 "RemoteTrigger",
                 "--append-system-prompt-file",
-                "/home/ada/.agent-workbench/sessions/abc.md",
+                "/home/ada/.chord/sessions/abc.md",
                 "--model",
                 "fable",
                 "--",
@@ -1170,7 +1170,7 @@ mod tests {
         assert_eq!(
             claude_server_config(server),
             format!(
-                r#"{{"mcpServers":{{"agent-workbench":{{"args":["mcp"],"command":"{}","type":"stdio"}}}}}}"#,
+                r#"{{"mcpServers":{{"chord":{{"args":["mcp"],"command":"{}","type":"stdio"}}}}}}"#,
                 server.display()
             )
         );
@@ -1178,17 +1178,13 @@ mod tests {
         let codex_settings = [
             vec![
                 "-c".to_string(),
-                format!(
-                    "mcp_servers.agent_workbench.command=\"{}\"",
-                    server.display()
-                ),
+                format!("mcp_servers.chord.command=\"{}\"", server.display()),
                 "-c".to_string(),
-                "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+                "mcp_servers.chord.args=[\"mcp\"]".to_string(),
                 "-c".to_string(),
-                "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
-                    .to_string(),
+                "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\"]".to_string(),
                 "-c".to_string(),
-                "mcp_servers.agent_workbench.tool_timeout_sec=1860".to_string(),
+                "mcp_servers.chord.tool_timeout_sec=1860".to_string(),
             ],
             tool_approvals(),
             vec![
@@ -1245,7 +1241,7 @@ mod tests {
                 "--session-id",
                 "abc",
                 "--append-system-prompt-file",
-                "/home/ada/.agent-workbench/sessions/abc.md"
+                "/home/ada/.chord/sessions/abc.md"
             ]
         );
         assert_eq!(
@@ -1267,7 +1263,7 @@ mod tests {
                 "--resume",
                 "abc",
                 "--append-system-prompt-file",
-                "/home/ada/.agent-workbench/sessions/abc.md",
+                "/home/ada/.chord/sessions/abc.md",
                 "--system-prompt-snapshot",
                 "off"
             ]
@@ -1599,7 +1595,7 @@ mod tests {
     #[test]
     fn codex_passes_the_session_s_variables_to_the_tool_server_it_has() {
         let vars = HashMap::new();
-        let daemon = Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote");
+        let daemon = Path::new("/home/ada/.chord/bin/chord-remote");
         let ctx = LaunchCtx {
             project: Path::new("/tmp"),
             env: &vars,
@@ -1631,17 +1627,13 @@ mod tests {
         };
         let whole = [
             "-c".to_string(),
-            format!(
-                "mcp_servers.agent_workbench.command=\"{}\"",
-                daemon.display()
-            ),
+            format!("mcp_servers.chord.command=\"{}\"", daemon.display()),
             "-c".to_string(),
-            "mcp_servers.agent_workbench.args=[\"mcp\"]".to_string(),
+            "mcp_servers.chord.args=[\"mcp\"]".to_string(),
             "-c".to_string(),
-            "mcp_servers.agent_workbench.env_vars=[\"WORKBENCH_SESSION\", \"WORKBENCH_ROLE\"]"
-                .to_string(),
+            "mcp_servers.chord.env_vars=[\"CHORD_SESSION\", \"CHORD_ROLE\"]".to_string(),
             "-c".to_string(),
-            "mcp_servers.agent_workbench.tool_timeout_sec=1860".to_string(),
+            "mcp_servers.chord.tool_timeout_sec=1860".to_string(),
         ];
         assert_eq!(codex_workflow(&configured, false, false).unwrap(), whole);
         // Named where no configuration names it, the tools that read, show
@@ -1655,12 +1647,12 @@ mod tests {
         };
         let approving = [whole.to_vec(), tool_approvals()].concat();
         assert_eq!(codex_workflow(&named, false, false).unwrap(), approving);
-        assert!(approving.contains(
-            &"mcp_servers.agent_workbench.tools.notify.approval_mode=\"approve\"".into()
-        ));
+        assert!(
+            approving.contains(&"mcp_servers.chord.tools.notify.approval_mode=\"approve\"".into())
+        );
         assert!(approving
             .iter()
-            .all(|arg| arg == "-c" || arg.starts_with("mcp_servers.agent_workbench.")));
+            .all(|arg| arg == "-c" || arg.starts_with("mcp_servers.chord.")));
         assert!(approving
             .iter()
             .all(|arg| !arg.contains("default_tools_approval_mode")));

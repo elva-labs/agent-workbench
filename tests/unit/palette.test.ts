@@ -659,7 +659,7 @@ describe("a new session", () => {
   // New session in it, and a new session from one of its rows asks which
   // project.
   it("offers nothing new in the orchestrator folder", () => {
-    const folder = "/home/ada/.agent-workbench/orchestrator";
+    const folder = "/home/ada/.chord/orchestrator";
     resetFolder(folder);
     const old = create(folder, "old-1", "claude-code", null);
     started(old.key, "pty-1", "old-1");

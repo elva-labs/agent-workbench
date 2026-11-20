@@ -129,7 +129,7 @@ pub struct PublishedTool {
 /// The file the running plugins' tools are listed in, which the tool
 /// server reads as the agent asks.
 pub fn tools_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("plugin-tools.json")
+    crate::home::dir(home).join("plugin-tools.json")
 }
 
 /// A schema for a tool that declared none: arguments of any shape.
@@ -682,7 +682,7 @@ impl Plugins {
     /// The same, with the sources offered out of the box given rather
     /// than read from the app's own list.
     fn with_known(home: &Path, sink: Arc<dyn Sink>, known: Vec<KnownSource>) -> Self {
-        let root = home.join(".agent-workbench").join("plugins");
+        let root = crate::home::dir(home).join("plugins");
         let stored = std::fs::read_to_string(root.join("state.json"))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
@@ -1387,7 +1387,7 @@ impl Inner {
             .current_dir(dir.join(&declared.path))
             .env_clear()
             .envs(vars)
-            .env("WORKBENCH_PLUGIN", &declared.name)
+            .env("CHORD_PLUGIN", &declared.name)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1548,7 +1548,7 @@ impl Inner {
             .current_dir(dir.join(&declared.path))
             .env_clear()
             .envs(&vars)
-            .env("WORKBENCH_PLUGIN", name)
+            .env("CHORD_PLUGIN", name)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -3561,7 +3561,7 @@ run = ["sh", "main.sh"]
     fn refuses_a_location_or_a_ref_that_git_would_read_as_an_option() {
         let home = Scratch::absent("plugins-arguments-home");
         let plugins = plugins_at(&home, Arc::new(Recorder::default()));
-        let root = home.join(".agent-workbench").join("plugins");
+        let root = home.join(".chord").join("plugins");
 
         let smuggled = "--upload-pack=touch /tmp/workbench-never-written";
         let refused = plugins.add(smuggled, None).unwrap_err();

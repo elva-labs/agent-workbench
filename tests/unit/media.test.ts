@@ -189,7 +189,7 @@ describe("presenting", () => {
     // not kept with the list.
     presented(mine(["/one/draft.md"], "Second."), 1_700_000_002_200);
     expect(media.calls[first.id]).toBe(3);
-    expect(localStorage.getItem("workbench.media")).not.toContain("calls");
+    expect(localStorage.getItem("chord.media")).not.toContain("calls");
     // A set is the same set in any order; a different set is another item.
     presented(mine(["/one/b.png", "/one/a.png"]), 1_700_000_003_000);
     presented(mine(["/one/a.png", "/one/b.png"]), 1_700_000_004_000);

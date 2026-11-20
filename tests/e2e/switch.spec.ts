@@ -243,7 +243,7 @@ test("moves a terminal row left from the last quit as it wakes, reading what it 
   await page.addInitScript(
     ({ project, id, worktree, items }) => {
       localStorage.setItem(
-        "workbench.open",
+        "chord.open",
         JSON.stringify({
           open: [{ project, id, agent: "claude-code", startIn: worktree, model: null, account: "Work", kind: "terminal", moves: "integrated" }],
           active: id,

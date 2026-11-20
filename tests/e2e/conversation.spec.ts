@@ -144,9 +144,9 @@ test.describe("an integrated session", () => {
        f.startTurn("${H}");
        f.tool("${H}", "Bash", { command: "npm test" }, "ok", { kind: "command" });
        f.emit("${H}", { type: "text", block: "a", parent: null, text: "Not yet: the review is still running.", done: true });
-       const n = f.startTool("${H}", "mcp__agent-workbench__notify", { text: "Answered" }, { kind: "mcp" });
+       const n = f.startTool("${H}", "mcp__chord__notify", { text: "Answered" }, { kind: "mcp" });
        f.finishTool("${H}", n, "Left on the session's row.");
-       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+       f.startTool("${H}", "mcp__chord__wait", {}, { kind: "mcp" });`,
     );
     const run = page.getByTestId("agent-run");
     await expect(run.getByTestId("agent-text")).toHaveText("Not yet: the review is still running.");
@@ -208,7 +208,7 @@ test.describe("an integrated session", () => {
     await agent(
       page,
       `f.startTurn("${H}");
-       f.tool("${H}", "mcp__agent-workbench__start", { prompt: "x" }, "Started session session-1 in demo. It has the prompt. Call wait to hear how it goes.", { kind: "mcp" });
+       f.tool("${H}", "mcp__chord__start", { prompt: "x" }, "Started session session-1 in demo. It has the prompt. Call wait to hear how it goes.", { kind: "mcp" });
        f.endTurn("${H}");`,
     );
     const started = page.getByTestId("started-session");
@@ -290,7 +290,7 @@ test.describe("an integrated session", () => {
       page,
       `f.send("${H}", crypto.randomUUID(), "Wait for the review.");
        f.startTurn("${H}");
-       f.startTool("${H}", "mcp__agent-workbench__wait", {}, { kind: "mcp" });`,
+       f.startTool("${H}", "mcp__chord__wait", {}, { kind: "mcp" });`,
     );
     await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
     await expect(meta).toHaveText("working");
@@ -1000,7 +1000,7 @@ test.describe("under a workflow, with Claude Code set to run integrated", () => 
       page,
       `f.startTurn("${H}");
        f.emit("${H}", { type: "text", block: "b-plan", parent: null, text: "I'll hand the fix to a session for the Work step.", done: true });
-       window.__startCall = f.startTool("${H}", "mcp__agent-workbench__start", { project: "${PROJECT}", prompt: "Fix the flaky cache test", step: "Work" }, { kind: "mcp" });`,
+       window.__startCall = f.startTool("${H}", "mcp__chord__start", { project: "${PROJECT}", prompt: "Fix the flaky cache test", step: "Work" }, { kind: "mcp" });`,
     );
 
     // A start the workflow refuses is said over the conversation too, and
@@ -1331,7 +1331,7 @@ test.describe("the composer while something is pending", () => {
   test("holds a send until the images going with it are read", async ({ page }) => {
     await openIntegrated(page);
     await page.evaluate(() => {
-      const core = (window as unknown as { __WORKBENCH_CORE__: { readMedia: (path: string) => Promise<unknown> } }).__WORKBENCH_CORE__;
+      const core = (window as unknown as { __CHORD_CORE__: { readMedia: (path: string) => Promise<unknown> } }).__CHORD_CORE__;
       const read = core.readMedia;
       core.readMedia = (path) => new Promise((resolve) => setTimeout(() => resolve(read(path)), 600));
     });
@@ -1646,7 +1646,7 @@ test.describe("a resumed conversation", () => {
       transcripts: [{ id: PAST, modified: Math.floor(now / 1000) - 3600, size: 100, title: "Count the files in src" }],
     });
     await page.addInitScript(
-      ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+      ({ project, past }) => localStorage.setItem("chord.mine", JSON.stringify({ [project]: [past] })),
       { project: PROJECT, past: PAST },
     );
     await page.goto("/");
@@ -1847,7 +1847,7 @@ test.describe("a resumed conversation", () => {
     await page.addInitScript(
       ({ project, past, items }) => {
         localStorage.setItem(
-          "workbench.open",
+          "chord.open",
           JSON.stringify({
             open: [{ project, id: past, agent: "claude-code", startIn: null, model: null, account: null, kind: "integrated", handle: "int-7", spoken: true }],
             active: past,
@@ -1930,7 +1930,7 @@ test.describe("a resumed conversation", () => {
         ],
       });
       await page.addInitScript(
-        ({ project, past }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: [past] })),
+        ({ project, past }) => localStorage.setItem("chord.mine", JSON.stringify({ [project]: [past] })),
         { project: PROJECT, past: THREAD },
       );
       await page.goto("/");
@@ -2941,7 +2941,7 @@ test.describe("copying from the conversation", () => {
 
   test("gives a command's title the whole row at rest, and draws Copy command over its end", async ({ page }) => {
     await openIntegrated(page);
-    const long = "cargo test -p workbench-core claude_history -- --nocapture --test-threads 1 reads_back_a_rewound_conversation_whole";
+    const long = "cargo test -p chord-core claude_history -- --nocapture --test-threads 1 reads_back_a_rewound_conversation_whole";
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "${long}" }, { kind: "command" });`);
     await page.getByTestId("work-line").click();
     const head = page.getByTestId("step-head");
@@ -3163,7 +3163,7 @@ test.describe("the conversation's width", () => {
        f.emit("${H}", { type: "text", block: "a", parent: null, text: ${JSON.stringify(long)}, done: true });
        f.tool("${H}", "Bash", { command: "ls" }, "a\\nb", { kind: "command" });
        f.emit("${H}", { type: "text", block: "b", parent: null, text: "Next.", done: true });
-       f.tool("${H}", "mcp__agent-workbench__start", { prompt: "x" }, "Started session session-1 in demo. It has the prompt. Call wait to hear how it goes.", { kind: "mcp" });
+       f.tool("${H}", "mcp__chord__start", { prompt: "x" }, "Started session session-1 in demo. It has the prompt. Call wait to hear how it goes.", { kind: "mcp" });
        f.question("${H}", [{ header: "Stage", question: "Which stage?", options: [{ label: "dev", description: "shared" }], multiple: false }]);`,
     );
     await page.getByTestId("question-option").first().focus();

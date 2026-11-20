@@ -112,7 +112,7 @@ fn handshake_with(
     let reading = read(
         driver,
         json!({"id": opening[0]["id"], "result": {
-            "userAgent": "agent-workbench/0.169.0 (Mac OS 27.2.0; arm64) xterm-256color (agent-workbench; 0.8.0)",
+            "userAgent": "chord/0.169.0 (Mac OS 27.2.0; arm64) xterm-256color (chord; 0.8.0)",
             "codexHome": "/h/.codex", "platformFamily": "unix", "platformOs": "macos"}}),
     );
     assert!(reading.fatal.is_none());
@@ -220,7 +220,7 @@ fn a_setting_as_codex_spells_it_goes_into_the_thread_s_configuration_as_tables()
 #[test]
 fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     let vars = HashMap::new();
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let mut driver = launch_with(&vars, |launch| {
         launch.model = Some("gpt-b");
         launch.mode = Some("read-only");
@@ -245,7 +245,7 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
             "account/rateLimits/read"
         ]
     );
-    assert_eq!(lines[0]["params"]["clientInfo"]["name"], "agent-workbench");
+    assert_eq!(lines[0]["params"]["clientInfo"]["name"], "chord");
     assert_eq!(lines[0]["params"]["capabilities"]["experimentalApi"], false);
     assert!(lines[1].get("id").is_none(), "a notification");
     assert_eq!(
@@ -259,7 +259,7 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     assert_eq!(start["approvalPolicy"], "on-request");
     assert_eq!(start["sandbox"], "read-only");
     assert_eq!(start["config"]["model_reasoning_effort"], "minimal");
-    let tool = &start["config"]["mcp_servers"]["agent_workbench"];
+    let tool = &start["config"]["mcp_servers"]["chord"];
     assert_eq!(tool["command"], server.to_string_lossy().as_ref());
     assert_eq!(tool["args"], json!(["mcp"]));
     // A call may take as long as the longest wait and a minute more, so
@@ -282,7 +282,7 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     }
     assert_eq!(
         tool["env"],
-        json!({"WORKBENCH_ROLE": "orchestrator", "WORKBENCH_VIEW": "conversation"})
+        json!({"CHORD_ROLE": "orchestrator", "CHORD_VIEW": "conversation"})
     );
     assert!(start.get("threadId").is_none());
 
@@ -357,7 +357,7 @@ fn a_thread_that_names_no_effort_runs_at_its_model_s_default() {
 #[test]
 fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     let vars = HashMap::new();
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let mut driver = launch_with(&vars, |launch| {
         launch.session = Some("thread-old");
         launch.token = Some("token-old");
@@ -367,7 +367,7 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     let opening = written(&driver.opening());
     let reading = read(
         &mut driver,
-        json!({"id": opening[0]["id"], "result": {"userAgent": "agent-workbench/0.169.0"}}),
+        json!({"id": opening[0]["id"], "result": {"userAgent": "chord/0.169.0"}}),
     );
     let resume = written(&reading.writes)
         .into_iter()
@@ -377,15 +377,15 @@ fn a_resume_names_the_thread_and_gives_the_tool_server_the_session() {
     assert_eq!(resume["params"]["excludeTurns"], true);
     assert_eq!(resume["params"]["approvalsReviewer"], "user");
     assert_eq!(
-        resume["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
-        json!({"WORKBENCH_SESSION": "token-old", "WORKBENCH_VIEW": "conversation"})
+        resume["params"]["config"]["mcp_servers"]["chord"]["env"],
+        json!({"CHORD_SESSION": "token-old", "CHORD_VIEW": "conversation"})
     );
 }
 
 #[test]
 fn a_fresh_thread_s_tool_server_is_told_the_session_before_codex_names_it() {
     let vars = HashMap::new();
-    let server = PathBuf::from("/opt/workbench/agent-workbench-remote");
+    let server = PathBuf::from("/opt/workbench/chord-remote");
     let mut driver = launch_with(&vars, |launch| {
         launch.token = Some("token-fresh");
         launch.tool_server = Some(Box::leak(server.into_boxed_path()));
@@ -393,15 +393,15 @@ fn a_fresh_thread_s_tool_server_is_told_the_session_before_codex_names_it() {
     let opening = written(&driver.opening());
     let reading = read(
         &mut driver,
-        json!({"id": opening[0]["id"], "result": {"userAgent": "agent-workbench/0.169.0"}}),
+        json!({"id": opening[0]["id"], "result": {"userAgent": "chord/0.169.0"}}),
     );
     let start = written(&reading.writes)
         .into_iter()
         .find(|line| line["method"] == "thread/start")
         .unwrap();
     assert_eq!(
-        start["params"]["config"]["mcp_servers"]["agent_workbench"]["env"],
-        json!({"WORKBENCH_SESSION": "token-fresh", "WORKBENCH_VIEW": "conversation"})
+        start["params"]["config"]["mcp_servers"]["chord"]["env"],
+        json!({"CHORD_SESSION": "token-fresh", "CHORD_VIEW": "conversation"})
     );
 }
 
@@ -440,7 +440,7 @@ fn an_old_version_or_a_refused_handshake_ends_the_session() {
     let opening = written(&driver.opening());
     let reading = read(
         &mut driver,
-        json!({"id": opening[0]["id"], "result": {"userAgent": "agent-workbench/0.150.2 (Linux)"}}),
+        json!({"id": opening[0]["id"], "result": {"userAgent": "chord/0.150.2 (Linux)"}}),
     );
     assert!(reading.writes.is_empty(), "nothing more is asked");
     let (kind, message) = reading.fatal.unwrap();
@@ -461,7 +461,7 @@ fn an_old_version_or_a_refused_handshake_ends_the_session() {
     let writes = written(
         &read(
             &mut driver,
-            json!({"id": opening[0]["id"], "result": {"userAgent": "agent-workbench/0.169.0"}}),
+            json!({"id": opening[0]["id"], "result": {"userAgent": "chord/0.169.0"}}),
         )
         .writes,
     );
@@ -1990,7 +1990,7 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
     crate::executable::write(&codex, b"#!/bin/sh\n").unwrap();
     let vars = HashMap::from([
         ("PATH".to_string(), dir.to_string_lossy().to_string()),
-        ("WORKBENCH_SESSION".to_string(), "the-parent".to_string()),
+        ("CHORD_SESSION".to_string(), "the-parent".to_string()),
     ]);
     let home = PathBuf::from("/home/ada/.codex-work");
     let launch = Launch {
@@ -2031,7 +2031,7 @@ fn the_command_runs_the_app_server_under_the_account_s_home() {
         .collect();
     assert_eq!(env["CODEX_HOME"], home.to_string_lossy());
     assert_eq!(
-        env["WORKBENCH_SESSION"], "token-old",
+        env["CHORD_SESSION"], "token-old",
         "its own token, not the parent's nor the thread's"
     );
 

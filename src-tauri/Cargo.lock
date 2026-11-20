@@ -9,31 +9,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "agent-workbench"
-version = "1.0.0-beta.6"
-dependencies = [
- "block2",
- "gtk",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-web-kit",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-clipboard-manager",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "tokio",
- "uuid",
- "webkit2gtk",
- "workbench-core",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -513,6 +488,52 @@ name = "cfg_aliases"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+
+[[package]]
+name = "chord"
+version = "1.0.0-beta.6"
+dependencies = [
+ "block2",
+ "chord-core",
+ "gtk",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "objc2-web-kit",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-clipboard-manager",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "tokio",
+ "uuid",
+ "webkit2gtk",
+]
+
+[[package]]
+name = "chord-core"
+version = "1.0.0-beta.6"
+dependencies = [
+ "base64 0.22.1",
+ "chord-core",
+ "dunce",
+ "git2",
+ "if-addrs",
+ "libc",
+ "notify",
+ "portable-pty",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "toml_edit 0.22.27",
+ "url",
+ "uuid",
+]
 
 [[package]]
 name = "chrono"
@@ -5711,27 +5732,6 @@ dependencies = [
  "wayland-client",
  "wayland-protocols",
  "wayland-protocols-wlr",
-]
-
-[[package]]
-name = "workbench-core"
-version = "1.0.0-beta.6"
-dependencies = [
- "base64 0.22.1",
- "dunce",
- "git2",
- "if-addrs",
- "libc",
- "notify",
- "portable-pty",
- "rusqlite",
- "serde",
- "serde_json",
- "sysinfo",
- "toml_edit 0.22.27",
- "url",
- "uuid",
- "workbench-core",
 ]
 
 [[package]]

@@ -568,7 +568,7 @@
           {#if Object.keys(theme.themes).length > 0}
             <p class="note">
               Your own themes, made by an agent you asked or by hand, are kept with the settings
-              in <code>~/.agent-workbench/settings.json</code>.
+              in <code>~/.chord/settings.json</code>.
             </p>
           {/if}
 
@@ -595,7 +595,7 @@
             >
           </div>
           <p class="note" data-testid="styles-note">
-            A stylesheet of your own, <code>~/.agent-workbench/user.css</code>, laid over the app's.
+            A stylesheet of your own, <code>~/.chord/user.css</code>, laid over the app's.
             {#if userStyles.problem !== null}
               It is not used, for the reason below.
             {:else if userStyles.css === ""}

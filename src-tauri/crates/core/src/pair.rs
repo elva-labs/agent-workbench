@@ -1,6 +1,6 @@
 //! Pairing a machine with a desktop by one token.
 //!
-//! `agent-workbench-remote connect`, run on the machine, makes a key pair,
+//! `chord-remote connect`, run on the machine, makes a key pair,
 //! authorises the public half for the daemon and nothing else, and prints
 //! a token holding the private half, the machine's address, the user and
 //! the machine's own host key. Pasted into the desktop, that is everything
@@ -60,7 +60,7 @@ impl Pairing {
         let body = token
             .trim()
             .strip_prefix(PREFIX)
-            .ok_or("that is not a token from agent-workbench-remote connect")?;
+            .ok_or("that is not a token from chord-remote connect")?;
         let json = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(body.trim())
             .map_err(|_| "the token is not whole; copy all of it")?;
@@ -94,7 +94,7 @@ impl Pairing {
 /// and nothing else, with no forwarding and no terminal.
 pub fn authorized_line(daemon: &Path, public_key: &str) -> String {
     format!(
-        "command=\"{} serve\",restrict {} agent-workbench",
+        "command=\"{} serve\",restrict {} chord",
         daemon.display(),
         public_key.trim()
     )
@@ -126,20 +126,11 @@ pub fn connect(
         .map_err(|e| format!("could not make {}: {e}", ssh_dir.display()))?;
     restrict(&ssh_dir, 0o700);
 
-    let scratch = std::env::temp_dir().join(format!("agent-workbench-pair-{}", std::process::id()));
+    let scratch = std::env::temp_dir().join(format!("chord-pair-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
     let key_path = scratch.join("key");
     let output = Command::new("ssh-keygen")
-        .args([
-            "-q",
-            "-t",
-            "ed25519",
-            "-N",
-            "",
-            "-C",
-            "agent-workbench",
-            "-f",
-        ])
+        .args(["-q", "-t", "ed25519", "-N", "", "-C", "chord", "-f"])
         .arg(&key_path)
         .output()
         .map_err(|e| format!("could not run ssh-keygen: {e}"))?;
@@ -293,7 +284,7 @@ fn restrict(_path: &Path, _mode: u32) {}
 
 /// Where the daemon this process is lives, for the authorised command.
 pub fn own_path() -> PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("agent-workbench-remote"))
+    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("chord-remote"))
 }
 
 #[cfg(test)]
@@ -378,10 +369,10 @@ mod tests {
     #[test]
     fn the_key_may_run_the_daemon_and_nothing_else() {
         let line = authorized_line(
-            Path::new("/home/ada/.agent-workbench/bin/agent-workbench-remote"),
-            "ssh-ed25519 AAAA agent-workbench\n",
+            Path::new("/home/ada/.chord/bin/chord-remote"),
+            "ssh-ed25519 AAAA chord\n",
         );
-        assert_eq!(line, "command=\"/home/ada/.agent-workbench/bin/agent-workbench-remote serve\",restrict ssh-ed25519 AAAA agent-workbench agent-workbench");
+        assert_eq!(line, "command=\"/home/ada/.chord/bin/chord-remote serve\",restrict ssh-ed25519 AAAA chord chord");
     }
 
     #[test]
@@ -414,16 +405,15 @@ mod tests {
         .unwrap();
         // The host key comes from /etc/ssh on a real machine; here the test
         // asks for the token's parts through the pieces connect is made of.
-        let daemon = Path::new("/opt/agent-workbench-remote");
+        let daemon = Path::new("/opt/chord-remote");
         let token = match connect(&home, daemon, Some("lab.example".into()), 22) {
             Ok(token) => token,
             Err(error) if error.contains("/etc/ssh") => {
                 // No sshd on this machine: the key was still made and authorised.
                 let authorized =
                     std::fs::read_to_string(home.join(".ssh/authorized_keys")).unwrap();
-                assert!(authorized.contains(
-                    "command=\"/opt/agent-workbench-remote serve\",restrict ssh-ed25519 "
-                ));
+                assert!(authorized
+                    .contains("command=\"/opt/chord-remote serve\",restrict ssh-ed25519 "));
                 return;
             }
             Err(error) => panic!("{error}"),
@@ -433,8 +423,7 @@ mod tests {
         assert!(!pairing.name.is_empty());
         assert!(pairing.key.contains("OPENSSH PRIVATE KEY"));
         let authorized = std::fs::read_to_string(home.join(".ssh/authorized_keys")).unwrap();
-        assert!(authorized
-            .contains("command=\"/opt/agent-workbench-remote serve\",restrict ssh-ed25519 "));
-        assert_eq!(authorized.matches("agent-workbench\n").count(), 1);
+        assert!(authorized.contains("command=\"/opt/chord-remote serve\",restrict ssh-ed25519 "));
+        assert_eq!(authorized.matches("chord\n").count(), 1);
     }
 }

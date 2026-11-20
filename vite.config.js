@@ -4,7 +4,7 @@ import { devPort } from "./dev-port.js";
 
 const host = process.env.TAURI_DEV_HOST;
 
-// The dev server's port. WORKBENCH_DEV_PORT overrides it for browser test runs
+// The dev server's port. CHORD_DEV_PORT overrides it for browser test runs
 // from a second checkout; the HMR port is the one after it.
 const { port } = devPort();
 

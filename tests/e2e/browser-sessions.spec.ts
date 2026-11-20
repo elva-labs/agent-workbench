@@ -72,8 +72,8 @@ async function ask(
 const allTabs = (page: Page) =>
   page.evaluate(async () => {
     const core = (window as unknown as {
-      __WORKBENCH_CORE__: { browserTabs(): Promise<{ tabs: unknown[] }> };
-    }).__WORKBENCH_CORE__;
+      __CHORD_CORE__: { browserTabs(): Promise<{ tabs: unknown[] }> };
+    }).__CHORD_CORE__;
     return (await core.browserTabs()).tabs.length;
   });
 

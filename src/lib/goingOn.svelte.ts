@@ -27,7 +27,7 @@ export interface Went {
   spoken: boolean;
 }
 
-const LINEAGE_KEY = "workbench.wentOn";
+const LINEAGE_KEY = "chord.wentOn";
 /** The most ids kept as going on from another. */
 const LINEAGE_MOST = 500;
 /** The most conversations one row's earlier messages are read from. */

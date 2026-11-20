@@ -330,7 +330,7 @@ test("keeps the line of a message waiting in a resumed session above the compose
     transcripts: [{ id: "past", modified: Math.floor(now / 1000) - 60, size: 100, title: "Question 1" }],
   });
   await page.addInitScript(
-    ({ project }) => localStorage.setItem("workbench.mine", JSON.stringify({ [project]: ["past"] })),
+    ({ project }) => localStorage.setItem("chord.mine", JSON.stringify({ [project]: ["past"] })),
     { project: PROJECT },
   );
   await page.goto("/");

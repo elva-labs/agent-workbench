@@ -9,7 +9,7 @@ import { devPort } from "./dev-port.js";
  * boundary, which has nothing behind it until phase 1; when the PTY lands, a
  * second tier on tauri-driver drives the packaged binary. See tests/e2e/README.
  */
-// WORKBENCH_DEV_PORT moves the dev server off the default port. When it is
+// CHORD_DEV_PORT moves the dev server off the default port. When it is
 // set, a server already answering there is an error, never a server to reuse.
 const { port, custom: customPort } = devPort();
 const origin = `http://localhost:${port}`;

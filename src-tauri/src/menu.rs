@@ -38,8 +38,8 @@ use tauri::menu::{ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{App, AppHandle, Emitter, Manager, State, Window, Wry};
 
 use crate::browser_keys::Chord;
+use chord_core::Core;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use workbench_core::Core;
 
 pub const OPEN_SETTINGS: &str = "open_settings";
 pub const MENU_ACTION: &str = "menu_action";

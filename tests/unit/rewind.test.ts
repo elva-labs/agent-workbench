@@ -42,7 +42,7 @@ let stopListening = () => {};
 /** The fake core behind the seam, its integrated sessions scripted. */
 async function install(options: FakeIntegratedOptions = {}) {
   fake = fakeIntegrated(options);
-  (window as unknown as { __WORKBENCH_CORE__: unknown }).__WORKBENCH_CORE__ = {
+  (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
     integratedStart: async (start: Parameters<FakeIntegrated["start"]>[0]) => fake.start(start),
     integratedSend: async (id: string, message: string, text: string, images?: never[]) =>
       fake.send(id, message, text, images),
@@ -91,7 +91,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   stopListening();
-  delete (window as unknown as { __WORKBENCH_CORE__?: unknown }).__WORKBENCH_CORE__;
+  delete (window as unknown as { __CHORD_CORE__?: unknown }).__CHORD_CORE__;
 });
 
 describe("the conversation store going back", () => {
@@ -255,7 +255,7 @@ describe("telling the agent of files put back", () => {
     expect(linkFor(key).backSaid).toMatch(
       /^upload\.ts is as it was at .+\. What commands changed stays\. Claude Code is told with your next message\.$/,
     );
-    const seam = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const seam = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     const through = seam.integratedSend;
     seam.integratedSend = async () => {
       throw new Error("the pipe broke");

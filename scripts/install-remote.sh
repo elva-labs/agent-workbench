@@ -2,12 +2,13 @@
 #
 # Puts the Chord daemon on this machine, for a desktop to reach
 # over ssh: the build for this machine from the latest release, under
-# ~/.agent-workbench/bin. Then `agent-workbench-remote connect` prints the
+# ~/.chord/bin, and has it move over an install made under the app's
+# earlier name, a pairing included. Then `chord-remote connect` prints the
 # token to paste into the desktop.
 #
 #   curl -fsSL https://raw.githubusercontent.com/elva-labs/chord/main/scripts/install-remote.sh | sh
 #
-# AGENT_WORKBENCH_VERSION picks a release other than the latest, as v0.2.0.
+# CHORD_VERSION picks a release other than the latest, as v0.2.0.
 set -eu
 
 case "$(uname -s)" in
@@ -22,18 +23,19 @@ case "$(uname -m)" in
 esac
 
 repo="elva-labs/chord"
-if [ -n "${AGENT_WORKBENCH_VERSION:-}" ]; then
-  url="https://github.com/$repo/releases/download/$AGENT_WORKBENCH_VERSION/agent-workbench-remote-$os-$arch"
+if [ -n "${CHORD_VERSION:-}" ]; then
+  url="https://github.com/$repo/releases/download/$CHORD_VERSION/chord-remote-$os-$arch"
 else
-  url="https://github.com/$repo/releases/latest/download/agent-workbench-remote-$os-$arch"
+  url="https://github.com/$repo/releases/latest/download/chord-remote-$os-$arch"
 fi
 
-dir="$HOME/.agent-workbench/bin"
+dir="$HOME/.chord/bin"
 umask 077
 mkdir -p "$dir"
 echo "fetching $url"
-curl -fsSL "$url" -o "$dir/agent-workbench-remote.new"
-chmod +x "$dir/agent-workbench-remote.new"
-mv "$dir/agent-workbench-remote.new" "$dir/agent-workbench-remote"
-echo "installed $("$dir/agent-workbench-remote" version) at $dir/agent-workbench-remote"
-echo "now run: $dir/agent-workbench-remote connect"
+curl -fsSL "$url" -o "$dir/chord-remote.new"
+chmod +x "$dir/chord-remote.new"
+mv "$dir/chord-remote.new" "$dir/chord-remote"
+echo "installed $("$dir/chord-remote" version) at $dir/chord-remote"
+"$dir/chord-remote" migrate
+echo "to pair this machine with a desktop, run: $dir/chord-remote connect"

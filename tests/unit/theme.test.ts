@@ -51,7 +51,7 @@ describe("setTheme", () => {
 
   it("persists the choice", () => {
     setTheme("dark");
-    expect(localStorage.getItem("workbench.theme")).toBe("dark");
+    expect(localStorage.getItem("chord.theme")).toBe("dark");
   });
 });
 
@@ -73,7 +73,7 @@ describe("setPalette", () => {
   });
 
   it("ignores a palette it does not know", () => {
-    localStorage.setItem("workbench.palette", "plaid");
+    localStorage.setItem("chord.palette", "plaid");
     theme.palette = "teal";
     loadTheme();
     expect(theme.palette).toBe("teal");
@@ -99,7 +99,7 @@ describe("setLook", () => {
 
   it("persists the look and restores it", () => {
     setLook("modern");
-    expect(localStorage.getItem("workbench.look")).toBe("modern");
+    expect(localStorage.getItem("chord.look")).toBe("modern");
     theme.look = "terminal";
     loadTheme();
     expect(theme.look).toBe("modern");
@@ -113,7 +113,7 @@ describe("setLook", () => {
   });
 
   it("ignores a look it does not know", () => {
-    localStorage.setItem("workbench.look", "brutalist");
+    localStorage.setItem("chord.look", "brutalist");
     loadTheme();
     expect(theme.look).toBe("modern");
   });
@@ -136,7 +136,7 @@ describe("setMono", () => {
 
   it("persists the family and restores it", () => {
     setMono("jetbrains");
-    expect(localStorage.getItem("workbench.mono")).toBe("jetbrains");
+    expect(localStorage.getItem("chord.mono")).toBe("jetbrains");
     theme.mono = "system";
     loadTheme();
     expect(theme.mono).toBe("jetbrains");
@@ -144,7 +144,7 @@ describe("setMono", () => {
   });
 
   it("ignores a family it does not ship", () => {
-    localStorage.setItem("workbench.mono", "comic");
+    localStorage.setItem("chord.mono", "comic");
     loadTheme();
     expect(theme.mono).toBe("system");
   });
@@ -162,7 +162,7 @@ describe("setSans", () => {
 
   it("persists the family and restores it", () => {
     setSans("inter");
-    expect(localStorage.getItem("workbench.sans")).toBe("inter");
+    expect(localStorage.getItem("chord.sans")).toBe("inter");
     theme.sans = "system";
     loadTheme();
     expect(theme.sans).toBe("inter");
@@ -170,7 +170,7 @@ describe("setSans", () => {
   });
 
   it("ignores a family it does not ship", () => {
-    localStorage.setItem("workbench.sans", "comic");
+    localStorage.setItem("chord.sans", "comic");
     loadTheme();
     expect(theme.sans).toBe("system");
   });
@@ -213,14 +213,14 @@ describe("cycleTheme", () => {
 
 describe("loadTheme", () => {
   it("restores a stored choice and applies it", () => {
-    localStorage.setItem("workbench.theme", "dark");
+    localStorage.setItem("chord.theme", "dark");
     loadTheme();
     expect(theme.choice).toBe("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
   });
 
   it("falls back to system for an unrecognised value", () => {
-    localStorage.setItem("workbench.theme", "solarized");
+    localStorage.setItem("chord.theme", "solarized");
     loadTheme();
     expect(theme.choice).toBe("system");
     expect(document.documentElement.dataset.theme).toBeUndefined();

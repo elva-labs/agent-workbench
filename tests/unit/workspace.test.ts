@@ -68,7 +68,7 @@ const repo = (path: string) => ({
 
 /** What is stored for the next start. */
 function stored(): { open: string[]; active: string | null } {
-  return JSON.parse(localStorage.getItem("workbench.workspace") ?? "null");
+  return JSON.parse(localStorage.getItem("chord.workspace") ?? "null");
 }
 
 beforeEach(() => {
@@ -87,7 +87,7 @@ beforeEach(() => {
 describe("restoring the open projects", () => {
   it("describes them all at once and lists them in the stored order", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/slow", "/gone", "/p/quick", "/p/middle"],
         active: "/p/middle",
@@ -106,7 +106,7 @@ describe("restoring the open projects", () => {
 
   it("puts the projects here in together, and does not wait for a host", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
         active: "/p/two",
@@ -147,10 +147,10 @@ describe("restoring the open projects", () => {
       "/p/one": Date.now() - hour,
       "/p/two": Date.now() - 3 * hour,
     };
-    localStorage.setItem("workbench.used", JSON.stringify(used));
+    localStorage.setItem("chord.used", JSON.stringify(used));
     loadUsed();
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: ["ssh://ada@lab/srv/x", "/p/one", "/p/two"], active: "ssh://ada@lab/srv/x" }),
     );
     fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
@@ -160,12 +160,12 @@ describe("restoring the open projects", () => {
     await Promise.all(arriving.values());
     expect(workspace.active).toBe("ssh://ada@lab/srv/x");
     expect(projects.used).toEqual(used);
-    expect(JSON.parse(localStorage.getItem("workbench.used")!)).toEqual(used);
+    expect(JSON.parse(localStorage.getItem("chord.used")!)).toEqual(used);
   });
 
   it("keeps a project on its way in what is stored, and after it arrives", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "ssh://ada@lab/srv/x", "/p/two"],
         active: "/p/two",
@@ -187,7 +187,7 @@ describe("restoring the open projects", () => {
 
   it("drops a project on another machine from what is stored when it cannot be described", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: ["/p/one", "ssh://ada@lab/gone"], active: "/p/one" }),
     );
     const arriving = await restore();
@@ -197,7 +197,7 @@ describe("restoring the open projects", () => {
 
   it("puts a late project before one opened while it was on its way", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: ["/p/zero", "ssh://ada@lab/srv/x", "/p/two"], active: "/p/zero" }),
     );
     fake.state.delays = { "ssh://ada@lab/srv/x": 30 };
@@ -221,7 +221,7 @@ describe("restoring the open projects", () => {
 
   it("puts the first project in front while the stored one waits for its host", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "ssh://ada@lab/srv/x"],
         active: "ssh://ada@lab/srv/x",
@@ -239,7 +239,7 @@ describe("restoring the open projects", () => {
 
   it("leaves the project chosen while the stored one waited in front", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "/p/two", "ssh://ada@lab/srv/x"],
         active: "ssh://ada@lab/srv/x",
@@ -255,7 +255,7 @@ describe("restoring the open projects", () => {
 
   it("leaves the session chosen while the stored project waited in front", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "ssh://ada@lab/srv/x"],
         active: "ssh://ada@lab/srv/x",
@@ -275,7 +275,7 @@ describe("restoring the open projects", () => {
 
   it("stores a project opened by hand while on its way only once", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({
         open: ["/p/one", "ssh://ada@lab/srv/x"],
         active: "/p/one",
@@ -292,7 +292,7 @@ describe("restoring the open projects", () => {
 
   it("activates the first project when the stored one cannot be described", async () => {
     localStorage.setItem(
-      "workbench.workspace",
+      "chord.workspace",
       JSON.stringify({ open: ["/p/one", "/gone"], active: "/gone" }),
     );
     await restore();

@@ -91,7 +91,7 @@ describe("taking a conversation up again", () => {
     identified("row-1", "new-id");
     expect(moved).toEqual([["old-id", "new-id"]]);
     expect(lineageOf("new-id")).toEqual(["old-id", "new-id"]);
-    expect(JSON.parse(localStorage.getItem("workbench.wentOn") ?? "{}")).toEqual({ "new-id": "old-id" });
+    expect(JSON.parse(localStorage.getItem("chord.wentOn") ?? "{}")).toEqual({ "new-id": "old-id" });
     // Again, from the fresh one.
     await takeUp(row({ resumedFrom: "new-id" }));
     identified("row-1", "newer-id");

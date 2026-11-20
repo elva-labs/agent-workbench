@@ -291,7 +291,7 @@ since the workbench was restarted, and a line sent to it resumes it.
 ## Who is calling
 
 Every session the workbench starts is given a token as it starts, chosen by
-the workbench, in its environment as `WORKBENCH_SESSION`. The agent passes
+the workbench, in its environment as `CHORD_SESSION`. The agent passes
 its environment on to the tool server and its hooks, so every call they
 make carries the token, for Claude Code and Codex alike, in a terminal or
 integrated, here or on another machine. A Codex session carries it from its
@@ -351,7 +351,7 @@ The token is an identifier, not a secret: the workbench cannot see which
 process made a call. A tool server run by hand from a session's shell has
 that session's token in its environment, and an agent started from that
 shell does too; either is taken for that session, as under [following a
-workflow](#following-a-workflow). The request log in `~/.agent-workbench`
+workflow](#following-a-workflow). The request log in `~/.chord`
 is how a call reaches the workbench: the tool server adds a line for each
 call, with its token, and the workbench reads it. The log holds the most
 recent calls, up to a quarter of a megabyte, and any program the user runs

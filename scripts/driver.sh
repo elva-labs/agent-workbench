@@ -24,7 +24,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-BIN="src-tauri/target/debug/agent-workbench"
+BIN="src-tauri/target/debug/chord"
 [[ "$(uname -s)" == MINGW* || "$(uname -s)" == MSYS* ]] && BIN="$BIN.exe"
 if [[ ! -x "$BIN" ]]; then
   echo "building the core first..."

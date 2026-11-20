@@ -38,7 +38,7 @@ import { openDayOfWork } from "./dayOfWork";
  * It runs only when PANE_MOTION=1 is set, against a dev server of its own,
  * WebKit only, one worker:
  *
- *   PANE_MOTION=1 WORKBENCH_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
+ *   PANE_MOTION=1 CHORD_DEV_PORT=14538 npx playwright test tests/e2e/pane-motion.webkit.spec.ts --project webkit --workers 1
  */
 
 const MOD = "ControlOrMeta";
@@ -314,7 +314,7 @@ test("the panes' motions, in a workspace the size of a day's work", async ({ pag
   });
   // A diff of a real file's length in the viewer.
   await page.evaluate(() => {
-    const core = (window as unknown as { __WORKBENCH_CORE__: Record<string, unknown> }).__WORKBENCH_CORE__;
+    const core = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
     const lines: { kind: string; text: string; old: number | null; new: number | null }[] = [];
     for (let hunk = 0; hunk < 12; hunk++) {
       lines.push({ kind: "hunk", text: `@@ -${hunk * 40 + 1},30 +${hunk * 40 + 1},34 @@`, old: null, new: null });
@@ -369,7 +369,7 @@ test("the panes' motions, in a workspace the size of a day's work", async ({ pag
   await motion(page, "sessions-open", () => page.keyboard.press(`${MOD}+b`));
 
   const shells = () =>
-    page.evaluate(() => Object.keys((window as unknown as { __WORKBENCH_TERMINALS__?: object }).__WORKBENCH_TERMINALS__ ?? {}).length);
+    page.evaluate(() => Object.keys((window as unknown as { __CHORD_TERMINALS__?: object }).__CHORD_TERMINALS__ ?? {}).length);
   const before = await shells();
   await motion(page, "terminal-first", () => page.keyboard.press(`${MOD}+j`));
   expect(await shells()).toBe(before + 1);

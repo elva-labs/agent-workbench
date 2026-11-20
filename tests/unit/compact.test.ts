@@ -39,7 +39,7 @@ function reset() {
   resetCompact();
   resetPersist();
   sets.length = 0;
-  localStorage.removeItem("workbench.compact");
+  localStorage.removeItem("chord.compact");
   theme.look = "modern";
   layout.sessions = DEFAULT.sessions;
   layout.changes = DEFAULT.changes;

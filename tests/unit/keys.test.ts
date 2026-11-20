@@ -136,12 +136,12 @@ describe("persistence", () => {
   });
 
   it("survives a corrupt or partial entry", () => {
-    localStorage.setItem("workbench.keys", "{not json");
+    localStorage.setItem("chord.keys", "{not json");
     expect(() => loadKeys()).not.toThrow();
     expect(chordFor("review")).toEqual(chord("d"));
 
     localStorage.setItem(
-      "workbench.keys",
+      "chord.keys",
       JSON.stringify({ bindings: { review: { key: "g", shift: false, alt: false }, view: "nope" } }),
     );
     loadKeys();
@@ -299,7 +299,7 @@ describe("the editor's chords", () => {
 
   it("are given to a stored table that never had them", () => {
     localStorage.setItem(
-      "workbench.keys",
+      "chord.keys",
       JSON.stringify({ bindings: { "focus.sessions": { key: "1", shift: false, alt: false } } }),
     );
     loadKeys();

@@ -291,7 +291,7 @@ describe("a plugin", () => {
     trust("src-1", "github");
     expect(trusted("src-1", "github")).toBe(true);
     expect(trusted("src-1", "git")).toBe(false);
-    localStorage.setItem("workbench.plugins.trusted", "nonsense");
+    localStorage.setItem("chord.plugins.trusted", "nonsense");
     expect(trusted("src-1", "github")).toBe(false);
   });
 });

@@ -673,7 +673,7 @@ on, whichever machine the agent runs on.
 The appearance, the look, compact mode, the palette, the fonts, the chords, the answer
 on hooks, the accounts, the workflows and the projects' choices among them,
 how long past sessions stay listed, how long a project stays active, what
-new sessions start on, the notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.agent-workbench`, and every
+new sessions start on, the notifications, your own themes, the backgrounds and the cards' shares are kept for the machine, in `settings.json` under `~/.chord`, and every
 window on the machine follows the same file.
 The window reads it at start and hears of every change to it, whether made
 in the settings, by another window, or by an edit to the file itself, which
@@ -771,3 +771,13 @@ without the file, that copy is what the file is first written from.
 The plugins keep their own record, described in [plugins](plugins.md). A
 window on a remote machine's project still follows the settings of the
 machine the window runs on.
+
+## An install from before Chord
+
+Chord was called Agent Workbench before 1.0, and kept its files in `~/.agent-workbench`. The first time Chord starts on a machine that has that folder, before anything reads it, it moves it to `~/.chord` and leaves a link at the old path, so a path to it written into a file Chord does not own still leads there. A folder that is itself a link, to dotfiles for instance, moves as a link. A `~/.chord` that is there before the move was made by something that ran first, so the old folder's files are the user's: what `~/.chord` holds is added to the old folder before it moves, and where both hold a file the old folder's is the one in use and the other is kept in `~/.chord/kept-from-before`. Until the folder has moved, Chord and its daemon use the old one. A move that cannot be made, a file held open on Windows for instance, leaves the files where they were: Chord says so in a dialog, goes on using the old folder, and tries again at the next start.
+
+The orchestrator folder moves with it, and agents know a folder by its path, so its identity is carried to the new path: Claude Code's transcript folders for it, under `projects` in each account's configuration folder, so its past sessions are listed and resume; its entry in each account's `.claude.json`, trust with it; and its trust in each account's Codex `config.toml`. The tool server, which was called `agent-workbench`, is `chord`, so its tools are `mcp__chord__…`. The entries Chord wrote under the old name, in each `.claude.json`, each Codex config, and each project's hooks and Codex config, are renamed and point at the renamed daemon, with nothing doubled. An entry that ran the daemon from a folder of the user's own, Homebrew's for instance, keeps that folder and runs the daemon's new name there. Permission rules saved for the old server, in Claude Code's settings files of each account and project, and Codex's approvals of its tools, name the new one and stay as they were, allow, ask or deny, and a rule with a path into the old folder names the new one. In a project, a file git tracks is left as it is and listed for the user to change, and the two files a project shares with its team, `.claude/settings.json` and `.mcp.json`, have the old server's name changed where it stands and nothing else, their commands included. The window's own stored state moves to its new keys, and once Chord is on the new folder, paths in it into the old folder say the new one, so open projects, names, themes and each session's notes are kept.
+
+Every file changed is listed in `~/.chord/migration.md`, under the time it was changed, and every file that could not be changed under a heading of its own. The move is under way until each file outside a project that needed it has been changed: a move cut off, or one that could not change a file, is taken up again at the next start, and Chord says so in a dialog. A finished move run again changes nothing. A project's files are checked again when it is opened, which also brings over a project no agent's state named, and what that changes is added to the list.
+
+A development build moves nothing unless `CHORD_MIGRATE` is set, and uses an install under the old name where it is, so running one leaves the developer's own install as it was.

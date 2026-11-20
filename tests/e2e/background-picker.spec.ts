@@ -336,21 +336,21 @@ test.describe("cards", () => {
     });
     await page.goto("/");
     const terminals = () =>
-      page.evaluate(() => Object.keys((window as unknown as { __WORKBENCH_TERMINALS__?: object }).__WORKBENCH_TERMINALS__ ?? {}).length);
+      page.evaluate(() => Object.keys((window as unknown as { __CHORD_TERMINALS__?: object }).__CHORD_TERMINALS__ ?? {}).length);
     for (let i = 1; i <= 3; i++) {
       await page.getByTestId("new-session").click();
       await expect.poll(terminals).toBe(i);
     }
-    type Terminals = { __WORKBENCH_TERMINALS__: Record<string, { options: { theme: object } }>; __themes?: object[] };
+    type Terminals = { __CHORD_TERMINALS__: Record<string, { options: { theme: object } }>; __themes?: object[] };
     const note = () =>
       page.evaluate(() => {
         const w = window as unknown as Terminals;
-        w.__themes = Object.values(w.__WORKBENCH_TERMINALS__).map((terminal) => terminal.options.theme);
+        w.__themes = Object.values(w.__CHORD_TERMINALS__).map((terminal) => terminal.options.theme);
       });
     const given = () =>
       page.evaluate(() => {
         const w = window as unknown as Terminals;
-        return Object.values(w.__WORKBENCH_TERMINALS__).filter((terminal, at) => terminal.options.theme !== w.__themes![at]).length;
+        return Object.values(w.__CHORD_TERMINALS__).filter((terminal, at) => terminal.options.theme !== w.__themes![at]).length;
       });
     await page.keyboard.press(`${MOD}+,`);
     await expect(page.getByTestId("background-picker")).toBeVisible();

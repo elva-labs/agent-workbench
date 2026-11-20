@@ -135,14 +135,14 @@ const MOST_BACKGROUNDS: usize = 64;
 const MOST_CARDS: f64 = 0.25;
 
 pub fn settings_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("settings.json")
+    crate::home::dir(home).join("settings.json")
 }
 
 /// The names of the workflows offered once to a settings file that held
 /// a list of workflows before they shipped. A file of its own beside the
 /// settings, which a version before this one never reads.
 fn offered_path(home: &Path) -> PathBuf {
-    home.join(".agent-workbench").join("offered-workflows.json")
+    crate::home::dir(home).join("offered-workflows.json")
 }
 
 /// The workflows that shipped after a settings file could hold workflows:

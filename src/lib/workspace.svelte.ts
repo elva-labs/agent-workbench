@@ -35,7 +35,7 @@ import {
  * project's work at a time, and the left pane is where the others live.
  */
 
-const KEY = "workbench.workspace";
+const KEY = "chord.workspace";
 
 export const workspace = $state({
   open: [] as ProjectInfo[],

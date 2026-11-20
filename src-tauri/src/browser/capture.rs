@@ -1,6 +1,6 @@
 //! A tab's screenshot, taken whether or not its view is on show, without
 //! the tab coming forward. What is done to the view, and in what order, is
-//! [`workbench_core::browser::capture`]'s; this is the part that waits on
+//! [`chord_core::browser::capture`]'s; this is the part that waits on
 //! the native snapshot and makes sure the view is back in its place before
 //! the browser's views are let go, on every way out.
 
@@ -8,7 +8,7 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use workbench_core::browser::capture::{Pending, Plan};
+use chord_core::browser::capture::{Pending, Plan};
 
 /// How long each part of a capture may take before it is given up on.
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +35,7 @@ pub const WAITS: Waits = Waits {
 /// The native side of a capture: a tab's view, on the thread that may
 /// touch it.
 pub trait Native {
-    /// Readies the view through [`workbench_core::browser::capture::begin`],
+    /// Readies the view through [`chord_core::browser::capture::begin`],
     /// recording what changed on `pending`, sends how the view is taken, or
     /// why it cannot be, to `began`, and starts its snapshot. Once the
     /// snapshot answers, the view is put back through `pending` and the
@@ -121,14 +121,14 @@ mod native {
     use std::sync::mpsc::Sender;
     use std::sync::Arc;
 
+    use chord_core::browser::capture::{
+        begin, CaptureView, Frame, Pending, Plan, ViewState, WindowState,
+    };
     use objc2::rc::Retained;
     use objc2::{msg_send, sel, Message};
     use objc2_app_kit::NSWindow;
     use objc2_foundation::{NSNumber, NSPoint, NSRect, NSSize, NSString};
     use objc2_web_kit::{WKContentWorld, WKSnapshotConfiguration, WKWebView};
-    use workbench_core::browser::capture::{
-        begin, CaptureView, Frame, Pending, Plan, ViewState, WindowState,
-    };
 
     #[link(name = "CoreGraphics", kind = "framework")]
     extern "C" {
@@ -376,7 +376,7 @@ mod tests {
     use std::sync::{Condvar, Mutex};
     use std::thread;
 
-    use workbench_core::browser::capture::{begin, CaptureView, Frame, ViewState, WindowState};
+    use chord_core::browser::capture::{begin, CaptureView, Frame, ViewState, WindowState};
 
     const PLACE: Frame = Frame {
         x: 340.0,

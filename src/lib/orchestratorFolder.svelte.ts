@@ -14,7 +14,7 @@ import { core } from "$lib/core";
 import { forProject, historyFor } from "$lib/sessions.svelte";
 
 /** Where the window keeps that the folder was closed. */
-const KEY = "workbench.orchestratorFolder";
+const KEY = "chord.orchestratorFolder";
 
 function readClosed(): boolean {
   try {

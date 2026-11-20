@@ -15,12 +15,12 @@
 
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
+use chord_core::browser::TabId;
 use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use tauri::Manager;
 use tauri::{State, Window};
-#[cfg(target_os = "macos")]
-use workbench_core::browser::TabId;
 
 use crate::browser::Browser;
 

@@ -121,7 +121,7 @@ describe("last used", () => {
     touch("/arriving", NOW - 3 * DAY);
     close("/a");
     expect(projects.used).toEqual({ "/b": NOW - 2 * DAY, "/arriving": NOW - 3 * DAY });
-    expect(JSON.parse(localStorage.getItem("workbench.used")!)).not.toHaveProperty("/a");
+    expect(JSON.parse(localStorage.getItem("chord.used")!)).not.toHaveProperty("/a");
   });
 
   // Only what the user does stamps a project: the window or an agent
@@ -147,12 +147,12 @@ describe("last used", () => {
     loadUsed();
     expect(projects.used["/other"]).toBe(at);
 
-    localStorage.setItem("workbench.used", "not json");
+    localStorage.setItem("chord.used", "not json");
     projects.used = {};
     loadUsed();
     expect(projects.used).toEqual({});
 
-    localStorage.setItem("workbench.used", JSON.stringify({ "/a": 5, "/b": "soon" }));
+    localStorage.setItem("chord.used", JSON.stringify({ "/a": 5, "/b": "soon" }));
     loadUsed();
     expect(projects.used).toEqual({ "/a": 5 });
   });

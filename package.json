@@ -1,5 +1,5 @@
 {
-  "name": "agent-workbench",
+  "name": "chord",
   "version": "1.0.0-beta.6",
   "description": "Three-pane desktop workbench for coding agent CLIs",
   "type": "module",

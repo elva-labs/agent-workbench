@@ -1,6 +1,7 @@
 export { revealed, shown } from "$lib/unseen";
 import { shown } from "$lib/unseen";
 import { spoken } from "$lib/instructions";
+import { EARLIER_SERVER_NAMES } from "$lib/migrate";
 import type {
   IntegratedEventBody,
   IntegratedFileChange,
@@ -69,7 +70,7 @@ const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
 export function drawnPart(part: Part): boolean {
   if (part.kind !== "tool") return true;
   const named = mcpName(part.name);
-  return named === null || named.server !== WORKBENCH || !UNDRAWN.has(named.tool);
+  return named === null || !isOwn(named.server) || !UNDRAWN.has(named.tool);
 }
 
 /** A span of time as the thread says it: 12s, 3m, 1h 5m. */
@@ -252,15 +253,20 @@ export function phraseText(phrase: Phrase): string {
     Claude apps add carry a `claude_ai_` prefix that says nothing to a
     person. */
 function serverShown(server: string): string {
-  if (server === WORKBENCH || server === WORKBENCH_KEY) return "Chord";
+  if (isOwn(server)) return "Chord";
   const bare = server.replace(/^claude_ai_/, "");
   return bare === "" ? server : bare;
 }
 
 /** The MCP server the workbench itself runs for its agents, by the name
-    Claude Code knows it by and the key Codex does. */
-const WORKBENCH = "agent-workbench";
-const WORKBENCH_KEY = "agent_workbench";
+    Claude Code knows it by, which is the key Codex knows it by too. */
+const OWN_SERVER = "chord";
+
+/** Whether a call's server is the app's own: by its name, or by the
+    earlier one a transcript written before the rename has. */
+function isOwn(server: string): boolean {
+  return server === OWN_SERVER || EARLIER_SERVER_NAMES.includes(server);
+}
 
 /** How the window answers what the workbench's tools name. */
 export interface SessionNames {
@@ -492,7 +498,7 @@ export function stepTitle(
     case "mcp": {
       const named = mcpName(call.name);
       if (named === null) return say("Using", "Used", call.name);
-      if (named.server === WORKBENCH) {
+      if (isOwn(named.server)) {
         const own = workbenchPhrase(named.tool, input, call, running ? "now" : "then", root);
         if (own !== null) return own;
       }
@@ -550,7 +556,7 @@ function runningWait(parts: Part[]): ToolCall | null {
     const part = parts[at];
     if (part.kind !== "tool" || part.done) continue;
     const named = mcpName(part.name);
-    if (named !== null && named.server === WORKBENCH && named.tool === "wait") return part;
+    if (named !== null && isOwn(named.server) && named.tool === "wait") return part;
   }
   return null;
 }
@@ -739,7 +745,7 @@ export function asks(asked: Permission, call: ToolCall | null = null): Phrase & 
   const input = asked.input;
   if (call?.plan) return { lead: ["go ahead with the plan"], object: null, shape: null };
   const named = mcpName(asked.tool);
-  if (named !== null && named.server === WORKBENCH) {
+  if (named !== null && isOwn(named.server)) {
     const own = workbenchPhrase(named.tool, input, call, "to", null);
     if (own !== null) return { ...own, shape: own.quoted || own.object === null ? null : askedShape(named.tool) };
   }

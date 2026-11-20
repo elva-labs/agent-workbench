@@ -14,7 +14,7 @@
 import type { Settings } from "$lib/core";
 import { persist } from "$lib/persist";
 
-const KEY = "workbench.compact";
+const KEY = "chord.compact";
 
 export const compact = $state({
   /** Whether compact mode is on. */
