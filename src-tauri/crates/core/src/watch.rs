@@ -403,11 +403,9 @@ impl Ignored {
         }
     }
 
-    /// True only when every path in the event is ignored. Unsure means not
-    /// ignored: a spurious refresh is cheap and a missed one is not.
-    ///
-    /// Git counts everything under `.git` as ignored, but `is_interesting`
-    /// has already chosen which of those matter, so they are never covered.
+    /// True only when no path in the event can change what status shows.
+    /// Unsure means it can: a spurious refresh is cheap and a missed one is
+    /// not.
     fn covers(&self, event: &notify::Result<Event>) -> bool {
         let Ok(event) = event else { return false };
         let Some(repo) = self.repo.as_ref() else {
@@ -416,10 +414,35 @@ impl Ignored {
         !event.paths.is_empty()
             && event.paths.iter().all(|path| {
                 path.strip_prefix(&self.root)
-                    .ok()
-                    .filter(|relative| !inside_git(relative))
-                    .and_then(|relative| repo.status_should_ignore(relative).ok())
-                    .unwrap_or(false)
+                    .is_ok_and(|relative| self.covers_path(repo, relative))
+            })
+    }
+
+    /// Git counts everything under `.git` as ignored, but `is_interesting`
+    /// has already chosen which of those matter. Of those, only the index
+    /// and HEAD of another worktree are covered: they are that worktree's
+    /// status, not this one's.
+    ///
+    /// A repository nested in the tree, a linked worktree or a clone that
+    /// is not a submodule, shows in status as one untracked folder whatever
+    /// happens inside it, so nothing inside it is a change here.
+    fn covers_path(&self, repo: &Repository, relative: &Path) -> bool {
+        if inside_git(relative) {
+            return relative.starts_with(".git/worktrees");
+        }
+        self.nested_repository(repo, relative)
+            || repo.status_should_ignore(relative).unwrap_or(false)
+    }
+
+    fn nested_repository(&self, repo: &Repository, relative: &Path) -> bool {
+        relative
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| !dir.as_os_str().is_empty())
+            .find(|dir| self.root.join(dir).join(".git").exists())
+            .is_some_and(|dir| {
+                dir.to_str()
+                    .is_some_and(|name| repo.find_submodule(name).is_err())
             })
     }
 }
@@ -597,6 +620,38 @@ mod tests {
             admin.display()
         );
         assert!(is_interesting(&admin.join("index")));
+    }
+
+    // A project holding its own worktrees sees every write and every git run
+    // in them. Status shows each as one untracked folder whatever happens
+    // inside it, so none of that is a change to the project.
+    #[test]
+    fn work_inside_a_nested_repository_is_covered() {
+        let (dir, tree) = repo_with_worktree("nested");
+        let ignored = Ignored::for_root(&dir);
+        assert!(ignored.covers(&event(&[tree.join("a.txt")])));
+        assert!(ignored.covers(&event(&[tree.join("src/deep/new.png")])));
+        assert!(ignored.covers(&event(&[dir.join(".git/worktrees/feature/index")])));
+        assert!(!ignored.covers(&event(&[dir.join("a.txt")])));
+        assert!(!ignored.covers(&event(&[dir.join(".git/index")])));
+        assert!(!ignored.covers(&event(&[dir.join(".claude/worktrees/other")])));
+        assert!(!ignored.covers(&event(&[tree.join("a.txt"), dir.join("a.txt")])));
+    }
+
+    // A dirty submodule is a change to the project that holds it.
+    #[test]
+    fn work_inside_a_submodule_is_not_covered() {
+        let dir = Scratch::new("watch-submodule");
+        let outer = Repository::init(&dir).unwrap();
+        let url = format!("file://{}", dir.join("elsewhere").display());
+        outer
+            .submodule(&url, Path::new("m"), true)
+            .unwrap()
+            .open()
+            .unwrap();
+        assert!(dir.join("m/.git").is_file());
+        let ignored = Ignored::for_root(&dir);
+        assert!(!ignored.covers(&event(&[dir.join("m/a.txt")])));
     }
 
     // A repository's own index is already inside what is being watched.
