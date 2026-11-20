@@ -190,3 +190,35 @@ test("lists the past sessions last, behind a fold that opens and closes", async 
   await expect(page.getByTestId("past-session")).toHaveCount(0);
   await expect(page.getByTestId("session-row")).toHaveCount(3);
 });
+
+test("resumes a past session in the worktree the app made for it as its own", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  const tree = `${PROJECT}/.claude/worktrees/fix-it`;
+  await installFakeCore(page, {
+    open: [PROJECT],
+    transcripts: [
+      { id: "made-1", modified: now - DAY, size: 100, title: "made for it", cwd: tree },
+      { id: "visit-1", modified: now - 2 * DAY, size: 100, title: "only ran there", cwd: tree },
+    ],
+  });
+  await page.addInitScript(
+    ({ project, tree }) => {
+      localStorage.setItem("chord.mine", JSON.stringify({ [project]: ["made-1", "visit-1"] }));
+      localStorage.setItem("chord.trees", JSON.stringify({ starter: [{ project, path: tree, id: "made-1" }] }));
+    },
+    { project: PROJECT, tree },
+  );
+  await page.goto("/");
+  await expect(page.getByTestId("past-session")).toHaveCount(2);
+
+  const spawned = () =>
+    page.evaluate(() =>
+      ((window as unknown as { __spawns?: { session?: string; cwd?: string; madeWorktree?: boolean }[] }).__spawns ?? []).map(
+        ({ session, cwd, madeWorktree }) => ({ session, cwd, madeWorktree: madeWorktree === true }),
+      ),
+    );
+  await page.getByTestId("past-session").filter({ hasText: "made for it" }).click();
+  await expect.poll(spawned).toEqual([{ session: "made-1", cwd: tree, madeWorktree: true }]);
+  await page.getByTestId("past-session").filter({ hasText: "only ran there" }).click();
+  await expect.poll(async () => (await spawned()).at(-1)).toEqual({ session: "visit-1", cwd: tree, madeWorktree: false });
+});

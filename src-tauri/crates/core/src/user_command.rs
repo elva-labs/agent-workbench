@@ -123,7 +123,7 @@ pub(crate) fn end_group(group: u32, grace: Duration) {
 /// of its own, the newest where the agent runs more than one such.
 pub(crate) fn group_of(agent: u32, text: &str, since: u64) -> Option<u32> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
-    let mut system = System::new();
+    let mut system = System::new().ok()?;
     system.refresh_processes_specifics(
         ProcessesToUpdate::All,
         true,

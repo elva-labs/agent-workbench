@@ -4,11 +4,13 @@
 //! tool changed a file; and session hooks, `UserPromptSubmit`, `Stop` and
 //! the permission prompt, appended to a log the core tails, so a row says
 //! exactly when its agent started, stopped, or asked for permission rather
-//! than reading that off the pty. Beside the session hook on the prompt,
-//! where there is a daemon, a second one asks the window through it what
-//! the sessions this one started did, and gives the agent the answer with
-//! the user's message. Both agents take the same shape: Claude Code in the
-//! project's `.claude/settings.local.json`, Codex in the project's
+//! than reading that off the pty. While an enabled plugin listens for
+//! commands, Claude Code's `PostToolUse` on its shell tool goes to the same
+//! log. Beside the session hook on the prompt, where there is a daemon, a
+//! second one asks the window through it what the sessions this one started
+//! did, and gives the agent the answer with the user's message. Both
+//! agents take the same shape: Claude Code in the project's
+//! `.claude/settings.local.json`, Codex in the project's
 //! `.codex/hooks.json`, with the same events and the same stdin.
 //!
 //! The watcher already works, and this does not replace it: a person editing
@@ -54,14 +56,20 @@ fn lock_state() -> MutexGuard<'static, ()> {
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
 
+/// The tool that runs shell commands, whose calls go to the session log
+/// for the plugins that listen for commands.
+const COMMAND_MATCHER: &str = "Bash";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookStatus {
     pub installed: bool,
     /// Whether the hooks are installed with something in a form the next
     /// install brings up to date: the project's Codex entry for the server
-    /// saying nothing of its tools' approval. They work as they are, so a
-    /// project that should have no hooks is still uninstalled.
+    /// saying nothing of its tools' approval, no tool hook on the shell tool
+    /// while an enabled plugin listens for commands, or one while none does.
+    /// They work as they are, so a project that should have no hooks is
+    /// still uninstalled.
     pub outdated: bool,
     /// Where the settings file is, whether or not it exists yet.
     pub settings: String,
@@ -134,6 +142,35 @@ const CODEX_SESSION_EVENTS: &[&str] = &["UserPromptSubmit", "Stop", "PermissionR
 
 pub fn events_path(home: &Path) -> PathBuf {
     crate::home::dir(home).join(EVENTS_FILE)
+}
+
+/// The file whose presence says an enabled plugin listens for commands, so
+/// the hooks carry the one on the shell tool. The plugins keep it.
+pub fn hears_commands_path(home: &Path) -> PathBuf {
+    crate::home::dir(home).join("hears-commands")
+}
+
+/// Whether an enabled plugin listens for commands.
+pub fn hears_commands(home: &Path) -> bool {
+    hears_commands_path(home).is_file()
+}
+
+/// Says whether an enabled plugin listens for commands, for the next
+/// install and status to read, and whether that is news.
+pub fn set_hears_commands(home: &Path, on: bool) -> bool {
+    let path = hears_commands_path(home);
+    if on == path.is_file() {
+        return false;
+    }
+    if on {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, "");
+    } else {
+        let _ = std::fs::remove_file(&path);
+    }
+    true
 }
 
 /// Where the daemon lives on a machine, which is also the MCP server the
@@ -413,6 +450,28 @@ fn add_entry(settings: &mut Map<String, Value>, event: &str, entry: Value) -> Re
     Ok(true)
 }
 
+/// Removes the entries under an event that run this command, and the empty
+/// scaffolding they leave. Says whether there was one.
+fn remove_command(settings: &mut Map<String, Value>, event: &str, command: &str) -> bool {
+    let commands = [command.to_string()];
+    let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let Some(entries) = hooks.get_mut(event).and_then(Value::as_array_mut) else {
+        return false;
+    };
+    let before = entries.len();
+    entries.retain(|entry| !runs(entry, &commands));
+    let removed = entries.len() != before;
+    if entries.is_empty() {
+        hooks.remove(event);
+    }
+    if hooks.is_empty() {
+        settings.remove("hooks");
+    }
+    removed
+}
+
 /// Removes our entries under an event, and the empty scaffolding they leave.
 fn remove_entries(settings: &mut Map<String, Value>, event: &str, home: &Path) {
     let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
@@ -459,6 +518,7 @@ pub fn status_many(
         crate::migrate::project(home, project);
     }
     let daemon_here = daemon_path(home).is_file();
+    let hears = hears_commands(home);
     let failures = claude_knows_failed_turns(home, env);
     let events = events_path(home).to_string_lossy().to_string();
     let mut servers: Option<Vec<Map<String, Value>>> = None;
@@ -481,7 +541,9 @@ pub fn status_many(
                     });
             HookStatus {
                 installed,
-                outdated: installed && daemon_here && !codex_current(home, project),
+                outdated: installed
+                    && (daemon_here && !codex_current(home, project)
+                        || has_command(&read, "PostToolUse", &activity_command(home)) != hears),
                 settings: settings.to_string_lossy().to_string(),
                 events: events.clone(),
             }
@@ -1082,6 +1144,18 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str], failures: bool) -> Resu
                 "hooks": [{ "type": "command", "command": command(home) }],
             }),
         )?;
+        if hears_commands(home) {
+            changed |= add_entry(
+                &mut settings,
+                "PostToolUse",
+                json!({
+                    "matcher": COMMAND_MATCHER,
+                    "hooks": [{ "type": "command", "command": activity_command(home) }],
+                }),
+            )?;
+        } else {
+            changed |= remove_command(&mut settings, "PostToolUse", &activity_command(home));
+        }
         for event in CLAUDE_SESSION_EVENTS {
             changed |= add_entry(&mut settings, event, session_entry(home))?;
         }
@@ -2716,6 +2790,58 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    // The hook on the shell tool is there only while an enabled plugin
+    // listens for commands: an install without it is current until one
+    // does, and one with it is out of date once none does.
+    #[test]
+    fn hears_the_shell_commands_a_session_runs_only_while_a_plugin_listens() {
+        let (home, project) = fixture("commands");
+        std::fs::create_dir_all(project.join(".claude")).unwrap();
+        std::fs::write(
+            settings_path(&project),
+            r#"{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"echo hi"}]}]}}"#,
+        )
+        .unwrap();
+        let shell_entries = |project: &Path| {
+            settings_of(project)["hooks"]["PostToolUse"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|entry| entry["hooks"][0]["command"] == activity_command(&home))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(shell_entries(&project).is_empty());
+        let without = status(&home, &project, &[], &HashMap::new());
+        assert!(without.installed && !without.outdated);
+
+        assert!(set_hears_commands(&home, true));
+        assert!(!set_hears_commands(&home, true));
+        assert!(status(&home, &project, &[], &HashMap::new()).outdated);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let shell = shell_entries(&project);
+        assert_eq!(shell.len(), 1);
+        assert_eq!(shell[0]["matcher"], COMMAND_MATCHER);
+        assert!(!status(&home, &project, &[], &HashMap::new()).outdated);
+
+        set_hears_commands(&home, false);
+        assert!(!hears_commands_path(&home).exists());
+        let lingering = status(&home, &project, &[], &HashMap::new());
+        assert!(lingering.installed && lingering.outdated);
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert!(shell_entries(&project).is_empty());
+        assert!(!status(&home, &project, &[], &HashMap::new()).outdated);
+        let others: Vec<_> = settings_of(&project)["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["hooks"][0]["command"] == "echo hi")
+            .cloned()
+            .collect();
+        assert_eq!(others.len(), 1);
     }
 
     // Somebody else's settings are not ours to rearrange.

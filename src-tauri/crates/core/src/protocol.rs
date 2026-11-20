@@ -122,6 +122,12 @@ struct SpawnParams {
     /// it went back to left out.
     #[serde(default)]
     bring_back: bool,
+    /// The agent session id of the session that started this one.
+    #[serde(default)]
+    starter: Option<String>,
+    /// Whether `cwd` is a worktree the window had made for this session.
+    #[serde(default)]
+    made_worktree: bool,
     cols: u16,
     rows: u16,
 }
@@ -153,6 +159,12 @@ struct IntegratedStartParams {
     afresh: bool,
     #[serde(default)]
     compact_at: Option<u64>,
+    /// The agent session id of the session that started this one.
+    #[serde(default)]
+    starter: Option<String>,
+    /// Whether `cwd` is a worktree the window had made for this session.
+    #[serde(default)]
+    made_worktree: bool,
 }
 
 #[derive(Deserialize)]
@@ -433,6 +445,9 @@ struct PluginActionParams {
     #[serde(default)]
     input: Value,
     project: String,
+    /// The token of the session whose rows the action is on.
+    #[serde(default)]
+    session: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -574,6 +589,8 @@ pub fn dispatch(
                 p.afresh,
                 p.compact_at,
                 p.bring_back,
+                p.starter.as_deref(),
+                p.made_worktree,
                 p.cols,
                 p.rows,
                 make_output,
@@ -595,6 +612,8 @@ pub fn dispatch(
                 p.start_only,
                 p.afresh,
                 p.compact_at,
+                p.starter.as_deref(),
+                p.made_worktree,
             )?)
         }
         "integrated_trust" => {
@@ -879,6 +898,7 @@ pub fn dispatch(
                 p.row.as_deref(),
                 &p.input,
                 &p.project,
+                p.session.as_deref(),
             )?;
             Ok(Value::Null)
         }

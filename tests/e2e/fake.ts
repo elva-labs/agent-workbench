@@ -172,6 +172,7 @@ export async function installFakeCore(
       title: string | null;
       configDir?: string;
       agent?: string;
+      cwd?: string | null;
     }[];
     /** The project in front when the window last closed; the first open
         one unless said. */
@@ -192,6 +193,7 @@ export async function installFakeCore(
       title: string | null;
       configDir?: string;
       agent?: string;
+      cwd?: string | null;
     }[];
   } = {},
 ) {
@@ -557,6 +559,7 @@ export async function installFakeCore(
         build: [] as string[],
         tools: [] as string[],
         sections: [] as string[],
+        commands: [] as string[],
         view: null,
         enabled: false,
         state: "off",
@@ -675,7 +678,12 @@ export async function installFakeCore(
           };
         },
         setWindowTitle: async () => {},
-        openUrl: async () => {},
+        // Every address opened in the user's browser, for a test to read
+        // back.
+        openUrl: async (url: string) => {
+          const w = window as unknown as { __openedUrls?: string[] };
+          (w.__openedUrls ??= []).push(url);
+        },
         // The window's close goes through the core's question while the
         // editor says it holds unsaved edits or sessions run, as the
         // core's does.
@@ -895,6 +903,7 @@ export async function installFakeCore(
                 build: ["npm", "run", "build"],
                 tools: ["pr", "checks"],
                 sections: ["Pull request"],
+                commands: ["gh pr create", "gh pr merge"],
                 view: "wide",
                 enabled: false,
                 state: "off",
@@ -922,6 +931,7 @@ export async function installFakeCore(
               build: ["npm", "run", "build"],
               tools: ["list", "add", "finish"],
               sections: ["Todos", "Notes"],
+              commands: [],
               view: null,
               enabled: false,
               state: "off",
@@ -938,6 +948,7 @@ export async function installFakeCore(
               build: ["npm", "run", "build"],
               tools: ["status", "commit", "log"],
               sections: ["Git", "Branches"],
+              commands: [],
               view: "full",
               enabled: false,
               state: "off",
@@ -984,7 +995,30 @@ export async function installFakeCore(
           // is what a plugin that says nothing gets.
           (window as unknown as Record<string, unknown>).__pluginSection = (
             sent: Record<string, unknown>,
-          ) => handler({ detail: null, folded: false, order: 0, ...sent });
+          ) =>
+            handler({
+              detail: null,
+              folded: false,
+              order: 0,
+              session: null,
+              ...sent,
+            });
+          return () => {};
+        },
+        onPluginMark: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginMark = (
+            sent: Record<string, unknown>,
+          ) => handler({ count: null, state: null, label: null, ...sent });
+          return () => {};
+        },
+        onPluginOpenUrl: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginOpenUrl =
+            handler;
+          return () => {};
+        },
+        onPluginHears: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginHears =
+            handler;
           return () => {};
         },
         onPluginNotice: async (handler: (event: unknown) => void) => {
@@ -1527,13 +1561,23 @@ export async function installFakeCore(
           );
         },
         sessionTitle: async () => null,
-        hookStatus: async () => ({
-          installed: false,
-          settings: "",
-          events: "",
-        }),
+        // What is on disk, as a test sets it in `__hookStatus`; none by
+        // default.
+        hookStatus: async () =>
+          (window as unknown as { __hookStatus?: unknown }).__hookStatus ?? {
+            installed: false,
+            settings: "",
+            events: "",
+          },
         hookStatusMany: async (projects: string[]) =>
-          projects.map(() => ({ installed: false, settings: "", events: "" })),
+          projects.map(
+            () =>
+              (window as unknown as { __hookStatus?: unknown }).__hookStatus ?? {
+                installed: false,
+                settings: "",
+                events: "",
+              },
+          ),
         // What the window asked of the hooks, by project, in order.
         hookInstall: async (project: string) => {
           const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };

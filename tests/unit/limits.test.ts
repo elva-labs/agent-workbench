@@ -231,16 +231,15 @@ describe("what a report says", () => {
     expect(ageOf(at(SECONDS - 20), NOW)).toEqual({
       stale: false,
       moved: false,
-      short: "now",
       long: "just now",
       newer: "just now",
     });
     expect(ageOf(at(SECONDS - 4 * 60), NOW)).toMatchObject({ stale: false, long: "4 min ago" });
-    expect(ageOf(at(SECONDS - 14 * 60), NOW)).toMatchObject({ stale: false, short: "14 min" });
-    expect(ageOf(at(SECONDS - 15 * 60), NOW)).toMatchObject({ stale: true, short: "15 min" });
-    expect(ageOf(at(SECONDS - 3 * 3600), NOW)).toMatchObject({ stale: true, short: "3 h", long: "3 hours ago" });
+    expect(ageOf(at(SECONDS - 14 * 60), NOW)).toMatchObject({ stale: false });
+    expect(ageOf(at(SECONDS - 15 * 60), NOW)).toMatchObject({ stale: true });
+    expect(ageOf(at(SECONDS - 3 * 3600), NOW)).toMatchObject({ stale: true, long: "3 hours ago" });
     expect(ageOf(at(SECONDS - 3600), NOW).long).toBe("an hour ago");
-    expect(ageOf(at(SECONDS - 2 * 86_400), NOW)).toMatchObject({ short: "2 d", long: "2 days ago" });
+    expect(ageOf(at(SECONDS - 2 * 86_400), NOW)).toMatchObject({ long: "2 days ago" });
     // Figures from a clock a little ahead are new, not from the future.
     expect(ageOf(at(SECONDS + 30), NOW).long).toBe("just now");
   });
@@ -251,7 +250,6 @@ describe("what a report says", () => {
     expect(ageOf({ readAt: SECONDS - 20 * 60, takenAt: SECONDS - 60 }, NOW)).toMatchObject({
       stale: true,
       moved: true,
-      short: "20 min",
       long: "20 min ago",
       newer: "1 min ago",
     });

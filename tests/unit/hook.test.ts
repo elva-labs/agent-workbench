@@ -4,6 +4,7 @@ import {
   apply,
   check,
   ensure,
+  hearsChanged,
   hook,
   isInstalled,
   isKnown,
@@ -180,6 +181,23 @@ describe("the answer for every project", () => {
     expect(state.calls.filter((call) => call.startsWith("install:"))).toEqual([
       `install:${A}`,
     ]);
+  });
+
+  it("brings the projects it has applied up to date when a listening plugin comes or goes", async () => {
+    hook.everywhere = true;
+    state.installed[A] = true;
+    ensure(A);
+    await vi.waitFor(() => expect(hook.busy).toBe(false));
+    expect(state.calls).toEqual([`status:${A}`]);
+
+    // A plugin that hears commands turns on: the shell hook is missing.
+    state.outdated[A] = true;
+    state.installed[B] = true;
+    state.outdated[B] = true;
+    state.calls = [];
+    await hearsChanged([A, B]);
+    expect(state.calls).toEqual([`status:${A}`, `install:${A}`]);
+    expect(isInstalled(A)).toBe(true);
   });
 
   it("applies a change of the answer to every open project", async () => {

@@ -106,7 +106,12 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
     let changed: Vec<(String, Status)> = statuses
         .iter()
         .filter(|entry| entry.status() != Status::CURRENT)
-        .filter_map(|entry| entry.path().map(|path| (path.to_string(), entry.status())))
+        .filter_map(|entry| {
+            entry
+                .path()
+                .ok()
+                .map(|path| (path.to_string(), entry.status()))
+        })
         .filter(|(path, _)| !is_directory(path))
         .collect();
 
@@ -404,7 +409,7 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     if let Ok(statuses) = repo.statuses(Some(&mut options)) {
         for entry in statuses.iter() {
             if entry.status().is_wt_new() {
-                if let Some(path) = entry.path() {
+                if let Ok(path) = entry.path() {
                     if !is_directory(path) {
                         paths.push(path.to_string());
                     }
@@ -528,6 +533,22 @@ pub fn workdir(root: &Path) -> Result<PathBuf, String> {
 
 /// Where a project keeps the worktrees the workbench makes for it.
 pub const WORKTREES: &str = ".claude/worktrees";
+
+/// The branch a worktree the workbench made in the project was made on,
+/// which is its directory's name, or None for a folder that is not one of
+/// those worktrees.
+pub fn made_branch(project: &Path, cwd: &Path) -> Option<String> {
+    let under = dunce::canonicalize(project.join(WORKTREES)).ok()?;
+    let cwd = dunce::canonicalize(cwd).ok()?;
+    let name = cwd.strip_prefix(&under).ok()?;
+    let mut parts = name.components();
+    let only = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let name = only.as_os_str().to_str()?;
+    plain_worktree_name(name).then(|| name.to_string())
+}
 
 /// A worktree's name, which is also a branch's and a directory's: letters,
 /// digits, dashes and underscores, and never one of git's own options.
@@ -1258,6 +1279,29 @@ mod tests {
         );
         let third = worktree_add(&dir, "review-42").unwrap();
         assert!(third.ends_with("review-42-3"), "{third}");
+    }
+
+    #[test]
+    fn a_made_worktree_names_the_branch_it_was_made_on() {
+        let dir = repo("made-branch");
+        write(&dir, "a.txt", "one\n");
+        commit(&dir);
+        let path = worktree_add(&dir, "fix-login").unwrap();
+        assert_eq!(
+            made_branch(&dir, Path::new(&path)).as_deref(),
+            Some("fix-login")
+        );
+        let again = worktree_add(&dir, "fix-login").unwrap();
+        assert_eq!(
+            made_branch(&dir, Path::new(&again)).as_deref(),
+            Some("fix-login-2")
+        );
+        // The project itself, a folder inside a worktree and one that is
+        // not there name no branch.
+        assert_eq!(made_branch(&dir, &dir), None);
+        std::fs::create_dir_all(Path::new(&path).join("src")).unwrap();
+        assert_eq!(made_branch(&dir, &Path::new(&path).join("src")), None);
+        assert_eq!(made_branch(&dir, &dir.join(WORKTREES).join("gone")), None);
     }
 
     #[test]

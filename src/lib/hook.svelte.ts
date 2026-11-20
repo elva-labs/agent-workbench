@@ -214,6 +214,14 @@ export async function reapply(projects: string[]) {
   }
 }
 
+/** Whether an enabled plugin listens for commands changed, and with it
+    the shell hook the hooks hold: each of the projects already brought to
+    the answer this run is read again and brought to it, so the hook goes
+    in or comes out now and not at the next launch. */
+export async function hearsChanged(projects: string[]) {
+  await reapply(projects.filter((project) => applied.has(project)));
+}
+
 /** Called for every open project: each is brought to the answer once per
     run, when it is first seen, asking for itself. Nothing is asked while
     the window is still starting, nor for a project on its way from another

@@ -380,11 +380,18 @@ test.describe("plugins", () => {
     await expect(source.getByTestId("plugin-state")).toContainText(
       "2 tools, 1 section, a wide view, runs node · off",
     );
+    // What it hears of the sessions' commands, before it is turned on.
+    await expect(source.getByTestId("plugin-listens")).toHaveText(
+      "Hears when a session runs gh pr create, gh pr merge",
+    );
 
     // On asks once, and says what it means.
     await row.getByTestId("plugin-on").click();
     await expect(source.getByTestId("plugin-ask")).toContainText(
       "runs node with your privileges",
+    );
+    await expect(source.getByTestId("plugin-ask")).toContainText(
+      "is told that command's own words, its folder and whether it worked; its output too, unless another command in the same line prints.",
     );
     await page.getByTestId("plugin-cancel").click();
     await expect(source.getByTestId("plugin-ask")).toHaveCount(0);

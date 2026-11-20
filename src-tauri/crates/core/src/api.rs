@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use portable_pty::PtySize;
 use serde::Serialize;
@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::account;
 use crate::adapter::{self, adapter_for, LaunchCtx, Surface};
 use crate::events::{self, Output, Sink};
+use crate::plugins::Started;
 use crate::pty::Sessions;
 use crate::watch::Watchers;
 use crate::{activity, codex, env, git, hook, project, pty, shell, transcripts, watch};
@@ -139,6 +140,10 @@ struct Run {
     start_only: bool,
     afresh: bool,
     compact_at: Option<u64>,
+    /// The agent's id of the session that started this one, if one did.
+    starter: Option<String>,
+    /// Whether `cwd` is a worktree made for this session.
+    made_worktree: bool,
     undo: Option<Undo>,
 }
 
@@ -158,12 +163,70 @@ struct Undo {
     at: Option<String>,
 }
 
+/// A shell command an integrated session runs, by run and call: the
+/// command and the folder it runs in, once the input says.
+type Followed = HashMap<(String, String), Option<(String, Option<String>)>>;
+
 /// The sink the core hands to the ptys and the watcher: everything reaches
 /// the window as it would, and the three events the plugins follow reach
 /// them on the way past.
 struct Overheard {
     inner: Arc<dyn Sink>,
     plugins: crate::plugins::Plugins,
+    /// The shell commands integrated sessions are running.
+    commands: Mutex<Followed>,
+}
+
+/// How many shell commands of integrated sessions are followed at once. A
+/// call whose run ended before it finished is never taken off, so past
+/// this all of them are let go, and one still running is not heard.
+const COMMANDS_FOLLOWED: usize = 256;
+
+impl Overheard {
+    /// Follows an integrated session's shell commands from the call to its
+    /// end, and tells the plugins of each that finished.
+    fn integrated(&self, payload: &serde_json::Value) {
+        let text = |key: &str| payload.get(key).and_then(|value| value.as_str());
+        let (Some(run), Some(call)) = (text("id"), text("call")) else {
+            return;
+        };
+        let key = (run.to_string(), call.to_string());
+        let mut commands = self.commands.lock().expect("commands lock");
+        match text("type") {
+            Some("toolStarted") if text("kind") == Some("command") => {
+                if commands.len() >= COMMANDS_FOLLOWED {
+                    commands.clear();
+                }
+                commands.insert(key, None);
+            }
+            Some("toolInput") => {
+                let input = &payload["input"];
+                if let (Some(command), Some(slot)) =
+                    (input["command"].as_str(), commands.get_mut(&key))
+                {
+                    let cwd = input["cwd"].as_str().map(str::to_string);
+                    *slot = Some((command.to_string(), cwd));
+                }
+            }
+            Some("toolFinished") => {
+                let Some(Some((command, cwd))) = commands.remove(&key) else {
+                    return;
+                };
+                drop(commands);
+                self.plugins.command_ran(crate::plugins::Ran {
+                    pty: Some(run),
+                    session: None,
+                    call,
+                    command: &command,
+                    cwd: cwd.as_deref(),
+                    ok: payload["error"] != true,
+                    output: text("output").unwrap_or_default(),
+                    truncated: payload["truncated"] == true,
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Sink for Overheard {
@@ -185,6 +248,22 @@ impl Sink for Overheard {
                     self.plugins.session_ended(id);
                 }
             }
+            crate::integrated::INTEGRATED_EVENT => self.integrated(&payload),
+            activity::SESSION_COMMAND => {
+                if let (Some(session), Some(command)) = (text("sessionId"), text("command")) {
+                    self.plugins.command_ran(crate::plugins::Ran {
+                        pty: None,
+                        session: Some(session),
+                        call: text("call").unwrap_or_default(),
+                        command,
+                        cwd: text("cwd"),
+                        ok: payload["ok"] != false,
+                        output: text("output").unwrap_or_default(),
+                        truncated: false,
+                    });
+                }
+                return;
+            }
             _ => {}
         }
         self.inner.emit(event, payload);
@@ -205,6 +284,7 @@ impl Core {
             Some(plugins) => Arc::new(Overheard {
                 inner: sink,
                 plugins,
+                commands: Mutex::new(HashMap::new()),
             }),
             None => sink,
         };
@@ -293,9 +373,11 @@ impl Core {
         row: Option<&str>,
         input: &serde_json::Value,
         project: &str,
+        session: Option<&str>,
     ) -> Result<(), String> {
-        self.plugins()?
-            .action(source, plugin, section, action, row, input, project)
+        self.plugins()?.action(
+            source, plugin, section, action, row, input, project, session,
+        )
     }
 
     /// A message from a plugin's page to the plugin. It comes back as soon
@@ -464,6 +546,8 @@ impl Core {
         afresh: bool,
         compact_at: Option<u64>,
         bring_back: bool,
+        starter: Option<&str>,
+        made_worktree: bool,
         cols: u16,
         rows: u16,
         output: impl FnOnce(&str) -> Output,
@@ -516,7 +600,23 @@ impl Core {
             files,
         )?;
         if let Some(plugins) = &self.plugins {
-            plugins.session_started(&pty_id, session_id.as_deref(), token, &opened);
+            // A worktree the app made is one of its own, under the project's
+            // worktrees and named for its branch.
+            let made = cwd
+                .filter(|_| made_worktree)
+                .and_then(|cwd| git::made_branch(Path::new(&opened), cwd));
+            plugins.session_started(
+                &pty_id,
+                Started {
+                    session: session_id.as_deref(),
+                    token,
+                    project: &opened,
+                    cwd: &cwd.unwrap_or(project).to_string_lossy(),
+                    starter: starter.filter(|starter| !starter.trim().is_empty()),
+                    worktree: made.is_some(),
+                    branch: made.as_deref(),
+                },
+            );
         }
         if let Some((home, activity)) = codex_activity {
             codex::observe(
@@ -708,6 +808,8 @@ impl Core {
         start_only: bool,
         afresh: bool,
         compact_at: Option<u64>,
+        starter: Option<&str>,
+        made_worktree: bool,
     ) -> Result<crate::integrated::Started, String> {
         let run = Run {
             agent: agent.to_string(),
@@ -723,6 +825,10 @@ impl Core {
             start_only,
             afresh,
             compact_at,
+            starter: starter
+                .filter(|starter| !starter.trim().is_empty())
+                .map(str::to_string),
+            made_worktree,
             undo: None,
         };
         // A conversation held at the point it went back to goes on from
@@ -826,6 +932,10 @@ impl Core {
             resume_at: at.as_deref().filter(|_| resume),
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
+        let (folder, starter) = (project.to_string_lossy().to_string(), run.starter.clone());
+        let made = cwd
+            .filter(|_| run.made_worktree)
+            .and_then(|cwd| git::made_branch(Path::new(&opened), cwd));
         let named = token
             .filter(|token| !token.trim().is_empty())
             .map(str::to_string);
@@ -852,9 +962,15 @@ impl Core {
                 if let Some(plugins) = starting {
                     plugins.session_started(
                         &started.id,
-                        started.session_id.as_deref(),
-                        named.as_deref(),
-                        &opened,
+                        Started {
+                            session: started.session_id.as_deref(),
+                            token: named.as_deref(),
+                            project: &opened,
+                            cwd: &folder,
+                            starter: starter.as_deref(),
+                            worktree: made.is_some(),
+                            branch: made.as_deref(),
+                        },
                     );
                 }
             }),
@@ -2352,6 +2468,8 @@ mod tests {
             false,
             None,
             false,
+            None,
+            false,
             80,
             24,
             |_| Box::new(|_: &[u8]| true),
@@ -2553,6 +2671,8 @@ mod tests {
             start_only: false,
             afresh: false,
             compact_at: None,
+            starter: None,
+            made_worktree: false,
             undo: None,
         };
         let again = |session: Option<&str>, at: Option<&str>| Again {
@@ -2603,6 +2723,8 @@ mod tests {
                 true,
                 false,
                 None,
+                None,
+                false,
             );
             // Refused before the folder is asked about, since trusting it
             // would not let the session start.

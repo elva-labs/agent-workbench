@@ -447,9 +447,6 @@
             >
           {/each}
         </span>
-        {#if age?.stale}
-          <span class="age" title="Figures from {age.long}" data-testid="limits-age">{@render clock()}{age.short} ago</span>
-        {/if}
       </button>
     {:else}
       <span class="acct" data-testid="account-group">{@render who()}</span>
@@ -784,14 +781,6 @@
 
   .lim .rs {
     font-weight: 400;
-  }
-
-  .age {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    color: var(--ink-2);
   }
 
   .ic {

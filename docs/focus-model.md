@@ -493,6 +493,12 @@ Confirming a session moves the keyboard into the agent, so
 flow. The tree opens the file in the viewer and keeps the keyboard, because
 the next thing is usually another file.
 
+The tree's cursor goes on through the folds under it, a plugin's rows among
+them. A plugin's row that has facts opens like a folder: <kbd>→</kbd> opens
+it, <kbd>←</kbd> closes it, and <kbd>Enter</kbd> does either, as a click
+does. Its facts are read, not walked, so <kbd>↓</kbd> goes on to the next
+row. Rows opened stay open while the cursor moves on, several at once.
+
 ## The editor
 
 In editor mode the panes keep their keys where they now stand:

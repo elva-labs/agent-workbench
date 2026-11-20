@@ -6,7 +6,7 @@
 //! The log is the agents' format, quarantined here like the transcripts:
 //! a line that does not parse is skipped, never fatal.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -18,10 +18,19 @@ use crate::events::Sink;
 
 pub const SESSION_EVENT: &str = "session_event";
 
+/// The event a shell command a session ran is told by, to the plugins and
+/// not the window.
+pub const SESSION_COMMAND: &str = "session_command";
+
 /// Only the log is truncated by this, and only when it has grown past this
 /// many bytes with nothing behind the offset; the hooks append to it and the
 /// window keeps the state, so old lines are worth nothing.
 const ROTATE_AT: u64 = 512 * 1024;
+
+/// The longest line of the session log that is read, in bytes. A longer one
+/// is a shell command's hook with a great deal of output, and it is passed
+/// over: no plugin hears that command.
+pub const LINE_MOST: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +71,66 @@ pub struct SessionEvent {
 
 /// The most background tasks a stop names.
 const BACKGROUND_MOST: usize = 3;
+
+/// A line of the log as what it says: a session event for the rows, or a
+/// command a session ran for the plugins.
+fn read_line(line: &str) -> Option<(String, serde_json::Value)> {
+    if let Some(ran) = command_of(line) {
+        return serde_json::to_value(ran)
+            .ok()
+            .map(|value| (SESSION_COMMAND.to_string(), value));
+    }
+    classify(line).and_then(|event| {
+        serde_json::to_value(event)
+            .ok()
+            .map(|value| (SESSION_EVENT.to_string(), value))
+    })
+}
+
+/// A shell command a session ran, as its tool hook tells it once the
+/// command is done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRan {
+    pub session_id: String,
+    /// The agent's id for the tool call.
+    pub call: String,
+    pub command: String,
+    pub cwd: Option<String>,
+    /// False when the command was cut short.
+    pub ok: bool,
+    /// What it wrote to its output, then to its error output.
+    pub output: String,
+}
+
+/// A line of the log as a shell command a session ran: Claude Code's tool
+/// hook on its Bash tool. Its tool hook fires for a command that finished,
+/// so one that failed is not here.
+pub fn command_of(line: &str) -> Option<CommandRan> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("hook_event_name")?.as_str()? != "PostToolUse"
+        || value.get("tool_name")?.as_str()? != "Bash"
+    {
+        return None;
+    }
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
+    let response = &value["tool_response"];
+    let stdout = text(&response["stdout"]);
+    let stderr = text(&response["stderr"]);
+    let output = match (stdout.is_empty(), stderr.is_empty()) {
+        (_, true) => stdout,
+        (true, false) => stderr,
+        (false, false) => format!("{}\n{stderr}", stdout.trim_end_matches('\n')),
+    };
+    Some(CommandRan {
+        session_id: value.get("session_id")?.as_str()?.to_string(),
+        call: text(&value["tool_use_id"]),
+        command: value["tool_input"]["command"].as_str()?.to_string(),
+        cwd: value["cwd"].as_str().map(str::to_string),
+        ok: response["interrupted"] != true,
+        output,
+    })
+}
 
 /// One line of the log, as an event, if it is one the rows care about.
 pub fn classify(line: &str) -> Option<SessionEvent> {
@@ -211,6 +280,12 @@ pub fn first_line(message: &str) -> Option<String> {
 /// The lines added since `offset`, and where the log ends now. A log that
 /// shrank was rotated: read it from the start.
 pub fn read_new(path: &Path, offset: u64) -> (Vec<String>, u64) {
+    read_within(path, offset, usize::MAX)
+}
+
+/// The lines added since `offset` of at most `most` bytes each, and where
+/// the log ends now. A longer line is passed over unread.
+pub fn read_within(path: &Path, offset: u64, most: usize) -> (Vec<String>, u64) {
     let Ok(mut file) = std::fs::File::open(path) else {
         return (Vec::new(), offset);
     };
@@ -219,21 +294,65 @@ pub fn read_new(path: &Path, offset: u64) -> (Vec<String>, u64) {
     if file.seek(SeekFrom::Start(start)).is_err() {
         return (Vec::new(), offset);
     }
-    let mut text = String::new();
-    if file.read_to_string(&mut text).is_err() {
-        return (Vec::new(), offset);
+    let mut reader = BufReader::new(file);
+    let mut lines = Vec::new();
+    let mut end = start;
+    let mut line = Vec::new();
+    let limit = most.saturating_add(1);
+    loop {
+        line.clear();
+        let Ok(read) = (&mut reader)
+            .take(limit as u64)
+            .read_until(b'\n', &mut line)
+        else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        if line.last() == Some(&b'\n') {
+            end += read as u64;
+            if let Ok(text) = std::str::from_utf8(&line[..read - 1]) {
+                let text = text.strip_suffix('\r').unwrap_or(text);
+                if !text.trim().is_empty() {
+                    lines.push(text.to_string());
+                }
+            }
+            continue;
+        }
+        // A line still being written has no newline yet: leave it for next time.
+        if read < limit {
+            break;
+        }
+        match pass_line(&mut reader) {
+            Some(rest) => end += read as u64 + rest,
+            None => break,
+        }
     }
-    // A line still being written has no newline yet: leave it for next time.
-    let complete = match text.rfind('\n') {
-        Some(at) => &text[..=at],
-        None => "",
-    };
-    let lines = complete
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(str::to_string)
-        .collect();
-    (lines, start + complete.len() as u64)
+    (lines, end)
+}
+
+/// Passes over the rest of a line without keeping it, and says how many
+/// bytes that was with its newline, or nothing when the line is unfinished.
+fn pass_line(reader: &mut impl BufRead) -> Option<u64> {
+    let mut passed = 0u64;
+    loop {
+        let buffer = reader.fill_buf().ok()?;
+        if buffer.is_empty() {
+            return None;
+        }
+        match buffer.iter().position(|b| *b == b'\n') {
+            Some(at) => {
+                reader.consume(at + 1);
+                return Some(passed + at as u64 + 1);
+            }
+            None => {
+                let all = buffer.len();
+                reader.consume(all);
+                passed += all as u64;
+            }
+        }
+    }
 }
 
 /// What a line of a log means to the window: an event and its payload, or
@@ -244,6 +363,7 @@ pub struct Tail {
     path: PathBuf,
     offset: Mutex<u64>,
     rotate_at: u64,
+    line_most: usize,
     classify: Box<Classify>,
 }
 
@@ -251,13 +371,10 @@ impl Tail {
     /// Starts at the end: what happened before the window opened is not
     /// news, and the window has no rows for it.
     pub fn new(path: PathBuf) -> Self {
-        Self::reading(path, ROTATE_AT, |line| {
-            classify(line).and_then(|event| {
-                serde_json::to_value(event)
-                    .ok()
-                    .map(|value| (SESSION_EVENT.to_string(), value))
-            })
-        })
+        Self {
+            line_most: LINE_MOST,
+            ..Self::reading(path, ROTATE_AT, read_line)
+        }
     }
 
     pub fn reading(
@@ -270,6 +387,7 @@ impl Tail {
             path,
             offset: Mutex::new(end),
             rotate_at,
+            line_most: usize::MAX,
             classify: Box::new(classify),
         }
     }
@@ -277,7 +395,7 @@ impl Tail {
     /// Reads what is new and says it. Rotates a log nothing is waiting on.
     pub fn drain(&self, sink: &Arc<dyn Sink>) {
         let mut offset = self.offset.lock().expect("tail lock");
-        let (lines, end) = read_new(&self.path, *offset);
+        let (lines, end) = read_within(&self.path, *offset, self.line_most);
         *offset = end;
         for line in lines {
             if let Some((event, payload)) = (self.classify)(&line) {
@@ -292,13 +410,7 @@ impl Tail {
 
 /// Watches the session log for the life of the app.
 pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
-    watch_log(sink, path, ROTATE_AT, |line| {
-        classify(line).and_then(|event| {
-            serde_json::to_value(event)
-                .ok()
-                .map(|value| (SESSION_EVENT.to_string(), value))
-        })
-    })
+    watch_tail(sink, Tail::new(path))
 }
 
 /// Watches a log for the life of the app, reading each new line with
@@ -310,13 +422,18 @@ pub fn watch_log(
     rotate_at: u64,
     classify: impl Fn(&str) -> Option<(String, serde_json::Value)> + Send + Sync + 'static,
 ) -> Result<(), String> {
+    watch_tail(sink, Tail::reading(path, rotate_at, classify))
+}
+
+fn watch_tail(sink: Arc<dyn Sink>, tail: Tail) -> Result<(), String> {
+    let path = tail.path.clone();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
     if !path.exists() {
         std::fs::write(&path, "").map_err(|e| format!("could not create {path:?}: {e}"))?;
     }
-    let tail = Arc::new(Tail::reading(path.clone(), rotate_at, classify));
+    let tail = Arc::new(tail);
     let (sender, receiver) = channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = sender.send(event);
@@ -342,6 +459,53 @@ pub fn watch_log(
 mod tests {
     use super::*;
     use crate::scratch::Scratch;
+
+    #[test]
+    fn reads_a_shell_command_off_its_tool_hook_and_nothing_else() {
+        let ran = command_of(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_1","cwd":"/p","tool_input":{"command":"gh pr create --fill","description":"Open it"},"tool_response":{"stdout":"https://github.com/o/r/pull/7\n","stderr":"Warning: 1 uncommitted change","interrupted":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ran,
+            CommandRan {
+                session_id: "s1".into(),
+                call: "toolu_1".into(),
+                command: "gh pr create --fill".into(),
+                cwd: Some("/p".into()),
+                ok: true,
+                output: "https://github.com/o/r/pull/7\nWarning: 1 uncommitted change".into(),
+            }
+        );
+        let interrupted = command_of(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"gh pr merge"},"tool_response":{"stdout":"","stderr":"stopped","interrupted":true}}"#,
+        )
+        .unwrap();
+        assert!(!interrupted.ok);
+        assert_eq!(interrupted.output, "stopped");
+        assert_eq!(interrupted.call, "");
+        assert_eq!(interrupted.cwd, None);
+
+        // Another tool, another event, and a line with no session or no
+        // command are no command.
+        for line in [
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{}}"#,
+            "not json",
+        ] {
+            assert_eq!(command_of(line), None, "{line}");
+        }
+        // The line is read as a command, not as a row's event.
+        let (event, payload) = read_line(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"a"}}"#,
+        )
+        .unwrap();
+        assert_eq!(event, SESSION_COMMAND);
+        assert_eq!(payload["sessionId"], "s1");
+        assert_eq!(payload["output"], "a");
+    }
 
     #[test]
     fn classifies_what_the_rows_show_and_nothing_else() {
@@ -631,6 +795,30 @@ mod tests {
         std::fs::write(&path, "{\"d\":4}\n").unwrap();
         let (lines, _) = read_new(&path, next);
         assert_eq!(lines, ["{\"d\":4}"]);
+    }
+
+    #[test]
+    fn passes_over_a_line_longer_than_the_bound_unread() {
+        let dir = Scratch::new("activity-long");
+        let path = dir.join("tail.jsonl");
+        let long = format!("{{\"x\":\"{}\"}}", "y".repeat(40));
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}\n{{\"b\":2}}\n")).unwrap();
+        let (lines, end) = read_within(&path, 0, 16);
+        assert_eq!(lines, ["{\"a\":1}", "{\"b\":2}"]);
+        assert_eq!(end, std::fs::metadata(&path).unwrap().len());
+
+        // A long line still being written is left for next time, then passed over.
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}")).unwrap();
+        let (lines, end) = read_within(&path, 0, 16);
+        assert_eq!(lines, ["{\"a\":1}"]);
+        assert_eq!(end, "{\"a\":1}\n".len() as u64);
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}\n{{\"c\":3}}\n")).unwrap();
+        let (lines, _) = read_within(&path, end, 16);
+        assert_eq!(lines, ["{\"c\":3}"]);
+
+        // Unbounded, the same line is read.
+        let (lines, _) = read_new(&path, 0);
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]

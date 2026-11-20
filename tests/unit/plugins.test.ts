@@ -7,6 +7,7 @@ import {
   enablePlugin,
   fetchSource,
   fetched,
+  listensFor,
   loadPlugins,
   plugins,
   projectsToSend,
@@ -29,6 +30,7 @@ const github = (): PluginInfo => ({
   build: ["npm", "run", "build"],
   tools: ["pr", "checks"],
   sections: ["Pull request"],
+  commands: [],
   view: "wide",
   enabled: false,
   state: "off",
@@ -293,5 +295,14 @@ describe("a plugin", () => {
     expect(trusted("src-1", "git")).toBe(false);
     localStorage.setItem("chord.plugins.trusted", "nonsense");
     expect(trusted("src-1", "github")).toBe(false);
+  });
+});
+
+describe("what a plugin listens for", () => {
+  it("is said in its row when it hears commands, and nothing when it hears none", () => {
+    expect(listensFor(github())).toBeNull();
+    expect(listensFor({ ...github(), commands: ["gh pr create", "gh pr merge"] })).toBe(
+      "Hears when a session runs gh pr create, gh pr merge",
+    );
   });
 });

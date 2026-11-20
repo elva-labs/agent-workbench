@@ -149,6 +149,12 @@ export interface SpawnOptions {
       goes on with, and the point is let go. Without it such a start fails
       with an error `isHeld` knows. */
   bringBack?: boolean;
+  /** The agent session id of the session that started this one, for the
+      plugins to be told. */
+  starter?: string;
+  /** Whether `cwd` is a worktree the window made for this session, and
+      not one it found or another session's. */
+  madeWorktree?: boolean;
   cols: number;
   rows: number;
 }
@@ -199,6 +205,10 @@ export interface IntegratedStartOptions {
   afresh?: boolean;
   /** The context at which the agent compacts on its own, as for `spawn`. */
   compactAt?: number;
+  /** The session that started this one, as for `spawn`. */
+  starter?: string;
+  /** Whether `cwd` is a worktree made for this session, as for `spawn`. */
+  madeWorktree?: boolean;
 }
 
 /** What starting an integrated session hands back: the id every other
@@ -927,6 +937,9 @@ export interface PluginInfo {
   tools: string[];
   sections: string[];
   view: "wide" | "full" | null;
+  /** The beginnings of the shell commands the plugin is told of when a
+      session runs one. */
+  commands: string[];
   enabled: boolean;
   state: "off" | "building" | "starting" | "running" | "stopped" | "failed";
   detail: string | null;
@@ -990,6 +1003,16 @@ export interface PluginRow {
   actions: PluginAction[] | null;
   /** The action Enter or a click on the row runs, by id. */
   default: string | null;
+  /** What the row opens to show, line by line. A row with none does not
+      open, and a core that predates facts leaves them out. */
+  facts?: PluginFact[];
+}
+
+/** A line a row opens to show: a name, what it says, how it is doing. */
+export interface PluginFact {
+  label: string;
+  text: string | null;
+  state: "ok" | "busy" | "waiting" | "failed" | null;
 }
 
 /** A section's rows for one project, as the plugin has them now. No rows
@@ -1002,6 +1025,9 @@ export interface PluginSectionEvent {
   /** A short line beside the title, the branch and its standing say. */
   detail: string | null;
   project: string;
+  /** The token of the one session the section is for, or null for one
+      the whole project shares. */
+  session: string | null;
   rows: PluginRow[];
   actions: PluginAction[];
   /** Whether the section starts folded inside its plugin's fold. */
@@ -1026,6 +1052,45 @@ export interface PluginActionRequest {
   row: string | null;
   input: Record<string, string>;
   project: string;
+  /** The token of the session whose section the action is on. */
+  session?: string | null;
+}
+
+/** The icons a plugin may put on a session's row. */
+export type PluginMarkIcon =
+  | "pull-request"
+  | "branch"
+  | "issue"
+  | "check"
+  | "comment"
+  | "dot";
+
+/** A plugin's mark on a session's row, or its mark gone when the icon is
+    null. One per plugin per session. */
+export interface PluginMarkEvent {
+  source: string;
+  plugin: string;
+  project: string;
+  /** The session's token. */
+  session: string;
+  icon: PluginMarkIcon | null;
+  count: number | null;
+  state: "ok" | "busy" | "waiting" | "failed" | null;
+  /** What the mark stands for, said on hover and to a screen reader. */
+  label: string | null;
+}
+
+/** Whether an enabled plugin listens for commands, told when it changes. */
+export interface PluginHearsEvent {
+  hears: boolean;
+}
+
+/** A web address a plugin asked to open while one of its actions ran. */
+export interface PluginOpenUrlEvent {
+  source: string;
+  plugin: string;
+  project: string;
+  url: string;
 }
 
 /** A plugin's own page for a project, as the changes pane's viewer shows
@@ -1674,6 +1739,17 @@ export interface Core {
   onPluginNotice(
     handler: (event: PluginNoticeEvent) => void,
   ): Promise<() => void>;
+  /** A plugin's mark on a session's row, new, changed or gone. */
+  onPluginMark(handler: (event: PluginMarkEvent) => void): Promise<() => void>;
+  /** A plugin asks for a web address to open in the user's browser. */
+  onPluginOpenUrl(
+    handler: (event: PluginOpenUrlEvent) => void,
+  ): Promise<() => void>;
+  /** An enabled plugin came to listen for commands, or the last one
+      stopped, so the hooks' shell hook is to go in or come out. */
+  onPluginHears(
+    handler: (event: PluginHearsEvent) => void,
+  ): Promise<() => void>;
   /** Takes an action on a section's header or row. Rejects with the reason
       when the plugin is not running. */
   pluginAction(request: PluginActionRequest): Promise<void>;
@@ -2208,6 +2284,21 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onPluginMark(handler) {
+    return listen<PluginMarkEvent>("plugin_mark", (event) =>
+      handler(event.payload),
+    );
+  },
+  async onPluginOpenUrl(handler) {
+    return listen<PluginOpenUrlEvent>("plugin_open_url", (event) =>
+      handler(event.payload),
+    );
+  },
+  async onPluginHears(handler) {
+    return listen<PluginHearsEvent>("plugin_hears", (event) =>
+      handler(event.payload),
+    );
+  },
   pluginAction: (request) => invoke<void>("plugin_action", { ...request }),
   async onPluginView(handler) {
     return listen<PluginViewEvent>("plugin_view", (event) =>
@@ -2594,6 +2685,15 @@ const detachedCore: Core = {
     return () => {};
   },
   async onPluginNotice() {
+    return () => {};
+  },
+  async onPluginMark() {
+    return () => {};
+  },
+  async onPluginOpenUrl() {
+    return () => {};
+  },
+  async onPluginHears() {
     return () => {};
   },
   async pluginAction() {
