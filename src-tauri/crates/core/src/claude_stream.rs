@@ -1887,7 +1887,7 @@ impl Stream {
             Some("error_during_execution") if self.interrupting || aborted => Outcome::Interrupted,
             _ => Outcome::Failed,
         };
-        self.interrupting = false;
+        let stopped = std::mem::take(&mut self.interrupting);
         self.turn = false;
         self.forget_turn();
         if let Some(models) = line["modelUsage"].as_object() {
@@ -1905,9 +1905,10 @@ impl Stream {
         self.tell_context(out);
         // The turn ended on a usage limit only where the agent names that
         // as what ended it, on the turn's end and on the last message of
-        // the turn alike.
+        // the turn alike, and the user had not asked it to stop: a stop
+        // that lands as the refusal does is the user's all the same.
         let refused = self.refused.take();
-        if outcome == Outcome::Failed && line["api_error"] == USAGE_LIMIT {
+        if outcome == Outcome::Failed && !stopped && line["api_error"] == USAGE_LIMIT {
             if let Some((window, resets_at)) = refused {
                 out.events.push(Event::LimitReached { window, resets_at });
             }
@@ -4004,6 +4005,26 @@ mod tests {
                 ..
             }
         ));
+        // A stop asked for as the refusal's own end of the turn lands.
+        events(
+            &mut stream,
+            &[refusal(Some("usage_limit_reached"), five_hour())],
+        );
+        interrupt(&mut stream);
+        let out = events(&mut stream, &[refused_result(Some("usage_limit_reached"))]);
+        assert_eq!(limits_reached(&out), vec![]);
+        assert!(out
+            .iter()
+            .any(|event| matches!(event, Event::TurnEnded { .. })));
+        // The turn after it, refused with no stop, is the limit's.
+        let out = events(
+            &mut stream,
+            &[
+                refusal(Some("usage_limit_reached"), five_hour()),
+                refused_result(Some("usage_limit_reached")),
+            ],
+        );
+        assert_eq!(limits_reached(&out).len(), 1);
     }
 
     #[test]
