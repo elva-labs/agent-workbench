@@ -1012,6 +1012,11 @@ export async function installFakeCore(
             handler;
           return () => {};
         },
+        onPluginHears: async (handler: (event: unknown) => void) => {
+          (window as unknown as Record<string, unknown>).__pluginHears =
+            handler;
+          return () => {};
+        },
         onPluginNotice: async (handler: (event: unknown) => void) => {
           (window as unknown as Record<string, unknown>).__pluginNotice =
             handler;
@@ -1552,13 +1557,23 @@ export async function installFakeCore(
           );
         },
         sessionTitle: async () => null,
-        hookStatus: async () => ({
-          installed: false,
-          settings: "",
-          events: "",
-        }),
+        // What is on disk, as a test sets it in `__hookStatus`; none by
+        // default.
+        hookStatus: async () =>
+          (window as unknown as { __hookStatus?: unknown }).__hookStatus ?? {
+            installed: false,
+            settings: "",
+            events: "",
+          },
         hookStatusMany: async (projects: string[]) =>
-          projects.map(() => ({ installed: false, settings: "", events: "" })),
+          projects.map(
+            () =>
+              (window as unknown as { __hookStatus?: unknown }).__hookStatus ?? {
+                installed: false,
+                settings: "",
+                events: "",
+              },
+          ),
         // What the window asked of the hooks, by project, in order.
         hookInstall: async (project: string) => {
           const w = window as unknown as { __hookCalls?: { kind: string; project: string }[] };

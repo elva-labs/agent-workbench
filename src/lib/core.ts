@@ -1041,6 +1041,11 @@ export interface PluginMarkEvent {
   label: string | null;
 }
 
+/** Whether an enabled plugin listens for commands, told when it changes. */
+export interface PluginHearsEvent {
+  hears: boolean;
+}
+
 /** A web address a plugin asked to open while one of its actions ran. */
 export interface PluginOpenUrlEvent {
   source: string;
@@ -1693,6 +1698,11 @@ export interface Core {
   onPluginOpenUrl(
     handler: (event: PluginOpenUrlEvent) => void,
   ): Promise<() => void>;
+  /** An enabled plugin came to listen for commands, or the last one
+      stopped, so the hooks' shell hook is to go in or come out. */
+  onPluginHears(
+    handler: (event: PluginHearsEvent) => void,
+  ): Promise<() => void>;
   /** Takes an action on a section's header or row. Rejects with the reason
       when the plugin is not running. */
   pluginAction(request: PluginActionRequest): Promise<void>;
@@ -2235,6 +2245,11 @@ const tauriCore: Core = {
       handler(event.payload),
     );
   },
+  async onPluginHears(handler) {
+    return listen<PluginHearsEvent>("plugin_hears", (event) =>
+      handler(event.payload),
+    );
+  },
   pluginAction: (request) => invoke<void>("plugin_action", { ...request }),
   async onPluginView(handler) {
     return listen<PluginViewEvent>("plugin_view", (event) =>
@@ -2623,6 +2638,9 @@ const detachedCore: Core = {
     return () => {};
   },
   async onPluginOpenUrl() {
+    return () => {};
+  },
+  async onPluginHears() {
     return () => {};
   },
   async pluginAction() {

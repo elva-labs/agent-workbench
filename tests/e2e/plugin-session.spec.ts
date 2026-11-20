@@ -229,3 +229,32 @@ test("opens a plugin's web address in the user's browser", async ({ page }) => {
     .poll(() => page.evaluate(() => (window as unknown as { __openedUrls?: string[] }).__openedUrls ?? []))
     .toEqual(["https://example.com/pull/12"]);
 });
+
+test("brings the hooks up to date at once when a plugin that hears commands is turned on or off", async ({ page }) => {
+  await installFakeCore(page, { open: [PROJECT], settings: { hooks: { everywhere: true, overrides: {} } } });
+  await page.goto("/");
+  await page.waitForFunction(() => "__pluginHears" in window);
+  type Hooks = { __hookCalls?: { kind: string; project: string }[]; __hookStatus?: unknown };
+  const calls = () => page.evaluate(() => (window as unknown as Hooks).__hookCalls ?? []);
+  // The hooks are wanted, so the project is brought to them first.
+  await expect.poll(calls).toEqual([{ kind: "install", project: PROJECT }]);
+
+  // The hooks on disk lack the shell hook the plugin now needs.
+  const hears = (hears: boolean, outdated: boolean) =>
+    page.evaluate(
+      ({ hears, outdated }) => {
+        const w = window as unknown as Hooks & { __pluginHears: (event: unknown) => void };
+        w.__hookCalls = [];
+        w.__hookStatus = { installed: true, outdated, settings: "", events: "" };
+        w.__pluginHears({ hears });
+      },
+      { hears, outdated },
+    );
+  await hears(true, true);
+  await expect.poll(calls).toEqual([{ kind: "install", project: PROJECT }]);
+
+  // Already as wanted, nothing is written.
+  await hears(false, false);
+  await page.waitForTimeout(200);
+  expect(await calls()).toEqual([]);
+});

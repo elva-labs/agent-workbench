@@ -45,6 +45,10 @@ pub const PLUGIN_MARK: &str = "plugin_mark";
 /// The event a web address a plugin opens is told by.
 pub const PLUGIN_OPEN_URL: &str = "plugin_open_url";
 
+/// The event told when an enabled plugin comes to listen for commands, or
+/// the last one stops, so the hooks are brought up to date at once.
+pub const PLUGIN_HEARS: &str = "plugin_hears";
+
 /// The manifest at a source's root.
 pub const MANIFEST: &str = "workbench-plugins.toml";
 
@@ -1104,9 +1108,17 @@ const LEADING_WORDS: &[&str] = &[
     "exec", "command", "nohup", "env",
 ];
 
-/// Programs that print nothing when given arguments, so a line that runs
-/// them beside a heard command still lets its output be told.
-const QUIET: &[&str] = &["cd", "pushd", "popd", "export", "set"];
+/// The options to `set` that change how the shell runs and print nothing,
+/// by their letters and by the names `-o` takes.
+const QUIET_SET_FLAGS: &[char] = &['e', 'u', 'E', 'C', 'f'];
+const QUIET_SET_OPTIONS: &[&str] = &[
+    "errexit",
+    "nounset",
+    "pipefail",
+    "errtrace",
+    "noclobber",
+    "noglob",
+];
 
 /// One simple command in a line: its words from the program on, with the
 /// quotes taken off, and its text as written from the program to its last
@@ -1118,13 +1130,57 @@ struct Part {
 }
 
 impl Part {
-    /// Whether the command prints nothing of its own: `cd` and its like,
-    /// and `export` or `set` with something to set, never bare.
+    /// Whether the command surely prints nothing of its own: `cd` to
+    /// anywhere but `-`, `export` with only `NAME=value` words, and `set`
+    /// with only those and options that print nothing. A command that runs
+    /// another inside it, or quotes in a way the line is not read for, is
+    /// never quiet.
     fn quiet(&self) -> bool {
-        let program = self.words[0].as_str();
-        QUIET.contains(&program)
-            && (self.words.len() > 1 || matches!(program, "cd" | "pushd" | "popd"))
+        if ["$(", "`", "$'"]
+            .iter()
+            .any(|runs| self.text.contains(runs))
+        {
+            return false;
+        }
+        let words = &self.words[1..];
+        match self.words[0].as_str() {
+            "cd" => words.iter().all(|word| word != "-"),
+            "export" => !words.is_empty() && words.iter().all(|word| assignment(word)),
+            "set" => !words.is_empty() && quiet_set(words),
+            _ => false,
+        }
     }
+}
+
+/// Whether `set` given these words prints nothing: each is `NAME=value`,
+/// or options from [`QUIET_SET_FLAGS`], `-o` naming one of
+/// [`QUIET_SET_OPTIONS`].
+fn quiet_set(words: &[String]) -> bool {
+    let mut words = words.iter();
+    while let Some(word) = words.next() {
+        if assignment(word) {
+            continue;
+        }
+        let Some(flags) = word
+            .strip_prefix(['-', '+'])
+            .filter(|flags| !flags.is_empty())
+        else {
+            return false;
+        };
+        for flag in flags.chars() {
+            let quiet = if flag == 'o' {
+                words
+                    .next()
+                    .is_some_and(|name| QUIET_SET_OPTIONS.contains(&name.as_str()))
+            } else {
+                QUIET_SET_FLAGS.contains(&flag)
+            };
+            if !quiet {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// The simple commands a shell command line runs: the line is split where
@@ -2475,7 +2531,13 @@ impl Inner {
             .expect("plugins lock")
             .values()
             .any(|live| live.state != State::Off && !live.commands.is_empty());
-        crate::hook::set_hears_commands(&self.home, hears);
+        if crate::hook::set_hears_commands(&self.home, hears) {
+            crate::events::emit(
+                &self.sink,
+                PLUGIN_HEARS,
+                &serde_json::json!({ "hears": hears }),
+            );
+        }
         let Ok(text) = serde_json::to_string(&self.tools()) else {
             return;
         };
@@ -5364,7 +5426,7 @@ run = ["sh", "main.sh"]
             own("gh pr create --fill")
         );
         assert_eq!(
-            heard("cd x; export A=1; X=2; pushd y; set -e; popd; gh pr create"),
+            heard("cd x; export A=1 B='b c'; X=2; set -e; set -euo pipefail; set +e; gh pr create"),
             own("gh pr create")
         );
         assert_eq!(heard("gh pr create 2>&1"), own("gh pr create 2>&1"));
@@ -5378,6 +5440,20 @@ run = ["sh", "main.sh"]
             ("gh pr create | tail -1", "gh pr create"),
             ("export; gh pr create", "gh pr create"),
             ("set; gh pr create", "gh pr create"),
+            ("export -p; gh pr create", "gh pr create"),
+            ("export A=1 -p; gh pr create", "gh pr create"),
+            ("export A=\"$(cat .env)\"; gh pr create", "gh pr create"),
+            ("export A=$'x'; gh pr create", "gh pr create"),
+            ("set -x; T=secret gh pr create", "gh pr create"),
+            ("set -v; gh pr create", "gh pr create"),
+            ("set -o; gh pr create", "gh pr create"),
+            ("set +o; gh pr create", "gh pr create"),
+            ("set -o xtrace; gh pr create", "gh pr create"),
+            ("set -ex; gh pr create", "gh pr create"),
+            ("pushd y; gh pr create", "gh pr create"),
+            ("popd; gh pr create", "gh pr create"),
+            ("cd -; gh pr create", "gh pr create"),
+            ("cd \"`cat .env`\"; gh pr create", "gh pr create"),
             ("echo $(gh pr create)", "gh pr create"),
             ("zsh -lc 'cat .env; gh pr create'", "gh pr create"),
         ] {
@@ -5492,7 +5568,18 @@ run = ["sh", "main.sh"]
                 .collect()
         };
 
-        let plugins = plugins_at(&home, Arc::new(Recorder::default()));
+        let recorder = Arc::new(Recorder::default());
+        let plugins = plugins_at(&home, recorder.clone());
+        let hears = || -> Vec<serde_json::Value> {
+            recorder
+                .events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(event, _)| event == PLUGIN_HEARS)
+                .map(|(_, payload)| payload["hears"].clone())
+                .collect()
+        };
         plugins.set_projects(vec!["/p".to_string()]);
         plugins.session_started(
             "pty-1",
@@ -5515,6 +5602,8 @@ run = ["sh", "main.sh"]
             });
         }
         assert!(crate::hook::hears_commands(&home));
+        // Told once, when the first comes to listen.
+        assert_eq!(hears(), vec![serde_json::json!(true)]);
 
         let address = "https://github.com/o/r/pull/7\n";
         let long = format!("{}{address}", "é".repeat(COMMAND_OUTPUT));
@@ -5613,6 +5702,10 @@ run = ["sh", "main.sh"]
         }
         assert!(commands("old").is_empty(), "{:?}", commands("old"));
         assert!(!crate::hook::hears_commands(&home));
+        assert_eq!(
+            hears(),
+            vec![serde_json::json!(true), serde_json::json!(false)]
+        );
         let told = commands("github");
         assert_eq!(told.len(), 3, "{told:?}");
         assert_eq!(told[0]["project"], "/p");

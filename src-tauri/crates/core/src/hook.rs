@@ -8,8 +8,9 @@
 //! commands, Claude Code's `PostToolUse` on its shell tool goes to the same
 //! log. Beside the session hook on the prompt, where there is a daemon, a
 //! second one asks the window through it what the sessions this one started
-//! did, and gives the agent the answer with the user's message. Both agents take the same shape: Claude Code in the
-//! project's `.claude/settings.local.json`, Codex in the project's
+//! did, and gives the agent the answer with the user's message. Both
+//! agents take the same shape: Claude Code in the project's
+//! `.claude/settings.local.json`, Codex in the project's
 //! `.codex/hooks.json`, with the same events and the same stdin.
 //!
 //! The watcher already works, and this does not replace it: a person editing
@@ -155,11 +156,11 @@ pub fn hears_commands(home: &Path) -> bool {
 }
 
 /// Says whether an enabled plugin listens for commands, for the next
-/// install and status to read.
-pub fn set_hears_commands(home: &Path, on: bool) {
+/// install and status to read, and whether that is news.
+pub fn set_hears_commands(home: &Path, on: bool) -> bool {
     let path = hears_commands_path(home);
     if on == path.is_file() {
-        return;
+        return false;
     }
     if on {
         if let Some(parent) = path.parent() {
@@ -169,6 +170,7 @@ pub fn set_hears_commands(home: &Path, on: bool) {
     } else {
         let _ = std::fs::remove_file(&path);
     }
+    true
 }
 
 /// Where the daemon lives on a machine, which is also the MCP server the
@@ -2789,7 +2791,8 @@ mod tests {
         let without = status(&home, &project, &[], &HashMap::new());
         assert!(without.installed && !without.outdated);
 
-        set_hears_commands(&home, true);
+        assert!(set_hears_commands(&home, true));
+        assert!(!set_hears_commands(&home, true));
         assert!(status(&home, &project, &[], &HashMap::new()).outdated);
         install(&home, &project, &[], &HashMap::new()).unwrap();
         let shell = shell_entries(&project);

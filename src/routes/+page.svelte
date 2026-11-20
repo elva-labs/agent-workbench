@@ -33,7 +33,7 @@
   import { handle as settingsRequested, settingsAsk } from "$lib/settingsTools.svelte";
   import { folderToRead, load as loadOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import { core } from "$lib/core";
-  import { ensure as ensureHooks } from "$lib/hook.svelte";
+  import { ensure as ensureHooks, hearsChanged } from "$lib/hook.svelte";
   import { diffRequested, notified, showRequested, switched, terminalRequested } from "$lib/show.svelte";
   import { watchSelection } from "$lib/selection.svelte";
   import { watchViewed } from "$lib/viewed.svelte";
@@ -283,6 +283,9 @@
     // started on it is under way.
     core()
       .onPluginOpenUrl((event) => void core().openUrl(event.url))
+      .then((unlisten) => offs.push(unlisten));
+    core()
+      .onPluginHears(() => void hearsChanged(hookedProjects()))
       .then((unlisten) => offs.push(unlisten));
     core()
       .onPluginView((event) => pluginViewChanged(event))
