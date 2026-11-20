@@ -530,6 +530,7 @@ export function deselect() {
   files.target = null;
   files.picked = null;
   leaveOtherKinds();
+  files.renderedFor = null;
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;

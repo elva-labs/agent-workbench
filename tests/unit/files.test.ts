@@ -835,6 +835,14 @@ describe("previewing the kinds besides Markdown", () => {
     expect(effectiveView()).toBe("diff");
   });
 
+  it("shows the source again on a file closed and opened again", async () => {
+    await html();
+    setView("rendered");
+    deselect();
+    await select("page.html");
+    expect(effectiveView()).toBe("diff");
+  });
+
   it("shows the source again on another file, and on the same file reopened", async () => {
     await html();
     setView("rendered");
