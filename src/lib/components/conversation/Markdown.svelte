@@ -140,9 +140,13 @@
   });
 
   function onclick(e: MouseEvent) {
-    const anchor = (e.target as HTMLElement | null)?.closest("a");
+    const target = e.target as HTMLElement | null;
+    const anchor = target?.closest("a");
     if (anchor === null || anchor === undefined) return;
     e.preventDefault();
+    // A button in a link, a command's Run, does its own work and only that.
+    const button = target?.closest("button");
+    if (button !== null && button !== undefined && anchor.contains(button)) return;
     const href = anchor.getAttribute("href") ?? "";
     if (/^https?:\/\//.test(href)) core().openUrl(href).catch(() => {});
   }
