@@ -790,6 +790,117 @@ fn the_figures_that_moved_last_are_shown_whichever_came_first() {
     );
 }
 
+/// A window of `kind`, of `model` where one is named.
+fn window(kind: LimitKind, model: Option<&str>, percent: f64) -> LimitWindow {
+    LimitWindow {
+        kind,
+        model: model.map(str::to_string),
+        percent,
+        resets_at: Some(T0 + 3600),
+        severity: None,
+    }
+}
+
+fn shown(limits: &Limits) -> (Vec<(LimitKind, Option<String>, f64)>, Option<u64>) {
+    match limits.held("claude-code", Path::new(DIR)).unwrap() {
+        Event::Limits {
+            windows, read_at, ..
+        } => (
+            windows
+                .into_iter()
+                .map(|w| (w.kind, w.model, w.percent))
+                .collect(),
+            read_at,
+        ),
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn a_window_the_account_has_stays_when_a_newer_report_names_fewer() {
+    let clock = Clock::new();
+    let limits = limits(&clock, None);
+    let full = Event::Limits {
+        agent: "claude-code".into(),
+        plan: Some("max".into()),
+        windows: vec![
+            window(LimitKind::Session, None, 4.0),
+            window(LimitKind::Weekly, None, 69.0),
+            window(LimitKind::WeeklyScoped, Some("Fable"), 45.0),
+        ],
+        read_at: Some(T0),
+        taken_at: T0,
+    };
+    limits.poll("claude-code", Path::new(DIR), true, || Ok(full));
+    // What a session's agent pushes between reads names two windows and no read.
+    let push = json!({
+        "type": "limits", "agent": "claude-code", "plan": null, "readAt": null,
+        "takenAt": T0 + 60,
+        "windows": [
+            {"kind": "session", "model": null, "percent": 5.0, "resetsAt": null, "severity": null},
+            {"kind": "weekly", "model": null, "percent": 70.0, "resetsAt": null, "severity": null},
+        ],
+    });
+    limits.heard("claude-code", Path::new(DIR), &push);
+    let (windows, read_at) = shown(&limits);
+    assert_eq!(
+        windows,
+        [
+            (LimitKind::Session, None, 5.0),
+            (LimitKind::Weekly, None, 70.0),
+            (LimitKind::WeeklyScoped, Some("Fable".into()), 45.0),
+        ]
+    );
+    assert_eq!(read_at, Some(T0), "the read the figures came after stays");
+    // A full read that leaves the row out leaves it as it was.
+    clock.on(10 * MINUTE);
+    let at = clock.now();
+    limits.poll("claude-code", Path::new(DIR), true, || {
+        Ok(Event::Limits {
+            agent: "claude-code".into(),
+            plan: Some("max".into()),
+            windows: vec![
+                window(LimitKind::Session, None, 6.0),
+                window(LimitKind::Weekly, None, 71.0),
+            ],
+            read_at: Some(at),
+            taken_at: at,
+        })
+    });
+    let (windows, read_at) = shown(&limits);
+    assert_eq!(windows.len(), 3);
+    assert_eq!(
+        windows[2],
+        (LimitKind::WeeklyScoped, Some("Fable".into()), 45.0)
+    );
+    assert_eq!(read_at, Some(at));
+}
+
+#[test]
+fn a_late_report_adds_the_windows_the_held_one_lacks_and_moves_none() {
+    let clock = Clock::new();
+    let limits = limits(&clock, None);
+    let held = serde_json::to_value(read_at(T0 + 10, 60.0)).unwrap();
+    limits.heard("claude-code", Path::new(DIR), &held);
+    let mut older = read_at(T0, 5.0);
+    if let Event::Limits { windows, .. } = &mut older {
+        windows.push(window(LimitKind::WeeklyScoped, Some("Fable"), 45.0));
+    }
+    limits.heard(
+        "claude-code",
+        Path::new(DIR),
+        &serde_json::to_value(older).unwrap(),
+    );
+    let (windows, _) = shown(&limits);
+    assert_eq!(
+        windows,
+        [
+            (LimitKind::Session, None, 60.0),
+            (LimitKind::WeeklyScoped, Some("Fable".into()), 45.0),
+        ]
+    );
+}
+
 #[test]
 fn the_last_full_read_of_each_account_is_kept_across_a_restart() {
     let clock = Clock::new();

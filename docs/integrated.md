@@ -763,6 +763,11 @@ a figure last moved. Every figure was taken between the two, and the
 oldest is as old as the read, or, where no read was answered, as the
 event's own time.
 
+The workbench keeps the figures of an account by limit window. A report
+that names fewer windows than are held, as a push does, or a read that
+leaves one out, changes only the windows it names, and a window the
+account is known to have stays at the figure it last had.
+
 Claude Code is read with a usage control request. Its answer holds the
 server's rows of limits, each with the percent used, when it resets, and
 the server's reading of how near its end it is. A row of no kind known

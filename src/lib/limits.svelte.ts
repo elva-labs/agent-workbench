@@ -26,26 +26,41 @@ function keyOf(host: string | null, agent: string, account: string | null): stri
   return JSON.stringify([host, agent, account]);
 }
 
-/** Takes a report of the limits of an account on a machine. One whose
-    figures last moved before the held report's did is let go; of two that
-    moved at the same second, the one with the later read stands. */
+/** The report with the windows the other has that it lacks, each as the
+    other last had it, so a window the account has does not leave because
+    one report names fewer, as a push between reads does. The plan and the
+    last read are the other's where the report has none. */
+function filled(report: LimitsReport, other: LimitsReport): LimitsReport {
+  const windows = report.windows.map((window) => ({ ...window }));
+  for (const window of other.windows) {
+    if (!windows.some((known) => known.kind === window.kind && known.model === window.model))
+      windows.push({ ...window });
+  }
+  return {
+    type: "limits",
+    agent: report.agent,
+    plan: report.plan ?? other.plan,
+    readAt: report.readAt ?? other.readAt,
+    takenAt: report.takenAt,
+    windows,
+  };
+}
+
+/** Takes a report of the limits of an account on a machine. Where its
+    figures last moved before the held report's did, the held ones stand;
+    of two that moved at the same second, the one with the later read
+    stands. Either way a window only the other has is kept. */
 export function heardLimits(host: string | null, account: string | null, report: LimitsReport) {
   const key = keyOf(host, report.agent, account);
   const held = known[key];
-  if (
-    held !== undefined &&
-    (held.takenAt > report.takenAt ||
-      (held.takenAt === report.takenAt && (held.readAt ?? 0) > (report.readAt ?? 0)))
-  )
+  if (held === undefined) {
+    known[key] = filled(report, { ...report, windows: [] });
     return;
-  known[key] = {
-    type: "limits",
-    agent: report.agent,
-    plan: report.plan,
-    readAt: report.readAt,
-    takenAt: report.takenAt,
-    windows: report.windows.map((window) => ({ ...window })),
-  };
+  }
+  const older =
+    held.takenAt > report.takenAt ||
+    (held.takenAt === report.takenAt && (held.readAt ?? 0) > (report.readAt ?? 0));
+  known[key] = older ? filled(held, report) : filled(report, held);
 }
 
 /** The last report for an agent under an account on a machine, or null

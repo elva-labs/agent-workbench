@@ -64,6 +64,39 @@ describe("the store of limits", () => {
     expect(limitsOf(null, "claude-code", "Work")).toMatchObject({ readAt: SECONDS, takenAt: SECONDS + 120 });
   });
 
+  it("keeps a window a newer report lacks, as it was last reported", () => {
+    const fable = window({ kind: "weeklyScoped", model: "Fable", percent: 45 });
+    heardLimits(
+      null,
+      null,
+      report({ windows: [window({ kind: "session", percent: 4 }), window({ kind: "weekly", percent: 69 }), fable] }),
+    );
+    // A push between reads names the session and the week only.
+    heardLimits(
+      null,
+      null,
+      report({
+        readAt: null,
+        takenAt: SECONDS + 60,
+        windows: [window({ kind: "session", percent: 5 }), window({ kind: "weekly", percent: 70 })],
+      }),
+    );
+    expect(limitsOf(null, "claude-code", null)).toMatchObject({ readAt: SECONDS, takenAt: SECONDS + 60 });
+    expect(limitsOf(null, "claude-code", null)?.windows.map((w) => [w.kind, w.percent])).toEqual([
+      ["session", 5],
+      ["weekly", 70],
+      ["weeklyScoped", 45],
+    ]);
+    // A late report from before fills in what the held one lacks, and moves nothing it has.
+    resetLimits();
+    heardLimits(null, null, report({ takenAt: SECONDS + 60, windows: [window({ kind: "session", percent: 5 })] }));
+    heardLimits(null, null, report({ windows: [window({ kind: "session", percent: 4 }), fable] }));
+    expect(limitsOf(null, "claude-code", null)?.windows.map((w) => [w.kind, w.percent])).toEqual([
+      ["session", 5],
+      ["weeklyScoped", 45],
+    ]);
+  });
+
   it("keeps each machine's, agent's and account's figures apart", () => {
     heardLimits(null, "Work", report({ windows: [window({ kind: "session", percent: 1 })] }));
     heardLimits(null, null, report({ windows: [window({ kind: "session", percent: 2 })] }));
