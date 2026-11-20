@@ -234,7 +234,7 @@ p.section("pull-request", {
     })),
 });
 
-p.action("pull-request", "open", ({ row }) => p.openUrl(row.id));
+p.action("pull-request", "open", ({ row, openUrl }) => openUrl(row.id));
 p.on("tree", ({ project }) => p.refresh("pull-request", project));
 
 p.run();
