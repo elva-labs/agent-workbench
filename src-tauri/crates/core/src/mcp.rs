@@ -90,7 +90,11 @@ macro_rules! instructions_rest {
 /// of its sessions stops or asks.
 macro_rules! sessions_when_woken {
     (terminal) => {
-        concat!(woken_started!(), ", with notify just before it, ", woken_after!())
+        concat!(
+            woken_started!(),
+            ", with notify just before it, ",
+            woken_after!()
+        )
     };
     (conversation) => {
         concat!(woken_started!(), " ", woken_after!())
@@ -267,7 +271,8 @@ fn woken_here() -> bool {
 /// Whether the workbench draws this session as a conversation, from the
 /// environment it was started in.
 fn conversation_here() -> bool {
-    std::env::var(crate::adapter::VIEW_VAR).ok().as_deref() == Some(crate::adapter::CONVERSATION_VIEW)
+    std::env::var(crate::adapter::VIEW_VAR).ok().as_deref()
+        == Some(crate::adapter::CONVERSATION_VIEW)
 }
 
 /// Read when the agent asks rather than when the server starts, so what a
@@ -2308,7 +2313,10 @@ mod tests {
         for told in [WOKEN_INSTRUCTIONS, ORCHESTRATOR_WOKEN_INSTRUCTIONS] {
             assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
         }
-        for told in [CONVERSATION_INSTRUCTIONS, ORCHESTRATOR_CONVERSATION_INSTRUCTIONS] {
+        for told in [
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
             assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
         }
         // Where it cannot, the agent answers the user and waits on, and is
@@ -2348,20 +2356,40 @@ mod tests {
             assert!(told.contains("call the notify tool with one line"));
             assert!(told.contains("notify at a turn's end most of all"));
         }
-        for told in [CONVERSATION_INSTRUCTIONS, ORCHESTRATOR_CONVERSATION_INSTRUCTIONS] {
+        for told in [
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
             assert!(!told.contains("notify"), "{told}");
-            assert!(told.contains("it puts the first line of the turn's final message on this session's row"));
+            assert!(told.contains(
+                "it puts the first line of the turn's final message on this session's row"
+            ));
             assert!(told.contains("never on its own between your thinking and your answer"));
         }
-        assert!(ORCHESTRATOR_CONVERSATION_INSTRUCTIONS.contains("open your final message with one line saying why"));
+        assert!(ORCHESTRATOR_CONVERSATION_INSTRUCTIONS
+            .contains("open your final message with one line saying why"));
 
-        let terminal = notify_tool_for(false)["description"].as_str().unwrap().to_string();
-        assert!(terminal.contains("Call it in every turn that ends with you handing back to the user"));
-        let conversation = notify_tool_for(true)["description"].as_str().unwrap().to_string();
+        let terminal = notify_tool_for(false)["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(
+            terminal.contains("Call it in every turn that ends with you handing back to the user")
+        );
+        let conversation = notify_tool_for(true)["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(conversation.contains("there is no need to call it at a turn's end"));
         assert!(!conversation.contains("Call it in every turn"));
-        assert!(note_tool_for(false)["description"].as_str().unwrap().contains("notify at a turn's end most of all"));
-        let note = note_tool_for(true)["description"].as_str().unwrap().to_string();
+        assert!(note_tool_for(false)["description"]
+            .as_str()
+            .unwrap()
+            .contains("notify at a turn's end most of all"));
+        let note = note_tool_for(true)["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
         assert!(!note.contains("notify"));
         assert!(note.contains("never on its own between your thinking and your answer"));
     }
@@ -2947,8 +2975,11 @@ mod tests {
         assert!(reads.contains("every line of the brief or a note starts with \"> \""));
         let keeps = note_tool()["description"].as_str().unwrap().to_string();
         assert!(keeps.contains("Never put a key, token, password or personal data in a note"));
-        assert!(instructions_tail!(terminal).contains("never a key, token, password or personal data"));
-        assert!(instructions_tail!(conversation).contains("never a key, token, password or personal data"));
+        assert!(
+            instructions_tail!(terminal).contains("never a key, token, password or personal data")
+        );
+        assert!(instructions_tail!(conversation)
+            .contains("never a key, token, password or personal data"));
     }
 
     #[test]
