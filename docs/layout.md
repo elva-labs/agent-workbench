@@ -177,16 +177,17 @@ only when the window is used up.
 A window near its end, as the agent reads it, or from 80% used where the
 agent gives no reading, takes the theme's warning tone in a heavier weight.
 One used up takes the error tone and says when it resets. A window whose
-reset time has passed reads as reset until new figures come. Figures older
-than fifteen minutes are followed by a small clock and their age. While
+reset time has passed reads as reset until new figures come. The bar
+shows the figures alone; how old they are is said in the popover and in
+the allowance's hover title. While
 the window is in use, an account in use is read about every five minutes
 while a session of it works, and every half hour while none does, since
-then only its use elsewhere can move them. So figures that old mean
-nothing here has worked on the account since, its reads have failed, or
-the window was left alone for a while. After a restart the figures kept from before show, with
-their age, until a read brings new ones. The age is that of the last full
-read, since what the agent pushes during a turn moves only some of the
-windows.
+then only its use elsewhere can move them. So figures older than fifteen
+minutes mean nothing here has worked on the account since, its reads have
+failed, or the window was left alone for a while. After a restart the
+figures kept from before show until a read brings new ones. Their age is
+that of the last full read, since what the agent pushes during a turn
+moves only some of the windows.
 
 A click on the allowance opens a popover with every window: a meter, the
 share used and when it resets in words, such as `resets in 2 h 10 min` or
