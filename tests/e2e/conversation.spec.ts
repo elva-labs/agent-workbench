@@ -2298,12 +2298,12 @@ test("shows a message another session sent under that session, and never the wor
   await page.getByTestId("conduct-allow").click();
   const started = page.getByTestId("started-session");
   await expect(started).toContainText("Count the files");
-  await expect(started).not.toContainText("notify");
+  await expect(started).not.toContainText("short report");
   await conduct("o-2", "send", { session: "integrated-session-2", text: "Now count the tests" });
   await started.click();
   const view = page.locator("[data-testid='conversation']:visible");
   await expect(page.locator(`${AGENT} > header`)).toContainText("Count the files");
-  await expect(page.locator(`${AGENT} > header`)).not.toContainText("notify");
+  await expect(page.locator(`${AGENT} > header`)).not.toContainText("short report");
   const messages = view.getByTestId("user-message");
   await expect(messages).toHaveCount(2);
   for (const message of await messages.all()) {
@@ -2314,7 +2314,7 @@ test("shows a message another session sent under that session, and never the wor
   await expect(messages.last().locator(".bubble")).toHaveText("Now count the tests");
   // The workbench's sentence is behind a fold of its own.
   await messages.first().getByTestId("workbench-instructions").click();
-  await expect(messages.first().getByTestId("workbench-instructions-text")).toContainText("call the notify tool");
+  await expect(messages.first().getByTestId("workbench-instructions-text")).toContainText("its first line saying which");
   // And the sender is a click away.
   await messages.first().getByTestId("message-sender-go").click();
   await expect(page.locator(".session.kid")).not.toHaveClass(/(^|\s)on(\s|$)/);

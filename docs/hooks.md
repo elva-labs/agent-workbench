@@ -286,29 +286,41 @@ that session: why the agent stopped, what it needs, what is done. The row
 has room for a few words on one line and cuts the rest off, which the agent
 is told. Looking at the session clears it. A line from an agent run by
 hand in the project's directory, which has the same tools but no row of
-its own, goes nowhere. The agent is told to call it in
-every turn it hands back, just before its final message rather than after
-it. Where its answer goes follows where the user reads it, which the
-workbench puts in the agent's environment for the tool server to read. In a
-terminal, what an agent writes before a tool call is folded into one line on
-screen, whatever the call is, and only the message after the last call of
-the turn shows in full; so the agent is told that its answer belongs in
-that message, written again there when a call had to follow it, and that a
-notify after the answer would fold the answer away. A session drawn as a
-conversation draws neither notify nor wait and folds no text, so an agent
-there is told to write an answer whole, in a message of its own after the
-work it reports. It is also told that its thinking is never shown, so
-whatever the user should read goes in a message's text, and that an answer
-to the user goes in the turn's final message, with notify just before it
-and no call after it. A starter the user writes to while its sessions run
-answers that way and ends its turn, and the workbench wakes it when one of
-the sessions stops or asks (see [orchestrator](orchestrator.md)). In a
-terminal that holds only with these hooks on, since they are how the
-workbench hears the turn end; without them the starter is told to answer
-and then wait again. It cannot tell whether
-the user is watching, so it calls regardless, and never for progress. A
-turn that ends without the call leaves a line all the same: the stop hook
-brings the agent's last message, and the row takes its first line.
+its own, goes nowhere. What the agent is told follows where the user reads
+it, which the workbench puts in the agent's environment for the tool server
+to read.
+
+In a terminal the agent is told to call notify in every turn it hands back,
+just before its final message rather than after it. What an agent writes
+there before a tool call is folded into one line on screen, whatever the
+call is, and only the message after the last call of the turn shows in
+full; so the agent is told that its answer belongs in that message, written
+again there when a call had to follow it, and that a notify after the
+answer would fold the answer away. It cannot tell whether the user is
+watching, so it calls regardless, and never for progress. A turn that ends
+without the call leaves a line all the same: the stop hook brings the
+agent's last message, and the row takes its first line.
+
+A session drawn as a conversation is not asked to call notify. The
+workbench sees each of its turns end, puts the first line of the turn's
+final message on the row and marks the row as wanting attention itself, so
+the agent is told to open that message with the line that matters, to write
+its answer whole there, after the work it reports, and to make no call
+after it or just before it. A call there would stand between its thinking
+and its answer, and an agent that has said its answer while thinking keeps
+only a closing line for the message. It is told that its thinking is never
+shown, so whatever the user should read goes in a message's text, and that
+a note is made alongside a call made while working, never between its
+thinking and its answer. A notify it makes all the same puts its words on
+the row in place of that line until its next turn. A turn that said nothing
+leaves no line, and the row is only marked.
+
+A starter the user writes to while its sessions run answers as its turn's
+final message and ends its turn, and the workbench wakes it when one of the
+sessions stops or asks (see [orchestrator](orchestrator.md)). In a terminal
+that holds only with these hooks on, since they are how the workbench hears
+the turn end; without them the starter is told to answer and then wait
+again.
 
 ![The user asks one session to run the tests and moves to another. When the tests finish, the first agent's line appears under its row with the dot lit, and goes when the row is opened.](tools-notify.gif)
 

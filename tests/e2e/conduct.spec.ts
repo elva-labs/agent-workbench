@@ -214,7 +214,7 @@ test.describe("the conductor", () => {
     );
     expect(spawns.at(-1)?.prompt).toContain("Fix the flaky test");
     expect(spawns.at(-1)?.prompt).toContain(
-      "call the notify tool with one line saying which",
+      "its first line saying which",
     );
 
     // The new session is listed as the caller's own; the caller itself,

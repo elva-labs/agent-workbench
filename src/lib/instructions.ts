@@ -1,14 +1,16 @@
 /** The sentence every started session gets after the caller's own line, so
-    what became of it comes back on its row instead of being watched for,
-    and its last message is a report another session could go on from. It
+    what became of it comes back on its row, from the first line of its
+    last message or a notify call in a terminal, instead of being watched
+    for, and that message is a report another session could go on from. It
     is the workbench's, never part of anyone's message as shown. */
 export const OUTCOME_ASK =
-  "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.";
+  "When you are done, or stuck, end with a short report that someone with none of your context could go on from, its first line saying which: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.";
 
 /** The sentences an earlier version gave a started session in its place,
     which a conversation it began still holds. */
 const OUTCOME_ASKED_BEFORE = [
   "When you are done, or stuck, call the notify tool with one line saying which, before your final message.",
+  "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.",
 ];
 
 /** The first and last lines of the briefing the core writes for a

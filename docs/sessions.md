@@ -645,7 +645,7 @@ known by, and as a session where none is kept. Its id is for the agent
 alone. A message is known as
 another session's by the id it was sent under, never by its words, so the
 user's own message reads as theirs whatever another session sent; the sentence the
-workbench adds to a started session's prompt, asking it to call notify and end with a report, is
+workbench adds to a started session's prompt, asking it to end with a report, is
 never shown as part of it, only behind a fold of its own. The agent's run
 on the left under the model it ran on, or the agent's own name where that is
 not known, with the time, down a quiet line at the side. Codex's app-server
@@ -1197,7 +1197,7 @@ The agent keeps and reads them with the workbench's own tools, as
 [hooks](hooks.md#the-agents-tools) describes. It is told as it connects to
 keep a note whenever something settles: a decision and why, a finding,
 what the user asked for or prefers, what is left open, and never a key,
-token, password or personal data. The call goes alongside another one, the notify at a turn's end most of all, so it adds
+token, password or personal data. The call goes alongside another one, in a terminal the notify at a turn's end most of all and in a conversation one made while working, never between its thinking and its answer, so it adds
 no step of its own, and the conversation does not draw it. When the user
 refers to something the agent has no context for, it is told to read the
 matching notes before asking or guessing.

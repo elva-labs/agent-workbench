@@ -303,6 +303,33 @@ describe("the orchestrator's tools with an integrated session", () => {
     expect(answerTo(waiting)?.content).toBe(`Session ${id} stopped working. Its last line: "All done."\n${STOP_WHEN_DONE}`);
   });
 
+  it("hears the line of a turn that ended on thinking before notify, and none from an earlier turn", async () => {
+    const { key, id, handle: core } = await own();
+    const turn = async (run: () => void) => {
+      await handle(call("send", { session: id, text: "go on" }));
+      const waiting = call("wait", { session: id, seconds: 5 });
+      const waited = handle(waiting);
+      await settle();
+      fake.startTurn(core);
+      run();
+      fake.endTurn(core);
+      flushSync();
+      await waited;
+      return answerTo(waiting)?.content;
+    };
+    expect(await turn(() => fake.emit(core, { type: "text", block: "a", parent: null, text: "All done.", done: true }))).toContain('Its last line: "All done."');
+    const thought = await turn(() => {
+      fake.tool(core, "Bash", { command: "npm test" }, "ok", { kind: "command" });
+      fake.think(core, "Five things are wrong. Shall I fix them?");
+      fake.finishTool(core, fake.startTool(core, "mcp__chord__notify", { text: "Asked" }, { kind: "mcp" }), "Left on the session's row.");
+    });
+    expect(thought).toContain('Its last line: "Five things are wrong. Shall I fix them?"');
+    expect(byKey(key)!.note).toBe("Five things are wrong. Shall I fix them?");
+    const silent = await turn(() => fake.tool(core, "Bash", { command: "npm test" }, "ok", { kind: "command" }));
+    expect(silent).toContain("It has left no line.");
+    expect(byKey(key)!.note).toBeNull();
+  });
+
   describe("a start in an integrated caller's own project", () => {
     /** A start from the caller in its own project, with whether it was
         put to the user; refused there when it was. */
@@ -713,7 +740,7 @@ describe("the orchestrator's tools with an integrated session", () => {
       expect(answerTo(waiting)?.content).toBe(USER_WROTE);
       // The answer to the user ends the turn, and no wait follows it.
       expect(USER_WROTE).toContain(
-        "Answer it as the final message of your turn, with notify just before it, and end the turn there without calling wait again",
+        "Answer it as the final message of your turn and end the turn there without calling wait again",
       );
       expect(sentTexts().at(-1)).toBe(
         `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Answer the user as your turn's final message when there is something to tell them, and end the turn there; the workbench writes to you when one of them stops or asks.\n\nStop for a moment`,

@@ -28,13 +28,13 @@ use crate::show::{
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
-/// What every session is told before how its turns end: the viewer, its
-/// tools and the notify tool. A macro, as the parts below are, so each set
+/// What every session is told before how its turns end: the viewer and
+/// its tools. A macro, as the parts below are, so each set
 /// of instructions is one constant rather than something put together at
 /// run time.
 macro_rules! instructions_head {
     () => {
-        "The user works in Chord, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. "
+        "The user works in Chord, a desktop app with a file viewer beside this session. When the user asks where something is, or you point them at a particular place in a file, call the show tool with that file and those lines as well as answering in words, so the place opens in front of them. Call it for the answer, once, not for every file you read while looking. When you point them at what changed in a file, yours or theirs, call the diff tool with the file so its diff opens in front of them. When the user asks to see a screenshot, a diagram or a rendering, or you have made an image, a PDF, a Markdown document, an HTML page or a Mermaid diagram for them, call the present tool with the files so they open in front of them, rendered; several files go in one call. Present a file where it is, the project's own when that is what is being worked on, never a copy; the same file presented again after a change shows as it is now on the same row of the media list. When the user says this, here, or that without naming a file, call the selection tool first: it says what they have open in the viewer and which lines are highlighted. The terminal tool types a command into a terminal for the user to run themselves, a dev server or a watch they asked for; run your own commands yourself. "
     };
 }
 
@@ -43,33 +43,72 @@ macro_rules! instructions_head {
 /// last call, written again there when a call had to follow it.
 macro_rules! turn_in_a_terminal {
     () => {
-        "What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait, notify or note; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. "
+        "Every time you finish a turn and hand it back to the user, done, stuck, or waiting on an answer, call the notify tool with one line saying which: the user often works in another session and reads it on this session's row. What you write before a tool call is folded into one line on screen, whatever the call is, a shell command, a wait, notify or note; only the message after the last call of the turn shows in full. So the answer goes in that final message, whole, never above a call with a line below pointing at it, and when a call turns out to be needed after you have answered, write the answer again in full after it. Call notify just before that final message, and write nothing after it but that message. Once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. "
     };
 }
 
 /// How a turn ends in the workbench's conversation, which draws an agent's
-/// text whole and its thinking only as a summary.
+/// text whole and its thinking only as a summary, and which sees each turn
+/// end, so the row's line comes from the final message without a call.
 macro_rules! turn_in_a_conversation {
     () => {
-        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. Your thinking is never shown to the user, so whatever they should read goes in a message's text, and an answer to them goes in the turn's final message, with no call after it but notify before it. "
+        "The workbench sees each of your turns end: it puts the first line of the turn's final message on this session's row, where the user reads it while they work in another session, and marks the row as wanting attention. So open that message with the line that matters, what is done, why you stopped, or what you need from the user; there is no call to make for it. Your thinking is never shown to the user, so whatever they should read goes in a message's text. Write an answer whole, in the turn's final message, after the work it reports, never above more work with a line below pointing at it, and with no call after it or just before it: the answer follows your thinking straight away, and the turn ends with it. "
     };
 }
 
 /// What every session is told after how its turns end: its notes, the
-/// browser and the settings.
+/// browser and the settings. A note is made alongside another call: notify
+/// at a turn's end in a terminal, and in a conversation a call made while
+/// working, never one between the thinking and the answer.
 macro_rules! instructions_tail {
+    (terminal) => {
+        concat!(notes_kept!(), "Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. ", instructions_rest!())
+    };
+    (conversation) => {
+        concat!(notes_kept!(), "Make the call alongside another one you make while working, so it costs no step of its own, never on its own between your thinking and your answer. ", instructions_rest!())
+    };
+}
+
+/// How the notes are kept, the same everywhere.
+macro_rules! notes_kept {
     () => {
-        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. "
+        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. "
+    };
+}
+
+/// The notes read, the browser and the settings, the same everywhere.
+macro_rules! instructions_rest {
+    () => {
+        "When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. "
     };
 }
 
 /// What a session the workbench can wake is told of the sessions it
 /// started: a conversation, or a terminal whose turns the workbench hears
-/// end through the hooks. An answer to the user ends the turn, and the
-/// workbench writes to the agent when one of its sessions stops or asks.
+/// end through the hooks. An answer to the user ends the turn, with notify
+/// before it in a terminal, and the workbench writes to the agent when one
+/// of its sessions stops or asks.
 macro_rules! sessions_when_woken {
+    (terminal) => {
+        concat!(woken_started!(), ", with notify just before it, ", woken_after!())
+    };
+    (conversation) => {
+        concat!(woken_started!(), " ", woken_after!())
+    };
+}
+
+/// How a woken session is told to answer the user while its sessions run.
+macro_rules! woken_started {
     () => {
-        "Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user or the user wrote to you. When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting. Once you hand the turn back, the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. "
+        "Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user or the user wrote to you. When the user writes to you while your sessions run, answer them as the final message of your turn"
+    };
+}
+
+/// How a woken session is told the turn ends there and the workbench
+/// writes to it.
+macro_rules! woken_after {
+    () => {
+        "and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting. Once you hand the turn back, the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. "
     };
 }
 
@@ -89,7 +128,9 @@ macro_rules! put_away {
     };
 }
 
-/// What a session that directs the others is told besides.
+/// What a session that directs the others is told besides, ending on how
+/// its row learns why it stopped: notify in a terminal, the first line of
+/// its final message in a conversation.
 macro_rules! orchestrator_instructions {
     () => {
         " This session directs work rather than doing it here. When the user asks \
@@ -118,10 +159,13 @@ macro_rules! orchestrator_instructions {
      asking for the sessions in a loop. Every session is asked to end with a \
      short report: when its last line is not enough, read the report with \
      the read tool rather than asking the session to say more. When a session asks a question, relay \
-     it to the user and answer it with the send tool. When you stop, whether \
-     to relay a question or to report, call the notify tool with one line \
-     saying why, before your final message rather than after it, so the \
-     user sees it on this session's row while they are in another one."
+     it to the user and answer it with the send tool."
+    };
+    (terminal) => {
+        concat!(orchestrator_instructions!(), " When you stop, whether to relay a question or to report, call the notify tool with one line saying why, before your final message rather than after it, so the user sees it on this session's row while they are in another one.")
+    };
+    (conversation) => {
+        concat!(orchestrator_instructions!(), " When you stop, whether to relay a question or to report, open your final message with one line saying why: the workbench puts it on this session's row, where the user sees it while they are in another one.")
     };
 }
 
@@ -130,7 +174,7 @@ macro_rules! orchestrator_instructions {
 pub const INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
-    instructions_tail!(),
+    instructions_tail!(terminal),
     sessions_when_not_woken!(),
     put_away!()
 );
@@ -140,8 +184,8 @@ pub const INSTRUCTIONS: &str = concat!(
 pub const WOKEN_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
-    instructions_tail!(),
-    sessions_when_woken!(),
+    instructions_tail!(terminal),
+    sessions_when_woken!(terminal),
     put_away!()
 );
 
@@ -149,8 +193,8 @@ pub const WOKEN_INSTRUCTIONS: &str = concat!(
 pub const CONVERSATION_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_conversation!(),
-    instructions_tail!(),
-    sessions_when_woken!(),
+    instructions_tail!(conversation),
+    sessions_when_woken!(conversation),
     put_away!()
 );
 
@@ -159,30 +203,30 @@ pub const CONVERSATION_INSTRUCTIONS: &str = concat!(
 pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
-    instructions_tail!(),
+    instructions_tail!(terminal),
     sessions_when_not_woken!(),
     put_away!(),
-    orchestrator_instructions!()
+    orchestrator_instructions!(terminal)
 );
 
 /// The same where the workbench hears its turns end.
 pub const ORCHESTRATOR_WOKEN_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
-    instructions_tail!(),
-    sessions_when_woken!(),
+    instructions_tail!(terminal),
+    sessions_when_woken!(terminal),
     put_away!(),
-    orchestrator_instructions!()
+    orchestrator_instructions!(terminal)
 );
 
 /// The same for one the workbench draws as a conversation.
 pub const ORCHESTRATOR_CONVERSATION_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_conversation!(),
-    instructions_tail!(),
-    sessions_when_woken!(),
+    instructions_tail!(conversation),
+    sessions_when_woken!(conversation),
     put_away!(),
-    orchestrator_instructions!()
+    orchestrator_instructions!(conversation)
 );
 
 /// Whether the workbench can wake a session with this view and this word
@@ -218,6 +262,12 @@ fn woken_here() -> bool {
     let view = std::env::var(crate::adapter::VIEW_VAR).ok();
     let wake = std::env::var(crate::adapter::WAKE_VAR).ok();
     woken(view.as_deref(), wake.as_deref())
+}
+
+/// Whether the workbench draws this session as a conversation, from the
+/// environment it was started in.
+fn conversation_here() -> bool {
+    std::env::var(crate::adapter::VIEW_VAR).ok().as_deref() == Some(crate::adapter::CONVERSATION_VIEW)
 }
 
 /// Read when the agent asks rather than when the server starts, so what a
@@ -460,11 +510,23 @@ pub fn terminal_tool() -> Value {
     })
 }
 
-/// The notify tool as the agent sees it.
+/// The notify tool as the agent sees it, told as the session it serves is
+/// drawn as a conversation or not.
 pub fn notify_tool() -> Value {
+    notify_tool_for(conversation_here())
+}
+
+/// The notify tool as a conversation sees it, where the workbench takes the
+/// row's line from the final message itself, or as a terminal sees it.
+pub fn notify_tool_for(conversation: bool) -> Value {
+    let when = if conversation {
+        "The workbench does this itself when your turn ends, from the first line of your final message, so there is no need to call it at a turn's end: open that message with the line that matters instead. Called, it puts its words on the row in place of that line until your next turn. The row has room for about forty characters on one line and cuts the rest off, so write it like a commit subject: 'Tests green, ready to merge', 'Need the API key'. Not for progress."
+    } else {
+        NOTIFY_IN_A_TERMINAL
+    };
     json!({
         "name": "notify",
-        "description": "Leaves a few words on this session's row in the user's sessions list, and marks the row as wanting attention unless the user is already looking at it. Call it in every turn that ends with you handing back to the user, just before your final message and never after it: what is done, why you stopped, or what you need from them. You cannot tell whether the user is watching, so call it regardless. The row has room for about forty characters on one line and cuts the rest off, so write it like a commit subject: 'Tests green, ready to merge', 'Need the API key'. Once per turn, right before the final message, which is the last thing in the turn. Not for progress, and not while you are still working.",
+        "description": format!("Leaves a few words on this session's row in the user's sessions list, and marks the row as wanting attention unless the user is already looking at it. {when}"),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -475,11 +537,26 @@ pub fn notify_tool() -> Value {
     })
 }
 
-/// The note tool as the agent sees it.
+/// When a terminal session calls notify.
+const NOTIFY_IN_A_TERMINAL: &str = "Call it in every turn that ends with you handing back to the user, just before your final message and never after it: what is done, why you stopped, or what you need from them. You cannot tell whether the user is watching, so call it regardless. The row has room for about forty characters on one line and cuts the rest off, so write it like a commit subject: 'Tests green, ready to merge', 'Need the API key'. Once per turn, right before the final message, which is the last thing in the turn. Not for progress, and not while you are still working.";
+
+/// The note tool as the agent sees it, told as the session it serves is
+/// drawn as a conversation or not.
 pub fn note_tool() -> Value {
+    note_tool_for(conversation_here())
+}
+
+/// The note tool as a conversation sees it, where a note never stands
+/// between the thinking and the answer, or as a terminal sees it.
+pub fn note_tool_for(conversation: bool) -> Value {
+    let alongside = if conversation {
+        "Add notes as things settle, never the whole set again, and make the call alongside another one you make while working, so it costs no step of its own, never on its own between your thinking and your answer."
+    } else {
+        "Add notes as things settle, never the whole set again, and make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own."
+    };
     json!({
         "name": "note",
-        "description": "Keeps a note of this conversation in the workbench, so it can go on later, fresh, from its notes instead of the whole conversation read again. A note is something settled: a decision and why, a finding, what the user asked for or prefers, what is left open, where things stand. Give it a title, a one-line summary and, when the summary is not enough, a body of a few lines. Keep each short: the titles and summaries are read again at every fresh start. A note that changes an earlier one names it with replaces, so the old one no longer stands. The brief, what is being built here, is given with brief and replaces the one before. Never put a key, token, password or personal data in a note: notes are kept on disk for weeks. Add notes as things settle, never the whole set again, and make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own.",
+        "description": format!("Keeps a note of this conversation in the workbench, so it can go on later, fresh, from its notes instead of the whole conversation read again. A note is something settled: a decision and why, a finding, what the user asked for or prefers, what is left open, where things stand. Give it a title, a one-line summary and, when the summary is not enough, a body of a few lines. Keep each short: the titles and summaries are read again at every fresh start. A note that changes an earlier one names it with replaces, so the old one no longer stands. The brief, what is being built here, is given with brief and replaces the one before. Never put a key, token, password or personal data in a note: notes are kept on disk for weeks. {alongside}"),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2201,7 +2278,7 @@ mod tests {
             ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
         ] {
             assert!(told.contains("Your thinking is never shown to the user"));
-            assert!(told.contains("an answer to them goes in the turn's final message, with no call after it but notify before it"));
+            assert!(told.contains("with no call after it or just before it: the answer follows your thinking straight away"));
             assert!(!told.contains("folded into one line"));
         }
         // In a terminal Claude Code's own view folds what comes before a
@@ -2226,8 +2303,13 @@ mod tests {
         ] {
             assert!(!told.contains("call wait again"));
             assert!(!told.contains("then call wait"));
-            assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
             assert!(told.contains("the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user"));
+        }
+        for told in [WOKEN_INSTRUCTIONS, ORCHESTRATOR_WOKEN_INSTRUCTIONS] {
+            assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
+        }
+        for told in [CONVERSATION_INSTRUCTIONS, ORCHESTRATOR_CONVERSATION_INSTRUCTIONS] {
+            assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
         }
         // Where it cannot, the agent answers the user and waits on, and is
         // not promised a message that never comes.
@@ -2247,9 +2329,41 @@ mod tests {
             ORCHESTRATOR_WOKEN_INSTRUCTIONS,
             ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
         ] {
-            assert!(told.contains("call the notify tool with one line"));
             assert!(told.contains("keep calling wait until all of them are done"));
         }
+    }
+
+    /// A terminal is told to call notify at a turn's end, as the workbench
+    /// may not hear the turn end. A conversation is not: the workbench
+    /// takes the row's line from the final message, so no call stands
+    /// between the thinking and the answer.
+    #[test]
+    fn only_a_terminal_is_told_to_call_notify_at_a_turn_s_end() {
+        for told in [
+            INSTRUCTIONS,
+            WOKEN_INSTRUCTIONS,
+            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS,
+        ] {
+            assert!(told.contains("call the notify tool with one line"));
+            assert!(told.contains("notify at a turn's end most of all"));
+        }
+        for told in [CONVERSATION_INSTRUCTIONS, ORCHESTRATOR_CONVERSATION_INSTRUCTIONS] {
+            assert!(!told.contains("notify"), "{told}");
+            assert!(told.contains("it puts the first line of the turn's final message on this session's row"));
+            assert!(told.contains("never on its own between your thinking and your answer"));
+        }
+        assert!(ORCHESTRATOR_CONVERSATION_INSTRUCTIONS.contains("open your final message with one line saying why"));
+
+        let terminal = notify_tool_for(false)["description"].as_str().unwrap().to_string();
+        assert!(terminal.contains("Call it in every turn that ends with you handing back to the user"));
+        let conversation = notify_tool_for(true)["description"].as_str().unwrap().to_string();
+        assert!(conversation.contains("there is no need to call it at a turn's end"));
+        assert!(!conversation.contains("Call it in every turn"));
+        assert!(note_tool_for(false)["description"].as_str().unwrap().contains("notify at a turn's end most of all"));
+        let note = note_tool_for(true)["description"].as_str().unwrap().to_string();
+        assert!(!note.contains("notify"));
+        assert!(note.contains("never on its own between your thinking and your answer"));
     }
 
     #[test]
@@ -2833,7 +2947,8 @@ mod tests {
         assert!(reads.contains("every line of the brief or a note starts with \"> \""));
         let keeps = note_tool()["description"].as_str().unwrap().to_string();
         assert!(keeps.contains("Never put a key, token, password or personal data in a note"));
-        assert!(instructions_tail!().contains("never a key, token, password or personal data"));
+        assert!(instructions_tail!(terminal).contains("never a key, token, password or personal data"));
+        assert!(instructions_tail!(conversation).contains("never a key, token, password or personal data"));
     }
 
     #[test]

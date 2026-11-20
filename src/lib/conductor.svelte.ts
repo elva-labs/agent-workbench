@@ -1522,7 +1522,7 @@ export function cancelled(id: string) {
 
 /** What a wait the user's message ended answers. */
 export const USER_WROTE =
-  "The user wrote to you, which ends this wait. If their message has not reached you yet, end your turn now so that it does. Answer it as the final message of your turn, with notify just before it, and end the turn there without calling wait again: the workbench writes to you when one of your sessions stops or asks.";
+  "The user wrote to you, which ends this wait. If their message has not reached you yet, end your turn now so that it does. Answer it as the final message of your turn and end the turn there without calling wait again: the workbench writes to you when one of your sessions stops or asks.";
 
 /** Ends the waits these callers hold, each with the answer given. */
 function endWaits(callers: string[], answer: string) {
