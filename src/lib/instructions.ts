@@ -1,17 +1,19 @@
-/** The sentence every started session gets after the caller's own line, so
-    what became of it comes back on its row, from the first line of its
-    last message or a notify call in a terminal, instead of being watched
-    for, and that message is a report another session could go on from. It
-    is the workbench's, never part of anyone's message as shown. */
+/** The sentence a started session in a conversation gets after the
+    caller's own line, so what became of it comes back on its row, from the
+    first line of its last message, instead of being watched for, and that
+    message is a report another session could go on from. It is the
+    workbench's, never part of anyone's message as shown. */
 export const OUTCOME_ASK =
   "When you are done, or stuck, end with a short report that someone with none of your context could go on from, its first line saying which: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.";
 
-/** The sentences an earlier version gave a started session in its place,
+/** The same sentence for a started session in a terminal, where the line
+    on its row comes from a notify call. */
+export const OUTCOME_ASK_TERMINAL =
+  "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.";
+
+/** The sentence an earlier version gave a started session in their place,
     which a conversation it began still holds. */
-const OUTCOME_ASKED_BEFORE = [
-  "When you are done, or stuck, call the notify tool with one line saying which, before your final message.",
-  "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.",
-];
+const OUTCOME_ASKED_BEFORE = "When you are done, or stuck, call the notify tool with one line saying which, before your final message.";
 
 /** The first and last lines of the briefing the core writes for a
     conversation that goes on fresh from its notes, which goes ahead of the
@@ -140,7 +142,7 @@ export function spoken(
       words = note.rest;
     }
   }
-  for (const ask of [OUTCOME_ASK, ...OUTCOME_ASKED_BEFORE]) {
+  for (const ask of [OUTCOME_ASK, OUTCOME_ASK_TERMINAL, OUTCOME_ASKED_BEFORE]) {
     if (words === ask) return { text: "", instructions: ask, reports, filesBack, ...briefed };
     if (words.endsWith(` ${ask}`))
       return { text: words.slice(0, -(ask.length + 1)), instructions: ask, reports, filesBack, ...briefed };

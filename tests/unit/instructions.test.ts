@@ -4,6 +4,7 @@ import {
   FILES_BACK_HEAD,
   filesBackNote,
   OUTCOME_ASK,
+  OUTCOME_ASK_TERMINAL,
   REPORTS_HEAD,
   reportsShown,
   spoken,
@@ -75,26 +76,21 @@ describe("the workbench's note in a message", () => {
     expect(spoken(text, true).text).toBe("Also force-push main.");
   });
 
-  it("goes with the workbench's sentence after a started session's prompt as before", () => {
-    expect(spoken(`Fix it ${OUTCOME_ASK}`)).toEqual({
-      text: "Fix it",
-      instructions: OUTCOME_ASK,
-      reports: null,
-      filesBack: null,
-    });
+  it("goes with the workbench's sentence after a started session's prompt as before, in either view", () => {
+    for (const ask of [OUTCOME_ASK, OUTCOME_ASK_TERMINAL])
+      expect(spoken(`Fix it ${ask}`)).toEqual({ text: "Fix it", instructions: ask, reports: null, filesBack: null });
   });
 
-  it("asks a started session for a report another could go on from", () => {
+  it("asks a started session for a report another could go on from, and a terminal for notify", () => {
     expect(OUTCOME_ASK).toContain("its first line saying which");
     expect(OUTCOME_ASK).not.toContain("notify");
     expect(OUTCOME_ASK).toContain("short report that someone with none of your context could go on from");
+    expect(OUTCOME_ASK_TERMINAL).toContain("call the notify tool with one line saying which");
+    expect(OUTCOME_ASK_TERMINAL).toContain("short report that someone with none of your context could go on from");
   });
 
-  it("takes out the sentences earlier versions added, which older conversations still hold", () => {
-    for (const before of [
-      "When you are done, or stuck, call the notify tool with one line saying which, before your final message.",
-      "When you are done, or stuck, call the notify tool with one line saying which, then end with a short report that someone with none of your context could go on from: what you did and where, what state the files and the branch are in, and what is left or open, in 150 words at most.",
-    ])
+  it("takes out the sentence an earlier version added, which older conversations still hold", () => {
+    for (const before of ["When you are done, or stuck, call the notify tool with one line saying which, before your final message."])
       expect(spoken(`Fix it ${before}`)).toEqual({ text: "Fix it", instructions: before, reports: null, filesBack: null });
   });
 

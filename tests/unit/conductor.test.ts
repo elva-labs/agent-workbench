@@ -10,7 +10,7 @@ import {
   PASTE_FROM,
   PIECE,
   PIECE_EVERY,
-  OUTCOME_ASK,
+  OUTCOME_ASK_TERMINAL,
   REPORTS_HEAD,
   USER_WROTE,
   KEEP_WAITING,
@@ -754,7 +754,7 @@ describe("starting a session", () => {
     }
   });
 
-  it("gives the session its prompt as one line, and asks it to say how it went", async () => {
+  it("gives the session its prompt as one line, and asks it to say how it went, with notify in a terminal", async () => {
     const row = await startAllowed(
       call(
         "start",
@@ -764,7 +764,9 @@ describe("starting a session", () => {
       "pty-1",
       "sid-new",
     );
-    expect(row.prompt).toBe(`Fix the flaky test in the cache ${OUTCOME_ASK}`);
+    expect(row.prompt).toBe(`Fix the flaky test in the cache ${OUTCOME_ASK_TERMINAL}`);
+    expect(row.kind).toBe("terminal");
+    expect(OUTCOME_ASK_TERMINAL).toContain("call the notify tool with one line saying which");
     expect(written).toHaveLength(0);
   });
 
@@ -3896,7 +3898,7 @@ describe("resuming a session", () => {
     expect(row.id).toBe("sid-1");
     expect(row.startIn).toBe(tree);
     expect(row.title).toBe("Cache flake");
-    expect(row.prompt).toBe(`Go on with the test ${OUTCOME_ASK}`);
+    expect(row.prompt).toBe(`Go on with the test ${OUTCOME_ASK_TERMINAL}`);
     expect(row.model).toBe("opus");
     expect(startedFor(row.key)).toBe(tok("caller-1"));
     // Nothing is made: the worktree stands.
@@ -6966,7 +6968,7 @@ describe("a session whose work is over", () => {
     expect(byKey(row.key)).toBeNull();
     const back = await resumed(call("send", { session: "sid-1", text: "Fix the docs too" }), "pty-1b");
     expect(back.id).toBe("sid-1");
-    expect(back.prompt).toBe(`Fix the docs too ${OUTCOME_ASK}`);
+    expect(back.prompt).toBe(`Fix the docs too ${OUTCOME_ASK_TERMINAL}`);
     expect(last().content).toMatch(
       /^Session sid-1 was not running: the workbench put it away once its work was over\. Your line resumed it\. Resumed session sid-1 /,
     );

@@ -706,7 +706,9 @@ A session it starts is asked, at the end of its prompt, to leave a line on
 its row when it is done or stuck, so the pane, the board and the wait tool
 all say how it went, and to end with a short report that someone with none
 of its context could go on from: what it did and where, what state the
-files and the branch are in, and what is left or open. The tools' own words
+files and the branch are in, and what is left or open. In a terminal the
+line goes to the notify tool; in a conversation it is the report's first
+line, which the workbench puts on the row when the turn ends. The tools' own words
 say that a new task is a new session, and that resuming a session or
 sending it a line is for the task it already has, since either carries its
 whole conversation into the work, or for one cold and large, its notes of

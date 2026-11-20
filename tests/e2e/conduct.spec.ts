@@ -206,7 +206,8 @@ test.describe("the conductor", () => {
     expect(answer.content).toContain("session-2");
 
     // The new session is started with the prompt on its command line, and
-    // with the sentence that asks it to say how it went.
+    // with the sentence that asks it to say how it went, by notify in a
+    // terminal.
     const spawns = await page.evaluate(
       () =>
         (window as unknown as { __spawns?: { prompt?: string }[] }).__spawns ??
@@ -214,7 +215,7 @@ test.describe("the conductor", () => {
     );
     expect(spawns.at(-1)?.prompt).toContain("Fix the flaky test");
     expect(spawns.at(-1)?.prompt).toContain(
-      "its first line saying which",
+      "call the notify tool with one line saying which",
     );
 
     // The new session is listed as the caller's own; the caller itself,

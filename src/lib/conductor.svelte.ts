@@ -119,7 +119,7 @@ import { lastRun, nameSessionsBy } from "$lib/thread";
 import { logUsage } from "$lib/usageLog";
 import { defaultModelOf } from "$lib/lastChosen.svelte";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
-import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD, stillOutLine } from "$lib/instructions";
+import { atWorkLine, OUTCOME_ASK, OUTCOME_ASK_TERMINAL, REPORTS_HEAD, stillOutLine } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsWorkbench, readsAsYou, reservedName, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
@@ -170,7 +170,7 @@ export const KEEP_WAITING =
     call names no number, and the most it answers with whatever it names. */
 export const LINES = 40;
 export const LINES_MAX = 200;
-export { OUTCOME_ASK, REPORTS_HEAD };
+export { OUTCOME_ASK, OUTCOME_ASK_TERMINAL, REPORTS_HEAD };
 
 /** How long after a line is typed its Enter follows. An agent takes a
     chunk that arrives at once for a paste, and an Enter inside a paste is
@@ -2705,6 +2705,13 @@ function nameCut(name: string): string {
   return chars.length > NAME_MOST ? `${chars.slice(0, NAME_MOST - 1).join("")}…` : name;
 }
 
+/** The sentence a started session's prompt ends with, by the way its
+    agent runs: a conversation's row reads its last message, a terminal's
+    the line it gives the notify tool. */
+function outcomeAsk(agent: AgentId): string {
+  return kindFor(agent) === "integrated" ? OUTCOME_ASK : OUTCOME_ASK_TERMINAL;
+}
+
 /** The rest of a start, once it has been held to the caller's workflow:
     the account it runs under, which turns on the agent the step chose, the
     question, and the session itself. */
@@ -2780,7 +2787,7 @@ async function startFitted(
     null,
     agent,
     startIn,
-    `${oneLine(prompt)} ${OUTCOME_ASK}`,
+    `${oneLine(prompt)} ${outcomeAsk(agent)}`,
     model,
     account,
     null,
@@ -3398,7 +3405,7 @@ async function resumeSession(
       id,
       agent,
       worktree,
-      prompt === null ? null : `${oneLine(prompt)} ${OUTCOME_ASK}`,
+      prompt === null ? null : `${oneLine(prompt)} ${outcomeAsk(agent)}`,
       model,
       entry.account ?? null,
       null,
