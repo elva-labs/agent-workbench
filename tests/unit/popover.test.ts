@@ -83,3 +83,10 @@ describe("an open popover", () => {
     expect(interrupted).toBe(1);
   });
 });
+
+describe("an open popover and the window", () => {
+  it("is put away when the window loses focus", () => {
+    window.dispatchEvent(new Event("blur"));
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});

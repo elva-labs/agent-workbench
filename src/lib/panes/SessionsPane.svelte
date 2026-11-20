@@ -1,6 +1,7 @@
 <script lang="ts">
   import Pane from "$lib/components/Pane.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+  import { putAway } from "$lib/popover";
   import {
     closeAsking,
     closingCancel,
@@ -1529,6 +1530,40 @@
       drag of a scroll bar or a selection. */
   let pressHeld = $state(false);
 
+  /** Every menu the pane can have open, put away. */
+  function closeMenus() {
+    menuOpen = false;
+    sortOpen = false;
+    projectMenu = null;
+    sessionMenu = null;
+  }
+
+  // An open menu goes with a press anywhere in the window outside it and the
+  // buttons that open it, Escape, the window losing focus or changing size,
+  // and the keyboard moving to another pane. The press is not stopped, so it
+  // does what it would have done.
+  $effect(() => {
+    if (!(menuOpen || sortOpen || projectMenu !== null || sessionMenu !== null)) return;
+    return putAway({
+      inside: () => [
+        ...(nav?.querySelectorAll(
+          '.menu, [data-testid="project-sort"], [data-testid="sessions-menu"], [data-testid="project-more"]',
+        ) ?? []),
+      ],
+      close: closeMenus,
+      control: () => nav,
+    });
+  });
+
+  let heldFocus = layout.focus === "sessions";
+  $effect(() => {
+    const here = layout.focus === "sessions";
+    if (here) heldFocus = true;
+    else if (heldFocus) {
+      heldFocus = false;
+      closeMenus();
+    }
+  });
   // What holds the pane in compact mode while the pointer is away from it:
   // a menu, the new-session choice, a question in the pane, a press under
   // way, or the keyboard walking it.
@@ -1834,9 +1869,6 @@
 <!-- A session's own menu, under its row, or over it near the pane's foot. -->
 {#snippet sessionMenuFor(key: string)}
   {#if sessionMenu?.key === key}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="scrim" onclick={() => (sessionMenu = null)}></div>
     <div class="menu session-menu" data-card class:up={sessionMenu.up} role="menu" data-testid="session-menu">
       {#each sessionItems as item, index (item.id)}
         {#if item.destructive && index > 0}<div class="separator" role="separator"></div>{/if}
@@ -2088,9 +2120,6 @@
      near the pane's foot. -->
 {#snippet projectMenuFor(path: string)}
   {#if projectMenu?.path === path}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="scrim" onclick={() => (projectMenu = null)}></div>
     <div class="menu project-menu" data-card class:up={projectMenu.up} role="menu" data-testid="project-menu">
       {#each projectItems as item, index (item.id)}
         {#if item.destructive && index > 0}<div class="separator" role="separator"></div>{/if}
@@ -2330,9 +2359,6 @@
       ><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h7M3 11.5h4" /></svg></button
     >
     {#if sortOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="scrim" onclick={() => (sortOpen = false)}></div>
       <div class="menu sort-menu" data-card role="menu" data-testid="project-sort-menu">
         {#each SORTS as choice, index (choice.sort)}
           <button
@@ -2367,9 +2393,6 @@
       ></button
     >
     {#if menuOpen}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="scrim" onclick={() => (menuOpen = false)}></div>
       <div class="menu more-menu" data-card role="menu" data-testid="sessions-menu-items">
         {#each menuItems as item, index (item.id)}
           <button
@@ -2870,12 +2893,6 @@
   .tool[aria-expanded="true"] {
     background: var(--surface-2);
     color: var(--ink);
-  }
-
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 4;
   }
 
   /* A few short items, in a pane that can be narrower than the changes
