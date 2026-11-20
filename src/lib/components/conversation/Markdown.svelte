@@ -1,7 +1,7 @@
 <script lang="ts">
   import { core } from "$lib/core";
   import { saidBlocks, settled } from "$lib/media.svelte";
-  import { mount, tick, unmount } from "svelte";
+  import { mount, tick, unmount, untrack } from "svelte";
   import Copy from "./Copy.svelte";
 
   /**
@@ -23,7 +23,9 @@
 
   let { text, streaming = false }: Props = $props();
 
-  let shown = $state("");
+  // Drawn with its text from the first render, so the row it is in has its
+  // full height when the thread measures it.
+  let shown = $state(untrack(() => text));
   let frame: number | null = null;
 
   $effect(() => {
