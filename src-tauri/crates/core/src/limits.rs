@@ -312,6 +312,33 @@ impl Figures {
         self.taken_at > other.taken_at
             || (self.taken_at == other.taken_at && self.read_at > other.read_at)
     }
+
+    /// These figures with the windows `other` has that they lack, each as
+    /// `other` last had it. A window the account has does not leave because
+    /// one report names fewer, as a push between reads does. The plan and
+    /// the last read are `other`'s where these have none.
+    fn filled_from(mut self, other: &Self) -> Self {
+        let missing: Vec<LimitWindow> = other
+            .windows
+            .iter()
+            .filter(|held| {
+                !self
+                    .windows
+                    .iter()
+                    .any(|window| window.kind == held.kind && window.model == held.model)
+            })
+            .cloned()
+            .collect();
+        self.windows.extend(missing);
+        self.windows = kept_windows(self.windows);
+        if self.plan.is_none() {
+            self.plan = other.plan.clone();
+        }
+        if self.read_at.is_none() {
+            self.read_at = other.read_at;
+        }
+        self
+    }
 }
 
 /// What is known of one account.
@@ -352,9 +379,11 @@ impl Account {
         if read_newer {
             self.last_read = figures.read_at;
         }
-        if self.figures.as_ref().is_none_or(|held| figures.over(held)) {
-            self.figures = Some(figures);
-        }
+        self.figures = Some(match self.figures.take() {
+            Some(held) if figures.over(&held) => figures.filled_from(&held),
+            Some(held) => held.filled_from(&figures),
+            None => figures,
+        });
         read_newer
     }
 }
