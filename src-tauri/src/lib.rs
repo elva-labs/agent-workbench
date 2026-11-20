@@ -446,8 +446,9 @@ async fn integrated_snapshot(
 
 /// The usage limits of an account on the machine the project is on, read
 /// there first where `read` asks and a read is due, sooner where `worked`
-/// says a session of the account worked since the last. Null where there
-/// are none.
+/// says a session of the account worked since the last, and where the
+/// newest was taken before `since`. Null where there are none.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn account_limits(
     core: State<'_, Arc<Core>>,
@@ -457,15 +458,24 @@ async fn account_limits(
     config_dir: Option<String>,
     read: bool,
     worked: Option<bool>,
+    since: Option<u64>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
     let worked = worked.unwrap_or(false);
     blocking(move || match route(&project) {
-        Route::Local(_) => value(core.account_limits(&agent, config_dir.as_deref(), read, worked)),
+        Route::Local(_) => {
+            value(core.account_limits(&agent, config_dir.as_deref(), read, worked, since))
+        }
         Route::Remote { host, .. } => remotes.connection(&host)?.call(
             "account_limits",
-            json!({ "agent": agent, "configDir": config_dir, "read": read, "worked": worked }),
+            json!({
+                "agent": agent,
+                "configDir": config_dir,
+                "read": read,
+                "worked": worked,
+                "since": since,
+            }),
         ),
     })
     .await
@@ -529,9 +539,11 @@ async fn going_on(
     session: String,
     config_dir: Option<String>,
     token: String,
+    always: Option<bool>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
+    let always = always.unwrap_or(false);
     let cwd = cwd.map(|cwd| match route(&cwd) {
         Route::Remote { rest, .. } => rest,
         Route::Local(cwd) => cwd,
@@ -544,6 +556,7 @@ async fn going_on(
             &session,
             config_dir.as_deref(),
             &token,
+            always,
         )?),
         Route::Remote { host, rest } => remotes.connection(&host)?.call(
             "going_on",
@@ -554,6 +567,7 @@ async fn going_on(
                 "session": session,
                 "configDir": config_dir,
                 "token": token,
+                "always": always,
             }),
         ),
     })

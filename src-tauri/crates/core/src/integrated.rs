@@ -378,6 +378,17 @@ pub enum Event {
         read_at: Option<u64>,
         taken_at: u64,
     },
+    /// The turn that ends next was refused by the account's own usage
+    /// limit, as the agent itself names the refusal, and by nothing else:
+    /// a turn the user stopped, one that failed for any other reason and
+    /// one that finished send none. `window` is the window that was used
+    /// up, null where it is none of those told apart here, a spend cap
+    /// among them; `resetsAt` is when it starts over, in seconds since
+    /// the epoch, where the agent says. Sent just before the turn's end.
+    LimitReached {
+        window: Option<LimitKind>,
+        resets_at: Option<u64>,
+    },
     /// Something the agent says that is neither an error nor part of a
     /// turn: that it fell back to another model, that its instructions are
     /// long, that something it uses is going away.

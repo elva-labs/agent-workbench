@@ -2086,6 +2086,7 @@ mod tests {
             "notifications",
             "chime",
             "askEveryStart",
+            "autoResume",
         ] {
             assert!(!properties.contains_key(name), "{name} is the user's alone");
         }

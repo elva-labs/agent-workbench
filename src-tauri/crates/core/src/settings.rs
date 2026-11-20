@@ -361,6 +361,12 @@ pub struct Settings {
     /// which reads as off.
     #[serde(default)]
     pub compact: bool,
+    /// Whether a new conversation goes on by itself once the usage limit
+    /// that cut it short resets: the user's last choice on a conversation,
+    /// which the next new one starts with. A file from before has none,
+    /// which reads as off.
+    #[serde(default)]
+    pub auto_resume: bool,
     /// The model, the effort and the permission mode the user last chose
     /// for each agent's sessions, by the agent's id, which a new session of
     /// that agent starts on. A file from before has none.
@@ -397,6 +403,7 @@ impl Default for Settings {
             chime: false,
             ask_every_start: false,
             compact: false,
+            auto_resume: false,
             last_chosen: BTreeMap::new(),
             unread_entries: Vec::new(),
         }
@@ -1209,6 +1216,9 @@ fn set_field(settings: &mut Settings, field: &str, value: &Value) -> Result<(), 
             settings.ask_every_start = value.as_bool().ok_or("askEveryStart is true or false")?;
         }
         "compact" => settings.compact = value.as_bool().ok_or("compact is true or false")?,
+        "autoResume" => {
+            settings.auto_resume = value.as_bool().ok_or("autoResume is true or false")?;
+        }
         "lastChosen" => settings.last_chosen = last_chosen(value)?,
         "terminalFont" => settings.terminal_font = one_of(field, value, TERMINAL_FONTS)?,
         "interfaceFont" => settings.interface_font = one_of(field, value, INTERFACE_FONTS)?,
@@ -3090,6 +3100,20 @@ mod tests {
         let odd = parse(r#"{ "compact": "yes" }"#).unwrap();
         assert!(!odd.compact);
         assert_eq!(odd.unread_entries[0].field, "compact");
+    }
+
+    #[test]
+    fn going_on_after_a_usage_limit_is_off_until_chosen() {
+        let defaults = Settings::default();
+        assert!(!defaults.auto_resume);
+        let next = apply(&defaults, &json!({ "autoResume": true })).unwrap();
+        assert!(next.auto_resume);
+        assert!(apply(&next, &json!({ "autoResume": "yes" })).is_err());
+        assert!(parse(r#"{ "autoResume": true }"#).unwrap().auto_resume);
+        assert!(!parse(r#"{ "chime": true }"#).unwrap().auto_resume);
+        let odd = parse(r#"{ "autoResume": 1 }"#).unwrap();
+        assert!(!odd.auto_resume);
+        assert_eq!(odd.unread_entries[0].field, "autoResume");
     }
 
     #[test]

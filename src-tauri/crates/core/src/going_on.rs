@@ -7,7 +7,9 @@
 //! fresh conversation, given its brief and the list of its notes, how it
 //! began, its last exchanges word for word, and where its transcript is,
 //! to be searched for a detail and never read whole. A warm or small one
-//! is resumed whole, as is any the user asks to have whole.
+//! is resumed whole, as is any the user asks to have whole. A conversation
+//! the window takes up by itself once a usage limit resets goes on from
+//! its notes whatever its size and however long it rested.
 
 use std::path::Path;
 
@@ -158,6 +160,28 @@ pub fn judge(
     now: u64,
     held: Option<&str>,
 ) -> GoingOn {
+    judged(transcript, notes, now, held, false)
+}
+
+/// How a Claude Code conversation goes on from its notes whatever its
+/// size and however long it rested: as [`judge`] takes it up, but with the
+/// briefing always, where the conversation can be followed at all.
+pub fn from_notes(
+    transcript: &Path,
+    notes: impl FnOnce(Option<i64>) -> Option<String>,
+    now: u64,
+    held: Option<&str>,
+) -> GoingOn {
+    judged(transcript, notes, now, held, true)
+}
+
+fn judged(
+    transcript: &Path,
+    notes: impl FnOnce(Option<i64>) -> Option<String>,
+    now: u64,
+    held: Option<&str>,
+    always: bool,
+) -> GoingOn {
     let line = match held {
         Some(at) => match crate::claude_history::held_line(transcript, at) {
             Some(line) => Some(line),
@@ -173,7 +197,7 @@ pub fn judge(
         None => None,
     };
     let standing = crate::claude_history::standing(transcript, line.as_ref());
-    let goes_on = standing.is_some_and(|standing| goes_on(&standing, now));
+    let goes_on = always || standing.is_some_and(|standing| goes_on(&standing, now));
     let briefing = goes_on.then(|| {
         let since = standing
             .filter(|_| held.is_some())

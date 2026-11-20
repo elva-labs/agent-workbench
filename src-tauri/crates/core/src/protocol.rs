@@ -165,6 +165,8 @@ struct AccountLimitsParams {
     read: bool,
     #[serde(default)]
     worked: bool,
+    #[serde(default)]
+    since: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -190,6 +192,8 @@ struct GoingOnParams {
     #[serde(default)]
     config_dir: Option<String>,
     token: String,
+    #[serde(default)]
+    always: bool,
 }
 
 #[derive(Deserialize)]
@@ -647,6 +651,7 @@ pub fn dispatch(
                 &p.session,
                 p.config_dir.as_deref(),
                 &p.token,
+                p.always,
             )?)
         }
         "integrated_history" => {
@@ -687,7 +692,7 @@ pub fn dispatch(
         }
         "account_limits" => {
             let p: AccountLimitsParams = parse(params)?;
-            value(core.account_limits(&p.agent, p.config_dir.as_deref(), p.read, p.worked))
+            value(core.account_limits(&p.agent, p.config_dir.as_deref(), p.read, p.worked, p.since))
         }
         "integrated_stop" => {
             let p: IdParams = parse(params)?;

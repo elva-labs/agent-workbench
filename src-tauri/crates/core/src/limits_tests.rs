@@ -566,6 +566,40 @@ fn an_account_no_session_worked_on_since_is_read_every_half_hour() {
 }
 
 #[test]
+fn figures_read_before_a_time_asked_about_are_read_again_at_once() {
+    let clock = Clock::new();
+    let failing = limits(&clock, None);
+    let limits = limits(&clock, None);
+    let reads = AtomicUsize::new(0);
+    let since = |limits: &Limits, since: u64| {
+        let at = clock.now();
+        limits.poll_since("claude-code", Path::new(DIR), true, Some(since), || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            Ok(read_at(at, 10.0))
+        })
+    };
+    poll(&limits, &clock, &reads, 100.0);
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    // A window started over a minute on: the fresh figures say nothing
+    // of it, and are read again.
+    clock.on(2 * MINUTE);
+    assert_eq!(percent(since(&limits, T0 + MINUTE)), Some(10.0));
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    // Read since, they stand as any fresh figures do.
+    clock.on(MINUTE);
+    since(&limits, T0 + MINUTE);
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    // A read that failed holds the next back, asked about a time or not.
+    failing.poll("claude-code", Path::new(DIR), true, || Err("no".into()));
+    let again = AtomicUsize::new(0);
+    failing.poll_since("claude-code", Path::new(DIR), true, Some(T0), || {
+        again.fetch_add(1, Ordering::SeqCst);
+        Err("no".into())
+    });
+    assert_eq!(again.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn a_failed_read_is_quiet_and_tried_again_later_and_later() {
     let clock = Clock::new();
     let limits = limits(&clock, None);
