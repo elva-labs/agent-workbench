@@ -1142,3 +1142,133 @@ fn a_thread_s_messages_are_read_with_their_turns_oldest_first() {
         "Codex does not have this conversation"
     );
 }
+
+fn shell(id: &str, line: &str, status: &str, code: i64, output: &str, at: u64) -> Value {
+    json!({
+        "type": "commandExecution", "id": id, "pluginId": null, "scriptPath": null,
+        "command": line, "cwd": "/work/demo", "processId": null, "source": "userShell",
+        "status": status, "commandActions": [], "aggregatedOutput": output,
+        "exitCode": code, "durationMs": 80, "startedAtMs": at, "completedAtMs": at + 80,
+    })
+}
+
+/// Each command the user ran, as its id, state, line, exit code, output
+/// and error.
+fn commands(history: &History) -> Vec<String> {
+    history
+        .items
+        .iter()
+        .filter_map(|said| match &said.event {
+            Event::Command {
+                command,
+                state,
+                text,
+                exit_code,
+                output,
+                error,
+                ..
+            } => Some(format!(
+                "{command} {state:?} {text} {exit_code:?} {output:?} {error:?}"
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_command_the_user_ran_comes_back_as_typed_and_its_turn_as_no_turn() {
+    let (history, _) = read_all(vec![(
+        "thread/turns/list",
+        page(
+            vec![
+                turn(
+                    "turn-4",
+                    "inProgress",
+                    1_400,
+                    vec![shell(
+                        "sh-4",
+                        "/bin/zsh -lc 'sleep 9'",
+                        "inProgress",
+                        -1,
+                        "",
+                        1_400_000,
+                    )],
+                ),
+                turn(
+                    "turn-3",
+                    "interrupted",
+                    1_300,
+                    vec![shell(
+                        "sh-3",
+                        "/bin/zsh -lc 'sleep 47'",
+                        "failed",
+                        -1,
+                        "command aborted by user",
+                        1_300_000,
+                    )],
+                ),
+                turn(
+                    "turn-2",
+                    "completed",
+                    1_200,
+                    vec![
+                        user("u-2", Some("m-2"), "Go on", 1_200_000),
+                        shell(
+                            "sh-2",
+                            "/bin/zsh -lc 'echo it'\\''s'",
+                            "completed",
+                            0,
+                            "it's\n",
+                            1_200_100,
+                        ),
+                        agent("msg-2", "Going on.", 1_200_300),
+                    ],
+                ),
+                turn(
+                    "turn-1",
+                    "completed",
+                    1_100,
+                    vec![shell(
+                        "sh-1",
+                        r#"/bin/zsh -lc "printf 'a\\n'; ls \"no dir\"""#,
+                        "failed",
+                        1,
+                        "a\nls: no dir: No such file or directory\n",
+                        1_100_000,
+                    )],
+                ),
+            ],
+            None,
+        ),
+    )]);
+    assert_eq!(
+        outline(&history),
+        [
+            "1100000 command",
+            "1200000 message m-2",
+            "1200000 turnStarted",
+            "1200100 command",
+            "1200300 text msg-2",
+            "1202000 turnEnded",
+            "1300000 command",
+            "1400000 command",
+        ]
+    );
+    assert_eq!(
+        commands(&history),
+        [
+            r#"sh-1 Done printf 'a\n'; ls "no dir" Some(1) Some("a\nls: no dir: No such file or directory\n") None"#,
+            r#"sh-2 Done echo it's Some(0) Some("it's\n") None"#,
+            "sh-3 Stopped sleep 47 None None None",
+            "sh-4 Running sleep 9 None None None",
+        ]
+    );
+}
+
+#[test]
+fn a_command_line_not_run_through_a_posix_shell_is_kept_whole() {
+    assert_eq!(typed("pwsh -Command ls"), "pwsh -Command ls");
+    assert_eq!(typed("/bin/bash -c 'a' 'b'"), "/bin/bash -c 'a' 'b'");
+    assert_eq!(typed("/bin/sh -c ls"), "ls");
+    assert_eq!(typed("/bin/zsh -lc 'unclosed"), "/bin/zsh -lc 'unclosed");
+}

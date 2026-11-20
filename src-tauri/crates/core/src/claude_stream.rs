@@ -28,7 +28,7 @@ use crate::integrated::{
     kept_windows, limits_due, now_seconds, percent, ChangeKind, Choice, CommandInfo, CompactReason,
     Control, Driver, ErrorKind, Event, FileChange, Hunk, Image, Launch, LimitKind, LimitSeverity,
     LimitWindow, MessageState, ModeInfo, ModelInfo, NoticeLevel, Offer, Outcome, PlanStep,
-    Prepared, Protocol, Question, QuestionOption, Reading, Sending, StepStatus, TaskKind,
+    Prepared, Protocol, Question, QuestionOption, Ran, Reading, Sending, StepStatus, TaskKind,
     TaskStatus, ToolKind, Usage,
 };
 
@@ -552,6 +552,15 @@ struct Stream {
     /// agent has said it took.
     ours: HashSet<String>,
     taken: HashSet<String>,
+    /// Commands the core ran and recorded, until the agent is done with
+    /// their record.
+    quiet: HashSet<String>,
+    /// Whether every line the agent started since its last turn is a
+    /// record, so the turn it opens for them is none to show.
+    batch: Option<bool>,
+    /// The agent opened a turn for records alone, which ends with no
+    /// model asked.
+    hushed: bool,
     /// Messages the user asked to take back, until the agent says whether
     /// it let go of each.
     withdrawing: HashSet<String>,
@@ -579,6 +588,18 @@ struct Stream {
     /// answered was taken, in seconds since the epoch.
     usage_asked: Option<Instant>,
     read_at: Option<u64>,
+}
+
+/// What heads a command the user ran, in the agent's record of it.
+pub(crate) const RAN_CAVEAT: &str = "<local-command-caveat>The command below was run directly in Claude Code, not sent to you as a request, and its output goes straight to the user. It's recorded here as context for later messages.</local-command-caveat>";
+
+/// Output in the agent's record of a command, escaped as the agent
+/// escapes it, so no output closes the tag it stands in.
+fn escape(output: &str) -> String {
+    output
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// What names the tool call a result belongs to, in a line from the agent.
@@ -1009,6 +1030,9 @@ impl Stream {
             calls: HashMap::new(),
             tasks: HashMap::new(),
             lost: HashSet::new(),
+            quiet: HashSet::new(),
+            batch: None,
+            hushed: false,
             turn: false,
             starting: Vec::new(),
             ours: HashSet::new(),
@@ -1636,7 +1660,11 @@ impl Stream {
         match line["subtype"].as_str() {
             // Every turn opens with the agent describing itself.
             Some("init") => {
-                self.begin(out);
+                if !self.turn && self.batch == Some(true) {
+                    self.hushed = true;
+                } else {
+                    self.begin(out);
+                }
                 if let Some(capabilities) = line["capabilities"].as_array() {
                     self.sends_now = capabilities.iter().any(|c| c == SEND_NOW);
                 }
@@ -1859,14 +1887,32 @@ impl Stream {
             return;
         };
         match line["state"].as_str() {
-            Some("started") => self.took(message, out),
-            Some("completed") => self.done_with(message, out, false),
-            Some("cancelled" | "discarded" | "refused") => self.done_with(message, out, true),
+            Some("started") => {
+                if !self.turn {
+                    let record = self.quiet.contains(message);
+                    self.batch = Some(self.batch.unwrap_or(true) && record);
+                }
+                self.took(message, out);
+            }
+            Some("completed") => {
+                self.quiet.remove(message);
+                self.done_with(message, out, false);
+            }
+            Some("cancelled" | "discarded" | "refused") => {
+                self.quiet.remove(message);
+                self.done_with(message, out, true);
+            }
             _ => {}
         }
     }
 
     fn result(&mut self, line: &Value, out: &mut Reading) {
+        // A turn opened for records alone asks no model and is not shown.
+        let hushed = std::mem::take(&mut self.hushed);
+        self.batch = None;
+        if hushed && !self.turn && line["num_turns"].as_u64() == Some(0) {
+            return;
+        }
         self.begin(out);
         // A task of the main conversation that its call waited on is over
         // with the turn, and so is one gone from the background that has no
@@ -2229,6 +2275,36 @@ impl Driver for Stream {
 
     fn takes_while_busy(&self) -> bool {
         true
+    }
+
+    /// The command goes in as the agent records one the user ran in its
+    /// own terminal: a caveat, the command and its output, as context for
+    /// the next message, with no turn of its own and taken as written.
+    fn ran(&mut self, command: &str, ran: &Ran) -> Result<String, String> {
+        let mut content = format!(
+            "{RAN_CAVEAT}\n<bash-input>{}</bash-input>\n<bash-stdout>{}</bash-stdout><bash-stderr>{}</bash-stderr>",
+            ran.text,
+            escape(ran.stdout),
+            escape(ran.stderr),
+        );
+        if let Some(code) = ran.exit_code.filter(|&code| code != 0) {
+            content.push_str(&format!("\n<bash-exit-code>{code}</bash-exit-code>"));
+        }
+        self.quiet.insert(command.to_string());
+        Ok(json!({
+            "type": "user",
+            "message": { "role": "user", "content": content },
+            "parent_tool_use_id": null,
+            "uuid": command,
+            "shouldQuery": false,
+            "priority": "later",
+            "client_composed": true,
+        })
+        .to_string())
+    }
+
+    fn recording(&self) -> bool {
+        !self.quiet.is_empty()
     }
 
     fn message(&mut self, message: &str, text: &str, images: &[Image]) -> Result<String, String> {
@@ -2618,6 +2694,120 @@ mod tests {
             ],
         );
         assert_eq!(started(&out), [vec![M2.to_string(), M3.to_string()]]);
+    }
+
+    const C1: &str = "44444444-4444-4444-8444-444444444444";
+
+    fn ran(stream: &mut Stream, command: &str, exit_code: Option<i32>) -> Value {
+        let line = stream
+            .ran(
+                command,
+                &Ran {
+                    text: "ls nope",
+                    stdout: "a <b> & c\n",
+                    stderr: "",
+                    exit_code,
+                },
+            )
+            .unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
+    /// The agent's lines for a record it took while no turn ran: a turn
+    /// that asks no model.
+    fn recorded(command: &str) -> Vec<Value> {
+        vec![
+            lifecycle(command, "queued"),
+            lifecycle(command, "started"),
+            init(),
+            json!({"type":"user","message":{"role":"user","content":"<bash-input>ls nope</bash-input>"},"parent_tool_use_id":null,"uuid":command,"isReplay":true}),
+            json!({"type":"result","subtype":"success","is_error":false,"num_turns":0,"total_cost_usd":0}),
+            lifecycle(command, "completed"),
+        ]
+    }
+
+    fn turns(out: &[Event]) -> usize {
+        out.iter()
+            .filter(|e| matches!(e, Event::TurnStarted { .. } | Event::TurnEnded { .. }))
+            .count()
+    }
+
+    #[test]
+    fn a_command_is_recorded_as_the_agent_records_one_the_user_ran() {
+        let mut stream = stream();
+        let line = ran(&mut stream, C1, Some(2));
+        assert_eq!(line["uuid"], C1);
+        assert_eq!(line["shouldQuery"], false);
+        assert_eq!(line["priority"], "later");
+        assert_eq!(line["client_composed"], true);
+        assert_eq!(
+            line["message"]["content"],
+            format!(
+                "{RAN_CAVEAT}\n<bash-input>ls nope</bash-input>\n<bash-stdout>a &lt;b&gt; &amp; c\n</bash-stdout><bash-stderr></bash-stderr>\n<bash-exit-code>2</bash-exit-code>"
+            )
+        );
+        let line = ran(&mut stream, C1, Some(0));
+        assert!(!line["message"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("bash-exit-code"));
+    }
+
+    #[test]
+    fn a_record_taken_while_no_turn_runs_shows_no_turn() {
+        let mut stream = stream();
+        ran(&mut stream, C1, Some(0));
+        assert!(stream.recording());
+        let lines = recorded(C1);
+        let out = events(&mut stream, &lines[..lines.len() - 1]);
+        assert_eq!(turns(&out), 0, "{out:?}");
+        assert!(stream.recording());
+        events(&mut stream, &lines[lines.len() - 1..]);
+        assert!(!stream.recording());
+        // The next message starts its turn as before.
+        sent(&mut stream, M1);
+        let out = events(&mut stream, &[lifecycle(M1, "started"), init(), result()]);
+        assert_eq!(started(&out), [vec![M1.to_string()]]);
+        assert_eq!(turns(&out), 2);
+    }
+
+    #[test]
+    fn a_record_sent_while_a_turn_runs_is_taken_after_it_with_no_turn_of_its_own() {
+        let mut stream = stream();
+        sent(&mut stream, M1);
+        let mut out = events(&mut stream, &[lifecycle(M1, "started"), init()]);
+        ran(&mut stream, C1, None);
+        out.extend(events(
+            &mut stream,
+            &[
+                lifecycle(C1, "queued"),
+                result(),
+                lifecycle(M1, "completed"),
+            ],
+        ));
+        let lines = recorded(C1);
+        out.extend(events(&mut stream, &lines[1..]));
+        assert_eq!(started(&out), [vec![M1.to_string()]]);
+        assert_eq!(turns(&out), 2, "{out:?}");
+        assert!(!stream.recording());
+    }
+
+    #[test]
+    fn a_record_taken_with_a_message_starts_the_message_s_turn() {
+        let mut stream = stream();
+        ran(&mut stream, C1, Some(0));
+        sent(&mut stream, M1);
+        let out = events(
+            &mut stream,
+            &[
+                lifecycle(C1, "started"),
+                lifecycle(M1, "started"),
+                init(),
+                json!({"type":"result","subtype":"success","is_error":false,"num_turns":1,"total_cost_usd":0.01}),
+            ],
+        );
+        assert_eq!(started(&out), [vec![M1.to_string()]]);
+        assert_eq!(turns(&out), 2);
     }
 
     #[test]

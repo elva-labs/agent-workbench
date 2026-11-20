@@ -244,6 +244,19 @@ struct IntegratedWithdrawParams {
 }
 
 #[derive(Deserialize)]
+struct IntegratedRunParams {
+    id: String,
+    command: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct IntegratedCommandParams {
+    id: String,
+    command: String,
+}
+
+#[derive(Deserialize)]
 struct IntegratedRewindParams {
     id: String,
     message: String,
@@ -612,6 +625,16 @@ pub fn dispatch(
         "integrated_withdraw" => {
             let p: IntegratedWithdrawParams = parse(params)?;
             core.integrated_withdraw(&p.id, &p.message)?;
+            Ok(Value::Null)
+        }
+        "integrated_run" => {
+            let p: IntegratedRunParams = parse(params)?;
+            core.integrated_run(&p.id, &p.command, &p.text)?;
+            Ok(Value::Null)
+        }
+        "integrated_stop_command" => {
+            let p: IntegratedCommandParams = parse(params)?;
+            core.integrated_stop_command(&p.id, &p.command)?;
             Ok(Value::Null)
         }
         "integrated_compact" => {
@@ -1512,6 +1535,14 @@ mod tests {
             (
                 "integrated_withdraw",
                 json!({ "id": "int-none", "message": "11111111-1111-4111-8111-111111111111" }),
+            ),
+            (
+                "integrated_run",
+                json!({ "id": "int-none", "command": "11111111-1111-4111-8111-111111111111", "text": "ls" }),
+            ),
+            (
+                "integrated_stop_command",
+                json!({ "id": "int-none", "command": "11111111-1111-4111-8111-111111111111" }),
             ),
             ("integrated_compact", json!({ "id": "int-none" })),
             (

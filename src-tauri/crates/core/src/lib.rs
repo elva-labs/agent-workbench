@@ -49,6 +49,7 @@ pub mod show;
 pub mod styles;
 pub mod transcripts;
 pub mod usage;
+pub mod user_command;
 pub mod watch;
 pub mod workflow;
 

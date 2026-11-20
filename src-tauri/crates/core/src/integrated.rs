@@ -25,13 +25,14 @@ use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::events::{self, Sink};
+use crate::user_command::{self, Decoder, ForAgent, Shell};
 
 /// The one event name every integrated session's news goes out under.
 pub const INTEGRATED_EVENT: &str = "integrated_event";
@@ -69,6 +70,9 @@ pub struct Deadlines {
     /// How long what the agent left in its process group has, once asked to
     /// end with the agent gone, before it is killed.
     pub group_grace: Duration,
+    /// How long a command of the user's may run before it is stopped. One
+    /// that runs on, a watch or a server, belongs in a terminal.
+    pub command: Duration,
 }
 
 impl Default for Deadlines {
@@ -82,6 +86,7 @@ impl Default for Deadlines {
             stop_grace: Duration::from_secs(5),
             term_grace: Duration::from_secs(3),
             group_grace: Duration::from_secs(1),
+            command: Duration::from_secs(600),
         }
     }
 }
@@ -110,6 +115,12 @@ const OUTPUT_KEEP: usize = 64 * 1024;
 /// The most of a changed file, a turn's diff, or a tool call's streamed
 /// input or output, passed on to the window.
 const CONTENT_KEEP: usize = 256 * 1024;
+
+/// The most of a command's output kept for the window.
+#[cfg(not(test))]
+const COMMAND_KEEP: usize = 1024 * 1024;
+#[cfg(test)]
+const COMMAND_KEEP: usize = 64;
 
 /// How much of a session's news may wait for a slow window or connection
 /// before streamed pieces are left out of it.
@@ -188,6 +199,30 @@ pub enum Event {
         text: Option<String>,
         images: Vec<Image>,
     },
+    /// Where a command of the user's stands: a line typed with a leading
+    /// `!`, run in the session's folder, whose output the agent takes as
+    /// context without a turn. `command` is the id the window chose for
+    /// it and `text` the command itself, without the `!`. It is `queued`
+    /// while it waits behind a turn or another command, `running`, and
+    /// then `done` once it exited, with its `exitCode`, `stopped` when the
+    /// user stopped it, `timedOut` when it ran too long, `failed`, with
+    /// `error`, when it could not run, `withdrawn` when the user took it
+    /// back before it ran and `dropped` when the session ended first. The
+    /// last carries its `output`, stdout and stderr as they came, cut
+    /// short past a limit, which `truncated` says.
+    Command {
+        command: String,
+        state: CommandState,
+        text: String,
+        exit_code: Option<i32>,
+        output: Option<String>,
+        truncated: bool,
+        error: Option<String>,
+    },
+    /// The next piece of a running command's output. Pieces stop coming
+    /// past a limit; the output the command ends with holds all that was
+    /// kept.
+    CommandOutput { command: String, delta: String },
     /// The agent began a turn. `messages` are the ids of the messages it
     /// answers, as the window chose them; several sent while the last turn
     /// ran may be answered by one. Empty for a turn the agent began by
@@ -474,6 +509,26 @@ pub enum MessageState {
     Taken,
     Dropped,
     Withdrawn,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandState {
+    Queued,
+    Running,
+    Done,
+    Stopped,
+    TimedOut,
+    Failed,
+    Withdrawn,
+    Dropped,
+}
+
+impl CommandState {
+    /// Whether the command is over.
+    pub fn over(self) -> bool {
+        !matches!(self, Self::Queued | Self::Running)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -817,6 +872,19 @@ impl Event {
             images: vec![],
         }
     }
+
+    /// A command's event, with no output, exit code or error.
+    pub fn command(command: &str, state: CommandState, text: &str) -> Self {
+        Event::Command {
+            command: command.to_string(),
+            state,
+            text: text.to_string(),
+            exit_code: None,
+            output: None,
+            truncated: false,
+            error: None,
+        }
+    }
 }
 
 /// An event, with the session it belongs to, as it goes out.
@@ -1075,6 +1143,53 @@ pub trait Driver: Send {
     fn skipped(&mut self) -> Reading {
         Reading::default()
     }
+
+    /// Whether the agent runs a command of the user's itself. When it
+    /// does, the core hands it over with [`Driver::run`] only when no turn
+    /// runs, and the driver tells its run as [`Event::Command`] and
+    /// [`Event::CommandOutput`]; when it does not, the core runs it and
+    /// records it with [`Driver::ran`].
+    fn runs_commands(&self) -> bool {
+        false
+    }
+
+    /// For an agent that runs commands, the line that runs the user's
+    /// command `text` under the window's id, stopped after `timeout`.
+    fn run(&mut self, _command: &str, _text: &str, _timeout: Duration) -> Result<String, String> {
+        Err("the agent runs no command".into())
+    }
+
+    /// For an agent that does not run commands, the line that records a
+    /// command the core ran for the user, under the window's id, as
+    /// context the agent reads with the next message and no turn of its
+    /// own.
+    fn ran(&mut self, _command: &str, _ran: &Ran) -> Result<String, String> {
+        Err("the agent takes no command".into())
+    }
+
+    /// Whether a command the core ran is still being recorded: a message
+    /// waits until it is, so the agent reads the command first.
+    fn recording(&self) -> bool {
+        false
+    }
+
+    /// For an agent that runs commands, the line that stops the one it
+    /// runs, or None when the driver sends it once it can. The driver
+    /// tells it as stopped when it ends.
+    fn stop_command(&mut self, _command: &str) -> Result<Option<String>, String> {
+        Err("the agent runs no command".into())
+    }
+}
+
+/// A command the core ran for the user, as it goes to the agent: its
+/// output for the agent, each stream already cut to size, and how it
+/// exited, None when it was stopped by a signal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ran<'a> {
+    pub text: &'a str,
+    pub stdout: &'a str,
+    pub stderr: &'a str,
+    pub exit_code: Option<i32>,
 }
 
 /// The model, mode and effort the session runs on, as its events last
@@ -1102,7 +1217,9 @@ pub struct Settings {
 /// them, null before one went out; `resumedAt` when this run of a
 /// conversation it resumed began, in milliseconds since the epoch, null for
 /// a conversation it began; `tasks` every subagent still at work, in the
-/// order they started, each as its start went out.
+/// order they started, each as its start went out; `commands` every
+/// command of the user's queued or running, in the order sent, each as
+/// its last event told it, the running one with its output so far.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
@@ -1116,6 +1233,7 @@ pub struct Snapshot {
     pub limits: Option<Event>,
     pub resumed_at: Option<u64>,
     pub tasks: Vec<Event>,
+    pub commands: Vec<Event>,
 }
 
 /// What a conversation said and did before a window took it up, read from
@@ -1192,6 +1310,11 @@ impl History {
                 }
                 images.retain(|image| image.data.len() <= Self::IMAGE_KEEP);
             }
+            Event::Command {
+                output: Some(output),
+                truncated,
+                ..
+            } => *truncated |= cut(output, Self::CONTENT_KEEP),
             _ => {}
         }
         event
@@ -1304,8 +1427,11 @@ struct Tracker {
     pending: Vec<String>,
     /// The first message event of each pending message, as it went out.
     told: HashMap<String, Event>,
-    /// Every message id used, so none is used twice.
+    /// Every message and command id used, so none is used twice.
     used: BTreeSet<String>,
+    /// The user's commands queued or running, in the order sent, each as
+    /// its last event went out; the running one holds its output so far.
+    commands: Vec<Event>,
     turn: bool,
     /// Permission requests and questions waiting for an answer, in the
     /// order asked, each as it went out.
@@ -1366,15 +1492,21 @@ impl Tracker {
     /// Takes a message id the window chose, and says whether the message
     /// waits behind something.
     fn send(&mut self, message: &str) -> Result<bool, String> {
-        if uuid::Uuid::parse_str(message).is_err() {
-            return Err(format!("{message:?} is not a UUID"));
-        }
-        if !self.used.insert(message.to_string()) {
-            return Err(format!("message {message} was sent already"));
-        }
+        self.claim(message, "message")?;
         let queued = self.turn || !self.pending.is_empty();
         self.pending.push(message.to_string());
         Ok(queued)
+    }
+
+    /// Takes an id the window chose for a message or a command.
+    fn claim(&mut self, id: &str, what: &str) -> Result<(), String> {
+        if uuid::Uuid::parse_str(id).is_err() {
+            return Err(format!("{id:?} is not a UUID"));
+        }
+        if !self.used.insert(id.to_string()) {
+            return Err(format!("{what} {id} was sent already"));
+        }
+        Ok(())
     }
 
     /// Why the messages that wait cannot be sent now, or None when they
@@ -1406,6 +1538,10 @@ impl Tracker {
             Some("the conversation is being compacted")
         } else if !self.pending.is_empty() {
             Some("a message waits for a turn")
+        } else if self.commands.iter().any(running) {
+            Some("a command runs")
+        } else if !self.commands.is_empty() {
+            Some("a command waits")
         } else if !self.asking.is_empty() {
             Some("the agent waits for an answer")
         } else if !self.subagents.is_empty() {
@@ -1452,6 +1588,10 @@ impl Tracker {
     /// Takes an event from the driver, fills in what the tracker knows, and
     /// hands back what goes out.
     fn observe(&mut self, event: Event, out: &mut Vec<Event>) {
+        if matches!(event, Event::Command { .. } | Event::CommandOutput { .. }) {
+            out.extend(self.commanded(event));
+            return;
+        }
         match &event {
             Event::Ready {
                 model,
@@ -1601,6 +1741,72 @@ impl Tracker {
         self.push_state(out);
     }
 
+    /// Takes a command's event: keeps the queued and running ones, and the
+    /// running one's output up to a limit, and fills in the output a last
+    /// event leaves out with what was kept. None when nothing goes out.
+    fn commanded(&mut self, event: Event) -> Option<Event> {
+        match event {
+            Event::CommandOutput { command, mut delta } => {
+                let Some(Event::Command {
+                    output, truncated, ..
+                }) = self
+                    .commands
+                    .iter_mut()
+                    .find(|known| command_of(known) == Some(&command))
+                else {
+                    return None;
+                };
+                if *truncated {
+                    return None;
+                }
+                let output = output.get_or_insert_with(String::new);
+                *truncated = cut(&mut delta, COMMAND_KEEP.saturating_sub(output.len()));
+                output.push_str(&delta);
+                (!delta.is_empty()).then_some(Event::CommandOutput { command, delta })
+            }
+            Event::Command {
+                command,
+                state,
+                text,
+                exit_code,
+                mut output,
+                mut truncated,
+                error,
+            } => {
+                let at = self
+                    .commands
+                    .iter()
+                    .position(|known| command_of(known) == Some(&command));
+                if let Some(Event::Command {
+                    output: kept,
+                    truncated: cut_short,
+                    ..
+                }) = at.map(|at| self.commands.remove(at))
+                {
+                    if output.is_none() {
+                        output = kept;
+                        truncated |= cut_short;
+                    }
+                }
+                let event = Event::Command {
+                    command,
+                    state,
+                    text,
+                    exit_code,
+                    output,
+                    truncated,
+                    error,
+                };
+                if !state.over() {
+                    let at = at.unwrap_or(self.commands.len());
+                    self.commands.insert(at, event.clone());
+                }
+                Some(event)
+            }
+            other => Some(other),
+        }
+    }
+
     fn push_state(&mut self, out: &mut Vec<Event>) {
         if let Some(state) = self.changed() {
             out.push(state);
@@ -1646,6 +1852,7 @@ impl Tracker {
             limits: self.limits.clone(),
             resumed_at: self.resumed_at,
             tasks: self.started.clone(),
+            commands: self.commands.clone(),
         }
     }
 
@@ -1699,11 +1906,60 @@ impl Tracker {
                 Some("the agent ended before it took the message".into()),
             ));
         }
+        for known in std::mem::take(&mut self.commands) {
+            if let Event::Command {
+                command,
+                state,
+                text,
+                output,
+                truncated,
+                ..
+            } = known
+            {
+                let ran = state == CommandState::Running;
+                out.push(Event::Command {
+                    command,
+                    state: if ran {
+                        CommandState::Stopped
+                    } else {
+                        CommandState::Dropped
+                    },
+                    text,
+                    exit_code: None,
+                    output,
+                    truncated,
+                    error: Some(if ran {
+                        "the session ended while the command ran".into()
+                    } else {
+                        "the session ended before the command ran".into()
+                    }),
+                });
+            }
+        }
         self.subagents.clear();
         self.started.clear();
         self.reporting = false;
         self.compacting = false;
     }
+}
+
+/// The command a command's event names.
+fn command_of(event: &Event) -> Option<&String> {
+    match event {
+        Event::Command { command, .. } | Event::CommandOutput { command, .. } => Some(command),
+        _ => None,
+    }
+}
+
+/// Whether a command's event says it runs.
+fn running(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Command {
+            state: CommandState::Running,
+            ..
+        }
+    )
 }
 
 /// The task a task's start names.
@@ -1744,6 +2000,7 @@ fn piece(event: &Event) -> bool {
             | Event::Thinking { done: false, .. }
             | Event::ToolInput { delta: Some(_), .. }
             | Event::ToolOutput { .. }
+            | Event::CommandOutput { .. }
     )
 }
 
@@ -1822,6 +2079,23 @@ struct Held {
     message: String,
     text: String,
     images: Vec<Image>,
+    /// A command of the user's, `text` being the command.
+    command: bool,
+    /// Where it was sent among the others.
+    order: u64,
+}
+
+/// A command of the user's that runs.
+struct Running {
+    command: String,
+    text: String,
+    /// The process group it runs in, once known: the core's own, or the
+    /// agent's shell, found when it is stopped.
+    group: Option<u32>,
+    /// How it ends, once the user or its time stopped it.
+    ending: Option<CommandState>,
+    /// Ends the watch on its time when dropped.
+    _timer: Sender<()>,
 }
 
 struct Machine {
@@ -1852,6 +2126,17 @@ struct Machine {
     /// The session is going back, from the moment it was found at rest to
     /// the answer: no message or compaction is taken meanwhile.
     going_back: bool,
+    /// How many messages and commands were held, for the order of those
+    /// held again.
+    holds: u64,
+    /// The user's command that runs. One runs at a time, and what is sent
+    /// meanwhile waits.
+    running: Option<Running>,
+    /// How the core runs a command of the user's, for an agent that runs
+    /// none itself; None where it runs none.
+    shell: Option<Shell>,
+    /// The agent's process.
+    agent: Option<u32>,
 }
 
 impl Machine {
@@ -1878,12 +2163,42 @@ impl Machine {
             ended: false,
             said: None,
             going_back: false,
+            holds: 0,
+            running: None,
+            shell: None,
+            agent: None,
+        }
+    }
+
+    /// Holds a message or a command, after those held before.
+    fn hold(&mut self, message: &str, text: &str, images: &[Image], command: bool) {
+        self.holds += 1;
+        self.held.push_back(Held {
+            message: message.to_string(),
+            text: text.to_string(),
+            images: images.to_vec(),
+            command,
+            order: self.holds,
+        });
+    }
+
+    /// Whether a command of the user's runs or waits.
+    fn commanding(&self) -> Option<&'static str> {
+        if self.running.is_some() {
+            Some("a command runs")
+        } else if self.held.iter().any(|held| held.command) {
+            Some("a command waits")
+        } else {
+            None
         }
     }
 }
 
 struct Live {
     id: String,
+    /// The session itself, for the threads a command of the user's runs
+    /// on.
+    me: Weak<Live>,
     machine: Mutex<Machine>,
     /// What goes out, in the order it is put here, which is always under
     /// the machine's lock. A sink that is slow holds up only the thread
@@ -1909,9 +2224,10 @@ impl Live {
         outbox: Arc<Outbox>,
         writer: Sender<Line>,
         kill: Sender<()>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|me| Self {
             id,
+            me: me.clone(),
             deadlines: machine.deadlines,
             machine: Mutex::new(machine),
             outbox,
@@ -1920,7 +2236,7 @@ impl Live {
             stopping: AtomicBool::new(false),
             over: Mutex::new(false),
             gone: Condvar::new(),
-        }
+        })
     }
 
     /// Waits until the process is gone and the session's last event has
@@ -2004,6 +2320,7 @@ impl Live {
                     let _ = ready.send(());
                 }
             }
+            let event = Self::ended_command(machine, event);
             machine.tracker.observe(bounded(event), &mut out);
         }
         self.unsteer(machine, reading.unsteered, &mut out);
@@ -2041,6 +2358,10 @@ impl Live {
     fn steer(&self, machine: &mut Machine) -> Result<Receiver<Result<(), String>>, String> {
         let mut went = None;
         while let Some(held) = machine.held.pop_front() {
+            if held.command {
+                machine.held.push_front(held);
+                break;
+            }
             if !machine.tracker.pending.contains(&held.message) {
                 continue;
             }
@@ -2099,11 +2420,10 @@ impl Live {
             }
         }
         // Put back in the order they were sent.
-        let pending = &machine.tracker.pending;
         machine
             .held
             .make_contiguous()
-            .sort_by_key(|held| pending.iter().position(|m| *m == held.message));
+            .sort_by_key(|held| held.order);
         let pending = machine.tracker.pending.clone();
         machine
             .steered
@@ -2121,22 +2441,42 @@ impl Live {
         }
     }
 
-    /// Hands the agent the next held message, once it is ready, no turn
-    /// runs and it has named the one handed over before. One the driver
-    /// cannot make a line of is dropped, and the next one goes.
+    /// Hands the agent what is held, in the order sent, once it is ready
+    /// and no command of the user's runs. A command goes at once to the
+    /// core's own runner, and to an agent that runs it itself once no
+    /// turn runs and it has named the message handed over before. A
+    /// message waits for a command the core ran to be recorded, and, for
+    /// an agent that takes none while a turn runs, for the same as a
+    /// command. One the driver cannot make a line of is dropped, and the
+    /// next one goes.
     fn release(&self, machine: &mut Machine, out: &mut Vec<Event>) {
         if let Some(message) = &machine.handed {
             if !machine.tracker.pending.contains(message) {
                 machine.handed = None;
             }
         }
-        while machine.ready.is_none() && !machine.tracker.turn && machine.handed.is_none() {
-            let Some(held) = machine.held.pop_front() else {
+        let holding = !machine.driver.takes_while_busy();
+        while machine.ready.is_none() && machine.running.is_none() {
+            let Some(front) = machine.held.front() else {
                 return;
             };
-            if !machine.tracker.pending.contains(&held.message) {
+            let busy = machine.tracker.turn || machine.handed.is_some();
+            if front.command {
+                if machine.driver.runs_commands() && busy {
+                    return;
+                }
+                let held = machine.held.pop_front().expect("held");
+                self.start_command(machine, held.message, held.text, out);
                 continue;
             }
+            if !machine.tracker.pending.contains(&front.message) {
+                machine.held.pop_front();
+                continue;
+            }
+            if machine.driver.recording() || (holding && busy) {
+                return;
+            }
+            let held = machine.held.pop_front().expect("held");
             match machine
                 .driver
                 .message(&held.message, &held.text, &held.images)
@@ -2144,7 +2484,9 @@ impl Live {
                 Ok(line) => {
                     // A failure to write shows as the session ending.
                     let _ = self.enqueue(line);
-                    machine.hand(held.message);
+                    if holding {
+                        machine.hand(held.message);
+                    }
                 }
                 Err(error) => machine.tracker.observe(
                     Event::message(&held.message, MessageState::Dropped, Some(error)),
@@ -2152,6 +2494,247 @@ impl Live {
                 ),
             }
         }
+    }
+
+    /// Starts a command of the user's: the agent runs it, or the core
+    /// does. One that cannot start fails.
+    fn start_command(
+        &self,
+        machine: &mut Machine,
+        command: String,
+        text: String,
+        out: &mut Vec<Event>,
+    ) {
+        let started = if machine.driver.runs_commands() {
+            machine
+                .driver
+                .run(&command, &text, machine.deadlines.command)
+                .and_then(|line| self.enqueue(line).map(|_| None))
+        } else {
+            self.run_here(machine, &command, &text).map(Some)
+        };
+        match started {
+            Ok(group) => {
+                let timer = self.time(&command, machine.deadlines.command);
+                machine
+                    .tracker
+                    .observe(Event::command(&command, CommandState::Running, &text), out);
+                machine.running = Some(Running {
+                    command,
+                    text,
+                    group,
+                    ending: None,
+                    _timer: timer,
+                });
+            }
+            Err(error) => machine.tracker.observe(
+                Event::Command {
+                    command,
+                    state: CommandState::Failed,
+                    text,
+                    exit_code: None,
+                    output: None,
+                    truncated: false,
+                    error: Some(error),
+                },
+                out,
+            ),
+        }
+    }
+
+    /// Runs a command of the user's in the core's own runner, and hands
+    /// back its process group.
+    fn run_here(&self, machine: &Machine, command: &str, text: &str) -> Result<u32, String> {
+        let shell = machine
+            .shell
+            .as_ref()
+            .ok_or("this session runs no command")?;
+        let mut child = shell
+            .spawn(text)
+            .map_err(|e| format!("could not run the command: {e}"))?;
+        let group = child.id();
+        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+            kill_tree(&mut child);
+            let _ = child.wait();
+            return Err("could not read the command's output".into());
+        };
+        let live = self.me.clone();
+        let command = command.to_string();
+        std::thread::spawn(move || watch_command(&live, &command, child, stdout, stderr));
+        Ok(group)
+    }
+
+    /// Watches a command's time, and stops it once `limit` passes. The
+    /// watch ends when what it hands back is dropped.
+    fn time(&self, command: &str, limit: Duration) -> Sender<()> {
+        let (timer, ends) = mpsc::channel::<()>();
+        let live = self.me.clone();
+        let command = command.to_string();
+        std::thread::spawn(move || {
+            if let Err(RecvTimeoutError::Timeout) = ends.recv_timeout(limit) {
+                if let Some(live) = live.upgrade() {
+                    let mut machine = live.machine.lock().expect("machine lock");
+                    let _ = live.halt(&mut machine, &command, CommandState::TimedOut);
+                }
+            }
+        });
+        timer
+    }
+
+    /// Stops the user's command that runs, to end as `how`. Its process
+    /// group is asked to end, and killed if any of it is still there a
+    /// little later; an agent that runs it is asked to stop it as well,
+    /// its shell's group found first, since its own stop leaves what the
+    /// shell started running.
+    fn halt(&self, machine: &mut Machine, command: &str, how: CommandState) -> Result<(), String> {
+        let agent = machine.agent;
+        let runs = machine.driver.runs_commands();
+        let Some(running) = machine
+            .running
+            .as_mut()
+            .filter(|running| running.command == command)
+        else {
+            return Err("the command does not run".into());
+        };
+        if running.ending.is_some() {
+            return Ok(());
+        }
+        running.ending = Some(how);
+        if runs && running.group.is_none() {
+            running.group = agent.and_then(|agent| user_command::group_of(agent, &running.text));
+        }
+        let group = running.group;
+        if runs {
+            if let Some(line) = machine.driver.stop_command(command)? {
+                self.enqueue(line)?;
+            }
+        }
+        if let Some(group) = group {
+            let grace = self.deadlines.term_grace;
+            std::thread::spawn(move || user_command::end_group(group, grace));
+        }
+        Ok(())
+    }
+
+    /// A driver's event, the last of the command that runs taking how the
+    /// core stopped it, which then runs no more.
+    fn ended_command(machine: &mut Machine, event: Event) -> Event {
+        let Event::Command {
+            command,
+            state,
+            text,
+            exit_code,
+            output,
+            truncated,
+            error,
+        } = event
+        else {
+            return event;
+        };
+        let mut state = state;
+        if state.over() {
+            if let Some(running) = machine
+                .running
+                .take_if(|running| running.command == command)
+            {
+                state = running.ending.unwrap_or(state);
+            }
+        }
+        Event::Command {
+            command,
+            state,
+            text,
+            exit_code,
+            output,
+            truncated,
+            error,
+        }
+    }
+
+    /// The next piece of the output of a command the core runs.
+    fn command_output(&self, command: &str, delta: String) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if machine.ended
+            || machine
+                .running
+                .as_ref()
+                .is_none_or(|running| running.command != command)
+        {
+            return;
+        }
+        let mut out = Vec::new();
+        machine.tracker.observe(
+            Event::CommandOutput {
+                command: command.to_string(),
+                delta,
+            },
+            &mut out,
+        );
+        self.emit(&out);
+    }
+
+    /// A command the core ran ended: the agent is given it, and what was
+    /// held behind it goes.
+    fn command_ran(
+        &self,
+        command: &str,
+        status: Option<std::process::ExitStatus>,
+        stdout: &str,
+        stderr: &str,
+    ) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if machine.ended {
+            return;
+        }
+        let Some(running) = machine
+            .running
+            .take_if(|running| running.command == command)
+        else {
+            return;
+        };
+        let state = running.ending.unwrap_or(CommandState::Done);
+        let exit_code = status.and_then(|status| status.code());
+        let note = match state {
+            CommandState::Stopped => Some("The user stopped the command.".to_string()),
+            CommandState::TimedOut => Some(format!(
+                "The command was stopped after {}.",
+                minutes(machine.deadlines.command)
+            )),
+            _ => None,
+        };
+        let stderr = match note {
+            Some(note) if stderr.is_empty() => note,
+            Some(note) => format!("{}\n{note}", stderr.trim_end()),
+            None => stderr.to_string(),
+        };
+        let ran = Ran {
+            text: &running.text,
+            stdout,
+            stderr: &stderr,
+            exit_code,
+        };
+        let error = match machine.driver.ran(command, &ran) {
+            Ok(line) => self
+                .enqueue(line)
+                .err()
+                .map(|e| format!("the agent was not given the command: {e}")),
+            Err(e) => Some(format!("the agent was not given the command: {e}")),
+        };
+        let mut out = Vec::new();
+        machine.tracker.observe(
+            Event::Command {
+                command: command.to_string(),
+                state,
+                text: running.text.clone(),
+                exit_code,
+                output: None,
+                truncated: false,
+                error,
+            },
+            &mut out,
+        );
+        self.release(&mut machine, &mut out);
+        self.emit(&out);
     }
 
     /// Gives up on a message handed over, or steered into the running
@@ -2297,6 +2880,11 @@ fn bounded(mut event: Event) -> Event {
                 .for_each(|change| cut_change(change, CONTENT_KEEP));
         }
         Event::TurnDiff { diff, truncated } => *truncated |= cut(diff, CONTENT_KEEP),
+        Event::Command {
+            output: Some(output),
+            truncated,
+            ..
+        } => *truncated |= cut(output, COMMAND_KEEP),
         _ => {}
     }
     event
@@ -2377,6 +2965,7 @@ pub fn start(
             let _ = std::fs::remove_file(file);
         }
     };
+    let shell = Shell::of(&command, launch.project, launch.env);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(e) => {
@@ -2407,13 +2996,9 @@ pub fn start(
     let opening = driver.opening();
     let mut machine = Machine::new(driver, Some(ready), sessions.deadlines);
     machine.tracker.resumed_at = launch.resume.then(now_millis);
-    let live = Arc::new(Live::new(
-        id.clone(),
-        machine,
-        Arc::clone(&outbox),
-        lines,
-        kill,
-    ));
+    machine.agent = Some(child.id());
+    machine.shell = (!machine.driver.runs_commands()).then_some(shell);
+    let live = Live::new(id.clone(), machine, Arc::clone(&outbox), lines, kill);
     sessions
         .inner
         .lock()
@@ -2603,6 +3188,103 @@ fn keep_tail(mut stderr: impl Read, tail: Arc<Mutex<String>>) {
     }
 }
 
+/// A piece of what a command the core runs prints, on its error stream
+/// or not, or its end.
+enum Piece {
+    Out(bool, String),
+    Exited(Option<std::process::ExitStatus>),
+}
+
+/// Reads what a command the core runs prints and hands it to the session
+/// as it comes. Once the command ended and its output stopped, or a
+/// little after it ended where what it left running holds its output
+/// open, the session is given the command.
+fn watch_command(
+    live: &Weak<Live>,
+    command: &str,
+    mut child: Child,
+    stdout: std::process::ChildStdout,
+    stderr: std::process::ChildStderr,
+) {
+    let (pieces, came) = mpsc::channel::<Piece>();
+    let streams: [(bool, Box<dyn Read + Send>); 2] =
+        [(false, Box::new(stdout)), (true, Box::new(stderr))];
+    for (error, mut stream) in streams {
+        let pieces = pieces.clone();
+        std::thread::spawn(move || {
+            let mut decoder = Decoder::default();
+            let mut bytes = [0u8; 8192];
+            loop {
+                match stream.read(&mut bytes) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let text = decoder.push(&bytes[..n]);
+                        if !text.is_empty() && pieces.send(Piece::Out(error, text)).is_err() {
+                            return;
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let text = decoder.finish();
+            if !text.is_empty() {
+                let _ = pieces.send(Piece::Out(error, text));
+            }
+        });
+    }
+    std::thread::spawn(move || {
+        let status = child.wait().ok();
+        let _ = pieces.send(Piece::Exited(status));
+    });
+    let mut stdout = ForAgent::default();
+    let mut stderr = ForAgent::default();
+    let mut status = None;
+    let mut drained: Option<Instant> = None;
+    loop {
+        let piece = match drained {
+            None => came.recv().ok(),
+            Some(by) => came
+                .recv_timeout(by.saturating_duration_since(Instant::now()))
+                .ok(),
+        };
+        let Some(piece) = piece else {
+            break;
+        };
+        match piece {
+            Piece::Out(error, text) => {
+                if error {
+                    stderr.push(&text);
+                } else {
+                    stdout.push(&text);
+                }
+                let Some(live) = live.upgrade() else {
+                    return;
+                };
+                live.command_output(command, text);
+            }
+            Piece::Exited(ended) => {
+                status = ended;
+                drained = Some(Instant::now() + DRAIN);
+            }
+        }
+    }
+    if let Some(live) = live.upgrade() {
+        live.command_ran(command, status, &stdout.finish(), &stderr.finish());
+    }
+}
+
+/// A length of time in words, in minutes where it is whole minutes.
+fn minutes(time: Duration) -> String {
+    let seconds = time.as_secs();
+    match seconds {
+        60 => "1 minute".to_string(),
+        s if s >= 60 && s % 60 == 0 => format!("{} minutes", s / 60),
+        1 => "1 second".to_string(),
+        s => format!("{s} seconds"),
+    }
+}
+
 /// Kills the agent and everything in its process group.
 pub(crate) fn kill_tree(child: &mut Child) {
     #[cfg(unix)]
@@ -2719,6 +3401,10 @@ fn finish(live: &Live, name: &str, status: Option<std::process::ExitStatus>, sai
     machine.held.clear();
     machine.steered.clear();
     machine.handed = None;
+    if let Some(group) = machine.running.take().and_then(|running| running.group) {
+        let grace = live.deadlines.term_grace;
+        std::thread::spawn(move || user_command::end_group(group, grace));
+    }
     let code = status.and_then(|status| status.code());
     let clean = status.is_some_and(|status| status.success());
     if !clean && !live.stopping.load(Ordering::SeqCst) {
@@ -2761,21 +3447,19 @@ pub fn send(
         if machine.going_back {
             return Err(GOING_BACK.into());
         }
-        let queued = machine.tracker.send(message)?;
         // An agent that takes no message mid-turn may have no conversation
         // to take one into before it is ready, so it is held till then too.
+        // Any message waits for the user's command before it, and for its
+        // record.
         let holding = !machine.driver.takes_while_busy();
-        let hold = holding
-            && (machine.ready.is_some()
-                || machine.tracker.turn
-                || machine.handed.is_some()
-                || !machine.held.is_empty());
+        let hold = machine.running.is_some()
+            || !machine.held.is_empty()
+            || machine.driver.recording()
+            || (holding
+                && (machine.ready.is_some() || machine.tracker.turn || machine.handed.is_some()));
+        let queued = machine.tracker.send(message)? || hold;
         let went = if hold {
-            machine.held.push_back(Held {
-                message: message.to_string(),
-                text: text.to_string(),
-                images: images.to_vec(),
-            });
+            machine.hold(message, text, images, false);
             None
         } else {
             let sent = machine
@@ -2819,6 +3503,48 @@ pub fn send(
         Some(went) => live.written(went),
         None => Ok(()),
     }
+}
+
+/// Runs a command the user typed, `text`, under `command`, the id the
+/// window chose for it, a UUID it has not used before in the session.
+/// One runs at a time, and once the agent is ready; an agent that runs it
+/// itself takes it between turns. Till then it waits, and what is sent
+/// after it waits for it.
+pub fn run(sessions: &Sessions, id: &str, command: &str, text: &str) -> Result<(), String> {
+    let live = sessions.get(id)?;
+    if text.trim().is_empty() {
+        return Err("there is no command to run".into());
+    }
+    if live.stopping.load(Ordering::SeqCst) {
+        return Err("the session is stopping".into());
+    }
+    let mut machine = live.machine.lock().expect("machine lock");
+    if machine.ended {
+        return Err("the session ended".into());
+    }
+    if machine.going_back {
+        return Err(GOING_BACK.into());
+    }
+    machine.tracker.claim(command, "command")?;
+    machine.hold(command, text, &[], true);
+    let mut out = Vec::new();
+    live.release(&mut machine, &mut out);
+    if machine.held.iter().any(|held| held.message == command) {
+        machine.tracker.observe(
+            Event::command(command, CommandState::Queued, text),
+            &mut out,
+        );
+    }
+    live.emit(&out);
+    Ok(())
+}
+
+/// Stops the user's command that runs. [`Event::Command`] says when it
+/// ended.
+pub fn stop_command(sessions: &Sessions, id: &str, command: &str) -> Result<(), String> {
+    let live = sessions.get(id)?;
+    let mut machine = live.machine.lock().expect("machine lock");
+    live.halt(&mut machine, command, CommandState::Stopped)
 }
 
 /// Answers a permission request with one of the choices it offered.
@@ -2953,12 +3679,22 @@ fn request(
         }
         let sending = match control {
             Control::SendNow => {
+                if let Some(why) = machine.commanding() {
+                    return Err(why.into());
+                }
                 if let Some(why) = machine.tracker.not_now() {
                     return Err(why.into());
                 }
                 if machine.driver.takes_while_busy() {
-                    let last = machine.tracker.pending.last().cloned().unwrap_or_default();
-                    machine.driver.send_now(&last)?
+                    if machine.driver.recording() {
+                        // The messages wait here for the record of a
+                        // command, which the agent takes once the turn
+                        // ends.
+                        machine.driver.control(&Control::Interrupt)?
+                    } else {
+                        let last = machine.tracker.pending.last().cloned().unwrap_or_default();
+                        machine.driver.send_now(&last)?
+                    }
                 } else {
                     // Steered here rather than by the driver, since the
                     // messages are held here.
@@ -2978,11 +3714,22 @@ fn request(
                     .iter()
                     .position(|held| held.message == *message)
                 {
-                    machine.held.remove(at);
+                    let held = machine.held.remove(at).expect("held");
+                    let withdrawn = if held.command {
+                        Event::command(message, CommandState::Withdrawn, &held.text)
+                    } else {
+                        Event::message(message, MessageState::Withdrawn, None)
+                    };
                     Sending::Local {
                         reply: Value::Null,
-                        events: vec![Event::message(message, MessageState::Withdrawn, None)],
+                        events: vec![withdrawn],
                     }
+                } else if machine
+                    .running
+                    .as_ref()
+                    .is_some_and(|running| running.command == *message)
+                {
+                    return Err("the command runs already".into());
                 } else if !machine.tracker.pending.contains(message) {
                     return Err("the agent has taken the message already".into());
                 } else {
@@ -3320,6 +4067,9 @@ fn going_back(sessions: &Sessions, id: &str) -> Result<(Going, Option<String>, S
     if let Some(why) = machine.tracker.unrested() {
         return Err(why.to_string());
     }
+    if machine.driver.recording() {
+        return Err("a command is being recorded".into());
+    }
     machine.going_back = true;
     let found = (machine.tracker.conversation(), machine.tracker.kept());
     drop(machine);
@@ -3444,6 +4194,16 @@ fn tell(sessions: &Sessions, id: &str, event: Event) {
 pub fn stop(sessions: &Arc<Sessions>, id: &str) -> Result<(), String> {
     let live = sessions.get(id)?;
     live.stopping.store(true, Ordering::SeqCst);
+    {
+        let mut machine = live.machine.lock().expect("machine lock");
+        let running = machine
+            .running
+            .as_ref()
+            .map(|running| running.command.clone());
+        if let Some(command) = running {
+            let _ = live.halt(&mut machine, &command, CommandState::Stopped);
+        }
+    }
     if live.writer.lock().expect("writer lock").take().is_none() {
         // Stopped already, and on its way out.
         return Ok(());
@@ -3976,14 +4736,26 @@ mod tests {
     /// request, `fatal` ends the turn and says the session cannot go on.
     /// The line it sends a message with names the model it runs on when it
     /// is sent. A model is settled without asking it; a mode or an effort
-    /// is asked for with `ask <key>`.
+    /// is asked for with `ask <key>`. Where it runs a command of the
+    /// user's, `out <id> <text>` is what the command printed and `ran <id>`
+    /// that it exited with 0; where the core runs it, `recorded` says the
+    /// record of the last one ran was taken.
     struct Fake {
         model: String,
+        /// Whether it takes a message while a turn runs.
+        busy: bool,
+        /// Whether it runs a command of the user's itself.
+        runs: bool,
+        /// The command it records, till it reads `recorded`.
+        recording: Option<String>,
     }
 
     fn fake() -> Box<Fake> {
         Box::new(Fake {
             model: "haiku".into(),
+            busy: false,
+            runs: false,
+            recording: None,
         })
     }
 
@@ -4079,6 +4851,23 @@ mod tests {
                         ..Reading::default()
                     }
                 }
+                (Some("out"), Some(command)) => vec![Event::CommandOutput {
+                    command: command.to_string(),
+                    delta: words.collect::<Vec<_>>().join(" "),
+                }],
+                (Some("ran"), Some(command)) => vec![Event::Command {
+                    command: command.to_string(),
+                    state: CommandState::Done,
+                    text: "sleep 9".into(),
+                    exit_code: Some(0),
+                    output: None,
+                    truncated: false,
+                    error: None,
+                }],
+                (Some("recorded"), _) => {
+                    self.recording = None;
+                    vec![]
+                }
                 _ => vec![],
             };
             Reading {
@@ -4088,7 +4877,34 @@ mod tests {
         }
 
         fn takes_while_busy(&self) -> bool {
-            false
+            self.busy
+        }
+
+        fn runs_commands(&self) -> bool {
+            self.runs
+        }
+
+        fn run(&mut self, command: &str, text: &str, timeout: Duration) -> Result<String, String> {
+            if text == "bad" {
+                return Err("not a command this agent runs".into());
+            }
+            Ok(format!("run {command} {text} in {}", timeout.as_secs()))
+        }
+
+        fn ran(&mut self, command: &str, ran: &Ran) -> Result<String, String> {
+            self.recording = Some(command.to_string());
+            Ok(format!(
+                "ran {command} {:?} {:?} {:?}",
+                ran.exit_code, ran.stdout, ran.stderr
+            ))
+        }
+
+        fn recording(&self) -> bool {
+            self.recording.is_some()
+        }
+
+        fn stop_command(&mut self, command: &str) -> Result<Option<String>, String> {
+            Ok(Some(format!("stop {command}")))
         }
 
         fn message(&mut self, message: &str, text: &str, _: &[Image]) -> Result<String, String> {
@@ -4197,13 +5013,13 @@ mod tests {
                     let _ = seen.send(line);
                 }
             });
-            let live = Arc::new(Live::new(
+            let live = Live::new(
                 "int-bench".into(),
                 Machine::new(driver, ready, deadlines),
                 outbox,
                 lines,
                 kill,
-            ));
+            );
             watch_handovers(&live);
             let sessions = Arc::new(Sessions::with_deadlines(deadlines));
             sessions
@@ -5144,5 +5960,222 @@ mod tests {
         .unwrap();
         assert_eq!(change["kind"], "move");
         assert_eq!(change["to"], "/b");
+    }
+
+    const C1: &str = "44444444-4444-4444-8444-444444444444";
+
+    /// The states `command` went through, as the events said.
+    fn command_states(events: &[Value], command: &str) -> Vec<String> {
+        events
+            .iter()
+            .filter(|e| e["type"] == "command" && e["command"] == command)
+            .map(|e| e["state"].as_str().unwrap_or_default().to_string())
+            .collect()
+    }
+
+    fn run_command(bench: &Bench, command: &str, text: &str) -> Result<(), String> {
+        run(&bench.sessions, "int-bench", command, text)
+    }
+
+    /// An agent that runs a command of the user's itself.
+    fn runner() -> Box<Fake> {
+        let mut driver = fake();
+        driver.runs = true;
+        driver
+    }
+
+    /// A session whose agent takes messages mid-turn and whose commands the
+    /// core runs, with /bin/sh in the temporary folder.
+    #[cfg(unix)]
+    fn shell_bench(deadlines: Deadlines) -> Bench {
+        let mut driver = fake();
+        driver.busy = true;
+        let bench = Bench::keeping(driver, deadlines);
+        let folder = std::env::temp_dir();
+        let mut agent = std::process::Command::new("true");
+        agent
+            .current_dir(&folder)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin");
+        let vars = HashMap::from([("SHELL".to_string(), "/bin/sh".to_string())]);
+        bench.live.machine.lock().unwrap().shell = Some(Shell::of(&agent, &folder, &vars));
+        bench
+    }
+
+    /// The next line written, waiting as long as a command may take.
+    #[cfg(unix)]
+    fn recorded(bench: &Bench) -> String {
+        bench
+            .written
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the command is recorded")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_the_core_runs_streams_its_output_and_is_recorded_before_the_next_message() {
+        let bench = shell_bench(Deadlines::default());
+        run_command(&bench, C1, "echo out; echo err >&2; exit 3").unwrap();
+        bench.send(M1, "after");
+        assert_eq!(
+            recorded(&bench),
+            format!("ran {C1} Some(3) \"out\\n\" \"err\\n\"")
+        );
+        assert_eq!(bench.next(), None, "the message waits for the record");
+        bench.live.take("recorded");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M1} after on haiku").as_str())
+        );
+        let events = bench.events();
+        assert_eq!(command_states(&events, C1), ["running", "done"]);
+        let done = events.iter().rfind(|e| e["type"] == "command").unwrap();
+        assert_eq!(done["exitCode"], 3);
+        assert_eq!(done["text"], "echo out; echo err >&2; exit 3");
+        let printed: String = events
+            .iter()
+            .filter(|e| e["type"] == "commandOutput")
+            .map(|e| e["delta"].as_str().unwrap())
+            .collect();
+        assert!(
+            printed.contains("out\n") && printed.contains("err\n"),
+            "{printed:?}"
+        );
+        assert!(run_command(&bench, C1, "ls").is_err(), "an id is used once");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_command_the_core_runs_ends_all_it_started_and_tells_the_agent() {
+        let bench = shell_bench(Deadlines::default());
+        // The last command is exec'd, so no shell is left to report how
+        // its child ended.
+        run_command(&bench, C1, "sleep 30 & exec sleep 30").unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        stop_command(&bench.sessions, "int-bench", C1).unwrap();
+        assert_eq!(
+            recorded(&bench),
+            format!("ran {C1} None \"\" \"The user stopped the command.\"")
+        );
+        let events = bench.events();
+        assert_eq!(command_states(&events, C1), ["running", "stopped"]);
+        assert!(stop_command(&bench.sessions, "int-bench", C1).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_the_core_runs_is_stopped_once_its_time_is_up() {
+        let bench = shell_bench(Deadlines {
+            command: Duration::from_secs(1),
+            ..Deadlines::default()
+        });
+        run_command(&bench, C1, "echo started; exec sleep 30").unwrap();
+        assert_eq!(
+            recorded(&bench),
+            format!("ran {C1} None \"started\\n\" \"The command was stopped after 1 second.\"")
+        );
+        assert_eq!(command_states(&bench.events(), C1), ["running", "timedOut"]);
+    }
+
+    #[test]
+    fn a_command_for_an_agent_that_runs_it_waits_for_the_turn_and_holds_what_comes_after() {
+        let bench = Bench::new(runner());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        run_command(&bench, C1, "sleep 9").unwrap();
+        bench.send(M2, "two");
+        assert_eq!(bench.next(), None, "both wait for the turn");
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("run {C1} sleep 9 in 600").as_str())
+        );
+        assert_eq!(bench.next(), None, "the message waits for the command");
+        bench.live.take(&format!("out {C1} hello there"));
+        bench.live.take(&format!("ran {C1}"));
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M2} two on haiku").as_str())
+        );
+        let events = bench.events();
+        assert_eq!(command_states(&events, C1), ["queued", "running", "done"]);
+        let output: Vec<&Value> = events
+            .iter()
+            .filter(|e| e["type"] == "commandOutput")
+            .collect();
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["delta"], "hello there");
+    }
+
+    #[test]
+    fn stopping_a_command_the_agent_runs_asks_it_once_and_ends_it_stopped() {
+        let bench = Bench::new(runner());
+        run_command(&bench, C1, "sleep 9").unwrap();
+        assert!(bench.next().is_some());
+        stop_command(&bench.sessions, "int-bench", C1).unwrap();
+        assert_eq!(bench.next().as_deref(), Some(format!("stop {C1}").as_str()));
+        stop_command(&bench.sessions, "int-bench", C1).unwrap();
+        assert_eq!(bench.next(), None, "asked once");
+        bench.live.take(&format!("ran {C1}"));
+        let events = bench.events();
+        assert_eq!(command_states(&events, C1), ["running", "stopped"]);
+        assert!(stop_command(&bench.sessions, "int-bench", C1).is_err());
+    }
+
+    #[test]
+    fn a_command_the_agent_runs_too_long_is_stopped_as_timed_out() {
+        let bench = Bench::keeping(
+            runner(),
+            Deadlines {
+                command: Duration::from_millis(100),
+                ..Deadlines::default()
+            },
+        );
+        run_command(&bench, C1, "sleep 9").unwrap();
+        assert!(bench.next().is_some());
+        assert_eq!(
+            bench.written.recv_timeout(Duration::from_secs(5)).ok(),
+            Some(format!("stop {C1}"))
+        );
+        bench.live.take(&format!("ran {C1}"));
+        assert_eq!(command_states(&bench.events(), C1), ["running", "timedOut"]);
+    }
+
+    #[test]
+    fn a_waiting_command_can_be_taken_back_and_keeps_send_now_off_till_then() {
+        let bench = Bench::new(runner());
+        bench.send(M1, "one");
+        assert!(bench.next().is_some());
+        bench.live.take(&format!("start {M1}"));
+        run_command(&bench, C1, "sleep 9").unwrap();
+        bench.send(M2, "two");
+        assert_eq!(
+            control(&bench.sessions, "int-bench", &Control::SendNow).unwrap_err(),
+            "a command waits"
+        );
+        control(&bench.sessions, "int-bench", &Control::Withdraw(C1.into())).unwrap();
+        bench.live.take("end");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M2} two on haiku").as_str())
+        );
+        assert_eq!(command_states(&bench.events(), C1), ["queued", "withdrawn"]);
+    }
+
+    #[test]
+    fn a_command_the_agent_will_not_run_fails_and_lets_the_next_go() {
+        let bench = Bench::new(runner());
+        assert!(run_command(&bench, C1, "  ").is_err());
+        run_command(&bench, C1, "bad").unwrap();
+        bench.send(M1, "one");
+        assert_eq!(
+            bench.next().as_deref(),
+            Some(format!("send {M1} one on haiku").as_str())
+        );
+        let events = bench.events();
+        assert_eq!(command_states(&events, C1), ["failed"]);
+        let failed = events.iter().rfind(|e| e["type"] == "command").unwrap();
+        assert_eq!(failed["error"], "not a command this agent runs");
     }
 }
