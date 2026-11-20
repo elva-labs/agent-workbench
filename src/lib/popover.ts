@@ -1,7 +1,7 @@
 /**
  * What puts an open popover away, wherever the keyboard and the pointer
  * are: Escape, a press outside the popover and the control that opened
- * it, and the window changing size. Called while the popover is open, it
+ * it, the window losing focus, and the window changing size. Called while the popover is open, it
  * answers with what stops listening; a component calls it from an effect
  * that runs while its popover is open.
  *
@@ -39,9 +39,11 @@ export function putAway(options: {
   window.addEventListener("keydown", key, true);
   window.addEventListener("pointerdown", away, true);
   window.addEventListener("resize", resized);
+  window.addEventListener("blur", resized);
   return () => {
     window.removeEventListener("keydown", key, true);
     window.removeEventListener("pointerdown", away, true);
     window.removeEventListener("resize", resized);
+    window.removeEventListener("blur", resized);
   };
 }

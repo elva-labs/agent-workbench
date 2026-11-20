@@ -12,6 +12,7 @@
    */
   import type { Snippet } from "svelte";
   import type { PluginAction } from "$lib/core";
+  import { putAway } from "$lib/popover";
 
   interface Props {
     /** Whether the fold this line heads stands open. */
@@ -66,6 +67,7 @@
       All of them, until they have been measured. */
   let shown = $state(Number.POSITIVE_INFINITY);
   let menuOpen = $state(false);
+  let slot = $state<HTMLElement | null>(null);
 
   let over = $derived(actions.slice(shown));
 
@@ -136,18 +138,15 @@
     if (over.length === 0 && menuOpen) menuOpen = false;
   });
 
-  // The button that opens the menu leaves the keyboard where it was, so the
-  // key that closes it is watched for on the window, ahead of the pane that
-  // would otherwise read it.
+  // Escape wherever the keyboard is, a press outside the button and its menu,
+  // the window losing focus or changing size puts the menu away.
   $effect(() => {
     if (!menuOpen) return;
-    const shut = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      e.stopPropagation();
-      menuOpen = false;
-    };
-    window.addEventListener("keydown", shut, true);
-    return () => window.removeEventListener("keydown", shut, true);
+    return putAway({
+      inside: () => [slot],
+      close: () => (menuOpen = false),
+      control: () => slot?.querySelector("button"),
+    });
   });
 
   function pick(action: PluginAction) {
@@ -193,7 +192,7 @@
         >
       {/each}
       {#if over.length > 0}
-        <span class="more-slot">
+        <span class="more-slot" bind:this={slot}>
           <button
             class="head-action more"
             tabindex="-1"
@@ -205,9 +204,6 @@
             data-testid="plugin-actions-more">⋯</button
           >
           {#if menuOpen}
-            <!-- svelte-ignore a11y_no_static_element_interactions -->
-            <!-- svelte-ignore a11y_click_events_have_key_events -->
-            <div class="scrim" onclick={() => (menuOpen = false)}></div>
             <div class="menu" data-card role="menu" data-testid="plugin-actions-menu">
               {#each over as action (action.id)}
                 <button
@@ -340,12 +336,6 @@
   .more-slot {
     position: relative;
     display: inline-flex;
-  }
-
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 4;
   }
 
   .menu {

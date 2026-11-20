@@ -114,6 +114,7 @@
     type Session,
   } from "$lib/sessions.svelte";
   import { activeProject, followedWorktree, goTo, projectLabel, watchRoot, workspace } from "$lib/workspace.svelte";
+  import { putAway } from "$lib/popover";
   import { isOrchestratorFolder } from "$lib/orchestratorFolder.svelte";
   import {
     DEFAULT,
@@ -530,6 +531,13 @@
   function menuItems(): HTMLButtonElement[] {
     return [...(more?.querySelectorAll<HTMLButtonElement>("[role^='menuitem']:not(:disabled)") ?? [])];
   }
+
+  // Escape wherever the keyboard is, a press outside the button and its menu,
+  // the window losing focus or changing size puts the menu away.
+  $effect(() => {
+    if (!menuOpen) return;
+    return putAway({ inside: () => [more], close: () => (menuOpen = false), control: () => more?.querySelector("button") });
+  });
 
   function toggleMenu() {
     menuOpen = !menuOpen;
@@ -1694,9 +1702,6 @@
         data-testid="changes-menu">⋯</button
       >
       {#if menuOpen}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="scrim" onclick={() => (menuOpen = false)}></div>
         <div class="menu" data-card role="menu" use:coversBrowser data-testid="changes-menu-items">
           <button
             role="menuitemradio"
@@ -2408,12 +2413,6 @@
   .more {
     position: relative;
     flex: none;
-  }
-
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 4;
   }
 
   .menu {
