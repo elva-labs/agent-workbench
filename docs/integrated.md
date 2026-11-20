@@ -451,7 +451,9 @@ naming the session and its kind:
   its exit code; stopped by the user; timed out; failed, with why; withdrawn
   by the user before it ran; or dropped because the session ended first.
   Each carries the command, and the last its output, both streams as they
-  came, cut short past a megabyte and flagged so.
+  came, cut short past a megabyte and flagged so. Any that is over may
+  carry an error as well, such as the agent not being given the command,
+  and the window shows it under the command as bad news.
 - **command output**: the next piece of what a running command printed.
   Pieces stop past the limit, and the output the command ends with holds
   all that was kept.
@@ -664,12 +666,19 @@ order sent. Each agent takes a command its own way.
   process group of its own. It starts at once, even while a turn runs.
   Once it has ended, the core gives it to the agent as the agent records
   a command the user ran in its own terminal: the line typed, what it
-  printed on each stream and, where it did not exit with 0, its exit
-  code. Claude Code takes that record once the running turn is over, or
+  printed on each stream, each escaped as the agent escapes them, and,
+  where it did not exit with 0, its exit code. A command a signal ended
+  has the code a shell gives it, 128 and the signal's number, and a line
+  saying which signal ended it. Once the record is written, whatever the
+  command left running, such as a server it sent to the background, is
+  ended with its process group, so nothing a command starts outlives it.
+  Claude Code takes that record once the running turn is over, or
   at once where none runs, in a turn that asks no model and is not told
   as one. A message sent meanwhile waits until the agent has taken the
   record, so that it reads the command first, and sending such a message
-  now stops the running turn.
+  now stops the running turn. Should Claude Code drop the record,
+  refusing, discarding or cancelling it, the window warns that the agent
+  has not seen what the command printed.
 - **Codex** runs the command itself, as its own shell command, in a turn
   of its own that asks no model and is not told as one, and keeps it in
   its thread for the next turn to read. It is handed over only when no
@@ -678,8 +687,9 @@ order sent. Each agent takes a command its own way.
   ends with the turn it runs in.
 
 What a command prints streams to the window as it comes, up to a megabyte.
-The agent is given at most thirty thousand bytes of each stream: past
-that, the start and the end of it, with a line between them saying how
+The agent is given at most thirty thousand bytes of each stream, standard
+output and standard error apart, so up to sixty thousand in all: past
+that, the start and the end of each, with a line between them saying how
 many lines were left out. Codex is given what Codex keeps.
 
 Stopping a command asks its whole process group to end, and kills what is
@@ -1102,12 +1112,12 @@ read twice: once for each line's ids and parent alone, to find the lines
 that make up the conversation, and once for what those lines say, each made
 into its events and let go before the next, so no more than what is kept is
 held at once. The second reading reads the same bytes as the first, though
-the file grows between them. Long
-content is cut down further than a live session's and flagged: a tool's
-output and each string of its input to sixteen kilobytes, a changed file
-and a command's output to sixty-four, and a block of text to a quarter of a megabyte; an image larger
-than four megabytes is left out; and a history of more than thirty-two
-megabytes in all leaves out its first turns and says so.
+the file grows between them. Long content is cut down further than a live
+session's and flagged: a tool's output and each string of its input to
+sixteen kilobytes, a changed file and a command's output to sixty-four,
+and a block of text to a quarter of a megabyte; an image larger than four
+megabytes is left out; and a history of more than thirty-two megabytes in
+all leaves out its first turns and says so.
 
 What a Codex conversation said before is read through Codex itself, which
 keeps each thread's turns and their items. For each read the workbench
