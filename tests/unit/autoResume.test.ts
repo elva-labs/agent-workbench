@@ -81,7 +81,11 @@ function withWindow(account: string | null = null) {
 }
 
 const went: { key: string; at: number }[] = [];
-const sent: { key: string; text: string }[] = [];
+const sent: { key: string; text: string; lost: () => void }[] = [];
+/** Whether a message of the user's waits, and what runs while the run
+    starts again. */
+let written = false;
+let meanwhile: () => void = () => {};
 const said: { key: string; text: string; warning: boolean }[] = [];
 let goes = true;
 
@@ -96,17 +100,21 @@ beforeEach(() => {
   sent.length = 0;
   said.length = 0;
   goes = true;
+  written = false;
+  meanwhile = () => {};
   read = null;
   parentsFrom((session) => rows.get(parents.get(session.key) ?? "") ?? null);
   setHands({
     goOn: async (key, at) => {
       went.push({ key, at });
+      meanwhile();
       return goes;
     },
-    send: (key, text) => {
-      sent.push({ key, text });
+    send: (key, text, lost) => {
+      sent.push({ key, text, lost });
       return true;
     },
+    written: () => written,
     say: (key, text, warning) => {
       said.push({ key, text, warning });
     },
@@ -204,11 +212,32 @@ describe("what is waited for", () => {
     choose("a", false);
     limitEnded("a", "session", RESET);
     expect(resumesAt(one)).toBeNull();
-    // Turned on while the limit holds, it waits from then.
+    expect(autoResume.stopped.a).toBeUndefined();
+    // Turned on while that limit holds, nothing is waited for.
     choose("a", true);
-    expect(resumesAt(one)).toBe(RESET * 1000);
-    choose("a", false);
     expect(resumesAt(one)).toBeNull();
+  });
+
+  it("turning it off ends the wait for good, for the session and for those it started", async () => {
+    withWindow();
+    opens();
+    const one = row();
+    const started = row({ key: "k" });
+    parents.set("k", "a");
+    choose("a", true);
+    limitEnded("a", "session", RESET);
+    limitEnded("k", "session", RESET);
+    expect(resumesAt(started)).toBe(RESET * 1000);
+    choose("a", false);
+    expect(autoResume.stopped.a).toBeUndefined();
+    expect(autoResume.stopped.k).toBeUndefined();
+    // Turned on again once the reset has passed, nothing goes.
+    choose("a", true);
+    expect(resumesAt(one)).toBeNull();
+    await look(AFTER);
+    expect(asked).toHaveLength(0);
+    expect(went).toHaveLength(0);
+    expect(sent).toHaveLength(0);
   });
 
   it("stops waiting when a turn begins, the run ends, the row stops or the account has no window", async () => {
@@ -244,6 +273,11 @@ describe("what is waited for", () => {
     moved.account = "api";
     expect(resumesAt(moved)).toBeNull();
     await look(AFTER);
+    expect(autoResume.stopped.m).toBeUndefined();
+    // Moved back, what it waited for is not taken up again.
+    moved.account = "work";
+    expect(resumesAt(moved)).toBeNull();
+    await look(AFTER);
     expect(asked).toHaveLength(0);
     expect(went).toHaveLength(0);
     expect(sent).toHaveLength(0);
@@ -267,7 +301,7 @@ describe("going on once the limit resets", () => {
       { project: "/p", agent: "claude-code", configDir: "work", read: true, worked: true, since: RESET },
     ]);
     expect(went).toEqual([{ key: "a", at: RESET * 1000 }]);
-    expect(sent).toEqual([{ key: "a", text: GO_ON }]);
+    expect(sent).toMatchObject([{ key: "a", text: GO_ON }]);
     expect(said).toHaveLength(0);
     expect(resumesAt(one)).toBeNull();
     await look(AFTER + 60_000);
@@ -328,6 +362,46 @@ describe("going on once the limit resets", () => {
     expect(said[0].text).toBe(
       "Did not go on by itself: the conversation could not be started again from its notes.",
     );
+  });
+
+  it("sends no line where the choice was turned off, or the user wrote, while the run started again", async () => {
+    withWindow();
+    opens();
+    row();
+    choose("a", true);
+    limitEnded("a", "session", RESET);
+    meanwhile = () => choose("a", false);
+    await look(AFTER);
+    expect(went).toHaveLength(1);
+    expect(sent).toHaveLength(0);
+    // The user's own message waits for the fresh run: it is the turn.
+    const other = row({ key: "b" });
+    choose("b", true);
+    limitEnded("b", "session", RESET);
+    meanwhile = () => {
+      written = true;
+    };
+    await look(AFTER);
+    expect(went).toHaveLength(2);
+    expect(sent).toHaveLength(0);
+    // That turn was not the one try: the limit refusing it is waited for.
+    turnMoved("b", true);
+    limitEnded("b", "session", RESET + 5 * 3600);
+    expect(resumesAt(other)).toBe((RESET + 5 * 3600) * 1000);
+    expect(said).toHaveLength(0);
+  });
+
+  it("a line that never reached the agent was no try", async () => {
+    withWindow();
+    opens();
+    const one = row();
+    choose("a", true);
+    limitEnded("a", "session", RESET);
+    await look(AFTER);
+    sent[0].lost();
+    limitEnded("a", "session", RESET + 5 * 3600);
+    expect(resumesAt(one)).toBe((RESET + 5 * 3600) * 1000);
+    expect(said).toHaveLength(0);
   });
 
   it("leaves a row alone that works or asks, and one a turn began in while the usage was read", async () => {

@@ -808,8 +808,7 @@ window has that one, and its chip says so.
 
 The chip is there only for a Claude Code conversation whose account's
 figures hold a session window. An account metered some other way has no
-such window and is offered nothing, and a conversation moved to one stops
-waiting. Codex and terminal sessions are not offered it: only a Claude
+such window and is offered nothing. Codex and terminal sessions are not offered it: only a Claude
 Code conversation goes on from its notes, and only an integrated session
 says for certain what ended its turn.
 
@@ -821,16 +820,19 @@ over with the message. The core sends the limitReached event only where
 the turn failed and both name that kind; a refusal by a throttle, a
 capacity switch-off or an organization's policy does not carry it. So a
 turn the user stopped, one that finished, one that failed for any other
-reason and a session waiting on an answer are never waited for. Nor is a
+reason and a session waiting on an answer are never waited for, and a
+stop the user asked for as the refusal landed is the user's stop. Nor is a
 refusal by the week's limit, by the credits bought beyond the plan, or by
 one that names no time. A message the user sends while the limit holds
 is refused the same way, and is waited for the same.
 
 While a conversation waits, its row and the status bar read that it
 resumes and when, and so does its chip. The wait is held in the window
-alone: quitting the app ends it, and so does the session stopping, a turn
-beginning in it, or the choice being turned off. Turned on while the
-limit still holds, the wait begins then.
+alone: quitting the app ends it, and so does the session stopping or a
+turn beginning in it. Turning the choice off ends it for good, and so does
+moving the conversation to an account with no session window: turned on
+again, or moved back, only a turn the limit cuts short after that is
+waited for.
 
 A minute after the time the window starts over, the account's usage is
 read again, with a read asked for whatever the age of the figures held,
@@ -847,7 +849,9 @@ whatever its size and however long it rested: the whole conversation is
 never read again for it. Where the core cannot write the briefing, the
 run is left as it is and the conversation says so. The fresh conversation
 is sent one line, as the workbench's own, asking it to go on, and the
-line where the run began says it went on by itself. That turn is the one
+line where the run began says it went on by itself. The line is not sent
+where the user turned the choice off or wrote to the conversation while
+it started: it is theirs to go on with. That turn is the one
 try: where the limit refuses it too, the conversation says so and waits
 for the user.
 

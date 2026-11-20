@@ -19,13 +19,17 @@
  * one that finished, one that failed otherwise, a week's limit and a
  * session waiting on an answer are left as they are. What is waited for is
  * held in the window alone, so quitting the app ends it, and so does the
- * run ending, a turn beginning, or the choice being turned off.
+ * run ending or a turn beginning. Turning the choice off, or moving the
+ * conversation to an account with no session window, ends it for good:
+ * turned on again, only a turn the limit cuts short after that is waited
+ * for.
  *
  * At the time the window resets, and a minute for the server to agree,
  * the account's usage is read again. The conversation goes on only where
  * figures read since the reset show the window open: its run is started
  * again as a fresh conversation from its notes, whatever its size, and
- * sent one line asking it to go on. A window that reads as used up until
+ * sent one line asking it to go on, unless the choice was turned off or
+ * the user wrote to it while it started. A window that reads as used up until
  * a later time is waited for until then. Where the figures cannot be read
  * for a quarter of an hour the wait ends and the conversation says so.
  * The turn sent is the one try: where the limit refuses it too, the
@@ -74,8 +78,11 @@ export interface Hands {
   /** Starts the row's run again as a fresh conversation from its notes;
       false where it could not, with nothing changed. */
   goOn(key: string, at: number): Promise<boolean>;
-  /** Sends the row's agent a line as the workbench's own. */
-  send(key: string, text: string): boolean;
+  /** Sends the row's agent a line as the workbench's own; `lost` runs
+      where it never reaches the agent. */
+  send(key: string, text: string, lost: () => void): boolean;
+  /** Whether a message of the user's waits for the row's agent. */
+  written(key: string): boolean;
   /** Writes a quiet line into the row's conversation. */
   say(key: string, text: string, warning: boolean): void;
 }
@@ -143,9 +150,11 @@ export function settle(key: string) {
 }
 
 /** The user chose on a conversation's composer. The choice is kept for
-    the next new conversation too. */
+    the next new conversation too. Turned off, what the conversation
+    waited for is let go, and so is what the sessions it started did. */
 export function choose(key: string, on: boolean) {
   autoResume.rows[key] = on;
+  if (!on) forget(key);
   if (autoResume.next !== on) {
     autoResume.next = on;
     persist({ autoResume: on });
@@ -188,8 +197,9 @@ function forget(key: string) {
 /**
  * The agent said the usage limit refused the turn that just ended:
  * `window` is the window used up and `resetsAt` when it starts over, in
- * seconds. Only the session window with a time is waited for. Where the
- * turn was the one sent to go on, that was the one try.
+ * seconds. Only the session window with a time is waited for, and only
+ * where the choice is on as the turn ends. Where the turn was the one
+ * sent to go on, that was the one try.
  */
 export function limitEnded(key: string, window: string | null, resetsAt: number | null) {
   if (tried.delete(key)) {
@@ -197,7 +207,8 @@ export function limitEnded(key: string, window: string | null, resetsAt: number 
     hands?.say(key, "The usage limit stopped it again. It does not go on by itself a second time.", true);
     return;
   }
-  if (window !== "session" || resetsAt === null) {
+  const session = byKey(key);
+  if (window !== "session" || resetsAt === null || session === null || !isOn(session)) {
     forget(key);
     return;
   }
@@ -276,12 +287,17 @@ async function goOn(session: Session, stopped: Stopped, now: number) {
     hands?.say(key, "Did not go on by itself: the conversation could not be started again from its notes.", true);
     return;
   }
+  // The run is up as a fresh conversation. It is the user's where they
+  // turned the choice off or wrote to it meanwhile: nothing more is sent.
+  const up = byKey(key);
+  if (up === null || !isOn(up) || hands?.written(key) === true) return;
   tried.add(key);
-  if (hands?.send(key, GO_ON) !== true) tried.delete(key);
+  if (hands?.send(key, GO_ON, () => tried.delete(key)) !== true) tried.delete(key);
 }
 
-/** Looks at every wait: one whose row is gone or no longer runs ends, and
-    one whose time has come reads the usage and goes on. */
+/** Looks at every wait: one whose row is gone, no longer runs or no longer
+    has the choice on ends, and one whose time has come reads the usage
+    and goes on. */
 export function look(now = Date.now()): Promise<void> {
   const going: Promise<void>[] = [];
   for (const [key, stopped] of Object.entries(autoResume.stopped)) {
@@ -290,7 +306,11 @@ export function look(now = Date.now()): Promise<void> {
       forget(key);
       continue;
     }
-    if (stopped.going || resumesAt(session) === null) continue;
+    if (stopped.going) continue;
+    if (!isOn(session)) {
+      forget(key);
+      continue;
+    }
     // Something of the user's is under way in the row: it is theirs now.
     if (session.working || session.needs !== null) continue;
     if (now < stopped.resetsAt + MARGIN) continue;

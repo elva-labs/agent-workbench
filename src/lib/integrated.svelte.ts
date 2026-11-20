@@ -1420,8 +1420,15 @@ export async function goOnAfterLimit(key: string, resetAt: number): Promise<bool
 }
 
 setHands({
-  goOn: goOnAfterLimit,
-  send: (key, text) => sendAsWorkbench(key, text, () => {}) !== null,
+  // What the composer held while the run started goes first, as the
+  // window draws the run as up.
+  goOn: async (key, resetAt) => {
+    const went = await goOnAfterLimit(key, resetAt);
+    await tick();
+    return went;
+  },
+  send: (key, text, lost) => sendAsWorkbench(key, text, lost) !== null,
+  written: userWaiting,
   say: (key, text, warning) =>
     links.get(key)?.conversation.apply({ type: "notice", level: warning ? "warning" : "info", message: text }),
 });

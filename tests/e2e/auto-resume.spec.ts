@@ -86,7 +86,7 @@ test("is offered only where the account has a session window, off until chosen, 
   await expect(chip(page)).toHaveText("Auto-resume on");
 });
 
-test("the row and the chip say when it resumes, and stop saying so once a turn begins", async ({ page }) => {
+test("the row and the chip say when it resumes, until a turn begins or it is turned off", async ({ page }) => {
   await open(page);
   await windowed(page, H, 100);
   await chip(page).click();
@@ -105,20 +105,27 @@ test("the row and the chip say when it resumes, and stop saying so once a turn b
   await expect(page.getByTestId("session-row").locator(".state")).toContainText(words);
   // Nothing is asked of the usage, and nothing sent, before the reset.
   expect((await calls(page)).filter((call) => call.method === "send")).toHaveLength(1);
-  // Turned off, nothing waits; turned on again while the limit holds, it does.
-  await chip(page).click();
-  await option(page, "Off").click();
-  await expect(when).toHaveCount(0);
-  await expect(chip(page)).toHaveText("Auto-resume off");
-  await chip(page).click();
-  await option(page, "On").click();
-  await expect(when).toHaveText(words);
   // The user goes on themselves: the wait is over.
   await page.getByTestId("composer-input").fill("Try again");
   await page.keyboard.press("Enter");
   await agent(page, `f.startTurn("${H}");`);
   await expect(when).toHaveCount(0);
   await expect(chip(page)).toHaveText("Auto-resume on");
+  // Refused again, it waits again; turned off, the wait is gone for good.
+  await agent(
+    page,
+    `f.emit("${H}", { type: "limitReached", window: "session", resetsAt: now + 3600 });
+     f.endTurn("${H}", "failed", "You've hit your limit");`,
+  );
+  await expect(when).toHaveText(words);
+  await chip(page).click();
+  await option(page, "Off").click();
+  await expect(when).toHaveCount(0);
+  await expect(chip(page)).toHaveText("Auto-resume off");
+  await chip(page).click();
+  await option(page, "On").click();
+  await expect(chip(page)).toHaveText("Auto-resume on");
+  await expect(when).toHaveCount(0);
 });
 
 test("goes on by itself from its notes once the usage reads open after the reset, and says so in the conversation", async ({
