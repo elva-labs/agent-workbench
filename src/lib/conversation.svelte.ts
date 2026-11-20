@@ -182,7 +182,16 @@ export interface Turn {
 
 export type Entry =
   | { kind: "user"; key: string; message: string }
-  | { kind: "agent"; key: string; turn: number; parts: Part[]; at: number | null }
+  | {
+      kind: "agent";
+      key: string;
+      turn: number;
+      parts: Part[];
+      at: number | null;
+      /** It follows a message the agent took while its turn went on, so
+          it holds the agent's answer to it. */
+      answers?: true;
+    }
   | {
       kind: "note";
       key: string;
@@ -1004,7 +1013,7 @@ export class Conversation {
           if (turn !== null) {
             if (!turn.messages.includes(message.id)) turn.messages.push(message.id);
             // What the agent says after it took the message follows it.
-            this.#push({ kind: "agent", key: "", turn: turn.id, parts: [], at: now });
+            this.#push({ kind: "agent", key: "", turn: turn.id, parts: [], at: now, answers: true });
           }
         }
         break;

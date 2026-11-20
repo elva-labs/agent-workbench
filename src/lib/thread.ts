@@ -34,13 +34,20 @@ export type Segment =
   | { kind: "text"; part: TextPart }
   | { kind: "plan"; part: PlanPart }
   | { kind: "question"; part: QuestionPart }
-  | { kind: "work"; parts: (ToolCall | TextPart)[]; key: string };
+  | { kind: "work"; parts: (ToolCall | TextPart)[]; key: string }
+  | { kind: "thought"; part: TextPart };
 
-export function segments(parts: Part[]): Segment[] {
+/** `answers` says the run follows a message the agent took while its turn
+    went on: there, its first thinking that is all it says before the
+    workbench's own calls is drawn in sight, as its answer may be there
+    and nowhere else. */
+export function segments(parts: Part[], answers = false): Segment[] {
   const out: Segment[] = [];
+  const thought = answers ? thoughtAnswer(parts) : null;
   for (const part of parts) {
     if (!drawnPart(part)) continue;
-    if (part.kind === "text") out.push({ kind: "text", part });
+    if (part === thought) out.push({ kind: "thought", part });
+    else if (part.kind === "text") out.push({ kind: "text", part });
     else if (part.kind === "plan") out.push({ kind: "plan", part });
     else if (part.kind === "question") {
       // An open question is in the dock; the thread draws it once settled.
@@ -65,6 +72,21 @@ export function segments(parts: Part[]): Segment[] {
     has a step, a count or a line of its own, and what the agent wrote
     before them stays the last thing in its run. */
 const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
+
+/** The first thinking in a run that is the whole of a message the agent
+    sent before a wait, notify, note or notes call: no text comes right
+    before it, and one of those calls right after it. */
+export function thoughtAnswer(parts: Part[]): TextPart | null {
+  for (let at = 0; at < parts.length; at++) {
+    const part = parts[at];
+    if (part.kind !== "thinking" || !part.done || part.text.trim() === "") continue;
+    const before = parts[at - 1];
+    const after = parts[at + 1];
+    if (before?.kind === "text") continue;
+    if (after !== undefined && !drawnPart(after)) return part;
+  }
+  return null;
+}
 
 /** Whether the thread draws a part of a run. */
 export function drawnPart(part: Part): boolean {
@@ -1281,9 +1303,9 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
       .filter((piece): piece is string => typeof piece === "string" && piece !== "")
       .map(shown)
       .join("\n");
-  const walk = (parts: Part[], around: string[]) => {
-    for (const segment of segments(parts)) {
-      if (segment.kind === "text") add(segment.part.block, around, "", segment.part.text);
+  const walk = (parts: Part[], around: string[], answers = false) => {
+    for (const segment of segments(parts, answers)) {
+      if (segment.kind === "text" || segment.kind === "thought") add(segment.part.block, around, "", segment.part.text);
       else if (segment.kind === "plan") {
         const plan = segment.part;
         add(`plan-${plan.at}`, around, lines(plan.steps.map((step) => step.text)), plan.text);
@@ -1321,7 +1343,7 @@ export function heldIn(conversation: Conversation, entry: Entry, options: HeldOp
   if (entry.kind === "user") {
     const message = conversation.messages[entry.message];
     if (message !== undefined) add(message.id, [], shown(words(message)));
-  } else if (entry.kind === "agent") walk(entry.parts, []);
+  } else if (entry.kind === "agent") walk(entry.parts, [], entry.answers === true);
   else if (entry.kind === "note") add(entry.key, [], shown(entry.text));
   return out;
 }

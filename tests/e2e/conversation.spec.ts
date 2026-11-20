@@ -161,6 +161,38 @@ test.describe("an integrated session", () => {
     await expect(run.getByTestId("step")).toHaveCount(1);
   });
 
+  for (const look of ["modern", "terminal"]) {
+    test(`draws thinking that is all the agent said to a message taken mid-turn in sight, marked as its thinking, in the ${look} look`, async ({ page }) => {
+      await installFakeCore(page, { open: [PROJECT], settings: { integrated: ["claude-code"], look } });
+      await page.goto("/");
+      await page.getByTestId("start-agent").click();
+      await agent(
+        page,
+        `f.send("${H}", crypto.randomUUID(), "Fix the cache, and review it.");
+         f.startTurn("${H}");
+         f.think("${H}", "Start the fix and the review, then wait on both.");
+         f.startTool("${H}", "mcp__chord__wait", {}, { kind: "mcp" });
+         const asked = crypto.randomUUID();
+         f.send("${H}", asked, "Is the cache fixed?");
+         f.emit("${H}", { type: "message", message: asked, state: "taken", text: null, images: [], error: null });
+         f.finishTool("${H}", "call-1", "The user wrote to you, which ends this wait.");
+         f.think("${H}", "Not yet: the review is still running.");
+         f.startTool("${H}", "mcp__chord__wait", {}, { kind: "mcp" });`,
+      );
+      const runs = page.getByTestId("agent-run");
+      await expect(runs).toHaveCount(2);
+      // Before the message, thinking is work, folded.
+      await expect(runs.first().getByTestId("work-line")).toHaveText(/Thought/);
+      await expect(runs.first().getByTestId("agent-thought")).toHaveCount(0);
+      // After it, in sight, and said to be the agent's thinking.
+      const thought = runs.last().getByTestId("agent-thought");
+      await expect(thought).toContainText("Summary of the agent's thinking");
+      await expect(thought).toContainText("Not yet: the review is still running.");
+      await expect(runs.last().getByTestId("work-line")).toHaveCount(0);
+      await expect(page.getByTestId("now")).toHaveText("Waiting on the sessions it started");
+    });
+  }
+
   test("grows streaming text in place and says what the agent does meanwhile", async ({ page }) => {
     await openIntegrated(page);
     await agent(page, `f.send("${H}", crypto.randomUUID(), "go"); f.startTurn("${H}"); f.startTool("${H}", "Bash", { command: "cargo build" }, { kind: "command" });`);

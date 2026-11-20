@@ -371,6 +371,52 @@ describe("the workbench's wait and notify in a run", () => {
     expect(nowDoing(running(), parts)).toBe("Waiting on the sessions it started");
   });
 
+  it("leave thinking that is all the agent said to a message it took mid-turn in sight, and nowhere else", () => {
+    const shapeOf = (parts: Part[], answers: boolean) =>
+      segments(parts, answers).map((segment) =>
+        segment.kind === "work" ? `work:${segment.parts.map((part) => (part.kind === "tool" ? part.name : part.kind)).join("+")}` : segment.kind,
+      );
+    const thought = (words = "Yes: the cache is fixed.") => text({ kind: "thinking", text: words });
+    const wait = (done = true) => call({ name: WAIT, tool: "mcp", done });
+    const answered: Part[] = [call({ name: "Bash" }), thought(), call({ name: NOTIFY, tool: "mcp" }), wait(false)];
+    expect(shapeOf(answered, true)).toEqual(["work:Bash", "thought"]);
+    expect(shapeOf(answered, false)).toEqual(["work:Bash+thinking"]);
+    expect(shapeOf([thought(), wait()], true)).toEqual(["thought"]);
+    // Words of its own, empty thinking, or work after it: the thinking stays work.
+    expect(shapeOf([text({ text: "Yes." }), thought(), wait()], true)).toEqual(["text", "work:thinking"]);
+    expect(shapeOf([thought(" "), wait()], true)).toEqual(["work:thinking"]);
+    expect(shapeOf([thought(), call({ name: "Bash" }), wait()], true)).toEqual(["work:thinking+Bash"]);
+    expect(shapeOf([thought()], true)).toEqual(["work:thinking"]);
+    // Only the first: what it thinks at each later wait is work.
+    expect(shapeOf([thought(), wait(), thought("Still waiting."), wait(false)], true)).toEqual(["thought", "work:thinking"]);
+  });
+
+  it("mark the run after a message taken mid-turn, live and read back, and find its thinking there", () => {
+    const events: IntegratedEventBody[] = [
+      { type: "message", message: "m-1", state: "sent", error: null, text: "go", images: [] },
+      { type: "turnStarted", messages: ["m-1"] },
+      { type: "thinking", block: "t-1", parent: null, text: "Start the review.", done: true },
+      { type: "toolStarted", call: "w-1", parent: null, name: WAIT, kind: "mcp" },
+      { type: "message", message: "m-2", state: "taken", error: null, text: "Is the cache fixed?", images: [] },
+      { type: "toolFinished", call: "w-1", parent: null, output: "", error: false, truncated: false, changes: [] },
+      { type: "thinking", block: "t-2", parent: null, text: "Yes: the cache is fixed.", done: true },
+      { type: "toolStarted", call: "w-2", parent: null, name: WAIT, kind: "mcp" },
+    ];
+    const live = new Conversation(() => 0);
+    for (const event of events) live.apply(event);
+    const read = new Conversation(() => 0);
+    read.lay({ items: events.map((event, at) => ({ at: at + 1, event })), cut: false }, null);
+    for (const c of [live, read]) {
+      const runs = c.entries.filter((entry) => entry.kind === "agent");
+      expect(runs.map((run) => run.kind === "agent" && run.answers === true)).toEqual([false, true]);
+      const found = held(c).filter((item) => item.markdown !== null);
+      expect(found.map((item) => [item.markdown, item.folds.length])).toEqual([
+        ["Start the review.", 2],
+        ["Yes: the cache is fixed.", 0],
+      ]);
+    }
+  });
+
   it("keep a message whole across a wake that comes between two waits", () => {
     const c = new Conversation(() => 0);
     const events: IntegratedEventBody[] = [
