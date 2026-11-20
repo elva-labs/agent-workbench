@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The event a plugin's state change is told by.
 pub const PLUGIN_STATE: &str = "plugin_state";
@@ -454,6 +454,27 @@ static LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
 type Key = (String, String);
 
+/// How long after an action is sent its plugin may open a web address for
+/// it.
+const OPEN_WINDOW: Duration = Duration::from_secs(30);
+
+/// An action waiting for an answer: the plugin it went to, when, and
+/// whether that plugin has opened its one web address for it.
+struct Waiting {
+    plugin: Key,
+    sent: Instant,
+    opened: bool,
+}
+
+impl Waiting {
+    /// Whether `plugin` may open a web address for this action at `now`:
+    /// the action went to it less than `OPEN_WINDOW` ago and it has opened
+    /// none for it yet.
+    fn may_open(&self, plugin: &Key, now: Instant) -> bool {
+        &self.plugin == plugin && !self.opened && now.duration_since(self.sent) < OPEN_WINDOW
+    }
+}
+
 /// An agent's pty as the runtime follows it: the session it runs, known at
 /// the spawn or found afterwards, the token the workbench gave it, the
 /// project it belongs to, the folder it runs in, and the agent's id of the
@@ -539,8 +560,8 @@ struct Inner {
     /// leaves in the viewer can be taken out of it when it goes.
     views: Mutex<HashMap<ViewKey, ViewEvent>>,
     /// The actions waiting for an answer, which tells an action's result
-    /// from a tool call's, each with the plugin it went to.
-    pending: Mutex<HashMap<String, Key>>,
+    /// from a tool call's, until it comes or the plugin goes.
+    pending: Mutex<HashMap<String, Waiting>>,
     /// The mark each plugin last put on a session's row.
     marks: Mutex<HashMap<MarkKey, MarkEvent>>,
     /// Where the build of a plugin with no process has got to: building,
@@ -953,8 +974,9 @@ impl Plugins {
     }
 
     /// A session ran a shell command. Each plugin whose manifest listens
-    /// for what it runs is told, and no other; a command of no session
-    /// this core started, or one told already, is told to none.
+    /// for one of the simple commands in it is told that command alone, and
+    /// no other; a command of no session this core started, or one told
+    /// already, is told to none.
     pub fn command_ran(&self, ran: Ran) {
         self.inner.command_ran(ran);
     }
@@ -1075,103 +1097,246 @@ const COMMANDS_TOLD: usize = 256;
 /// How deep the scripts of `sh -c` and its like are looked into.
 const SHELL_DEPTH: usize = 3;
 
-/// Words a simple command can open with before the program it runs.
+/// Words a simple command can open with before the program it runs, and
+/// the words that close a compound one.
 const LEADING_WORDS: &[&str] = &[
-    "!", "{", "}", "if", "then", "elif", "else", "while", "until", "do", "time", "exec", "command",
-    "nohup", "env",
+    "!", "{", "}", "if", "then", "elif", "else", "fi", "while", "until", "do", "done", "time",
+    "exec", "command", "nohup", "env",
 ];
 
-/// The simple commands a shell command line runs, each as its words with
-/// the quotes taken off: the line is split where `;`, `&`, `|`, a newline,
-/// a parenthesis or a backquote stands outside quotes, and the words a
-/// command opens with before its program, `NAME=value` among them, are
-/// dropped. The script a shell is given with `-c` is split as well, so a
-/// command an agent wraps in `zsh -lc '...'` is found inside.
-fn command_parts(line: &str) -> Vec<Vec<String>> {
+/// Programs that print nothing when given arguments, so a line that runs
+/// them beside a heard command still lets its output be told.
+const QUIET: &[&str] = &["cd", "pushd", "popd", "export", "set"];
+
+/// One simple command in a line: its words from the program on, with the
+/// quotes taken off, and its text as written from the program to its last
+/// word.
+#[derive(Debug, Clone, PartialEq)]
+struct Part {
+    words: Vec<String>,
+    text: String,
+}
+
+impl Part {
+    /// Whether the command prints nothing of its own: `cd` and its like,
+    /// and `export` or `set` with something to set, never bare.
+    fn quiet(&self) -> bool {
+        let program = self.words[0].as_str();
+        QUIET.contains(&program)
+            && (self.words.len() > 1 || matches!(program, "cd" | "pushd" | "popd"))
+    }
+}
+
+/// The simple commands a shell command line runs: the line is split where
+/// `;`, `&`, `|`, a newline, a parenthesis or a backquote stands outside
+/// quotes, and the words a command opens with before its program,
+/// `NAME=value` among them, are dropped, as is a command of nothing else.
+/// A heredoc's body is text and not commands. The script a shell is given
+/// with `-c` stands in for that shell, so a command an agent wraps in
+/// `zsh -lc '...'` is found inside and the wrapper is not a command of its
+/// own.
+fn command_parts(line: &str) -> Vec<Part> {
     let mut parts = Vec::new();
     split_command(line, 0, &mut parts);
     parts
 }
 
-fn split_command(line: &str, depth: usize, parts: &mut Vec<Vec<String>>) {
+type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
+
+/// A word being read: its text, with quotes taken off, and where it
+/// starts in the line.
+struct Word {
+    text: String,
+    start: Option<usize>,
+}
+
+impl Word {
+    fn push(&mut self, at: usize, c: char) {
+        self.start.get_or_insert(at);
+        self.text.push(c);
+    }
+
+    fn end(&mut self, at: usize, words: &mut Vec<(String, usize, usize)>) {
+        if let Some(start) = self.start.take() {
+            words.push((std::mem::take(&mut self.text), start, at));
+        }
+    }
+}
+
+fn split_command(line: &str, depth: usize, parts: &mut Vec<Part>) {
     let mut words = Vec::new();
-    let mut word = String::new();
-    let mut in_word = false;
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
+    let mut word = Word {
+        text: String::new(),
+        start: None,
+    };
+    let mut heredocs = Vec::new();
+    let mut chars = line.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
         match c {
             '\'' => {
-                in_word = true;
-                for c in chars.by_ref() {
+                word.start.get_or_insert(at);
+                for (_, c) in chars.by_ref() {
                     if c == '\'' {
                         break;
                     }
-                    word.push(c);
+                    word.text.push(c);
                 }
             }
             '"' => {
-                in_word = true;
-                while let Some(c) = chars.next() {
-                    match c {
-                        '"' => break,
-                        '\\' => match chars.peek() {
-                            Some(&next @ ('"' | '\\' | '$' | '`')) => {
-                                word.push(next);
-                                chars.next();
-                            }
-                            Some('\n') => {
-                                chars.next();
-                            }
-                            _ => word.push('\\'),
-                        },
-                        c => word.push(c),
+                word.start.get_or_insert(at);
+                double_quoted(&mut chars, &mut word.text);
+            }
+            '\\' => {
+                if let Some((next_at, next)) = chars.next() {
+                    if next != '\n' {
+                        word.start.get_or_insert(at);
+                        word.push(next_at, next);
                     }
                 }
             }
-            '\\' => {
-                if let Some(next) = chars.next().filter(|next| *next != '\n') {
-                    in_word = true;
-                    word.push(next);
+            '#' if word.start.is_none() => while chars.next_if(|(_, c)| *c != '\n').is_some() {},
+            '<' if chars.peek().is_some_and(|(_, c)| *c == '<') => {
+                chars.next();
+                if chars.next_if(|(_, c)| *c == '<').is_some() {
+                    word.push(at, '<');
+                    word.text.push_str("<<");
+                } else {
+                    word.end(at, &mut words);
+                    heredocs.extend(heredoc(&mut chars));
                 }
             }
-            '#' if !in_word => while chars.next_if(|c| *c != '\n').is_some() {},
-            ';' | '&' | '|' | '\n' | '(' | ')' | '`' => {
-                end_word(&mut word, &mut in_word, &mut words);
-                end_part(&mut words, depth, parts);
+            '&' if word.text.ends_with(['>', '<'])
+                || chars.peek().is_some_and(|(_, c)| *c == '>') =>
+            {
+                word.push(at, c);
             }
-            c if c.is_whitespace() => end_word(&mut word, &mut in_word, &mut words),
-            c => {
-                in_word = true;
+            '\n' => {
+                word.end(at, &mut words);
+                end_part(line, &mut words, depth, parts);
+                skip_heredocs(&mut chars, &mut heredocs);
+            }
+            ';' | '&' | '|' | '(' | ')' | '`' => {
+                word.end(at, &mut words);
+                end_part(line, &mut words, depth, parts);
+            }
+            c if c.is_whitespace() => word.end(at, &mut words),
+            c => word.push(at, c),
+        }
+    }
+    word.end(line.len(), &mut words);
+    end_part(line, &mut words, depth, parts);
+}
+
+/// Reads a double-quoted string after its opening quote, into `word`. A
+/// heredoc opened inside a `$(...)` in it has its body read as the
+/// string's text, quotes and all, as the shell reads it.
+fn double_quoted(chars: &mut Chars, word: &mut String) {
+    let mut substitutions = 0usize;
+    let mut heredocs = Vec::new();
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '"' => break,
+            '\\' => match chars.peek().map(|(_, c)| *c) {
+                Some(next @ ('"' | '\\' | '$' | '`')) => {
+                    word.push(next);
+                    chars.next();
+                }
+                Some('\n') => {
+                    chars.next();
+                }
+                _ => word.push('\\'),
+            },
+            '$' if chars.peek().is_some_and(|(_, c)| *c == '(') => {
+                substitutions += 1;
                 word.push(c);
+            }
+            ')' if substitutions > 0 => {
+                substitutions -= 1;
+                word.push(c);
+            }
+            '<' if substitutions > 0 && chars.peek().is_some_and(|(_, c)| *c == '<') => {
+                chars.next();
+                if chars.next_if(|(_, c)| *c == '<').is_some() {
+                    word.push_str("<<<");
+                } else {
+                    heredocs.extend(heredoc(chars));
+                }
+            }
+            '\n' => {
+                word.push(c);
+                skip_heredocs(chars, &mut heredocs);
+            }
+            c => word.push(c),
+        }
+    }
+}
+
+/// The word a heredoc ends at, read after its `<<`, quotes taken off, and
+/// whether its body's lines may be indented with tabs, as `<<-` allows.
+fn heredoc(chars: &mut Chars) -> Option<(String, bool)> {
+    let tabs = chars.next_if(|(_, c)| *c == '-').is_some();
+    while chars.next_if(|(_, c)| *c == ' ' || *c == '\t').is_some() {}
+    let mut end = String::new();
+    while let Some((_, c)) = chars.next_if(|(_, c)| {
+        !c.is_whitespace() && !matches!(c, ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`')
+    }) {
+        if !matches!(c, '\'' | '"' | '\\') {
+            end.push(c);
+        }
+    }
+    (!end.is_empty()).then_some((end, tabs))
+}
+
+/// Passes over the bodies of the heredocs a line opened, each up to the
+/// line that ends it, or to the end of the text when none does.
+fn skip_heredocs(chars: &mut Chars, heredocs: &mut Vec<(String, bool)>) {
+    for (end, tabs) in heredocs.drain(..) {
+        loop {
+            let mut body_line = String::new();
+            let mut more = false;
+            for (_, c) in chars.by_ref() {
+                if c == '\n' {
+                    more = true;
+                    break;
+                }
+                body_line.push(c);
+            }
+            let body_line = if tabs {
+                body_line.trim_start_matches('\t')
+            } else {
+                &body_line
+            };
+            if body_line == end || !more {
+                break;
             }
         }
     }
-    end_word(&mut word, &mut in_word, &mut words);
-    end_part(&mut words, depth, parts);
 }
 
-fn end_word(word: &mut String, in_word: &mut bool, words: &mut Vec<String>) {
-    if std::mem::take(in_word) {
-        words.push(std::mem::take(word));
-    }
-}
-
-fn end_part(words: &mut Vec<String>, depth: usize, parts: &mut Vec<Vec<String>>) {
+fn end_part(
+    line: &str,
+    words: &mut Vec<(String, usize, usize)>,
+    depth: usize,
+    parts: &mut Vec<Part>,
+) {
     let mut words = std::mem::take(words);
     let program = words
         .iter()
-        .position(|word| !LEADING_WORDS.contains(&word.as_str()) && !assignment(word))
+        .position(|(word, _, _)| !LEADING_WORDS.contains(&word.as_str()) && !assignment(word))
         .unwrap_or(words.len());
     words.drain(..program);
-    if words.is_empty() {
+    let (Some((_, start, _)), Some((_, _, end))) = (words.first(), words.last()) else {
         return;
-    }
+    };
+    let text = line[*start..*end].to_string();
+    let words: Vec<String> = words.into_iter().map(|(word, _, _)| word).collect();
     if depth < SHELL_DEPTH {
         if let Some(script) = shell_script(&words) {
             split_command(script, depth + 1, parts);
+            return;
         }
     }
-    parts.push(words);
+    parts.push(Part { words, text });
 }
 
 /// Whether a word sets a variable for the command after it.
@@ -1203,26 +1368,34 @@ fn shell_script(words: &[String]) -> Option<&str> {
     None
 }
 
-/// Whether a command line runs what one of the beginnings names: a simple
-/// command in it whose words begin with the beginning's words, word for
-/// word, its program known by its name wherever it lives.
-fn runs_any(parts: &[Vec<String>], beginnings: &[String]) -> bool {
+/// Whether a simple command runs what one of the beginnings names: its
+/// words begin with the beginning's words, word for word, its program
+/// known by its name wherever it lives.
+fn runs(part: &Part, beginnings: &[String]) -> bool {
     beginnings.iter().any(|beginning| {
         let wanted: Vec<&str> = beginning.split(' ').collect();
-        parts.iter().any(|words| {
-            words.len() >= wanted.len()
-                && words
-                    .iter()
-                    .zip(&wanted)
-                    .enumerate()
-                    .all(|(at, (word, want))| {
-                        word == want
-                            || (at == 0
-                                && !want.contains('/')
-                                && word.rsplit('/').next() == Some(want))
-                    })
-        })
+        part.words.len() >= wanted.len()
+            && part
+                .words
+                .iter()
+                .zip(&wanted)
+                .enumerate()
+                .all(|(at, (word, want))| {
+                    word == want
+                        || (at == 0 && !want.contains('/') && word.rsplit('/').next() == Some(want))
+                })
     })
+}
+
+/// The output a plugin may be told for the simple command at `heard` in a
+/// line: all of it when every other command in the line prints nothing,
+/// and none otherwise, since it is not that command's alone.
+fn output_of<'a>(parts: &[Part], heard: usize, output: &'a str) -> Option<&'a str> {
+    parts
+        .iter()
+        .enumerate()
+        .all(|(at, part)| at == heard || part.quiet())
+        .then_some(output)
 }
 
 /// The end of a command's output a plugin is told, and whether it was cut
@@ -2170,6 +2343,12 @@ impl Inner {
             }
             out
         };
+        // Its actions are answered by no one now, and the next process
+        // under its name opens nothing for them.
+        self.pending
+            .lock()
+            .expect("plugins lock")
+            .retain(|_, waiting| waiting.plugin != key);
         self.publish();
         self.forget_sections(source_id, name);
         self.forget_views(source_id, name);
@@ -2287,8 +2466,16 @@ impl Inner {
 
     /// Writes the tools out for the tool server, which reads the file as
     /// the agent asks. Written whole and moved into place, so a reader
-    /// sees one list or the other and never half of one.
+    /// sees one list or the other and never half of one. Says too whether
+    /// an enabled plugin listens for commands, for the hooks.
     fn publish(&self) {
+        let hears = self
+            .running
+            .lock()
+            .expect("plugins lock")
+            .values()
+            .any(|live| live.state != State::Off && !live.commands.is_empty());
+        crate::hook::set_hears_commands(&self.home, hears);
         let Ok(text) = serde_json::to_string(&self.tools()) else {
             return;
         };
@@ -2464,10 +2651,12 @@ impl Inner {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         };
-        let (Some(project), Some(session)) = (text("project"), text("session")) else {
+        // The session's own project, whatever the message names, so a
+        // session carries one mark of a plugin's.
+        let Some(session) = text("session") else {
             return;
         };
-        let Some(token) = self.token_of(&session) else {
+        let Some((token, project)) = self.place_of(&session) else {
             return;
         };
         let icon = text("icon").map(|icon| {
@@ -2539,9 +2728,10 @@ impl Inner {
     }
 
     /// One `open_url` line from a plugin: a web address for the user's
-    /// browser. Only http and https open, and only while one of the
-    /// plugin's actions waits for its result, so the browser opens when
-    /// the user asked something of the plugin and at no other time.
+    /// browser, for the action it names. Only http and https open, one for
+    /// each action, while that action waits for its result and for 30
+    /// seconds at most after it was sent, so the browser opens when the
+    /// user asked something of the plugin and at no other time.
     fn open_url(&self, source_id: &str, name: &str, message: &serde_json::Value) {
         let text = |key: &str| {
             message
@@ -2550,21 +2740,21 @@ impl Inner {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         };
-        let (Some(project), Some(url)) = (text("project"), text("url")) else {
+        let (Some(project), Some(url), Some(action)) =
+            (text("project"), text("url"), text("action"))
+        else {
             return;
         };
         if !web_address(url) {
             return;
         }
         let key: Key = (source_id.to_string(), name.to_string());
-        let asked = self
-            .pending
-            .lock()
-            .expect("plugins lock")
-            .values()
-            .any(|plugin| plugin == &key);
-        if !asked {
-            return;
+        {
+            let mut pending = self.pending.lock().expect("plugins lock");
+            match pending.get_mut(action) {
+                Some(waiting) if waiting.may_open(&key, Instant::now()) => waiting.opened = true,
+                _ => return,
+            }
         }
         crate::events::emit(
             &self.sink,
@@ -2882,10 +3072,14 @@ impl Inner {
         if let Some(session) = session.and_then(|token| self.session_of(token)) {
             message["session"] = serde_json::Value::String(session);
         }
-        self.pending
-            .lock()
-            .expect("plugins lock")
-            .insert(id.clone(), (source_id.to_string(), name.to_string()));
+        self.pending.lock().expect("plugins lock").insert(
+            id.clone(),
+            Waiting {
+                plugin: (source_id.to_string(), name.to_string()),
+                sent: Instant::now(),
+                opened: false,
+            },
+        );
         if let Err(error) = self.send(source_id, name, &message) {
             self.pending.lock().expect("plugins lock").remove(&id);
             return Err(error);
@@ -2948,6 +3142,18 @@ impl Inner {
             .filter_map(|pty| pty.token.clone());
         let token = tokens.next()?;
         tokens.all(|other| other == token).then_some(token)
+    }
+
+    /// The token and the project of the session with this agent id, by the
+    /// same rule as `token_of`.
+    fn place_of(&self, session: &str) -> Option<(String, String)> {
+        let ptys = self.ptys.lock().expect("plugins lock");
+        let mut places = ptys
+            .values()
+            .filter(|pty| pty.session.as_deref() == Some(session))
+            .filter_map(|pty| Some((pty.token.clone()?, pty.project.clone())));
+        let place = places.next()?;
+        places.all(|other| other == place).then_some(place)
     }
 
     fn session_started(&self, pty_id: &str, started: Started) {
@@ -3046,16 +3252,20 @@ impl Inner {
             (session, pty.project.clone(), cwd)
         };
         let parts = command_parts(ran.command);
-        let stdins: Vec<Arc<Mutex<ChildStdin>>> = {
+        let listening: Vec<(Arc<Mutex<ChildStdin>>, Vec<usize>)> = {
             let running = self.running.lock().expect("plugins lock");
             running
                 .values()
                 .filter(|live| matches!(live.state, State::Starting | State::Running))
-                .filter(|live| runs_any(&parts, &live.commands))
-                .map(|live| Arc::clone(&live.stdin))
+                .filter_map(|live| {
+                    let heard: Vec<usize> = (0..parts.len())
+                        .filter(|at| runs(&parts[*at], &live.commands))
+                        .collect();
+                    (!heard.is_empty()).then(|| (Arc::clone(&live.stdin), heard))
+                })
                 .collect()
         };
-        if stdins.is_empty() {
+        if listening.is_empty() {
             return;
         }
         if !ran.call.is_empty() {
@@ -3069,21 +3279,24 @@ impl Inner {
             }
             told.push_back(key);
         }
-        let (output, cut) = output_end(ran.output);
-        let message = serde_json::json!({
-            "type": "command",
-            "project": project,
-            "session": session,
-            "cwd": cwd,
-            "command": ran.command,
-            "ok": ran.ok,
-            "output": output,
-            "truncated": cut || ran.truncated,
-        });
-        for stdin in stdins {
-            if let Ok(mut stdin) = stdin.lock() {
-                let _ = writeln!(stdin, "{message}");
-                let _ = stdin.flush();
+        for (stdin, heard) in listening {
+            for at in heard {
+                let output = output_of(&parts, at, ran.output).map(output_end);
+                let message = serde_json::json!({
+                    "type": "command",
+                    "project": project,
+                    "session": session,
+                    "cwd": cwd,
+                    "command": parts[at].text,
+                    "ok": ran.ok,
+                    "output": output.map(|(output, _)| output),
+                    "truncated": output.is_some_and(|(_, cut)| cut || ran.truncated),
+                    "withheld": output.is_none(),
+                });
+                if let Ok(mut stdin) = stdin.lock() {
+                    let _ = writeln!(stdin, "{message}");
+                    let _ = stdin.flush();
+                }
             }
         }
     }
@@ -3235,12 +3448,15 @@ done
 "#;
 
     /// A plugin that puts rows and a mark on the session it is told of,
-    /// writes down every line it hears, and opens web addresses while an
-    /// action of its waits and before one does.
+    /// writes down every line it hears, and asks to open web addresses for
+    /// an action, for none, and for one it was sent before it restarted.
     #[cfg(unix)]
     const SESSIONS: &str = r#"#!/bin/sh
 echo '{"type":"hello","name":"board","version":"1.0.0","sections":[{"id":"checks"}]}'
 echo '{"type":"open_url","project":"PROJECT","url":"https://example.com/early"}'
+if [ -f held.txt ]; then
+  printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/after-restart"}\n' "$(cat held.txt)"
+fi
 echo '{"type":"section","id":"checks","project":"PROJECT","session":"s-9","rows":[{"id":"stray","label":"Stray"}]}'
 echo '{"type":"mark","project":"PROJECT","session":"s-9","icon":"branch"}'
 while IFS= read -r line; do
@@ -3252,12 +3468,19 @@ while IFS= read -r line; do
       echo '{"type":"mark","project":"PROJECT","session":"s-1","icon":"pull-request","count":2,"state":"failed","label":"  2   failing  ","extra":true}'
       ;;
     *'"event":"started"'*'"id":"s-2"'*)
-      echo '{"type":"mark","project":"PROJECT","session":"s-2","icon":"rocket","count":0,"state":"odd"}'
+      echo '{"type":"mark","project":"/elsewhere","session":"s-2","icon":"rocket","count":0,"state":"odd"}'
+      ;;
+    *'"action":"hold"'*)
+      printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/' > held.txt
+      exit 1
       ;;
     *'"type":"action"'*)
       id=$(printf '%s' "$line" | sed 's/.*"id":"\([^"]*\)".*/\1/')
-      echo '{"type":"open_url","project":"PROJECT","url":"file:///etc/passwd"}'
-      echo '{"type":"open_url","project":"PROJECT","url":"https://example.com/pull/1"}'
+      echo '{"type":"open_url","project":"PROJECT","url":"https://example.com/unnamed"}'
+      echo '{"type":"open_url","project":"PROJECT","action":"not-sent","url":"https://example.com/wrong"}'
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"file:///etc/passwd"}\n' "$id"
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/pull/1"}\n' "$id"
+      printf '{"type":"open_url","project":"PROJECT","action":"%s","url":"https://example.com/pull/2"}\n' "$id"
       printf '{"type":"result","id":"%s"}\n' "$id"
       ;;
   esac
@@ -4843,6 +5066,8 @@ run = ["sh", "main.sh"]
         assert_eq!(mark["state"], "failed");
         assert_eq!(mark["label"], "2 failing");
         assert!(mark.get("extra").is_none());
+        // Marked under another project, it lands on the session's own.
+        assert_eq!(dot["project"], here);
         assert_eq!(dot["icon"], "dot");
         assert!(dot["count"].is_null());
         assert!(dot["state"].is_null());
@@ -4857,8 +5082,9 @@ run = ["sh", "main.sh"]
             .all(|payload| payload["icon"] != "branch"));
         assert!(events(PLUGIN_OPEN_URL).is_empty());
 
-        // While an action waits, a web address opens, and one that is not
-        // for a browser does not.
+        // While an action waits, one web address that names it opens. One
+        // that names no action, or one not sent, or that is not for a
+        // browser, or a second for the same action, does not.
         plugins
             .action(
                 &added.id,
@@ -4902,11 +5128,90 @@ run = ["sh", "main.sh"]
             .iter()
             .all(|payload| payload["session"] != "t-2" || !payload["icon"].is_null()));
 
-        // The plugin stops, and its mark on the other session goes too.
-        plugins.enable(&added.id, "board", false).unwrap();
-        wait(PLUGIN_MARK, &|payload| {
-            payload["session"] == "t-2" && payload["icon"].is_null()
+        // An action the plugin holds unanswered when it dies opens nothing
+        // for the process that starts in its place.
+        let hellos = || {
+            std::fs::read_to_string(&received)
+                .unwrap()
+                .matches(r#""type":"hello""#)
+                .count()
+        };
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "checks",
+                "hold",
+                None,
+                &serde_json::json!({}),
+                &here,
+                None,
+            )
+            .unwrap();
+        for _ in 0..50 {
+            if hellos() == 2 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(hellos(), 2, "the plugin was not started again");
+        plugins
+            .action(
+                &added.id,
+                "board",
+                "checks",
+                "open",
+                Some("ci"),
+                &serde_json::json!({}),
+                &here,
+                None,
+            )
+            .unwrap();
+        wait(PLUGIN_OPEN_URL, &|payload| {
+            payload["url"] == "https://example.com/pull/1" && events(PLUGIN_OPEN_URL).len() == 2
         });
+        let opened: Vec<serde_json::Value> = events(PLUGIN_OPEN_URL)
+            .iter()
+            .map(|payload| payload["url"].clone())
+            .collect();
+        assert_eq!(
+            opened,
+            ["https://example.com/pull/1", "https://example.com/pull/1"]
+        );
+
+        // The plugin stops, and its mark on the other session goes too.
+        let cleared = || {
+            events(PLUGIN_MARK)
+                .iter()
+                .filter(|payload| payload["session"] == "t-2" && payload["icon"].is_null())
+                .count()
+        };
+        let before = cleared();
+        plugins.enable(&added.id, "board", false).unwrap();
+        for _ in 0..50 {
+            if cleared() > before {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(cleared() > before, "the mark stayed");
+    }
+
+    #[test]
+    fn an_action_lets_its_own_plugin_open_one_web_address_for_30_seconds() {
+        let board: Key = ("source".into(), "board".into());
+        let other: Key = ("source".into(), "other".into());
+        let sent = Instant::now();
+        let mut waiting = Waiting {
+            plugin: board.clone(),
+            sent,
+            opened: false,
+        };
+        assert!(waiting.may_open(&board, sent + Duration::from_secs(29)));
+        assert!(!waiting.may_open(&other, sent));
+        assert!(!waiting.may_open(&board, sent + OPEN_WINDOW));
+        waiting.opened = true;
+        assert!(!waiting.may_open(&board, sent));
     }
 
     #[test]
@@ -4951,9 +5256,11 @@ run = ["sh", "main.sh"]
     }
 
     /// Whether a command line runs one of the beginnings.
-    fn runs(line: &str, beginnings: &[&str]) -> bool {
+    fn line_runs(line: &str, beginnings: &[&str]) -> bool {
         let beginnings: Vec<String> = beginnings.iter().map(|b| b.to_string()).collect();
-        runs_any(&command_parts(line), &beginnings)
+        command_parts(line)
+            .iter()
+            .any(|part| runs(part, &beginnings))
     }
 
     #[test]
@@ -4982,7 +5289,7 @@ run = ["sh", "main.sh"]
             "bash -c \"cd x && gh pr create --title \\\"x\\\"\"",
             "sh -c 'sh -c \"gh pr create\"'",
         ] {
-            assert!(runs(line, &create), "{line:?} was not heard");
+            assert!(line_runs(line, &create), "{line:?} was not heard");
         }
         for line in [
             "",
@@ -5000,18 +5307,90 @@ run = ["sh", "main.sh"]
             "/usr/local/bin/ghx pr create",
             "zsh -lc",
             "grep 'gh pr create' notes.txt",
+            "cat > notes.md <<EOF\ngh pr create --fill\nEOF",
+            "cat > notes.md <<-'EOF'\n\tgh pr create\n\tEOF",
+            "cat <<A <<\"B\"\ngh pr create\nA\ngh pr create\nB",
+            "git commit -m \"$(cat <<'EOF'\nSay \"hi\"\ngh pr create\nEOF\n)\"",
+            "cat <<EOF\ngh pr create, never ended",
         ] {
-            assert!(!runs(line, &create), "{line:?} was heard");
+            assert!(!line_runs(line, &create), "{line:?} was heard");
         }
+        // After a heredoc's body, the line goes on as commands.
+        assert!(line_runs(
+            "cat > notes.md <<EOF\nx\nEOF\ngh pr create",
+            &create
+        ));
+        assert!(line_runs("cat <<< 'x'; gh pr create", &create));
+        assert!(line_runs(
+            "gh pr create --title \"x\" --body \"$(cat <<'EOF'\nSays \"hi\" twice \"\nEOF\n)\" && gh pr view",
+            &create
+        ));
         // A beginning that names a path matches that path only.
-        assert!(runs("/opt/gh pr create", &["/opt/gh pr create"]));
-        assert!(!runs("gh pr create", &["/opt/gh pr create"]));
+        assert!(line_runs("/opt/gh pr create", &["/opt/gh pr create"]));
+        assert!(!line_runs("gh pr create", &["/opt/gh pr create"]));
         // Any of several beginnings will do, and none is none.
-        assert!(runs(
+        assert!(line_runs(
             "gh pr merge 7 --squash",
             &["gh pr create", "gh pr merge"]
         ));
-        assert!(!runs("gh pr create", &[]));
+        assert!(!line_runs("gh pr create", &[]));
+    }
+
+    #[test]
+    fn tells_a_command_s_own_words_and_its_output_only_when_no_other_command_prints() {
+        let heard = |line: &str| -> Vec<(String, bool)> {
+            let parts = command_parts(line);
+            let create = ["gh pr create".to_string()];
+            (0..parts.len())
+                .filter(|at| runs(&parts[*at], &create))
+                .map(|at| {
+                    (
+                        parts[at].text.clone(),
+                        output_of(&parts, at, "out").is_some(),
+                    )
+                })
+                .collect()
+        };
+        let own = |text: &str| vec![(text.to_string(), true)];
+        let withheld = |text: &str| vec![(text.to_string(), false)];
+        assert_eq!(heard("gh pr create --fill"), own("gh pr create --fill"));
+        assert_eq!(
+            heard("GH_TOKEN=x FOO=\"a b\" gh pr create --title 'A; b'"),
+            own("gh pr create --title 'A; b'")
+        );
+        assert_eq!(heard("env GH_TOKEN=x gh pr create"), own("gh pr create"));
+        assert_eq!(
+            heard("bash -lc 'cd api && gh pr create --fill'"),
+            own("gh pr create --fill")
+        );
+        assert_eq!(
+            heard("cd x; export A=1; X=2; pushd y; set -e; popd; gh pr create"),
+            own("gh pr create")
+        );
+        assert_eq!(heard("gh pr create 2>&1"), own("gh pr create 2>&1"));
+        assert_eq!(
+            heard("gh pr create --body-file - <<'EOF'\nbody; rm -rf x\nEOF"),
+            own("gh pr create --body-file -")
+        );
+        assert_eq!(heard("if gh pr create; then cd x; fi"), own("gh pr create"));
+        for (line, text) in [
+            ("git push && gh pr create", "gh pr create"),
+            ("gh pr create | tail -1", "gh pr create"),
+            ("export; gh pr create", "gh pr create"),
+            ("set; gh pr create", "gh pr create"),
+            ("echo $(gh pr create)", "gh pr create"),
+            ("zsh -lc 'cat .env; gh pr create'", "gh pr create"),
+        ] {
+            assert_eq!(heard(line), withheld(text), "{line:?}");
+        }
+        // Two heard in one line print beside each other.
+        assert_eq!(
+            heard("gh pr create -t a; gh pr create -t b"),
+            vec![
+                ("gh pr create -t a".to_string(), false),
+                ("gh pr create -t b".to_string(), false)
+            ]
+        );
     }
 
     #[test]
@@ -5135,6 +5514,7 @@ run = ["sh", "main.sh"]
                 lines.iter().any(|line| line["type"] == "hello")
             });
         }
+        assert!(crate::hook::hears_commands(&home));
 
         let address = "https://github.com/o/r/pull/7\n";
         let long = format!("{}{address}", "é".repeat(COMMAND_OUTPUT));
@@ -5148,12 +5528,13 @@ run = ["sh", "main.sh"]
             output,
             truncated: false,
         };
-        // Heard from a conversation's stream, in a folder of its own.
+        // Heard from a conversation's stream, in a folder of its own, beside
+        // a command that prints nothing.
         plugins.command_ran(ran(
             Some("pty-1"),
             None,
             "call-1",
-            "cd x && gh pr create --fill | cat",
+            "cd x && GH_TOKEN=secret gh pr create --fill",
             Some("/p/x"),
             true,
             &long,
@@ -5163,16 +5544,21 @@ run = ["sh", "main.sh"]
             None,
             Some("s-1"),
             "call-1",
-            "cd x && gh pr create --fill | cat",
+            "cd x && GH_TOKEN=secret gh pr create --fill",
             Some("/p/x"),
             true,
             address,
         ));
-        // Commands no plugin listens for.
+        // Commands no plugin listens for, one of them only the body of a
+        // heredoc.
         for (call, command) in [
             ("call-2", "gh pr list"),
             ("call-3", "echo gh pr create"),
             ("call-4", "gh pr createx"),
+            (
+                "call-8",
+                "cat > notes.md <<'EOF'\ngh pr create --fill\nEOF\ngit status",
+            ),
         ] {
             plugins.command_ran(ran(Some("pty-1"), None, call, command, None, true, ""));
         }
@@ -5205,8 +5591,18 @@ run = ["sh", "main.sh"]
             false,
             "not mergeable\n",
         ));
+        // One beside commands that print, whose output is not its own.
+        plugins.command_ran(ran(
+            Some("pty-1"),
+            None,
+            "call-9",
+            "export GH_TOKEN=secret; curl -H \"Authorization: secret\" api && gh pr create --fill",
+            None,
+            true,
+            "{\"token\": \"secret\"}\nhttps://github.com/o/r/pull/8\n",
+        ));
 
-        wait("github", &|_| commands("github").len() >= 2);
+        wait("github", &|_| commands("github").len() >= 3);
         // Both stop, and what each heard before the stop is all it heard.
         plugins.enable(&added.id, "ears", false).unwrap();
         plugins.enable(&added.id, "old", false).unwrap();
@@ -5216,22 +5612,33 @@ run = ["sh", "main.sh"]
             });
         }
         assert!(commands("old").is_empty(), "{:?}", commands("old"));
+        assert!(!crate::hook::hears_commands(&home));
         let told = commands("github");
-        assert_eq!(told.len(), 2, "{told:?}");
+        assert_eq!(told.len(), 3, "{told:?}");
         assert_eq!(told[0]["project"], "/p");
         assert_eq!(told[0]["session"], "s-1");
         assert_eq!(told[0]["cwd"], "/p/x");
-        assert_eq!(told[0]["command"], "cd x && gh pr create --fill | cat");
+        assert_eq!(told[0]["command"], "gh pr create --fill");
         assert_eq!(told[0]["ok"], true);
         assert_eq!(told[0]["truncated"], true);
+        assert_eq!(told[0]["withheld"], false);
         let output = told[0]["output"].as_str().unwrap();
         assert!(output.len() <= COMMAND_OUTPUT);
         assert!(output.ends_with(address));
         assert_eq!(told[1]["session"], "s-1");
         assert_eq!(told[1]["cwd"], "/p/.claude/worktrees/fix");
-        assert_eq!(told[1]["command"], "/bin/zsh -lc 'gh pr merge 7 --squash'");
+        assert_eq!(told[1]["command"], "gh pr merge 7 --squash");
         assert_eq!(told[1]["ok"], false);
         assert_eq!(told[1]["output"], "not mergeable\n");
         assert_eq!(told[1]["truncated"], false);
+        assert_eq!(told[1]["withheld"], false);
+        assert_eq!(told[2]["command"], "gh pr create --fill");
+        assert_eq!(told[2]["output"], serde_json::Value::Null);
+        assert_eq!(told[2]["truncated"], false);
+        assert_eq!(told[2]["withheld"], true);
+        // Nothing of the rest of a line reaches the plugin.
+        for line in &told {
+            assert!(!line.to_string().contains("secret"), "{line}");
+        }
     }
 }

@@ -600,6 +600,11 @@ impl Core {
             files,
         )?;
         if let Some(plugins) = &self.plugins {
+            // A worktree the app made is one of its own, under the project's
+            // worktrees and named for its branch.
+            let made = cwd
+                .filter(|_| made_worktree)
+                .and_then(|cwd| git::made_branch(Path::new(&opened), cwd));
             plugins.session_started(
                 &pty_id,
                 Started {
@@ -608,11 +613,8 @@ impl Core {
                     project: &opened,
                     cwd: &cwd.unwrap_or(project).to_string_lossy(),
                     starter: starter.filter(|starter| !starter.trim().is_empty()),
-                    worktree: made_worktree && cwd.is_some(),
-                    branch: cwd
-                        .filter(|_| made_worktree)
-                        .and_then(|cwd| git::made_branch(Path::new(&opened), cwd))
-                        .as_deref(),
+                    worktree: made.is_some(),
+                    branch: made.as_deref(),
                 },
             );
         }
@@ -923,8 +925,9 @@ impl Core {
         };
         let (starting, ending) = (self.plugins.clone(), self.plugins.clone());
         let (folder, starter) = (project.to_string_lossy().to_string(), run.starter.clone());
-        let made = (run.made_worktree && cwd.is_some())
-            .then(|| cwd.and_then(|cwd| git::made_branch(Path::new(&opened), cwd)));
+        let made = cwd
+            .filter(|_| run.made_worktree)
+            .and_then(|cwd| git::made_branch(Path::new(&opened), cwd));
         let named = token
             .filter(|token| !token.trim().is_empty())
             .map(str::to_string);
@@ -958,7 +961,7 @@ impl Core {
                             cwd: &folder,
                             starter: starter.as_deref(),
                             worktree: made.is_some(),
-                            branch: made.as_ref().and_then(|branch| branch.as_deref()),
+                            branch: made.as_deref(),
                         },
                     );
                 }

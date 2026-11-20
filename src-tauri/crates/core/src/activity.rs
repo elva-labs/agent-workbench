@@ -6,7 +6,7 @@
 //! The log is the agents' format, quarantined here like the transcripts:
 //! a line that does not parse is skipped, never fatal.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex};
@@ -26,6 +26,11 @@ pub const SESSION_COMMAND: &str = "session_command";
 /// many bytes with nothing behind the offset; the hooks append to it and the
 /// window keeps the state, so old lines are worth nothing.
 const ROTATE_AT: u64 = 512 * 1024;
+
+/// The longest line of the session log that is read, in bytes. A longer one
+/// is a shell command's hook with a great deal of output, and it is passed
+/// over: no plugin hears that command.
+pub const LINE_MOST: usize = 256 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -275,6 +280,12 @@ pub fn first_line(message: &str) -> Option<String> {
 /// The lines added since `offset`, and where the log ends now. A log that
 /// shrank was rotated: read it from the start.
 pub fn read_new(path: &Path, offset: u64) -> (Vec<String>, u64) {
+    read_within(path, offset, usize::MAX)
+}
+
+/// The lines added since `offset` of at most `most` bytes each, and where
+/// the log ends now. A longer line is passed over unread.
+pub fn read_within(path: &Path, offset: u64, most: usize) -> (Vec<String>, u64) {
     let Ok(mut file) = std::fs::File::open(path) else {
         return (Vec::new(), offset);
     };
@@ -283,21 +294,65 @@ pub fn read_new(path: &Path, offset: u64) -> (Vec<String>, u64) {
     if file.seek(SeekFrom::Start(start)).is_err() {
         return (Vec::new(), offset);
     }
-    let mut text = String::new();
-    if file.read_to_string(&mut text).is_err() {
-        return (Vec::new(), offset);
+    let mut reader = BufReader::new(file);
+    let mut lines = Vec::new();
+    let mut end = start;
+    let mut line = Vec::new();
+    let limit = most.saturating_add(1);
+    loop {
+        line.clear();
+        let Ok(read) = (&mut reader)
+            .take(limit as u64)
+            .read_until(b'\n', &mut line)
+        else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        if line.last() == Some(&b'\n') {
+            end += read as u64;
+            if let Ok(text) = std::str::from_utf8(&line[..read - 1]) {
+                let text = text.strip_suffix('\r').unwrap_or(text);
+                if !text.trim().is_empty() {
+                    lines.push(text.to_string());
+                }
+            }
+            continue;
+        }
+        // A line still being written has no newline yet: leave it for next time.
+        if read < limit {
+            break;
+        }
+        match pass_line(&mut reader) {
+            Some(rest) => end += read as u64 + rest,
+            None => break,
+        }
     }
-    // A line still being written has no newline yet: leave it for next time.
-    let complete = match text.rfind('\n') {
-        Some(at) => &text[..=at],
-        None => "",
-    };
-    let lines = complete
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(str::to_string)
-        .collect();
-    (lines, start + complete.len() as u64)
+    (lines, end)
+}
+
+/// Passes over the rest of a line without keeping it, and says how many
+/// bytes that was with its newline, or nothing when the line is unfinished.
+fn pass_line(reader: &mut impl BufRead) -> Option<u64> {
+    let mut passed = 0u64;
+    loop {
+        let buffer = reader.fill_buf().ok()?;
+        if buffer.is_empty() {
+            return None;
+        }
+        match buffer.iter().position(|b| *b == b'\n') {
+            Some(at) => {
+                reader.consume(at + 1);
+                return Some(passed + at as u64 + 1);
+            }
+            None => {
+                let all = buffer.len();
+                reader.consume(all);
+                passed += all as u64;
+            }
+        }
+    }
 }
 
 /// What a line of a log means to the window: an event and its payload, or
@@ -308,6 +363,7 @@ pub struct Tail {
     path: PathBuf,
     offset: Mutex<u64>,
     rotate_at: u64,
+    line_most: usize,
     classify: Box<Classify>,
 }
 
@@ -315,7 +371,10 @@ impl Tail {
     /// Starts at the end: what happened before the window opened is not
     /// news, and the window has no rows for it.
     pub fn new(path: PathBuf) -> Self {
-        Self::reading(path, ROTATE_AT, read_line)
+        Self {
+            line_most: LINE_MOST,
+            ..Self::reading(path, ROTATE_AT, read_line)
+        }
     }
 
     pub fn reading(
@@ -328,6 +387,7 @@ impl Tail {
             path,
             offset: Mutex::new(end),
             rotate_at,
+            line_most: usize::MAX,
             classify: Box::new(classify),
         }
     }
@@ -335,7 +395,7 @@ impl Tail {
     /// Reads what is new and says it. Rotates a log nothing is waiting on.
     pub fn drain(&self, sink: &Arc<dyn Sink>) {
         let mut offset = self.offset.lock().expect("tail lock");
-        let (lines, end) = read_new(&self.path, *offset);
+        let (lines, end) = read_within(&self.path, *offset, self.line_most);
         *offset = end;
         for line in lines {
             if let Some((event, payload)) = (self.classify)(&line) {
@@ -350,7 +410,7 @@ impl Tail {
 
 /// Watches the session log for the life of the app.
 pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
-    watch_log(sink, path, ROTATE_AT, read_line)
+    watch_tail(sink, Tail::new(path))
 }
 
 /// Watches a log for the life of the app, reading each new line with
@@ -362,13 +422,18 @@ pub fn watch_log(
     rotate_at: u64,
     classify: impl Fn(&str) -> Option<(String, serde_json::Value)> + Send + Sync + 'static,
 ) -> Result<(), String> {
+    watch_tail(sink, Tail::reading(path, rotate_at, classify))
+}
+
+fn watch_tail(sink: Arc<dyn Sink>, tail: Tail) -> Result<(), String> {
+    let path = tail.path.clone();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("could not create {parent:?}: {e}"))?;
     }
     if !path.exists() {
         std::fs::write(&path, "").map_err(|e| format!("could not create {path:?}: {e}"))?;
     }
-    let tail = Arc::new(Tail::reading(path.clone(), rotate_at, classify));
+    let tail = Arc::new(tail);
     let (sender, receiver) = channel::<notify::Result<notify::Event>>();
     let mut watcher = notify::recommended_watcher(move |event| {
         let _ = sender.send(event);
@@ -730,6 +795,30 @@ mod tests {
         std::fs::write(&path, "{\"d\":4}\n").unwrap();
         let (lines, _) = read_new(&path, next);
         assert_eq!(lines, ["{\"d\":4}"]);
+    }
+
+    #[test]
+    fn passes_over_a_line_longer_than_the_bound_unread() {
+        let dir = Scratch::new("activity-long");
+        let path = dir.join("tail.jsonl");
+        let long = format!("{{\"x\":\"{}\"}}", "y".repeat(40));
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}\n{{\"b\":2}}\n")).unwrap();
+        let (lines, end) = read_within(&path, 0, 16);
+        assert_eq!(lines, ["{\"a\":1}", "{\"b\":2}"]);
+        assert_eq!(end, std::fs::metadata(&path).unwrap().len());
+
+        // A long line still being written is left for next time, then passed over.
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}")).unwrap();
+        let (lines, end) = read_within(&path, 0, 16);
+        assert_eq!(lines, ["{\"a\":1}"]);
+        assert_eq!(end, "{\"a\":1}\n".len() as u64);
+        std::fs::write(&path, format!("{{\"a\":1}}\n{long}\n{{\"c\":3}}\n")).unwrap();
+        let (lines, _) = read_within(&path, end, 16);
+        assert_eq!(lines, ["{\"c\":3}"]);
+
+        // Unbounded, the same line is read.
+        let (lines, _) = read_new(&path, 0);
+        assert_eq!(lines.len(), 3);
     }
 
     #[test]
