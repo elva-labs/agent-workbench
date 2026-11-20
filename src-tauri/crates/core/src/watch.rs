@@ -664,7 +664,7 @@ mod tests {
         assert!(!ignored.covers(&event(&[dir.join("a.txt")])));
         assert!(!ignored.covers(&event(&[dir.join(".git/index")])));
         assert!(!ignored.covers(&event(&[dir.join(".git/HEAD")])));
-        assert!(!ignored.covers(&event(&[tree.clone()])));
+        assert!(!ignored.covers(&event(std::slice::from_ref(&tree))));
         assert!(!ignored.covers(&event(&[tree.join("a.txt"), dir.join("a.txt")])));
     }
 
@@ -676,7 +676,7 @@ mod tests {
         let ignored = Ignored::for_root(&dir);
         std::fs::remove_dir_all(&tree).unwrap();
         assert!(!ignored.covers(&event(&[tree.join("a.txt")])));
-        assert!(!ignored.covers(&event(&[tree.clone()])));
+        assert!(!ignored.covers(&event(std::slice::from_ref(&tree))));
     }
 
     // Git still reports the files a project tracks in a folder, whatever
