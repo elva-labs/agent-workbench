@@ -387,8 +387,13 @@ describe("the workbench's wait and notify in a run", () => {
     expect(shapeOf([thought(" "), wait()], true)).toEqual(["work:thinking"]);
     expect(shapeOf([thought(), call({ name: "Bash" }), wait()], true)).toEqual(["work:thinking+Bash"]);
     expect(shapeOf([thought()], true)).toEqual(["work:thinking"]);
-    // Only the first: what it thinks at each later wait is work.
-    expect(shapeOf([thought(), wait(), thought("Still waiting."), wait(false)], true)).toEqual(["thought", "work:thinking"]);
+    // Only the last: what it thought at each earlier wait is work.
+    expect(shapeOf([thought(), wait(), thought("Still waiting."), wait(false)], true)).toEqual(["work:thinking", "thought"]);
+    const note = call({ name: "mcp__chord__note", tool: "mcp" });
+    const shown = segments([thought("A"), note, thought("B"), wait(false)], true).flatMap((segment) => (segment.kind === "thought" ? [segment.part.text] : []));
+    expect(shown).toEqual(["B"]);
+    // Words later in the run: the agent said it there, so the thinking stays work.
+    expect(shapeOf([thought(), call({ name: NOTIFY, tool: "mcp" }), text({ text: "Yes." })], true)).toEqual(["work:thinking", "text"]);
   });
 
   it("mark the run after a message taken mid-turn, live and read back, and find its thinking there", () => {

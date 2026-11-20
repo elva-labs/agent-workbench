@@ -696,8 +696,8 @@ count in the line work folds into, or a line at the foot of its own, and
 neither folds anything: what the agent wrote before them stays the last
 thing in its run, in full, and a wait that follows a wake leaves it so as
 well. In the run that follows a message the agent took while its turn went
-on, the first thinking that is all it said before one of the workbench's
-own calls is not folded into work: it is drawn in sight under a label that
+on, the last thinking that is all it said before one of the workbench's
+own calls, with no words of its own after it, is not folded into work: it is drawn in sight under a label that
 calls it a summary of the agent's thinking, as an answer the agent left
 there would be read nowhere else. While a turn is only waiting, its foot says on what, in the
 wait's own words: waiting on a session by its name, or on the sessions it

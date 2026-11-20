@@ -38,8 +38,8 @@ export type Segment =
   | { kind: "thought"; part: TextPart };
 
 /** `answers` says the run follows a message the agent took while its turn
-    went on: there, its first thinking that is all it says before the
-    workbench's own calls is drawn in sight, as its answer may be there
+    went on: there, its last thinking that is all it says before the
+    workbench's own calls, with no text after it, is drawn in sight, as its answer may be there
     and nowhere else. */
 export function segments(parts: Part[], answers = false): Segment[] {
   const out: Segment[] = [];
@@ -73,12 +73,14 @@ export function segments(parts: Part[], answers = false): Segment[] {
     before them stays the last thing in its run. */
 const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
 
-/** The first thinking in a run that is the whole of a message the agent
+/** The last thinking in a run that is the whole of a message the agent
     sent before a wait, notify, note or notes call: no text comes right
-    before it, and one of those calls right after it. */
+    before it, one of those calls right after it, and no text anywhere
+    after it in the run, where the agent may have said it in words. */
 export function thoughtAnswer(parts: Part[]): TextPart | null {
-  for (let at = 0; at < parts.length; at++) {
+  for (let at = parts.length - 1; at >= 0; at--) {
     const part = parts[at];
+    if (part.kind === "text") return null;
     if (part.kind !== "thinking" || !part.done || part.text.trim() === "") continue;
     const before = parts[at - 1];
     const after = parts[at + 1];
