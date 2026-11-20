@@ -340,29 +340,12 @@ fn debounce(
             return;
         }
 
-        let started = std::time::Instant::now();
         let tree = |event: &notify::Result<Event>| {
             interesting(event) && !ignored.covers(event) && !shown.only_outside(event)
         };
-        let mut worth_it = tree(&first);
-        let mut hits: Vec<PathBuf> = shown.hits(&first);
-        loop {
-            if started.elapsed() >= MAX_WAIT {
-                break;
-            }
-            match receiver.recv_timeout(DEBOUNCE) {
-                Ok(event) => {
-                    worth_it |= tree(&event);
-                    for hit in shown.hits(&event) {
-                        if !hits.contains(&hit) {
-                            hits.push(hit);
-                        }
-                    }
-                }
-                Err(RecvTimeoutError::Timeout) => break,
-                Err(RecvTimeoutError::Disconnected) => return,
-            }
-        }
+        let Some((worth_it, hits)) = gather(&first, &receiver, tree, &shown) else {
+            return;
+        };
 
         if stop.stopped() {
             return;
@@ -386,6 +369,36 @@ fn debounce(
     }
 }
 
+/// Waits out the burst `first` opened: whether any event in it is worth a
+/// refresh, by `tree`, and the shown files it touched. `tree` is asked only
+/// until one event is worth it, since a build in a nested repository sends
+/// thousands. None when the watcher is gone.
+fn gather(
+    first: &notify::Result<Event>,
+    receiver: &Receiver<notify::Result<Event>>,
+    tree: impl Fn(&notify::Result<Event>) -> bool,
+    shown: &Shown,
+) -> Option<(bool, Vec<PathBuf>)> {
+    let started = std::time::Instant::now();
+    let mut worth_it = tree(first);
+    let mut hits: Vec<PathBuf> = shown.hits(first);
+    while started.elapsed() < MAX_WAIT {
+        match receiver.recv_timeout(DEBOUNCE) {
+            Ok(event) => {
+                worth_it = worth_it || tree(&event);
+                for hit in shown.hits(&event) {
+                    if !hits.contains(&hit) {
+                        hits.push(hit);
+                    }
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => break,
+            Err(RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+    Some((worth_it, hits))
+}
+
 /// Asks git whether a path is ignored, so a build writing into `target/` does
 /// not refresh a pane that would show nothing new. Opening the repository
 /// once per watch rather than per event, because the answer for a path does
@@ -403,11 +416,9 @@ impl Ignored {
         }
     }
 
-    /// True only when every path in the event is ignored. Unsure means not
-    /// ignored: a spurious refresh is cheap and a missed one is not.
-    ///
-    /// Git counts everything under `.git` as ignored, but `is_interesting`
-    /// has already chosen which of those matter, so they are never covered.
+    /// True only when no path in the event can change what status shows.
+    /// Unsure means it can: a spurious refresh is cheap and a missed one is
+    /// not.
     fn covers(&self, event: &notify::Result<Event>) -> bool {
         let Ok(event) = event else { return false };
         let Some(repo) = self.repo.as_ref() else {
@@ -416,12 +427,53 @@ impl Ignored {
         !event.paths.is_empty()
             && event.paths.iter().all(|path| {
                 path.strip_prefix(&self.root)
-                    .ok()
-                    .filter(|relative| !inside_git(relative))
-                    .and_then(|relative| repo.status_should_ignore(relative).ok())
-                    .unwrap_or(false)
+                    .is_ok_and(|relative| self.covers_path(repo, relative))
             })
     }
+
+    /// Git counts everything under `.git` as ignored, but `is_interesting`
+    /// has already chosen which of those matter. Of those, only the index
+    /// and HEAD of another worktree are covered: they are that worktree's
+    /// status, not this one's.
+    ///
+    /// A repository nested in the tree, a linked worktree or a clone that
+    /// is not a submodule, shows in status as one untracked folder whatever
+    /// happens inside it, so nothing inside it is a change here. A folder
+    /// the project tracks files in is the exception: git still reports
+    /// those, whatever repository has landed in it since.
+    fn covers_path(&self, repo: &Repository, relative: &Path) -> bool {
+        if inside_git(relative) {
+            return relative.starts_with(".git/worktrees");
+        }
+        self.nested_repository(repo, relative)
+            || repo.status_should_ignore(relative).unwrap_or(false)
+    }
+
+    fn nested_repository(&self, repo: &Repository, relative: &Path) -> bool {
+        relative
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| !dir.as_os_str().is_empty())
+            .find(|dir| self.root.join(dir).join(".git").exists())
+            .is_some_and(|dir| {
+                dir.to_str().is_some_and(|name| {
+                    !tracked_under(repo, name) && repo.find_submodule(name).is_err()
+                })
+            })
+    }
+}
+
+/// Whether the project's index holds any file under the folder `name`, as
+/// it stands on disk now. Unsure means it does.
+fn tracked_under(repo: &Repository, name: &str) -> bool {
+    let Ok(mut index) = repo.index() else {
+        return true;
+    };
+    if index.read(false).is_err() {
+        return true;
+    }
+    let prefix = format!("{}/", name.replace('\\', "/"));
+    index.find_prefix(prefix.as_str()).is_ok()
 }
 
 fn interesting(event: &notify::Result<Event>) -> bool {
@@ -597,6 +649,98 @@ mod tests {
             admin.display()
         );
         assert!(is_interesting(&admin.join("index")));
+    }
+
+    // A project holding its own worktrees sees every write and every git run
+    // in them. Status shows each as one untracked folder whatever happens
+    // inside it, so none of that is a change to the project.
+    #[test]
+    fn work_inside_a_nested_repository_is_covered() {
+        let (dir, tree) = repo_with_worktree("nested");
+        let ignored = Ignored::for_root(&dir);
+        assert!(ignored.covers(&event(&[tree.join("a.txt")])));
+        assert!(ignored.covers(&event(&[tree.join("src/deep/new.png")])));
+        assert!(ignored.covers(&event(&[dir.join(".git/worktrees/feature/index")])));
+        assert!(!ignored.covers(&event(&[dir.join("a.txt")])));
+        assert!(!ignored.covers(&event(&[dir.join(".git/index")])));
+        assert!(!ignored.covers(&event(&[dir.join(".git/HEAD")])));
+        assert!(!ignored.covers(&event(std::slice::from_ref(&tree))));
+        assert!(!ignored.covers(&event(&[tree.join("a.txt"), dir.join("a.txt")])));
+    }
+
+    // A deleted nested repository has no .git left, so its last events
+    // refresh the project, which shows the folder gone.
+    #[test]
+    fn a_deleted_nested_repository_is_not_covered() {
+        let (dir, tree) = repo_with_worktree("nested-gone");
+        let ignored = Ignored::for_root(&dir);
+        std::fs::remove_dir_all(&tree).unwrap();
+        assert!(!ignored.covers(&event(&[tree.join("a.txt")])));
+        assert!(!ignored.covers(&event(std::slice::from_ref(&tree))));
+    }
+
+    // Git still reports the files a project tracks in a folder, whatever
+    // repository has been made in it since.
+    #[test]
+    fn a_tracked_folder_holding_a_repository_is_not_covered() {
+        let (dir, _) = repo_with_worktree("nested-tracked");
+        let ignored = Ignored::for_root(&dir);
+        let vendored = dir.join("v");
+        std::fs::create_dir_all(&vendored).unwrap();
+        std::fs::write(vendored.join("a.txt"), "one\n").unwrap();
+        let repo = Repository::open(&dir).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("v/a.txt")).unwrap();
+        index.write().unwrap();
+        Repository::init(&vendored).unwrap();
+        assert!(!ignored.covers(&event(&[vendored.join("a.txt")])));
+        assert!(!ignored.covers(&event(&[vendored.join("new.txt")])));
+    }
+
+    // A build in a nested repository sends thousands of events, and once
+    // one is worth a refresh the rest need not be asked about.
+    #[test]
+    fn a_burst_stops_asking_once_it_is_worth_a_refresh() {
+        let (sender, receiver) = channel::<notify::Result<Event>>();
+        for n in 0..5 {
+            sender
+                .send(event(&[PathBuf::from(format!("/repo/{n}"))]))
+                .unwrap();
+        }
+        let shown = Shown::default();
+        shown.set(&[PathBuf::from("/repo/4")]);
+        let asked = std::cell::Cell::new(0);
+        let tree = |_: &notify::Result<Event>| {
+            asked.set(asked.get() + 1);
+            true
+        };
+        let (worth_it, hits) = gather(
+            &event(&[PathBuf::from("/repo/first")]),
+            &receiver,
+            tree,
+            &shown,
+        )
+        .expect("the watcher is still there");
+        assert!(worth_it);
+        assert_eq!(asked.get(), 1);
+        assert_eq!(hits, vec![PathBuf::from("/repo/4")]);
+        drop(sender);
+    }
+
+    // A dirty submodule is a change to the project that holds it.
+    #[test]
+    fn work_inside_a_submodule_is_not_covered() {
+        let dir = Scratch::new("watch-submodule");
+        let outer = Repository::init(&dir).unwrap();
+        let url = format!("file://{}", dir.join("elsewhere").display());
+        outer
+            .submodule(&url, Path::new("m"), true)
+            .unwrap()
+            .open()
+            .unwrap();
+        assert!(dir.join("m/.git").is_file());
+        let ignored = Ignored::for_root(&dir);
+        assert!(!ignored.covers(&event(&[dir.join("m/a.txt")])));
     }
 
     // A repository's own index is already inside what is being watched.

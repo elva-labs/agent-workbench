@@ -1390,7 +1390,11 @@ open project in the settings.
 
 **Watcher only**, the default: a filesystem watcher on the worktree,
 debounced. It costs nothing, needs no permission, and catches every writer:
-the agent, your editor, a script, a rebase.
+the agent, your editor, a script, a rebase. A write the pane would show
+nothing new for does not refresh it: one in an ignored folder, or one inside
+another repository kept in the tree, such as a worktree, which status does
+not look into. A submodule is the exception, since its changes are the
+project's.
 
 **Agent hooks**, opt-in: hooks written into the project's own agent
 configuration, which report each edit the moment a tool finishes and give
