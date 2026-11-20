@@ -484,6 +484,16 @@ describe("a command the agent writes for the user to run", () => {
     }
   });
 
+  it("draws a command left to right as it runs, whatever letters it holds", () => {
+    const box = drawn(renderSaid("Run `! sort א > 1`.\n\n```sh\n! sort א > 1\n```"));
+    const marked = [...box.querySelectorAll<HTMLElement>("[data-run]")];
+    expect(marked).toHaveLength(2);
+    for (const element of marked) {
+      expect(element.dir).toBe("ltr");
+      expect(element.style.unicodeBidi).toBe("bidi-override");
+    }
+  });
+
   it("marks nothing in a document the viewer draws", () => {
     const box = drawn(render("Run `! npm test`.\n\n```sh\n! npm test\n```\n\n```\n! npm test\n```"));
     expect(box.querySelector("[data-run]")).toBeNull();

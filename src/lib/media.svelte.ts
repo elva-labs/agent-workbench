@@ -264,13 +264,18 @@ said.code = function (this: typeof said, token) {
   return `<div class="code" data-copy-host="code" data-wrap><pre><code${named}>${lines}</code></pre></div>\n`;
 };
 
+/** What marks an element as holding a command for the user to run. The
+    command is drawn left to right in the order it runs, so right-to-left
+    letters in it cannot reorder or mirror what is around them. */
+const RUN = 'data-run="" dir="ltr" style="unicode-bidi: bidi-override"';
+
 /** A line of code as HTML, held in an element marked `data-run` when it is
     a command for the user to run, `!` and a space and then the command, so
     the conversation puts a Run after it. Escaping leaves a line's `!` and
     space as they are and an empty line empty, so the escaped line tells
     as well as the line itself. */
 function runLine(html: string): string {
-  return runnable(html) === null ? html : `<span data-run="">${html}</span>`;
+  return runnable(html) === null ? html : `<span ${RUN}>${html}</span>`;
 }
 
 /** A code block as marked draws it, each of its lines through `runLine`. */
@@ -285,7 +290,7 @@ function runLines(html: string): string {
 const drawSpan = said.codespan;
 said.codespan = function (this: typeof said, token) {
   const html = drawSpan.call(this, token);
-  return runnable(token.text) === null ? html : html.replace(/^<code>/, '<code data-run="">');
+  return runnable(token.text) === null ? html : html.replace(/^<code>/, `<code ${RUN}>`);
 };
 
 /** Raw HTML in a document is shown as the text it is, never drawn. Text is
