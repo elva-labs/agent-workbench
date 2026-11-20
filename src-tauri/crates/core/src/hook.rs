@@ -4,7 +4,8 @@
 //! tool changed a file; and session hooks, `UserPromptSubmit`, `Stop` and
 //! the permission prompt, appended to a log the core tails, so a row says
 //! exactly when its agent started, stopped, or asked for permission rather
-//! than reading that off the pty. Beside the session hook on the prompt,
+//! than reading that off the pty. Claude Code's `PostToolUse` on its shell
+//! tool goes to the same log, for the plugins that listen for commands. Beside the session hook on the prompt,
 //! where there is a daemon, a second one asks the window through it what
 //! the sessions this one started did, and gives the agent the answer with
 //! the user's message. Both agents take the same shape: Claude Code in the
@@ -54,14 +55,19 @@ fn lock_state() -> MutexGuard<'static, ()> {
 /// Only the tools that change files. Reacting to a Read would be noise.
 const MATCHER: &str = "Edit|Write|MultiEdit|NotebookEdit";
 
+/// The tool that runs shell commands, whose calls go to the session log
+/// for the plugins that listen for commands.
+const COMMAND_MATCHER: &str = "Bash";
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookStatus {
     pub installed: bool,
     /// Whether the hooks are installed with something in a form the next
     /// install brings up to date: the project's Codex entry for the server
-    /// saying nothing of its tools' approval. They work as they are, so a
-    /// project that should have no hooks is still uninstalled.
+    /// saying nothing of its tools' approval, or no tool hook on the shell
+    /// tool for the plugins that listen for commands. They work as they
+    /// are, so a project that should have no hooks is still uninstalled.
     pub outdated: bool,
     /// Where the settings file is, whether or not it exists yet.
     pub settings: String,
@@ -481,7 +487,9 @@ pub fn status_many(
                     });
             HookStatus {
                 installed,
-                outdated: installed && daemon_here && !codex_current(home, project),
+                outdated: installed
+                    && (daemon_here && !codex_current(home, project)
+                        || !has_command(&read, "PostToolUse", &activity_command(home))),
                 settings: settings.to_string_lossy().to_string(),
                 events: events.clone(),
             }
@@ -1069,6 +1077,14 @@ fn add_hooks(home: &Path, folder: &Path, leave: &[&str], failures: bool) -> Resu
             json!({
                 "matcher": MATCHER,
                 "hooks": [{ "type": "command", "command": command(home) }],
+            }),
+        )?;
+        changed |= add_entry(
+            &mut settings,
+            "PostToolUse",
+            json!({
+                "matcher": COMMAND_MATCHER,
+                "hooks": [{ "type": "command", "command": activity_command(home) }],
             }),
         )?;
         for event in CLAUDE_SESSION_EVENTS {
@@ -2687,8 +2703,44 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            1
+            2
         );
+    }
+
+    // A project whose hooks were put in before plugins listened for
+    // commands reads as out of date, and the next install adds the hook on
+    // the shell tool and nothing else.
+    #[test]
+    fn hears_the_shell_commands_a_session_runs_and_brings_an_older_install_up_to_date() {
+        let (home, project) = fixture("commands");
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        let entries = settings_of(&project)["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let shell = entries
+            .iter()
+            .find(|entry| entry["matcher"] == COMMAND_MATCHER)
+            .expect("an entry on the shell tool");
+        assert_eq!(shell["hooks"][0]["command"], activity_command(&home));
+        let now = status(&home, &project, &[], &HashMap::new());
+        assert!(now.installed && !now.outdated);
+
+        let mut settings = settings_of(&project);
+        settings["hooks"]["PostToolUse"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|entry| entry["matcher"] != COMMAND_MATCHER);
+        std::fs::write(settings_path(&project), settings.to_string()).unwrap();
+        let was = status(&home, &project, &[], &HashMap::new());
+        assert!(was.installed && was.outdated);
+
+        install(&home, &project, &[], &HashMap::new()).unwrap();
+        assert_eq!(
+            settings_of(&project)["hooks"]["PostToolUse"],
+            json!(entries)
+        );
+        assert!(!status(&home, &project, &[], &HashMap::new()).outdated);
     }
 
     // Somebody else's settings are not ours to rearrange.
@@ -2723,7 +2775,7 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
 
         uninstall(&home, &project, &[], &HashMap::new()).unwrap();
         let after = settings_of(&project)["hooks"]["PostToolUse"]

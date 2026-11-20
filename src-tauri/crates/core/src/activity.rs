@@ -18,6 +18,10 @@ use crate::events::Sink;
 
 pub const SESSION_EVENT: &str = "session_event";
 
+/// The event a shell command a session ran is told by, to the plugins and
+/// not the window.
+pub const SESSION_COMMAND: &str = "session_command";
+
 /// Only the log is truncated by this, and only when it has grown past this
 /// many bytes with nothing behind the offset; the hooks append to it and the
 /// window keeps the state, so old lines are worth nothing.
@@ -62,6 +66,66 @@ pub struct SessionEvent {
 
 /// The most background tasks a stop names.
 const BACKGROUND_MOST: usize = 3;
+
+/// A line of the log as what it says: a session event for the rows, or a
+/// command a session ran for the plugins.
+fn read_line(line: &str) -> Option<(String, serde_json::Value)> {
+    if let Some(ran) = command_of(line) {
+        return serde_json::to_value(ran)
+            .ok()
+            .map(|value| (SESSION_COMMAND.to_string(), value));
+    }
+    classify(line).and_then(|event| {
+        serde_json::to_value(event)
+            .ok()
+            .map(|value| (SESSION_EVENT.to_string(), value))
+    })
+}
+
+/// A shell command a session ran, as its tool hook tells it once the
+/// command is done.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRan {
+    pub session_id: String,
+    /// The agent's id for the tool call.
+    pub call: String,
+    pub command: String,
+    pub cwd: Option<String>,
+    /// False when the command was cut short.
+    pub ok: bool,
+    /// What it wrote to its output, then to its error output.
+    pub output: String,
+}
+
+/// A line of the log as a shell command a session ran: Claude Code's tool
+/// hook on its Bash tool. Its tool hook fires for a command that finished,
+/// so one that failed is not here.
+pub fn command_of(line: &str) -> Option<CommandRan> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    if value.get("hook_event_name")?.as_str()? != "PostToolUse"
+        || value.get("tool_name")?.as_str()? != "Bash"
+    {
+        return None;
+    }
+    let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
+    let response = &value["tool_response"];
+    let stdout = text(&response["stdout"]);
+    let stderr = text(&response["stderr"]);
+    let output = match (stdout.is_empty(), stderr.is_empty()) {
+        (_, true) => stdout,
+        (true, false) => stderr,
+        (false, false) => format!("{}\n{stderr}", stdout.trim_end_matches('\n')),
+    };
+    Some(CommandRan {
+        session_id: value.get("session_id")?.as_str()?.to_string(),
+        call: text(&value["tool_use_id"]),
+        command: value["tool_input"]["command"].as_str()?.to_string(),
+        cwd: value["cwd"].as_str().map(str::to_string),
+        ok: response["interrupted"] != true,
+        output,
+    })
+}
 
 /// One line of the log, as an event, if it is one the rows care about.
 pub fn classify(line: &str) -> Option<SessionEvent> {
@@ -251,13 +315,7 @@ impl Tail {
     /// Starts at the end: what happened before the window opened is not
     /// news, and the window has no rows for it.
     pub fn new(path: PathBuf) -> Self {
-        Self::reading(path, ROTATE_AT, |line| {
-            classify(line).and_then(|event| {
-                serde_json::to_value(event)
-                    .ok()
-                    .map(|value| (SESSION_EVENT.to_string(), value))
-            })
-        })
+        Self::reading(path, ROTATE_AT, read_line)
     }
 
     pub fn reading(
@@ -292,13 +350,7 @@ impl Tail {
 
 /// Watches the session log for the life of the app.
 pub fn watch(sink: Arc<dyn Sink>, path: PathBuf) -> Result<(), String> {
-    watch_log(sink, path, ROTATE_AT, |line| {
-        classify(line).and_then(|event| {
-            serde_json::to_value(event)
-                .ok()
-                .map(|value| (SESSION_EVENT.to_string(), value))
-        })
-    })
+    watch_log(sink, path, ROTATE_AT, read_line)
 }
 
 /// Watches a log for the life of the app, reading each new line with
@@ -342,6 +394,53 @@ pub fn watch_log(
 mod tests {
     use super::*;
     use crate::scratch::Scratch;
+
+    #[test]
+    fn reads_a_shell_command_off_its_tool_hook_and_nothing_else() {
+        let ran = command_of(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"toolu_1","cwd":"/p","tool_input":{"command":"gh pr create --fill","description":"Open it"},"tool_response":{"stdout":"https://github.com/o/r/pull/7\n","stderr":"Warning: 1 uncommitted change","interrupted":false}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            ran,
+            CommandRan {
+                session_id: "s1".into(),
+                call: "toolu_1".into(),
+                command: "gh pr create --fill".into(),
+                cwd: Some("/p".into()),
+                ok: true,
+                output: "https://github.com/o/r/pull/7\nWarning: 1 uncommitted change".into(),
+            }
+        );
+        let interrupted = command_of(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"gh pr merge"},"tool_response":{"stdout":"","stderr":"stopped","interrupted":true}}"#,
+        )
+        .unwrap();
+        assert!(!interrupted.ok);
+        assert_eq!(interrupted.output, "stopped");
+        assert_eq!(interrupted.call, "");
+        assert_eq!(interrupted.cwd, None);
+
+        // Another tool, another event, and a line with no session or no
+        // command are no command.
+        for line in [
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"session_id":"s1","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"gh pr create"}}"#,
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{}}"#,
+            "not json",
+        ] {
+            assert_eq!(command_of(line), None, "{line}");
+        }
+        // The line is read as a command, not as a row's event.
+        let (event, payload) = read_line(
+            r#"{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":{"stdout":"a"}}"#,
+        )
+        .unwrap();
+        assert_eq!(event, SESSION_COMMAND);
+        assert_eq!(payload["sessionId"], "s1");
+        assert_eq!(payload["output"], "a");
+    }
 
     #[test]
     fn classifies_what_the_rows_show_and_nothing_else() {

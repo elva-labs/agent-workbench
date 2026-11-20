@@ -118,6 +118,8 @@ async fn pty_spawn(
     afresh: Option<bool>,
     compact_at: Option<u64>,
     bring_back: Option<bool>,
+    starter: Option<String>,
+    made_worktree: Option<bool>,
     cols: u16,
     rows: u16,
     on_output: Channel,
@@ -147,6 +149,8 @@ async fn pty_spawn(
                 afresh.unwrap_or(false),
                 compact_at,
                 bring_back.unwrap_or(false),
+                starter.as_deref(),
+                made_worktree.unwrap_or(false),
                 cols,
                 rows,
                 |_| to_channel(on_output),
@@ -157,7 +161,7 @@ async fn pty_spawn(
             let connection = remotes.connection(&host)?;
             let spawned = connection.call(
                 "pty_spawn",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at, "bringBack": bring_back.unwrap_or(false), "cols": cols, "rows": rows }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "prompt": prompt, "model": model, "mode": mode, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at, "bringBack": bring_back.unwrap_or(false), "starter": starter, "madeWorktree": made_worktree.unwrap_or(false), "cols": cols, "rows": rows }),
             )?;
             let id = spawned["ptyId"].as_str().ok_or("no pty id")?.to_string();
             connection.attach_output(&id, to_channel(on_output));
@@ -188,6 +192,8 @@ async fn integrated_start(
     start_only: Option<bool>,
     afresh: Option<bool>,
     compact_at: Option<u64>,
+    starter: Option<String>,
+    made_worktree: Option<bool>,
 ) -> Result<Value, String> {
     let core = Arc::clone(&core);
     let remotes = Arc::clone(&remotes);
@@ -210,11 +216,13 @@ async fn integrated_start(
             start_only.unwrap_or(false),
             afresh.unwrap_or(false),
             compact_at,
+            starter.as_deref(),
+            made_worktree.unwrap_or(false),
         )?),
         Route::Remote { host, rest } => {
             let started = remotes.connection(&host)?.call(
                 "integrated_start",
-                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at }),
+                json!({ "agent": agent, "project": rest, "cwd": cwd, "session": session, "token": token, "model": model, "mode": mode, "effort": effort, "configDir": config_dir, "instructions": instructions, "startOnly": start_only.unwrap_or(false), "afresh": afresh.unwrap_or(false), "compactAt": compact_at, "starter": starter, "madeWorktree": made_worktree.unwrap_or(false) }),
             )?;
             let id = started["id"].as_str().ok_or("no session id")?;
             let id = with_host_id(&host, id);
@@ -2044,14 +2052,16 @@ async fn plugin_action(
     row: Option<String>,
     input: Value,
     project: String,
+    session: Option<String>,
 ) -> Result<Value, String> {
-    let (s, p, c, a, r, i) = (
+    let (s, p, c, a, r, i, t) = (
         source.clone(),
         plugin.clone(),
         section.clone(),
         action.clone(),
         row.clone(),
         input.clone(),
+        session.clone(),
     );
     routed(
         Arc::clone(&core),
@@ -2059,9 +2069,11 @@ async fn plugin_action(
         route(&project),
         "plugin_action",
         move |rest| {
-            json!({ "source": source, "plugin": plugin, "section": section, "action": action, "row": row, "input": input, "project": rest })
+            json!({ "source": source, "plugin": plugin, "section": section, "action": action, "row": row, "input": input, "project": rest, "session": session })
         },
-        move |core, project| core.plugin_action(&s, &p, &c, &a, r.as_deref(), &i, project),
+        move |core, project| {
+            core.plugin_action(&s, &p, &c, &a, r.as_deref(), &i, project, t.as_deref())
+        },
     )
     .await
 }
