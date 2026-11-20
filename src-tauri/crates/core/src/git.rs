@@ -8,9 +8,10 @@
 //! is on disk, and they run git itself rather than libgit2.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use git2::{DiffFormat, DiffOptions, Repository, Status, StatusOptions};
+use git2::{AttrCheckFlags, AttrValue, DiffFormat, DiffOptions, Repository, Status, StatusOptions};
 use serde::Serialize;
 
 /// Above this a diff stops being something you read and starts being something
@@ -109,12 +110,22 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
         .filter(|(path, _)| !is_directory(path))
         .collect();
 
-    let counts = line_counts(&repo, changed.iter().map(|(path, _)| path.as_str()));
+    let counts = line_counts(
+        &repo,
+        changed
+            .iter()
+            .filter(|(_, status)| *status != Status::WT_NEW)
+            .map(|(path, _)| path.as_str()),
+    );
 
     let mut files: Vec<ChangedFile> = changed
         .into_iter()
         .map(|(path, status)| {
-            let (add, del, binary) = counts.get(&path).copied().unwrap_or_default();
+            let (add, del, binary) = if status == Status::WT_NEW {
+                untracked_counts(&repo, &path)
+            } else {
+                counts.get(&path).copied().unwrap_or_default()
+            };
             ChangedFile {
                 path,
                 status: letter(status).to_string(),
@@ -140,10 +151,17 @@ fn line_counts<'a>(
     // include_untracked lists a new file; show_untracked_content is what makes
     // its lines appear. Without the second, a file the agent just created shows
     // up with an empty diff, which is the common case rather than an edge one.
+    //
+    // The paths are literal. As patterns, every file the diff walks is
+    // matched against every changed path in turn, which is quadratic: a
+    // project with a few thousand new files spends seconds of CPU on it each
+    // time status is read. As literal paths they are a sorted list the walk
+    // looks each file up in, and folders holding none of them are skipped.
     options
         .include_untracked(true)
         .recurse_untracked_dirs(true)
-        .show_untracked_content(true);
+        .show_untracked_content(true)
+        .disable_pathspec_match(true);
     let mut any = false;
     for path in paths {
         options.pathspec(path);
@@ -179,6 +197,71 @@ fn line_counts<'a>(
     });
 
     counts
+}
+
+/// How far into a file git looks for a NUL byte to call it binary.
+const BINARY_PROBE: usize = 8000;
+
+/// Lines and binary-ness of a file git does not track, all of which is added
+/// lines, counted the way git counts them. Only the start of a binary file is
+/// read: a project can hold thousands of untracked screenshots, and status
+/// runs whenever the tree moves.
+fn untracked_counts(repo: &Repository, path: &str) -> (u32, u32, bool) {
+    let marked_binary = matches!(
+        repo.get_attr(Path::new(path), "diff", AttrCheckFlags::FILE_THEN_INDEX)
+            .map(AttrValue::from_string),
+        Ok(AttrValue::False)
+    );
+    if marked_binary {
+        return (0, 0, true);
+    }
+    let Some(full) = repo.workdir().map(|dir| dir.join(path)) else {
+        return (0, 0, false);
+    };
+    let Ok(meta) = std::fs::symlink_metadata(&full) else {
+        return (0, 0, false);
+    };
+    if meta.file_type().is_symlink() {
+        return (1, 0, false);
+    }
+    match std::fs::File::open(&full).map(added_lines) {
+        Ok(Some(lines)) => (lines, 0, false),
+        Ok(None) => (0, 0, true),
+        Err(_) => (0, 0, false),
+    }
+}
+
+/// The lines in what `reader` holds, or None when it is binary: a NUL byte
+/// in its first `BINARY_PROBE` bytes, after which nothing more is read.
+fn added_lines(mut reader: impl Read) -> Option<u32> {
+    let mut buffer = vec![0u8; 64 * 1024];
+    let mut seen = 0usize;
+    let mut lines = 0u32;
+    let mut last = b'\n';
+    loop {
+        let limit = if seen < BINARY_PROBE {
+            BINARY_PROBE - seen
+        } else {
+            buffer.len()
+        };
+        let read = match reader.read(&mut buffer[..limit]) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        };
+        let chunk = &buffer[..read];
+        if seen < BINARY_PROBE && chunk.contains(&0) {
+            return None;
+        }
+        seen += read;
+        lines = lines.saturating_add(chunk.iter().filter(|&&byte| byte == b'\n').count() as u32);
+        last = chunk[read - 1];
+    }
+    if last != b'\n' {
+        lines = lines.saturating_add(1);
+    }
+    Some(lines)
 }
 
 pub fn diff(root: &Path, file: &str) -> Result<FileDiff, String> {
@@ -802,6 +885,67 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "new.txt");
         assert_eq!(files[0].status, "A");
+    }
+
+    #[test]
+    fn counts_untracked_files_as_libgit2_diffs_them() {
+        let dir = repo("untracked-counts");
+        write(&dir, ".gitattributes", "*.dat binary\n");
+        commit(&dir);
+        write(&dir, "ends.txt", "one\ntwo\n");
+        write(&dir, "open.txt", "one\ntwo");
+        write(&dir, "empty.txt", "");
+        write(&dir, "blank.txt", "\n\n\n");
+        write(&dir, "marked.dat", "text, but marked binary\n");
+        write(&dir, "deep/er/nested.md", "# a\n\nb\n");
+        let mut late = vec![b'x'; BINARY_PROBE + 10];
+        late.push(0);
+        std::fs::write(dir.join("late-nul.txt"), &late).unwrap();
+        std::fs::write(
+            dir.join("shot.png"),
+            [0x89, b'P', b'N', b'G', 0, 1, 2, b'\n'],
+        )
+        .unwrap();
+
+        let files = status(&dir).unwrap();
+        let repo = Repository::open(&*dir).unwrap();
+        let libgit2 = line_counts(&repo, files.iter().map(|file| file.path.as_str()));
+        assert_eq!(files.len(), 8);
+        for file in &files {
+            assert_eq!(file.status, "A", "{}", file.path);
+            let (add, del, binary) = libgit2.get(&file.path).copied().unwrap_or_default();
+            assert_eq!(
+                (file.add, file.del, file.binary),
+                (add, del, binary),
+                "{}",
+                file.path
+            );
+        }
+    }
+
+    /// Reads from an endless stream and keeps count of what it handed out.
+    struct Counted<R> {
+        inner: R,
+        read: usize,
+    }
+
+    impl<R: Read> Read for Counted<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.inner.read(buf)?;
+            self.read += read;
+            Ok(read)
+        }
+    }
+
+    #[test]
+    fn reads_no_further_into_a_binary_file_than_it_takes_to_call_it_binary() {
+        let mut stream = Counted {
+            inner: std::io::repeat(0).take(1 << 30),
+            read: 0,
+        };
+
+        assert_eq!(added_lines(&mut stream), None);
+        assert!(stream.read <= BINARY_PROBE, "read {} bytes", stream.read);
     }
 
     #[test]
