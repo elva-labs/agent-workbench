@@ -2040,9 +2040,17 @@ mod tests {
             .unwrap()
             .contains("has not answered yet"));
 
+        // A read is given the answer wait. The watching wait here is far
+        // longer than a loaded machine takes over the short one, so the
+        // time taken tells the two apart.
+        let waits = Waits {
+            watching: Duration::from_secs(60),
+            longest: Duration::from_secs(60),
+            ..waits
+        };
         let started = Instant::now();
         let answer = handle_with(&home, Path::new("/p"), None, r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"settings","arguments":{}}}"#, waits).unwrap();
-        assert!(started.elapsed() < Duration::from_millis(400));
+        assert!(started.elapsed() < Duration::from_secs(30));
         assert_eq!(
             answer["result"]["content"][0]["text"],
             "the app did not answer the settings tool within a minute"

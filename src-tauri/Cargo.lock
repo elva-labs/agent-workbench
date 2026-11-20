@@ -491,7 +491,7 @@ checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "chord"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 dependencies = [
  "block2",
  "chord-core",
@@ -516,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "chord-core"
-version = "1.0.0-beta.6"
+version = "1.0.0-beta.7"
 dependencies = [
  "base64 0.22.1",
  "chord-core",
