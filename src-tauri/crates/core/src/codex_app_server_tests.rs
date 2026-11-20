@@ -3625,12 +3625,24 @@ fn a_command_of_the_user_s_runs_in_a_turn_that_is_not_shown_as_one() {
             shell_item("item/completed", done),
         ],
     ));
+    // The shell's start is told, so its process group can be found.
     assert_eq!(
         out,
-        [Event::CommandOutput {
-            command: C1.into(),
-            delta: "ls: nope".into()
-        }]
+        [
+            Event::Command {
+                command: C1.into(),
+                state: CommandState::Running,
+                text: "ls nope".into(),
+                exit_code: None,
+                output: None,
+                truncated: false,
+                error: None,
+            },
+            Event::CommandOutput {
+                command: C1.into(),
+                delta: "ls: nope".into()
+            }
+        ]
     );
     let out = events(&mut driver, &[shell_done("completed")]);
     assert_eq!(
@@ -3653,6 +3665,52 @@ fn a_command_of_the_user_s_runs_in_a_turn_that_is_not_shown_as_one() {
         [Event::TurnStarted {
             messages: vec![M1.into()]
         }]
+    );
+}
+
+#[test]
+fn a_turn_codex_began_by_itself_while_a_command_waits_is_shown_and_the_next_is_the_command_s() {
+    let mut driver = ready();
+    shell(&mut driver);
+    // The turn taken as the command's starts with a compaction instead.
+    let out = events(
+        &mut driver,
+        &[shell_item(
+            "item/started",
+            json!({"type": "contextCompaction", "id": "compact-1"}),
+        )],
+    );
+    assert_eq!(
+        out,
+        [Event::TurnStarted { messages: vec![] }, Event::Compacting]
+    );
+    let out = events(&mut driver, &[shell_done("completed")]);
+    assert!(matches!(&out[..], [.., Event::TurnEnded { .. }]), "{out:?}");
+    let mut started = user_shell("inProgress");
+    started["id"] = json!("call_t");
+    let out = events(
+        &mut driver,
+        &[
+            notification(
+                "turn/started",
+                json!({"threadId": THREAD, "turn": {"id": "turn-t", "status": "inProgress", "items": []}}),
+            ),
+            notification(
+                "item/started",
+                json!({"threadId": THREAD, "turnId": "turn-t", "item": started}),
+            ),
+        ],
+    );
+    assert_eq!(turns(&out), 0, "{out:?}");
+    assert!(
+        matches!(
+            &out[..],
+            [Event::Command {
+                state: CommandState::Running,
+                ..
+            }]
+        ),
+        "{out:?}"
     );
 }
 

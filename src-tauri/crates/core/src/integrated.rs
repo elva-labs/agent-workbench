@@ -98,6 +98,12 @@ const POLL: Duration = Duration::from_millis(50);
 /// read. Bounded, since a grandchild can hold the pipe open.
 const DRAIN: Duration = Duration::from_secs(2);
 
+/// How often, and how far apart, the shell an agent runs a command of the
+/// user's in is looked for: it may not have started yet when the agent
+/// says it has.
+const GROUP_TRIES: u32 = 20;
+const GROUP_PAUSE: Duration = Duration::from_millis(100);
+
 /// The tail of stderr kept to explain a session that ended badly.
 const STDERR_KEEP: usize = 4096;
 
@@ -1147,7 +1153,9 @@ pub trait Driver: Send {
     /// Whether the agent runs a command of the user's itself. When it
     /// does, the core hands it over with [`Driver::run`] only when no turn
     /// runs, and the driver tells its run as [`Event::Command`] and
-    /// [`Event::CommandOutput`]; when it does not, the core runs it and
+    /// [`Event::CommandOutput`], a running one once the agent's shell for
+    /// it starts, so the core can find that shell; when it does not, the
+    /// core runs it and
     /// records it with [`Driver::ran`].
     fn runs_commands(&self) -> bool {
         false
@@ -2090,8 +2098,16 @@ struct Running {
     command: String,
     text: String,
     /// The process group it runs in, once known: the core's own, or the
-    /// agent's shell, found when it is stopped.
+    /// agent's shell, looked for once the shell starts.
     group: Option<u32>,
+    /// The agent's shell is being looked for, and was looked for at all.
+    seeking: bool,
+    sought: bool,
+    /// When it started, in seconds since the epoch.
+    since: u64,
+    /// The core's own shell exited, and what it left running is given a
+    /// little longer to finish its output.
+    exited: bool,
     /// How it ends, once the user or its time stopped it.
     ending: Option<CommandState>,
     /// Ends the watch on its time when dropped.
@@ -2320,6 +2336,19 @@ impl Live {
                     let _ = ready.send(());
                 }
             }
+            match &event {
+                // The agent's shell for the user's command started, which
+                // the window was told when the command was handed over.
+                Event::Command {
+                    state: CommandState::Running,
+                    ..
+                } => {
+                    self.find_group(machine, false);
+                    continue;
+                }
+                Event::CommandOutput { .. } => self.find_group(machine, false),
+                _ => {}
+            }
             let event = Self::ended_command(machine, event);
             machine.tracker.observe(bounded(event), &mut out);
         }
@@ -2523,6 +2552,10 @@ impl Live {
                     command,
                     text,
                     group,
+                    seeking: false,
+                    sought: false,
+                    since: now_seconds(),
+                    exited: false,
                     ending: None,
                     _timer: timer,
                 });
@@ -2560,7 +2593,8 @@ impl Live {
         };
         let live = self.me.clone();
         let command = command.to_string();
-        std::thread::spawn(move || watch_command(&live, &command, child, stdout, stderr));
+        let grace = self.deadlines.term_grace;
+        std::thread::spawn(move || watch_command(&live, &command, child, stdout, stderr, grace));
         Ok(group)
     }
 
@@ -2583,15 +2617,15 @@ impl Live {
 
     /// Stops the user's command that runs, to end as `how`. Its process
     /// group is asked to end, and killed if any of it is still there a
-    /// little later; an agent that runs it is asked to stop it as well,
-    /// its shell's group found first, since its own stop leaves what the
-    /// shell started running.
+    /// little later; an agent that runs it is asked to stop it first, and
+    /// its shell's group is ended as well, since its own stop leaves what
+    /// the shell started running. A command whose shell exited already
+    /// keeps how it ended, and only what it left running is ended.
     fn halt(&self, machine: &mut Machine, command: &str, how: CommandState) -> Result<(), String> {
-        let agent = machine.agent;
         let runs = machine.driver.runs_commands();
         let Some(running) = machine
             .running
-            .as_mut()
+            .as_ref()
             .filter(|running| running.command == command)
         else {
             return Err("the command does not run".into());
@@ -2599,21 +2633,92 @@ impl Live {
         if running.ending.is_some() {
             return Ok(());
         }
-        running.ending = Some(how);
-        if runs && running.group.is_none() {
-            running.group = agent.and_then(|agent| user_command::group_of(agent, &running.text));
+        if running.exited {
+            if let Some(group) = running.group {
+                let grace = self.deadlines.term_grace;
+                std::thread::spawn(move || user_command::end_group(group, grace));
+            }
+            return Ok(());
         }
-        let group = running.group;
         if runs {
             if let Some(line) = machine.driver.stop_command(command)? {
                 self.enqueue(line)?;
             }
         }
-        if let Some(group) = group {
-            let grace = self.deadlines.term_grace;
-            std::thread::spawn(move || user_command::end_group(group, grace));
+        let running = machine.running.as_mut().expect("matched above");
+        running.ending = Some(how);
+        match running.group {
+            Some(group) => {
+                let grace = self.deadlines.term_grace;
+                std::thread::spawn(move || user_command::end_group(group, grace));
+            }
+            None => self.find_group(machine, true),
         }
         Ok(())
+    }
+
+    /// Looks for the process group of the agent's shell that runs the
+    /// user's command, away from the machine lock, and keeps it, so a stop
+    /// or the session's end reaches what the shell started even once the
+    /// agent is gone. A command stopped while it is looked for has its
+    /// group ended once found. It is looked for once, and `again` where an
+    /// earlier look found nothing.
+    fn find_group(&self, machine: &mut Machine, again: bool) {
+        let Some(agent) = machine.agent else {
+            return;
+        };
+        let Some(running) = machine.running.as_mut().filter(|running| {
+            running.group.is_none() && !running.seeking && (again || !running.sought)
+        }) else {
+            return;
+        };
+        running.seeking = true;
+        running.sought = true;
+        let command = running.command.clone();
+        let text = running.text.clone();
+        let since = running.since;
+        let live = self.me.clone();
+        let grace = self.deadlines.term_grace;
+        std::thread::spawn(move || {
+            let mut group = None;
+            for _ in 0..GROUP_TRIES {
+                group = user_command::group_of(agent, &text, since);
+                if group.is_some() {
+                    break;
+                }
+                std::thread::sleep(GROUP_PAUSE);
+            }
+            let Some(live) = live.upgrade() else {
+                return;
+            };
+            let mut machine = live.machine.lock().expect("machine lock");
+            let Some(running) = machine
+                .running
+                .as_mut()
+                .filter(|running| running.command == command)
+            else {
+                return;
+            };
+            running.seeking = false;
+            running.group = group;
+            let ending = running.ending.is_some();
+            drop(machine);
+            if let (true, Some(group)) = (ending, group) {
+                user_command::end_group(group, grace);
+            }
+        });
+    }
+
+    /// The core's own shell for the command that runs exited.
+    fn command_exited(&self, command: &str) {
+        let mut machine = self.machine.lock().expect("machine lock");
+        if let Some(running) = machine
+            .running
+            .as_mut()
+            .filter(|running| running.command == command)
+        {
+            running.exited = true;
+        }
     }
 
     /// A driver's event, the last of the command that runs taking how the
@@ -2693,13 +2798,18 @@ impl Live {
             return;
         };
         let state = running.ending.unwrap_or(CommandState::Done);
-        let exit_code = status.and_then(|status| status.code());
-        let note = match state {
-            CommandState::Stopped => Some("The user stopped the command.".to_string()),
-            CommandState::TimedOut => Some(format!(
+        let signal = status.and_then(signal_of);
+        // A shell reports a command a signal ended as 128 and the signal.
+        let exit_code = status
+            .and_then(|status| status.code())
+            .or(signal.map(|signal| 128 + signal));
+        let note = match (state, signal) {
+            (CommandState::Stopped, _) => Some("The user stopped the command.".to_string()),
+            (CommandState::TimedOut, _) => Some(format!(
                 "The command was stopped after {}.",
                 minutes(machine.deadlines.command)
             )),
+            (_, Some(signal)) => Some(format!("The command was ended by signal {signal}.")),
             _ => None,
         };
         let stderr = match note {
@@ -3198,14 +3308,17 @@ enum Piece {
 /// Reads what a command the core runs prints and hands it to the session
 /// as it comes. Once the command ended and its output stopped, or a
 /// little after it ended where what it left running holds its output
-/// open, the session is given the command.
+/// open, the session is given the command, and what it left running is
+/// ended.
 fn watch_command(
     live: &Weak<Live>,
     command: &str,
     mut child: Child,
     stdout: std::process::ChildStdout,
     stderr: std::process::ChildStderr,
+    grace: Duration,
 ) {
+    let group = child.id();
     let (pieces, came) = mpsc::channel::<Piece>();
     let streams: [(bool, Box<dyn Read + Send>); 2] =
         [(false, Box::new(stdout)), (true, Box::new(stderr))];
@@ -3259,22 +3372,39 @@ fn watch_command(
                     stdout.push(&text);
                 }
                 let Some(live) = live.upgrade() else {
-                    return;
+                    break;
                 };
                 live.command_output(command, text);
             }
             Piece::Exited(ended) => {
                 status = ended;
                 drained = Some(Instant::now() + DRAIN);
+                if let Some(live) = live.upgrade() {
+                    live.command_exited(command);
+                }
             }
         }
     }
     if let Some(live) = live.upgrade() {
         live.command_ran(command, status, &stdout.finish(), &stderr.finish());
     }
+    // Nothing a command started outlives it.
+    user_command::end_group(group, grace);
 }
 
 /// A length of time in words, in minutes where it is whole minutes.
+/// The signal that ended a process, where one did.
+#[cfg(unix)]
+fn signal_of(status: std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal()
+}
+
+#[cfg(not(unix))]
+fn signal_of(_status: std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
 fn minutes(time: Duration) -> String {
     let seconds = time.as_secs();
     match seconds {
@@ -6048,18 +6178,126 @@ mod tests {
     #[test]
     fn stopping_a_command_the_core_runs_ends_all_it_started_and_tells_the_agent() {
         let bench = shell_bench(Deadlines::default());
+        let pidfile = scratch("stopped");
         // The last command is exec'd, so no shell is left to report how
         // its child ended.
-        run_command(&bench, C1, "sleep 30 & exec sleep 30").unwrap();
-        std::thread::sleep(Duration::from_millis(200));
+        run_command(
+            &bench,
+            C1,
+            &format!("sleep 30 & echo $! > {}; exec sleep 30", pidfile.display()),
+        )
+        .unwrap();
+        let background = pid_in(&pidfile);
         stop_command(&bench.sessions, "int-bench", C1).unwrap();
         assert_eq!(
             recorded(&bench),
-            format!("ran {C1} None \"\" \"The user stopped the command.\"")
+            format!("ran {C1} Some(143) \"\" \"The user stopped the command.\"")
         );
         let events = bench.events();
         assert_eq!(command_states(&events, C1), ["running", "stopped"]);
         assert!(stop_command(&bench.sessions, "int-bench", C1).is_err());
+        assert!(gone(&background), "the background sleep is ended");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn what_a_command_the_core_runs_leaves_running_is_ended_once_it_is_recorded() {
+        let bench = shell_bench(Deadlines::default());
+        let pidfile = scratch("left");
+        run_command(
+            &bench,
+            C1,
+            &format!(
+                "sleep 30 >/dev/null 2>&1 & echo $! > {}; echo done",
+                pidfile.display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            recorded(&bench),
+            format!("ran {C1} Some(0) \"done\\n\" \"\"")
+        );
+        let background = pid_in(&pidfile);
+        assert!(gone(&background), "nothing the command started outlives it");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stop_once_the_shell_has_exited_ends_what_it_left_and_keeps_its_exit_code() {
+        let bench = shell_bench(Deadlines::default());
+        let pidfile = scratch("drained");
+        // The background sleep holds the output open, so the core waits
+        // for the rest of it after the shell exits.
+        run_command(
+            &bench,
+            C1,
+            &format!("sleep 30 & echo $! > {}; exit 4", pidfile.display()),
+        )
+        .unwrap();
+        let background = pid_in(&pidfile);
+        std::thread::sleep(Duration::from_millis(300));
+        stop_command(&bench.sessions, "int-bench", C1).unwrap();
+        assert_eq!(recorded(&bench), format!("ran {C1} Some(4) \"\" \"\""));
+        assert_eq!(command_states(&bench.events(), C1), ["running", "done"]);
+        assert!(gone(&background));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_a_signal_ends_reports_it_as_a_shell_would() {
+        let bench = shell_bench(Deadlines::default());
+        run_command(&bench, C1, "kill -9 $$").unwrap();
+        assert_eq!(
+            recorded(&bench),
+            format!("ran {C1} Some(137) \"\" \"The command was ended by signal 9.\"")
+        );
+        let events = bench.events();
+        let done = events.iter().rfind(|e| e["type"] == "command").unwrap();
+        assert_eq!(done["state"], "done");
+        assert_eq!(done["exitCode"], 137);
+    }
+
+    /// A file of this test's own in the temporary folder, not there yet.
+    #[cfg(unix)]
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("chord-command-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    /// The process id a command wrote to `path`, once it is there.
+    #[cfg(unix)]
+    fn pid_in(path: &std::path::Path) -> String {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(pid) = std::fs::read_to_string(path) {
+                if pid.ends_with('\n') {
+                    let _ = std::fs::remove_file(path);
+                    return pid.trim().to_string();
+                }
+            }
+            assert!(std::time::Instant::now() < deadline, "no pid written");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// Whether process `pid` is gone within a few seconds.
+    #[cfg(unix)]
+    fn gone(pid: &str) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let alive = std::process::Command::new("kill")
+                .args(["-0", pid])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !alive {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        false
     }
 
     #[cfg(unix)]
@@ -6072,7 +6310,9 @@ mod tests {
         run_command(&bench, C1, "echo started; exec sleep 30").unwrap();
         assert_eq!(
             recorded(&bench),
-            format!("ran {C1} None \"started\\n\" \"The command was stopped after 1 second.\"")
+            format!(
+                "ran {C1} Some(143) \"started\\n\" \"The command was stopped after 1 second.\""
+            )
         );
         assert_eq!(command_states(&bench.events(), C1), ["running", "timedOut"]);
     }

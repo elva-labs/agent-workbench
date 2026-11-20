@@ -352,6 +352,9 @@ struct Shell {
     /// The turn it runs in and the item it is, once Codex names them.
     turn: Option<String>,
     item: Option<String>,
+    /// A turn taken as its own whose first item was something else: one
+    /// Codex began by itself, never claimed again.
+    disowned: Option<String>,
     /// Some of its output came as it ran.
     streamed: bool,
     /// The user stopped it, and whether the interrupt waits for its turn.
@@ -1930,12 +1933,14 @@ impl AppServer {
         }
         // The first turn after a command of the user's is handed over,
         // while no other runs or is on its way, is the one it runs in.
-        let quiet = self.turn.is_none() && self.starting.is_none() && self.awaited.is_none();
-        if let Some(shell) = self
-            .shell
-            .as_mut()
-            .filter(|shell| quiet || shell.turn.is_some())
-        {
+        let quiet = self.starting.is_none() && self.awaited.is_none();
+        let running = self.turn.clone();
+        if let Some(shell) = self.shell.as_mut().filter(|shell| {
+            shell.turn.is_some()
+                || (quiet
+                    && shell.disowned.as_deref() != Some(turn)
+                    && running.is_none_or(|running| shell.disowned == Some(running)))
+        }) {
             if shell.turn.is_none() {
                 shell.turn = Some(turn.to_string());
                 if std::mem::take(&mut shell.interrupt_wanted) {
@@ -2084,13 +2089,32 @@ impl AppServer {
         true
     }
 
-    fn item_started(&mut self, item: &Value, out: &mut Reading) {
+    fn item_started(&mut self, item: &Value, turn: Option<String>, out: &mut Reading) {
         let Some(id) = item["id"].as_str() else {
             return;
         };
         if let Some(shell) = self.user_shell(item) {
-            shell.item = Some(id.to_string());
+            if shell.item.is_none() {
+                shell.item = Some(id.to_string());
+                out.events.push(Event::command(
+                    &shell.command,
+                    CommandState::Running,
+                    &shell.text,
+                ));
+            }
             return;
+        }
+        // The command's turn starts with the command: a turn taken as its
+        // own that starts with anything else is one Codex began by itself.
+        if let Some(shell) = self
+            .shell
+            .as_mut()
+            .filter(|shell| shell.item.is_none() && turn.is_some() && shell.turn == turn)
+        {
+            let disowned = shell.turn.take().expect("matched above");
+            shell.interrupt_wanted |= shell.stopping;
+            shell.disowned = Some(disowned.clone());
+            self.begin(&disowned, vec![], out);
         }
         if item["type"] == "contextCompaction" {
             if self.compacting.insert(id.to_string()) {
@@ -2187,7 +2211,7 @@ impl AppServer {
         match method {
             "turn/started" => self.turn_started(params, out),
             "turn/completed" => self.turn_completed(params, out),
-            "item/started" => self.item_started(&params["item"], out),
+            "item/started" => self.item_started(&params["item"], text(&params["turnId"]), out),
             "item/completed" => self.item_completed(&params["item"], out),
             "item/agentMessage/delta" => {
                 if let (Some(block), Some(delta)) =

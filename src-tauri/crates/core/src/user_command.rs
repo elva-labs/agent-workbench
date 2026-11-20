@@ -118,9 +118,10 @@ pub(crate) fn end_group(group: u32, grace: Duration) {
 }
 
 /// The process group of the shell an agent with process `agent` runs
-/// `text` in: its direct child whose last argument is the command, where
-/// that child leads a group of its own.
-pub(crate) fn group_of(agent: u32, text: &str) -> Option<u32> {
+/// `text` in, started at `since` seconds since the epoch or later: its
+/// direct child whose last argument is the command and that leads a group
+/// of its own, the newest where the agent runs more than one such.
+pub(crate) fn group_of(agent: u32, text: &str, since: u64) -> Option<u32> {
     use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
     let mut system = System::new();
     system.refresh_processes_specifics(
@@ -132,9 +133,12 @@ pub(crate) fn group_of(agent: u32, text: &str) -> Option<u32> {
         .processes()
         .iter()
         .filter(|(_, process)| process.parent().map(|parent| parent.as_u32()) == Some(agent))
-        .find(|(_, process)| process.cmd().last().is_some_and(|last| last == text))
+        .filter(|(_, process)| process.cmd().last().is_some_and(|last| last == text))
+        // Start times are whole seconds, read at a different moment.
+        .filter(|(_, process)| process.start_time() + 1 >= since)
+        .filter(|(pid, _)| leads_group(pid.as_u32()))
+        .max_by_key(|(_, process)| process.start_time())
         .map(|(pid, _)| pid.as_u32())
-        .filter(|&pid| leads_group(pid))
 }
 
 #[cfg(unix)]
