@@ -801,7 +801,10 @@ fn window(kind: LimitKind, model: Option<&str>, percent: f64) -> LimitWindow {
     }
 }
 
-fn shown(limits: &Limits) -> (Vec<(LimitKind, Option<String>, f64)>, Option<u64>) {
+/// A window as the tests compare it: its kind, model and percent.
+type Shown = (LimitKind, Option<String>, f64);
+
+fn shown(limits: &Limits) -> (Vec<Shown>, Option<u64>) {
     match limits.held("claude-code", Path::new(DIR)).unwrap() {
         Event::Limits {
             windows, read_at, ..
