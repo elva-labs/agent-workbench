@@ -1759,7 +1759,7 @@ export async function installFakeCore(
             } else if (field === "integrated") {
               if (!Array.isArray(value) || value.some((agent) => !integrable.includes(agent)))
                 throw new Error(`only ${integrable.join(", ")} can run integrated, not ${JSON.stringify(value)}`);
-            } else if (["userStyles", "notifications", "chime", "askEveryStart", "compact"].includes(field)) {
+            } else if (["userStyles", "notifications", "chime", "askEveryStart", "compact", "autoResume"].includes(field)) {
               if (typeof value !== "boolean") throw new Error(`${field} is true or false`);
             } else if (field === "backgrounds") {
               if (typeof value !== "object" || value === null || Array.isArray(value))

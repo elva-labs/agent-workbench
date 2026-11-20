@@ -1033,8 +1033,10 @@ impl Core {
 
     /// How a session's conversation is taken up again: whole, or for a
     /// Claude Code conversation that is cold and large, as a fresh one
-    /// from the briefing this answers with. Whole for any other agent, and
-    /// where no transcript of it is found.
+    /// from the briefing this answers with. With `always` it goes on from
+    /// the briefing whatever its size and however long it rested. Whole
+    /// for any other agent, and where no transcript of it is found.
+    #[allow(clippy::too_many_arguments)]
     pub fn taken_up(
         &self,
         agent: &str,
@@ -1043,6 +1045,7 @@ impl Core {
         session: &str,
         config_dir: Option<&str>,
         token: &str,
+        always: bool,
     ) -> Result<crate::going_on::GoingOn, String> {
         let whole = crate::going_on::GoingOn {
             context: None,
@@ -1065,12 +1068,13 @@ impl Core {
         // briefed as it stands there.
         let leaf = crate::claude_history::leaf(&path);
         let held = self.held.at(session, leaf.as_deref());
-        Ok(crate::going_on::judge(
-            &path,
-            |since| crate::notes::briefing_since(home, token, since),
-            crate::notes::now() as u64 * 1000,
-            held.as_deref(),
-        ))
+        let notes = |since| crate::notes::briefing_since(home, token, since);
+        let now = crate::notes::now() as u64 * 1000;
+        Ok(if always {
+            crate::going_on::from_notes(&path, notes, now, held.as_deref())
+        } else {
+            crate::going_on::judge(&path, notes, now, held.as_deref())
+        })
     }
 
     /// How an integrated session that runs was started.
@@ -1398,7 +1402,9 @@ impl Core {
     /// module says, which takes a second or two of the agent's own process;
     /// without, the figures held are the answer at once. `worked` says a
     /// session of the account worked since its figures were read, which
-    /// makes a read due sooner. None where there are no figures, a read
+    /// makes a read due sooner, and `since` a time, in seconds since the
+    /// epoch, that figures read before say nothing of, which makes one due
+    /// where the newest is older. None where there are no figures, a read
     /// failed and none came before it, or the agent has no limits read here.
     pub fn account_limits(
         &self,
@@ -1406,6 +1412,7 @@ impl Core {
         config_dir: Option<&str>,
         read: bool,
         worked: bool,
+        since: Option<u64>,
     ) -> Option<crate::integrated::Event> {
         let environment = env::environment();
         let dir = self.limits_dir(agent, config_dir, &environment.vars)?;
@@ -1417,7 +1424,7 @@ impl Core {
         let config_dir = config_dir
             .filter(|named| !named.trim().is_empty())
             .map(|_| dir.clone());
-        self.limits.poll(agent, &dir, worked, || {
+        self.limits.poll_since(agent, &dir, worked, since, || {
             // An account whose directory is not there has never been signed
             // in to, and the agent would make the directory to say so.
             if !dir.is_dir() {

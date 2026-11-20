@@ -54,6 +54,14 @@
   import { finder, find, isListed, LIMIT, list } from "$lib/mentionFiles.svelte";
   import { lastSegment } from "$lib/paths";
   import { isRemote } from "$lib/remote.svelte";
+  import {
+    choose as chooseResume,
+    followed,
+    isOn as resumeIsOn,
+    offered as resumeOffered,
+    resumesWords,
+  } from "$lib/autoResume.svelte";
+  import { byKey } from "$lib/sessions.svelte";
   import ChoiceMenu from "../ChoiceMenu.svelte";
   import CompletionMenu, { rowId } from "./CompletionMenu.svelte";
   import Icon from "./Icon.svelte";
@@ -67,6 +75,9 @@
    * images dropped, pasted or picked, shows the model the session runs on,
    * the effort it thinks at where the model takes one, and the mode, and
    * lets each be changed, and turns Send into Stop while the agent works.
+   * Where the session's account has a five-hour usage window, a chip
+   * beside them says whether the session goes on by itself when that
+   * limit resets, and while it waits to, when.
    * A message sent meanwhile waits for the turn, and the thread says so.
    *
    * Enter sends and Shift+Enter breaks the line. Escape stops a running
@@ -307,7 +318,7 @@
   let field = $state<HTMLTextAreaElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
-  let menu = $state<"model" | "effort" | "mode" | "workflow" | null>(null);
+  let menu = $state<"model" | "effort" | "mode" | "resume" | "workflow" | null>(null);
   /** It was opened with the pointer rather than a key. */
   let byPointer = $state(false);
   let reading = $state(0);
@@ -1022,6 +1033,43 @@
     field?.focus();
   }
 
+  // ---- going on by itself after a usage limit ----
+
+  let row = $derived(byKey(sessionKey));
+  /** Offered only where the session's account has a session window. */
+  let resumable = $derived(row !== null && resumeOffered(row));
+  let resumeOn = $derived(row !== null && resumeIsOn(row));
+  /** The session that started this one, whose choice it goes by. */
+  let resumeFollows = $derived(row === null ? null : followed(row));
+  /** While it waits to go on, the chip says when. */
+  let resumes = $derived(resumesWords(row));
+  let resumeLabel = $derived(
+    resumes !== null ? `Resumes ${resumes.slice("resumes ".length)}` : resumeOn ? "Auto-resume on" : "Auto-resume off",
+  );
+  const RESUME_CHOICES = [
+    {
+      value: "off",
+      name: "Off",
+      about: "A turn the usage limit stops waits for you.",
+    },
+    {
+      value: "on",
+      name: "On",
+      about: "A turn the 5-hour usage limit stops goes on by itself when the limit resets, as a new conversation from its notes.",
+    },
+  ];
+
+  function pickResume(value: string) {
+    menu = null;
+    chooseResume(sessionKey, value === "on");
+    field?.focus();
+  }
+
+  // The choice goes with the chip where the account has no such window.
+  $effect(() => {
+    if ((!resumable || resumeFollows !== null) && untrack(() => menu) === "resume") menu = null;
+  });
+
   // ---- the workflow ----
 
   /** The model a workflow holds the session to, as the chip says it. */
@@ -1046,7 +1094,7 @@
       void tick().then(() => box?.querySelector<HTMLButtonElement>(`[data-testid='${which}-chip']`)?.focus());
   }
 
-  function openMenu(which: "model" | "effort" | "mode" | "workflow", e: MouseEvent) {
+  function openMenu(which: "model" | "effort" | "mode" | "resume" | "workflow", e: MouseEvent) {
     byPointer = e.detail > 0;
     menu = menu === which ? null : which;
   }
@@ -1466,6 +1514,50 @@
             pointer={byPointer}
             testid="mode-menu"
             optionTestid="mode-option"
+          />
+        {/if}
+      </div>
+    {/if}
+    {#if resumable}
+      <div class="picker">
+        {#if resumeFollows !== null}
+          <!-- A session another started goes by its starter's choice: the
+               chip is reached like the others, says so, and opens nothing. -->
+          <button
+            class="chip"
+            class:lit={resumes !== null}
+            tabindex="0"
+            aria-disabled="true"
+            aria-label="{resumeLabel}, set on the session that started this one"
+            title="Set on the session that started this one"
+            data-testid="resume-chip"
+            data-on={resumeOn ? "" : undefined}
+            data-held=""><Icon name="again" size={13} /><Plain text={resumeLabel} /></button
+          >
+        {:else}
+          <button
+            class="chip"
+            class:lit={resumes !== null}
+            tabindex="0"
+            onclick={(e) => openMenu("resume", e)}
+            aria-haspopup="menu"
+            aria-expanded={menu === "resume"}
+            title="Whether the session goes on by itself when the 5-hour usage limit resets"
+            data-testid="resume-chip"
+            data-on={resumeOn ? "" : undefined}
+            ><Icon name="again" size={13} /><Plain text={resumeLabel} /><Icon name="down" size={12} /></button
+          >
+        {/if}
+        {#if menu === "resume" && resumeFollows === null}
+          <ChoiceMenu
+            label="Auto-resume"
+            choices={RESUME_CHOICES.map((choice) => ({ ...choice, on: (choice.value === "on") === resumeOn }))}
+            note="New sessions start with what is chosen here. Stopping the session or quitting the app ends a wait."
+            onpick={pickResume}
+            onclose={closeMenu}
+            pointer={byPointer}
+            testid="resume-menu"
+            optionTestid="resume-option"
           />
         {/if}
       </div>
@@ -1981,6 +2073,11 @@
   .chip[aria-disabled="true"] {
     opacity: 0.6;
     cursor: default;
+  }
+
+  /* A chip that says something is under way: the wait to go on. */
+  .chip.lit {
+    color: var(--ink);
   }
 
   :global(.conv.tight) .chip .word {

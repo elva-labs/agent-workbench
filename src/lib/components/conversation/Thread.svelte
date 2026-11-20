@@ -1255,7 +1255,11 @@
   {#if conversation.began !== null}
     <div class="divider" data-testid="run-began">
       <span
-        >{conversation.wentOn ? "Went on from its notes here" : "Resumed here"},
+        >{conversation.afterLimit !== null
+          ? "Went on by itself here after the usage limit reset"
+          : conversation.wentOn
+            ? "Went on from its notes here"
+            : "Resumed here"},
         <time class="num">{written.get("began") ?? clock(conversation.began.at)}</time></span
       >
     </div>

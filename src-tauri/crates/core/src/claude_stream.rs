@@ -501,6 +501,9 @@ struct Stream {
     /// agent may not run in where it is not available.
     asked_mode: Option<String>,
     effort: Option<String>,
+    /// The usage limit the agent said refused the running turn's last
+    /// request: the window used up and when it starts over.
+    refused: Option<(Option<LimitKind>, Option<u64>)>,
     /// The models the agent offers.
     models: Vec<ModelInfo>,
     /// What the agent said of itself at the start, held until the
@@ -844,6 +847,35 @@ fn window_kind(name: &str) -> Option<LimitKind> {
     }
 }
 
+/// The agent's name for a request the account's own usage limit refused:
+/// a plan limit or a spend cap. No other refusal carries it, a throttle,
+/// a capacity switch-off and an organization's policy among them.
+const USAGE_LIMIT: &str = "usage_limit_reached";
+
+/// The usage limit that refused the request an assistant line stands for:
+/// the window used up, where it is one told apart here, and when it starts
+/// over, where the agent says. None for a line that is no such refusal.
+/// A refusal that names no window, one from the credits bought beyond the
+/// plan, and one held until the next day by a daily cap name no window.
+fn usage_limit(line: &Value) -> Option<(Option<LimitKind>, Option<u64>)> {
+    if line["error"] != "rate_limit" || line["api_error"] != USAGE_LIMIT {
+        return None;
+    }
+    let info = &line["api_error_params"]["rate_limit_info"];
+    if info["status"] != "rejected" {
+        return None;
+    }
+    let capped = info["dailyCapPaused"] == true || info["isUsingOverage"] == true;
+    let window = match info["rateLimitType"].as_str() {
+        _ if capped => None,
+        Some("five_hour") => Some(LimitKind::Session),
+        Some("seven_day") => Some(LimitKind::Weekly),
+        Some(name) if name.starts_with("seven_day_") => Some(LimitKind::WeeklyScoped),
+        _ => None,
+    };
+    Some((window, info["resetsAt"].as_u64()))
+}
+
 /// The plan and the windows of a reply to a read of the usage, from the
 /// server's own rows of limits, kept as an event may carry them. A row of a
 /// kind not known here, or of one model with no model named, is left out.
@@ -956,6 +988,7 @@ impl Stream {
             mode: mode.map(str::to_string),
             asked_mode: mode.map(str::to_string),
             effort: effort.map(str::to_string),
+            refused: None,
             models: Vec::new(),
             introduced: None,
             listed: Vec::new(),
@@ -1491,6 +1524,9 @@ impl Stream {
             self.context.0 =
                 Some(read_tokens(usage) + usage["output_tokens"].as_u64().unwrap_or(0));
         }
+        if parent.is_none() {
+            self.refused = usage_limit(line);
+        }
         if let Some(error) = line["error"].as_str() {
             let said = text_of(&message["content"]);
             let (kind, message) = if error == "authentication_failed" {
@@ -1851,7 +1887,7 @@ impl Stream {
             Some("error_during_execution") if self.interrupting || aborted => Outcome::Interrupted,
             _ => Outcome::Failed,
         };
-        self.interrupting = false;
+        let stopped = std::mem::take(&mut self.interrupting);
         self.turn = false;
         self.forget_turn();
         if let Some(models) = line["modelUsage"].as_object() {
@@ -1867,6 +1903,16 @@ impl Stream {
             }
         }
         self.tell_context(out);
+        // The turn ended on a usage limit only where the agent names that
+        // as what ended it, on the turn's end and on the last message of
+        // the turn alike, and the user had not asked it to stop: a stop
+        // that lands as the refusal does is the user's all the same.
+        let refused = self.refused.take();
+        if outcome == Outcome::Failed && !stopped && line["api_error"] == USAGE_LIMIT {
+            if let Some((window, resets_at)) = refused {
+                out.events.push(Event::LimitReached { window, resets_at });
+            }
+        }
         let error = (outcome == Outcome::Failed).then(|| {
             let said = line["result"].as_str().unwrap_or_default();
             let errors = strings(&line["errors"]);
@@ -3806,6 +3852,260 @@ mod tests {
         assert_eq!(*outcome, Outcome::Failed);
         assert_eq!(error.as_deref(), Some("Not logged in · Please run /login"));
         assert_eq!(usage.as_ref().unwrap().input_tokens, 3);
+    }
+
+    /// The assistant line the agent writes for a request its API refused.
+    fn refusal(api_error: Option<&str>, info: Value) -> Value {
+        let mut line = json!({"type":"assistant","error":"rate_limit","parent_tool_use_id":null,
+            "message":{"id":"e1","content":[{"type":"text","text":"You've hit your limit"}]}});
+        if let Some(api_error) = api_error {
+            line["api_error"] = json!(api_error);
+            line["api_error_params"] = json!({ "rate_limit_info": info });
+        }
+        line
+    }
+
+    /// The end of a turn the API's refusal ended.
+    fn refused_result(api_error: Option<&str>) -> Value {
+        let mut line = json!({"type":"result","subtype":"success","is_error":true,
+            "result":"You've hit your limit","api_error_status":429});
+        if let Some(api_error) = api_error {
+            line["api_error"] = json!(api_error);
+        }
+        line
+    }
+
+    fn five_hour() -> Value {
+        json!({"status":"rejected","rateLimitType":"five_hour","resetsAt":1_893_480_000u64})
+    }
+
+    fn limits_reached(out: &[Event]) -> Vec<(Option<LimitKind>, Option<u64>)> {
+        out.iter()
+            .filter_map(|event| match event {
+                Event::LimitReached { window, resets_at } => Some((*window, *resets_at)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_turn_the_usage_limit_refused_says_which_window_and_when_it_resets() {
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                init(),
+                refusal(Some("usage_limit_reached"), five_hour()),
+                refused_result(Some("usage_limit_reached")),
+            ],
+        );
+        assert_eq!(
+            limits_reached(&out),
+            vec![(Some(LimitKind::Session), Some(1_893_480_000))]
+        );
+        // Told just before the end of the turn, which failed.
+        let at = out
+            .iter()
+            .position(|event| matches!(event, Event::LimitReached { .. }))
+            .unwrap();
+        assert!(
+            matches!(
+                out[at + 1],
+                Event::TurnEnded {
+                    outcome: Outcome::Failed,
+                    ..
+                }
+            ),
+            "{out:?}"
+        );
+        // The turn after it ends by itself and says nothing of a limit.
+        let out = events(&mut stream, &[result()]);
+        assert_eq!(limits_reached(&out), vec![]);
+    }
+
+    #[test]
+    fn the_window_a_usage_limit_names_is_told_apart() {
+        for (info, window) in [
+            (
+                json!({"status":"rejected","rateLimitType":"seven_day","resetsAt":5}),
+                Some(LimitKind::Weekly),
+            ),
+            (
+                json!({"status":"rejected","rateLimitType":"seven_day_opus","resetsAt":5}),
+                Some(LimitKind::WeeklyScoped),
+            ),
+            (
+                json!({"status":"rejected","rateLimitType":"overage","resetsAt":5}),
+                None,
+            ),
+            (json!({"status":"rejected","resetsAt":5}), None),
+            (
+                json!({"status":"rejected","rateLimitType":"five_hour","resetsAt":5,"dailyCapPaused":true}),
+                None,
+            ),
+            (
+                json!({"status":"rejected","rateLimitType":"five_hour","resetsAt":5,"isUsingOverage":true}),
+                None,
+            ),
+        ] {
+            let mut stream = stream();
+            let out = events(
+                &mut stream,
+                &[
+                    init(),
+                    refusal(Some("usage_limit_reached"), info.clone()),
+                    refused_result(Some("usage_limit_reached")),
+                ],
+            );
+            assert_eq!(limits_reached(&out), vec![(window, Some(5))], "{info}");
+        }
+        // A window with no time to start over at says none.
+        let mut stream = stream();
+        let out = events(
+            &mut stream,
+            &[
+                refusal(
+                    Some("usage_limit_reached"),
+                    json!({"status":"rejected","rateLimitType":"five_hour"}),
+                ),
+                refused_result(Some("usage_limit_reached")),
+            ],
+        );
+        assert_eq!(limits_reached(&out), vec![(Some(LimitKind::Session), None)]);
+    }
+
+    #[test]
+    fn no_other_end_of_a_turn_reads_as_the_usage_limit() {
+        let limit = || refusal(Some("usage_limit_reached"), five_hour());
+        let rejected = json!({"type":"rate_limit_event","rate_limit_info":
+            {"status":"rejected","rateLimitType":"five_hour","resetsAt":1_893_480_000u64,"utilization":1.0}});
+        let endings: Vec<(&str, Vec<Value>)> = vec![
+            // A throttle, a capacity switch-off or a policy: a refusal the
+            // agent does not name as the account's usage limit.
+            (
+                "another refusal",
+                vec![refusal(None, json!(null)), refused_result(None)],
+            ),
+            (
+                "another named refusal",
+                vec![
+                    refusal(Some("model_requires_usage_credits"), five_hour()),
+                    refused_result(Some("model_requires_usage_credits")),
+                ],
+            ),
+            // The agent's own word on the windows, with no refusal of the
+            // turn's request.
+            ("a rejected window alone", vec![rejected.clone(), result()]),
+            (
+                "a rejected window and another failure",
+                vec![
+                    rejected,
+                    json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom"}),
+                ],
+            ),
+            // The limit on the turn's end with no message of the turn's
+            // saying so, and on a message with no end saying so.
+            (
+                "the end alone",
+                vec![refused_result(Some("usage_limit_reached"))],
+            ),
+            ("the message alone", vec![limit(), refused_result(None)]),
+            // A turn that went on after the refusal and ended by itself, or
+            // failed on something else.
+            (
+                "a turn that went on",
+                vec![
+                    limit(),
+                    json!({"type":"assistant","parent_tool_use_id":null,"message":{"id":"m2","content":[{"type":"text","text":"on"}]}}),
+                    result(),
+                ],
+            ),
+            (
+                "a later failure",
+                vec![
+                    limit(),
+                    json!({"type":"assistant","parent_tool_use_id":null,"message":{"id":"m2","content":[{"type":"text","text":"on"}]}}),
+                    refused_result(Some("usage_limit_reached")),
+                ],
+            ),
+            ("a turn that finished", vec![limit(), result()]),
+            // A window the refusal does not say was refused.
+            (
+                "a window not rejected",
+                vec![
+                    refusal(
+                        Some("usage_limit_reached"),
+                        json!({"status":"allowed_warning","rateLimitType":"five_hour","resetsAt":5}),
+                    ),
+                    refused_result(Some("usage_limit_reached")),
+                ],
+            ),
+            // A subagent's request refused, in a turn that fails after it.
+            (
+                "a subagent's refusal",
+                vec![
+                    {
+                        let mut line = limit();
+                        line["parent_tool_use_id"] = json!("call-1");
+                        line
+                    },
+                    refused_result(Some("usage_limit_reached")),
+                ],
+            ),
+        ];
+        for (name, lines) in endings {
+            let mut stream = stream();
+            events(&mut stream, &[init()]);
+            let out = events(&mut stream, &lines);
+            assert_eq!(limits_reached(&out), vec![], "{name}: {out:?}");
+            assert!(
+                out.iter()
+                    .any(|event| matches!(event, Event::TurnEnded { .. })),
+                "{name}: {out:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_turn_the_user_stopped_at_the_usage_limit_is_a_stop() {
+        let mut stream = stream();
+        events(
+            &mut stream,
+            &[init(), refusal(Some("usage_limit_reached"), five_hour())],
+        );
+        interrupt(&mut stream);
+        let mut end =
+            json!({"type":"result","subtype":"error_during_execution","is_error":true,"result":""});
+        end["api_error"] = json!("usage_limit_reached");
+        let out = events(&mut stream, &[end]);
+        assert_eq!(limits_reached(&out), vec![]);
+        assert!(matches!(
+            out[0],
+            Event::TurnEnded {
+                outcome: Outcome::Interrupted,
+                ..
+            }
+        ));
+        // A stop asked for as the refusal's own end of the turn lands.
+        events(
+            &mut stream,
+            &[refusal(Some("usage_limit_reached"), five_hour())],
+        );
+        interrupt(&mut stream);
+        let out = events(&mut stream, &[refused_result(Some("usage_limit_reached"))]);
+        assert_eq!(limits_reached(&out), vec![]);
+        assert!(out
+            .iter()
+            .any(|event| matches!(event, Event::TurnEnded { .. })));
+        // The turn after it, refused with no stop, is the limit's.
+        let out = events(
+            &mut stream,
+            &[
+                refusal(Some("usage_limit_reached"), five_hour()),
+                refused_result(Some("usage_limit_reached")),
+            ],
+        );
+        assert_eq!(limits_reached(&out).len(), 1);
     }
 
     #[test]

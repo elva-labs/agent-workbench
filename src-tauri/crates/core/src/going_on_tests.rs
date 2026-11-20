@@ -67,6 +67,48 @@ fn a_conversation_goes_on_only_when_cold_and_large() {
     assert!(goes_on(&short, AT + FIVE_MINUTES));
 }
 
+/// A conversation taken up once a usage limit resets goes on from its
+/// notes however small and warm it is, and one that never got an answer
+/// does too.
+#[test]
+fn a_conversation_asked_to_go_on_from_its_notes_does_whatever_its_size_and_rest() {
+    let home = Scratch::new("going-on-always");
+    let notes = "Brief (2026-11-19):\n> Chord.";
+    let path = transcript(
+        &home,
+        &[
+            user("Build it."),
+            assistant("On it.", 40_000, true),
+            user("And the tests."),
+        ],
+    );
+    // Small and warm, it is resumed whole where nothing asks otherwise.
+    let whole = judge(&path, |_| Some(notes.to_string()), AT + 60 * 1000, None);
+    assert!(!whole.goes_on);
+    let asked = from_notes(&path, |_| Some(notes.to_string()), AT + 60 * 1000, None);
+    assert!(asked.goes_on);
+    assert_eq!(asked.context, Some(40_000));
+    let briefing = asked.briefing.unwrap();
+    assert!(briefing.starts_with(HEAD));
+    assert!(briefing.ends_with(END));
+    assert!(briefing.contains("> Chord."));
+    assert!(briefing.contains("User:\n> And the tests."));
+    // A first message the limit refused left no request to stand on.
+    let refused = transcript(&home, &[user("Build it.")]);
+    assert_eq!(crate::claude_history::standing(&refused, None), None);
+    let asked = from_notes(&refused, |_| None, AT, None);
+    assert!(asked.goes_on);
+    assert!(asked
+        .briefing
+        .unwrap()
+        .contains("How it began, the user's first message:\n> Build it."));
+    // A conversation held at an entry that cannot be followed is not
+    // briefed, asked or not.
+    let lost = from_notes(&path, |_| None, AT, Some("gone"));
+    assert!(!lost.goes_on);
+    assert_eq!(lost.briefing, None);
+}
+
 #[test]
 fn a_request_that_does_not_say_when_it_was_is_no_standing() {
     let home = Scratch::new("going-on-no-time");

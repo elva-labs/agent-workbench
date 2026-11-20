@@ -275,6 +275,9 @@ export class Conversation {
   /** This run went on fresh from the conversation's notes rather than
       resuming it whole. */
   wentOn = $state(false);
+  /** This run went on by itself once the usage limit that cut the one
+      before it short had reset, at this time; null otherwise. */
+  afterLimit = $state<number | null>(null);
   /** How many messages this window has sent. */
   sentHere = $state(0);
   /** The folds of the thread that stand open, by `foldKey`. Kept with the

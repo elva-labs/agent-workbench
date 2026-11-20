@@ -590,6 +590,13 @@ export type IntegratedEventBody =
       readAt: number | null;
       takenAt: number;
     }
+  /** The turn that ends next was refused by the account's own usage
+      limit, as the agent itself names the refusal, and by nothing else.
+      `window` is the window used up, null where it is none of those told
+      apart, a spend cap among them; `resetsAt` is when it starts over, in
+      seconds since the epoch, where the agent says. Sent just before the
+      turn's end. */
+  | { type: "limitReached"; window: IntegratedLimitWindow["kind"] | null; resetsAt: number | null }
   /** Something the agent says that is neither an error nor part of a
       turn. */
   | { type: "notice"; level: "info" | "warning"; message: string }
@@ -721,6 +728,9 @@ export interface IntegratedHistoryOptions {
   cwd?: string;
   session: string;
   configDir?: string;
+  /** It goes on from its notes whatever its size and rest, as one does
+      that goes on by itself once a usage limit resets. */
+  always?: boolean;
 }
 
 /** Whose usage limits `accountLimits` asks for: the agent's account whose
@@ -735,6 +745,10 @@ export interface AccountLimitsOptions {
   /** A session of the account worked since its figures were read, so they
       are read again sooner. */
   worked: boolean;
+  /** A time, in seconds since the epoch, that figures read before say
+      nothing of, as when a window has started over: they are read again
+      where the newest is older. */
+  since?: number;
 }
 
 /** A transition reported by an agent hook or session log, by session id:
@@ -1363,6 +1377,10 @@ export interface Settings {
       for each agent's sessions, by the agent's id, which a new session
       of that agent starts on. A file from before has none. */
   lastChosen?: Record<string, { model?: string; effort?: string; mode?: string }>;
+  /** Whether a new conversation goes on by itself once the usage limit
+      that cut it short resets: the user's last choice on a conversation.
+      A file from before has none, which reads as off. */
+  autoResume?: boolean;
 }
 
 /** The conversation a session is about to take up again. */

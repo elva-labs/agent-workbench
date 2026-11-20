@@ -9,6 +9,7 @@ import { senderOf, sentAt, sentBy, starterOf, WORKBENCH } from "$lib/senders.sve
 import { keepMode, modeOf } from "$lib/sessionModes";
 import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
 import { heardOffers } from "$lib/lastChosen.svelte";
+import { limitEnded, runOver, setHands, settle as settleAutoResume, turnMoved } from "$lib/autoResume.svelte";
 import { modelLabel } from "$lib/models";
 import { readsAsCommand } from "$lib/slash";
 import { offeredModel } from "$lib/thread";
@@ -179,6 +180,10 @@ export class Link {
       just picked. The session counts as ready meanwhile: a message sent
       waits for the new run, and a change of model or mode is made on it. */
   restarting = $state(false);
+  /** The agent's word that the usage limit refused the running turn, as
+      it came just before the turn's end: the window used up and when it
+      starts over, in seconds. */
+  limitReached: { window: string | null; resetsAt: number | null } | null = null;
   /** A change of model, mode or effort to make on the run starting again
       once it is up. */
   after: Change | null = null;
@@ -336,6 +341,7 @@ function isWork(body: IntegratedEventBody): boolean {
     case "commands":
     case "titled":
     case "limits":
+    case "limitReached":
     case "context":
     case "notice":
     case "retrying":
@@ -419,11 +425,16 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
     case "limits":
       heardLimits(hostOf(session.project), session.account, body);
       break;
+    case "limitReached":
+      link.limitReached = { window: body.window, resetsAt: body.resetsAt };
+      break;
     case "state":
       settle(session, body.state, before, link);
       break;
     case "turnStarted":
       session.turnEnd = null;
+      link.limitReached = null;
+      turnMoved(key, true);
       beganTurn(session);
       break;
     case "turnEnded":
@@ -436,8 +447,16 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         tokens: body.usage,
         context: link.conversation.context?.used ?? null,
       });
+      // Only the agent's own word that the usage limit refused the turn
+      // is taken as that: the event just before a turn that failed.
+      if (body.outcome === "failed" && link.limitReached !== null)
+        limitEnded(key, link.limitReached.window, link.limitReached.resetsAt);
+      else turnMoved(key, false);
+      link.limitReached = null;
       break;
     case "ended":
+      link.limitReached = null;
+      runOver(key);
       ended(session, link, body.code, body.clean);
       break;
   }
@@ -575,6 +594,7 @@ export async function launch(key: string): Promise<void> {
     if (starting.resumedFrom !== null) {
       await takeUp(starting);
       link.conversation.wentOn = wentOn(key) !== null;
+      link.conversation.afterLimit = null;
       // The row keeps the name it showed, which its old conversation gave.
       if (link.conversation.wentOn) starting.title ??= nameGoingOn(starting);
     }
@@ -590,6 +610,7 @@ export async function launch(key: string): Promise<void> {
 async function begin(key: string, link: Link, starting: Session, told: Told) {
   link.ranOn = { agent: starting.agent, told: toldText(told.instructions, told.startOnly) };
   link.granted = [];
+  settleAutoResume(key);
   const mode = startMode(starting, link);
   starting.modeNamed = mode ?? null;
   const carried = carriedFor(starting);
@@ -1313,9 +1334,26 @@ export async function goOnIfCold(key: string, now = Date.now(), sending = false)
     link.restarting = false;
     return false;
   }
+  return startFresh(key, link, row, id, handle, null);
+}
+
+/** Stops the row's run and starts a fresh conversation in its place that
+    goes on from the notes of the one with this id, under what the thread
+    holds. The row counts as starting again until it is up. `afterLimit`
+    is when the usage limit reset that it goes on by itself after, null
+    where it goes on for another reason. */
+async function startFresh(
+  key: string,
+  link: Link,
+  row: Session,
+  id: string,
+  handle: string,
+  afterLimit: number | null,
+): Promise<boolean> {
   row.title ??= nameGoingOn({ ...row, resumedFrom: id });
   row.resumedFrom = id;
   link.conversation.wentOn = true;
+  link.conversation.afterLimit = afterLimit;
   link.conversation.beganHere(Date.now());
   // The fresh run's context is known once it has read something.
   link.conversation.context = null;
@@ -1337,6 +1375,63 @@ export async function goOnIfCold(key: string, now = Date.now(), sending = false)
   }
   return true;
 }
+
+/** A row whose run is at rest with nothing on its way, which a stop ends
+    no turn of. */
+function atRest(key: string): { session: Session; link: Link } | null {
+  const session = byKey(key);
+  const link = links.get(key);
+  if (session === null || link === undefined || session.kind !== "integrated") return null;
+  if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return null;
+  if (link.busy || link.handle === null || session.working || link.sendingNow || link.goingBack !== null) return null;
+  if (session.needs !== null || link.conversation.working || link.conversation.waiting.length > 0) return null;
+  return { session, link };
+}
+
+/**
+ * Goes on by itself with a row whose turn the usage limit cut short, now
+ * that the limit has reset at `resetAt`: its run is started again as a
+ * fresh conversation from its notes, under the same row, whatever its
+ * size and however long it rested, so the whole of it is never read
+ * again. Only at rest, and only where the core wrote the briefing; false,
+ * with the run left as it is, otherwise.
+ */
+export async function goOnAfterLimit(key: string, resetAt: number): Promise<boolean> {
+  const found = atRest(key);
+  if (found === null || found.link.restarting) return false;
+  const { session, link } = found;
+  const id = session.id;
+  const handle = link.handle;
+  if (id === null || handle === null) return false;
+  link.restarting = true;
+  let resume: string | null;
+  try {
+    resume = await takeUp({ ...session, resumedFrom: id }, true);
+  } catch {
+    resume = id;
+  }
+  const row = atRest(key)?.session ?? null;
+  if (resume !== null || row === null || link.handle !== handle || row.id !== id) {
+    if (resume === null) forgetWent(key);
+    link.restarting = false;
+    return false;
+  }
+  return startFresh(key, link, row, id, handle, resetAt);
+}
+
+setHands({
+  // What the composer held while the run started goes first, as the
+  // window draws the run as up.
+  goOn: async (key, resetAt) => {
+    const went = await goOnAfterLimit(key, resetAt);
+    await tick();
+    return went;
+  },
+  send: (key, text, lost) => sendAsWorkbench(key, text, lost) !== null,
+  written: userWaiting,
+  say: (key, text, warning) =>
+    links.get(key)?.conversation.apply({ type: "notice", level: warning ? "warning" : "info", message: text }),
+});
 
 /**
  * Starts a row's run that went on from its notes again on the whole of
@@ -1362,6 +1457,7 @@ export async function resumeWhole(key: string): Promise<boolean> {
   askWhole(key);
   session.resumedFrom = went.from;
   link.conversation.wentOn = false;
+  link.conversation.afterLimit = null;
   link.conversation.beganHere(Date.now());
   const handle = link.handle;
   link.handle = null;

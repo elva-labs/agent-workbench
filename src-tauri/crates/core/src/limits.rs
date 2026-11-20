@@ -332,14 +332,16 @@ struct Account {
 
 impl Account {
     /// Whether a read is due at `now`: the newest full read is `fresh_for`
-    /// seconds old, or there is none, and no failed read holds the next
-    /// back. A read under way is not considered.
-    fn due(&self, now: u64, fresh_for: u64) -> bool {
+    /// seconds old or was taken before `since`, or there is none, and no
+    /// failed read holds the next back. A read under way is not
+    /// considered.
+    fn due(&self, now: u64, fresh_for: u64, since: Option<u64>) -> bool {
         if self.failures > 0 && now < self.failed_at.saturating_add(retry_after(self.failures)) {
             return false;
         }
-        self.last_read
-            .is_none_or(|read_at| now.saturating_sub(read_at) >= fresh_for)
+        self.last_read.is_none_or(|read_at| {
+            now.saturating_sub(read_at) >= fresh_for || since.is_some_and(|since| read_at < since)
+        })
     }
 
     /// Takes figures over those held where they stand over them, and their
@@ -462,13 +464,28 @@ impl Limits {
         worked: bool,
         read: impl FnOnce() -> Result<Event, String>,
     ) -> Option<Event> {
+        self.poll_since(agent, dir, worked, None, read)
+    }
+
+    /// As [`Limits::poll`], with a read due as well where the newest was
+    /// taken before `since`, in seconds since the epoch: a time that a
+    /// read taken before says nothing of, as when a window has started
+    /// over. A failed read holds the next back all the same.
+    pub fn poll_since(
+        &self,
+        agent: &str,
+        dir: &Path,
+        worked: bool,
+        since: Option<u64>,
+        read: impl FnOnce() -> Result<Event, String>,
+    ) -> Option<Event> {
         let key = key(agent, dir);
         let fresh_for = if worked { FRESH_FOR } else { QUIET_FOR };
         {
             let mut state = self.state();
             let now = (self.clock)();
             let account = state.accounts.entry(key.clone()).or_default();
-            if account.reading || !account.due(now, fresh_for) {
+            if account.reading || !account.due(now, fresh_for, since) {
                 return account.figures.as_ref().map(|figures| figures.event(agent));
             }
             account.reading = true;
@@ -481,7 +498,7 @@ impl Limits {
                 state
                     .accounts
                     .get(&key)
-                    .is_none_or(|account| account.due(now, fresh_for))
+                    .is_none_or(|account| account.due(now, fresh_for, since))
             };
             // A read that panics fails like any other, so the account is
             // not left marked as being read.

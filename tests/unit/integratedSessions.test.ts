@@ -26,6 +26,8 @@ import {
   unspoken,
 } from "$lib/integrated.svelte";
 import { resetGoingOn } from "$lib/goingOn.svelte";
+import { GO_ON, MARGIN, choose as chooseResume, look, resetAutoResume, resumesWords } from "$lib/autoResume.svelte";
+import { stateWord } from "$lib/orchestrator.svelte";
 import {
   byKey,
   close,
@@ -199,6 +201,7 @@ beforeEach(async () => {
   resetWorkflows();
   resetAccounts();
   resetGoingOn();
+  resetAutoResume();
   pty.spawned = [];
   pty.written = [];
   pty.killed = [];
@@ -326,6 +329,164 @@ describe("a row at rest whose conversation went cold and large", () => {
     await settled();
     expect(await goOnIfCold(key, Date.now() + 3_600_000, true)).toBe(false);
     expect(linkFor(key).restarting).toBe(false);
+  });
+});
+
+describe("a session the usage limit cut short", () => {
+  /** The reset the agent names, two minutes gone, in seconds. */
+  const reset = () => Math.floor(Date.now() / 1000) - 120;
+  const notes = (conversation: ReturnType<typeof conversationOf>) =>
+    conversation.entries.flatMap((entry) => (entry.kind === "note" ? [entry.text] : []));
+
+  /** A core that reads the session window as open since the reset, and
+      briefs a conversation asked to go on from its notes. */
+  function core(briefing: string | null = "BRIEFING") {
+    const asked: { always?: boolean }[] = [];
+    const own = (window as unknown as { __CHORD_CORE__: Record<string, unknown> }).__CHORD_CORE__;
+    own.goingOn = async (options: { always?: boolean }) => {
+      asked.push(options);
+      return { context: 40_000, idle: 60, goesOn: briefing !== null, briefing };
+    };
+    own.accountLimits = async () => ({
+      type: "limits",
+      agent: "claude-code",
+      plan: "max",
+      readAt: Math.floor(Date.now() / 1000),
+      takenAt: Math.floor(Date.now() / 1000),
+      windows: [{ kind: "session", model: null, percent: 3, resetsAt: reset() + 5 * 3600, severity: "normal" }],
+    });
+    return asked;
+  }
+
+  /** A row with the choice on whose account has a session window. */
+  async function chosen() {
+    const row = await started();
+    fake.limits(row.handle, [{ kind: "session", percent: 100 }], { takenAt: 1_000 });
+    chooseResume(row.key, true);
+    return row;
+  }
+
+  /** A turn of the user's that the agent ends as refused by the limit. */
+  function refused(key: string, handle: string, window: "session" | "weekly" | null = "session") {
+    send(key, "Build it.");
+    fake.startTurn(handle);
+    fake.emit(handle, { type: "limitReached", window, resetsAt: reset() });
+    fake.endTurn(handle, "failed", "You've hit your limit");
+  }
+
+  it("goes on by itself from its notes once the limit has reset, and says so", async () => {
+    const asked = core();
+    const { key, handle, session } = await chosen();
+    refused(key, handle);
+    await settled();
+    expect(resumesWords(session)).toMatch(/^resumes /);
+    expect(stateWord(session)).toBe(resumesWords(session));
+    await look();
+    await settled();
+    // Small and warm, it still goes on from its notes, never whole.
+    expect(asked).toMatchObject([{ always: true, session: "integrated-session-1" }]);
+    expect(handleOf(key)).not.toBe(handle);
+    expect(fake.calls.filter((call) => call.method === "stop")).toHaveLength(1);
+    expect(fake.calls.filter((call) => call.method === "start").at(-1)).toMatchObject({
+      options: { session: undefined },
+    });
+    const sent = fake.calls.filter((call) => call.method === "send").at(-1) as { id: string; text: string };
+    expect(sent.id).toBe(handleOf(key));
+    expect(sent.text).toBe(`BRIEFING\n\n${GO_ON}`);
+    expect(conversationOf(key).afterLimit).toBe(reset() * 1000);
+    expect(conversationOf(key).wentOn).toBe(true);
+    expect(resumesWords(session)).toBeNull();
+    // Looked at again, nothing more is sent.
+    await look(Date.now() + MARGIN);
+    expect(fake.calls.filter((call) => call.method === "send")).toHaveLength(2);
+  });
+
+  it("tries once: the limit refusing the turn it sent is said and not waited for", async () => {
+    core();
+    const { key, handle, session } = await chosen();
+    refused(key, handle);
+    await look();
+    await settled();
+    const next = handleOf(key)!;
+    fake.startTurn(next);
+    fake.emit(next, { type: "limitReached", window: "session", resetsAt: reset() + 5 * 3600 });
+    fake.endTurn(next, "failed", "You've hit your limit");
+    await settled();
+    expect(resumesWords(session)).toBeNull();
+    expect(notes(conversationOf(key))).toContain(
+      "The usage limit stopped it again. It does not go on by itself a second time.",
+    );
+  });
+
+  it("never goes on after a turn that ended any other way", async () => {
+    const asked = core();
+    const { key, handle, session } = await chosen();
+    // A turn that failed with no word from the agent that it was the limit.
+    send(key, "One.");
+    fake.startTurn(handle);
+    fake.endTurn(handle, "failed", "API Error: 529 overloaded");
+    expect(resumesWords(session)).toBeNull();
+    // A turn the user stopped, though the limit was named in it.
+    send(key, "Two.");
+    fake.startTurn(handle);
+    fake.emit(handle, { type: "limitReached", window: "session", resetsAt: reset() });
+    fake.endTurn(handle, "interrupted");
+    expect(resumesWords(session)).toBeNull();
+    // A turn that finished, and one a week's limit refused.
+    send(key, "Three.");
+    fake.startTurn(handle);
+    fake.emit(handle, { type: "limitReached", window: "session", resetsAt: reset() });
+    fake.endTurn(handle, "done");
+    expect(resumesWords(session)).toBeNull();
+    refused(key, handle, "weekly");
+    expect(resumesWords(session)).toBeNull();
+    refused(key, handle, null);
+    expect(resumesWords(session)).toBeNull();
+    await look();
+    await settled();
+    expect(asked).toHaveLength(0);
+    expect(handleOf(key)).toBe(handle);
+  });
+
+  it("never goes on with the choice off, once the run ended, or after a turn began", async () => {
+    const asked = core();
+    const off = await started();
+    fake.limits(off.handle, [{ kind: "session", percent: 100 }], { takenAt: 1_000 });
+    refused(off.key, off.handle);
+    expect(resumesWords(off.session)).toBeNull();
+    const over = await chosen();
+    refused(over.key, over.handle);
+    expect(resumesWords(over.session)).not.toBeNull();
+    fake.end(over.handle);
+    await settled();
+    expect(resumesWords(over.session)).toBeNull();
+    const began = await chosen();
+    refused(began.key, began.handle);
+    send(began.key, "Again.");
+    fake.startTurn(began.handle);
+    expect(resumesWords(began.session)).toBeNull();
+    await look();
+    await settled();
+    expect(asked).toHaveLength(0);
+    expect(handleOf(off.key)).toBe(off.handle);
+    expect(handleOf(began.key)).toBe(began.handle);
+  });
+
+  it("leaves the run as it is where the core writes no briefing, and says so", async () => {
+    const asked = core(null);
+    const { key, handle } = await chosen();
+    refused(key, handle);
+    const sends = fake.calls.filter((call) => call.method === "send").length;
+    await look();
+    await settled();
+    expect(asked).toHaveLength(1);
+    expect(handleOf(key)).toBe(handle);
+    expect(fake.calls.filter((call) => call.method === "stop")).toHaveLength(0);
+    expect(fake.calls.filter((call) => call.method === "send")).toHaveLength(sends);
+    expect(notes(conversationOf(key))).toContain(
+      "Did not go on by itself: the conversation could not be started again from its notes.",
+    );
+    expect(conversationOf(key).afterLimit).toBeNull();
   });
 });
 
