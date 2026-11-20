@@ -1546,9 +1546,11 @@
     if (!(menuOpen || sortOpen || projectMenu !== null || sessionMenu !== null)) return;
     return putAway({
       inside: () => [
-        ...(nav?.querySelectorAll(
-          '.menu, [data-testid="project-sort"], [data-testid="sessions-menu"], [data-testid="project-more"]',
-        ) ?? []),
+        ...(nav
+          ?.closest("section[data-pane]")
+          ?.querySelectorAll(
+            '.menu, [data-testid="project-sort"], [data-testid="sessions-menu"], [data-testid="project-more"]',
+          ) ?? []),
       ],
       close: closeMenus,
       control: () => nav,
