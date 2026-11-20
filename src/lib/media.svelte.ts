@@ -14,6 +14,7 @@
  */
 
 import { marked } from "marked";
+import { runnable } from "$lib/bang";
 import { core, type Media, type PresentRequest } from "$lib/core";
 import { forProject, sessions } from "$lib/sessions.svelte";
 import { held, projectFor, sessionFor } from "$lib/show.svelte";
@@ -248,17 +249,43 @@ function hang(line: string): number {
     stands in a box of its own that the conversation puts its Copy in. A
     block of prose wraps at the box's width, each line a block of its own
     that hangs its continuation lines under its words; the text of the
-    box is still the lines as written, line breaks included. */
+    box is still the lines as written, line breaks included. A line that
+    is a command for the user to run is marked for its Run (see `runLine`). */
 const drawCode = said.code;
 said.code = function (this: typeof said, token) {
   const lang = (token.lang ?? "").trim().split(/\s+/)[0].toLowerCase();
-  if ((lang !== "" && !PROSE.has(lang)) || (lang === "" && drawn(token.text))) return `<div class="code" data-copy-host="code">${drawCode.call(this, token)}</div>`;
+  if ((lang !== "" && !PROSE.has(lang)) || (lang === "" && drawn(token.text)))
+    return `<div class="code" data-copy-host="code">${runLines(drawCode.call(this, token))}</div>`;
   const named = lang === "" ? "" : ` class="language-${escapeAttribute(lang)}"`;
   const lines = token.text
     .split("\n")
-    .map((line) => `<span class="line" style="--hang:${hang(line)}ch">${escapeAttribute(line)}\n</span>`)
+    .map((line) => `<span class="line" style="--hang:${hang(line)}ch">${runLine(escapeAttribute(line))}\n</span>`)
     .join("");
   return `<div class="code" data-copy-host="code" data-wrap><pre><code${named}>${lines}</code></pre></div>\n`;
+};
+
+/** A line of code as HTML, held in an element marked `data-run` when it is
+    a command for the user to run, `!` and a space and then the command, so
+    the conversation puts a Run after it. Escaping leaves a line's `!` and
+    space as they are and an empty line empty, so the escaped line tells
+    as well as the line itself. */
+function runLine(html: string): string {
+  return runnable(html) === null ? html : `<span data-run="">${html}</span>`;
+}
+
+/** A code block as marked draws it, each of its lines through `runLine`. */
+function runLines(html: string): string {
+  const block = /^(<pre><code[^>]*>)([\s\S]*)(<\/code><\/pre>\n?)$/.exec(html);
+  if (block === null) return html;
+  return block[1] + block[2].split("\n").map(runLine).join("\n") + block[3];
+}
+
+/** A code span is marked `data-run` when it holds a command for the user
+    to run, as a line of a block is. */
+const drawSpan = said.codespan;
+said.codespan = function (this: typeof said, token) {
+  const html = drawSpan.call(this, token);
+  return runnable(token.text) === null ? html : html.replace(/^<code>/, '<code data-run="">');
 };
 
 /** Raw HTML in a document is shown as the text it is, never drawn. Text is

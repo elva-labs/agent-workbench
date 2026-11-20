@@ -90,6 +90,8 @@ beforeEach(async () => {
     integratedInterrupt: async (id: string) => fake.interrupt(id),
     integratedSendNow: async (id: string) => fake.sendNow(id),
     integratedWithdraw: async (id: string, message: string) => fake.withdraw(id, message),
+    integratedRun: async (id: string, command: string, text: string) => fake.run(id, command, text),
+    integratedStopCommand: async (id: string, command: string) => fake.stopCommand(id, command),
     onIntegratedEvent: async (handler: Parameters<FakeIntegrated["subscribe"]>[0]) => fake.subscribe(handler),
     conductAnswer: async (id: string, _cwd: string, content: string | null, error: string | null) => {
       answers.push({ id, content, error });

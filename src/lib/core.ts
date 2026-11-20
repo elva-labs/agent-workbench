@@ -377,6 +377,18 @@ export interface IntegratedCommand {
   source: string | null;
 }
 
+/** Where a command of the user's stands: waiting, running, or over, as
+    the `command` event says. */
+export type IntegratedCommandState =
+  | "queued"
+  | "running"
+  | "done"
+  | "stopped"
+  | "timedOut"
+  | "failed"
+  | "withdrawn"
+  | "dropped";
+
 /** A session's news, by `type`. Text, thinking, tool calls, plans and
     requests carry `parent`: the tool call that started the subagent they
     belong to, or null in the main conversation. */
@@ -432,6 +444,30 @@ export type IntegratedEventBody =
       text: string | null;
       images: IntegratedImage[];
     }
+  /** Where a command of the user's stands: a line typed with a leading
+      `!`, run in the session's folder, whose output the agent takes
+      without a turn. `command` is the id the window chose for it and
+      `text` the command itself, without the `!`, on every event. The
+      first event is `queued`, while it waits behind a turn or another
+      command, or `running`; the last is any other state, with `output`,
+      all of it that was kept, which `truncated` says was cut short, and
+      `exitCode` where it exited. A command `done` with an exit code other
+      than zero exited with an error; `failed` could not run, `error` says
+      why. */
+  | {
+      type: "command";
+      command: string;
+      state: IntegratedCommandState;
+      text: string;
+      exitCode: number | null;
+      output: string | null;
+      truncated: boolean;
+      error: string | null;
+    }
+  /** The next piece of a running command's output. Pieces may be left
+      out, which a `skipped` event says; the output the command ends with
+      holds all that was kept. */
+  | { type: "commandOutput"; command: string; delta: string }
   /** The messages the turn answers, by the ids they were sent with; one
       turn may answer several. Empty for a turn the agent began itself. */
   | { type: "turnStarted"; messages: string[] }
@@ -648,7 +684,9 @@ export type IntegratedEvent = IntegratedEventBody & { id: string };
     since the epoch, null for one it began, and absent from a core that
     does not say; `tasks` every subagent still at work, in the order they
     started, each as its start went out, absent from a core that does not
-    say. */
+    say; `commands` every command of the user's that waits or runs, in
+    the order sent, a running one with its output so far, absent from a
+    core that does not say. */
 export interface IntegratedSnapshot {
   state: IntegratedState;
   turn: boolean;
@@ -660,6 +698,7 @@ export interface IntegratedSnapshot {
   limits: Extract<IntegratedEventBody, { type: "limits" }> | null;
   resumedAt?: number | null;
   tasks?: Extract<IntegratedEventBody, { type: "taskStarted" }>[];
+  commands?: Extract<IntegratedEventBody, { type: "command" }>[];
 }
 
 /** What a conversation said and did before a window took it up, read
@@ -1501,8 +1540,16 @@ export interface Core {
       by then. Fails saying why when they cannot go now. */
   integratedSendNow(id: string): Promise<IntegratedSentNow>;
   /** Takes back a message the agent has not taken yet; it comes back as
-      withdrawn. Fails once the agent has taken it. */
+      withdrawn. Fails once the agent has taken it. A command that waits is
+      taken back the same way, by its id. */
   integratedWithdraw(id: string, message: string): Promise<void>;
+  /** Runs `text`, a line the user typed after a `!`, in the session's
+      folder, under `command`, an id the window chose that no message or
+      command of the session has. Resolves once the core took it; where it
+      stands comes as `command` events, its output as `commandOutput`. */
+  integratedRun(id: string, command: string, text: string): Promise<void>;
+  /** Stops a running command; it ends as stopped. */
+  integratedStopCommand(id: string, command: string): Promise<void>;
   /** Compacts the conversation, in the agent's own way, with what the
       summary should keep where the agent takes that. Resolves once asked;
       `compacting` and `compacted` follow. */
@@ -2086,6 +2133,8 @@ const tauriCore: Core = {
   integratedInterrupt: (id) => invoke<void>("integrated_interrupt", { id }),
   integratedSendNow: (id) => invoke<IntegratedSentNow>("integrated_send_now", { id }),
   integratedWithdraw: (id, message) => invoke<void>("integrated_withdraw", { id, message }),
+  integratedRun: (id, command, text) => invoke<void>("integrated_run", { id, command, text }),
+  integratedStopCommand: (id, command) => invoke<void>("integrated_stop_command", { id, command }),
   integratedCompact: (id, instructions) =>
     invoke<void>("integrated_compact", { id, instructions: instructions ?? null }),
   integratedAnswer: (id, request, choice, message) =>
@@ -2473,6 +2522,10 @@ const detachedCore: Core = {
   async integratedWithdraw() {
     throw new Error("not connected to the workbench core");
   },
+  async integratedRun() {
+    throw new Error("not connected to the workbench core");
+  },
+  async integratedStopCommand() {},
   async integratedCompact() {},
   async integratedAnswer() {},
   async integratedReply() {},

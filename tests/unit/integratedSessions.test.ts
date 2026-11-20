@@ -18,11 +18,14 @@ import {
   reply,
   resetIntegrated,
   resume,
+  run,
   send,
   sendNow,
   sendNowBlocked,
   onTheirWay,
+  stopCommand,
   takeBack,
+  takeBackCommand,
   trust,
   unspoken,
 } from "$lib/integrated.svelte";
@@ -93,6 +96,8 @@ async function install(options: FakeIntegratedOptions = {}) {
     integratedInterrupt: async (id: string) => fake.interrupt(id),
     integratedSendNow: async (id: string) => fake.sendNow(id),
     integratedWithdraw: async (id: string, message: string) => fake.withdraw(id, message),
+    integratedRun: async (id: string, command: string, text: string) => fake.run(id, command, text),
+    integratedStopCommand: async (id: string, command: string) => fake.stopCommand(id, command),
     integratedCompact: async (id: string, instructions?: string) => fake.compact(id, instructions),
     integratedAnswer: async (id: string, request: string, choice: never, message?: string) =>
       fake.answer(id, request, choice, message),
@@ -866,6 +871,54 @@ describe("an integrated session behind its row", () => {
     fake.startTurn(handle, [taken]);
     expect(await takeBack(session.key, taken)).toBe(false);
     expect(linkFor(session.key).nowError).toBe("Not taken back: the agent has taken the message already");
+  });
+
+  it("runs a line the user typed after a ! through the core, the session staying at rest", async () => {
+    const { session, handle } = await started();
+    const conversation = conversationOf(session.key);
+    expect(run(session.key, "   ")).toBeNull();
+    const id = run(session.key, "  npm test ")!;
+    await settled();
+    expect(fake.calls).toContainEqual({ method: "run", id: handle, command: id, text: "npm test" });
+    expect(conversation.commands[id]).toMatchObject({ text: "npm test", state: "running" });
+    expect(byKey(session.key)!.working).toBe(false);
+    fake.commandOutput(handle, id, "ok 1\n");
+    expect(conversation.commands[id].output).toBe("ok 1\n");
+    stopCommand(session.key, id);
+    await settled();
+    expect(conversation.commands[id]).toMatchObject({ state: "stopped", output: "ok 1\n" });
+  });
+
+  it("takes back a command Codex holds behind its turn, putting its line after what the composer holds", async () => {
+    await install({ mints: true });
+    const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    const handle = handleOf(session.key)!;
+    const link = linkFor(session.key);
+    const conversation = conversationOf(session.key);
+    send(session.key, "go");
+    fake.startTurn(handle);
+    const id = run(session.key, "git status")!;
+    await settled();
+    expect(conversation.commands[id].state).toBe("queued");
+    link.draft = "something new";
+    expect(await takeBackCommand(session.key, id)).toBe(true);
+    expect(conversation.commands[id]).toBeUndefined();
+    expect(link.draft).toBe("something new\n\n!git status");
+  });
+
+  it("says why a command it could not take back began first", async () => {
+    const { session, handle } = await started();
+    const link = linkFor(session.key);
+    const id = run(session.key, "npm test")!;
+    await settled();
+    link.draft = "";
+    expect(await takeBackCommand(session.key, id)).toBe(false);
+    expect(link.nowError).toBe("Not taken back: the command runs already");
+    expect(link.draft).toBe("");
+    fake.finishCommand(handle, id);
+    expect(conversationOf(session.key).commands[id].state).toBe("done");
+    expect(link.nowError).toBeNull();
   });
 
   it("compacts with what the summary should keep, saying it waits while a turn runs", async () => {

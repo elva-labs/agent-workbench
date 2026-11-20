@@ -17,9 +17,12 @@
     parts: Part[];
     root: string | null;
     nested?: boolean;
+    /** Runs a command the agent wrote in its text for the user to run.
+        Its thinking and its plan, and a subagent's text, get no Run. */
+    onrun?: (command: string) => void;
   }
 
-  let { parts, root, nested = false }: Props = $props();
+  let { parts, root, nested = false, onrun }: Props = $props();
 
   let drawn = $derived(segments(parts));
 
@@ -30,7 +33,7 @@
   {#each drawn as segment (segment.kind === "work" ? segment.key : segment.kind === "text" || segment.kind === "thought" ? segment.part.block : segment.kind === "question" ? segment.part.request : `plan-${segment.part.at}`)}
     {#if segment.kind === "text"}
       <div class="text" data-testid="agent-text" data-find={segment.part.block}>
-        <Markdown text={segment.part.text} streaming={!segment.part.done} />
+        <Markdown text={segment.part.text} streaming={!segment.part.done} onrun={nested ? undefined : onrun} />
         {#if segment.part.gap && segment.part.done}
           <p class="gap" data-find-skip>Some of this did not reach the window.</p>
         {/if}

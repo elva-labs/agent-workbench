@@ -6,10 +6,14 @@
     linkFor,
     onTheirWay,
     restore,
+    restoreCommand,
     resume,
+    run,
     sendNow,
     sendNowBlocked,
+    stopCommand,
     takeBack,
+    takeBackCommand,
     takeBackUp,
     trust,
     undoGoBack,
@@ -402,6 +406,12 @@
       {marked}
       onGoBack={backable ? goBackHere : null}
       onUndo={() => void undoGoBack(session.key)}
+      commands={{
+        stop: (command) => stopCommand(session.key, command.id),
+        takeBack: (command) => void takeBackCommand(session.key, command.id),
+        putBack: (command) => restoreCommand(session.key, command),
+      }}
+      onRun={(command) => void run(session.key, command)}
     />
     <div class="foot" style:--conv-width={width > 0 ? `${width}px` : null}>
       {#if over}

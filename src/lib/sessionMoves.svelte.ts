@@ -208,6 +208,7 @@ function conversationHold(session: Session): Hold | null {
     conversation.waiting.some((message) => ["sending", "queued", "sent"].includes(message.state))
   )
     return busy("messages waiting");
+  if (conversation.commanding) return busy("running a command");
   // What the user is writing goes with the conversation, not into a
   // terminal.
   if (link.draft.trim() !== "" || link.images.length > 0 || link.files.length > 0) return busy("being written to");

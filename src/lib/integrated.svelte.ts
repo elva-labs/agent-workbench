@@ -24,7 +24,7 @@ import {
   type IntegratedState,
   type PermissionChoice,
 } from "$lib/core";
-import { Conversation, type Message, type Part, type TextPart } from "$lib/conversation.svelte";
+import { Conversation, type Command, type Message, type Part, type TextPart } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import { logUsage } from "$lib/usageLog";
 import {
@@ -143,6 +143,9 @@ export class Link {
   /** The messages this window asked to take back, kept whole until the
       agent lets go of each, when they go back to the composer. */
   takingBack = new Map<string, Message>();
+  /** The commands this window asked to take back, kept until the core
+      lets go of each, when its line goes back to the composer. */
+  commandsBack = new Map<string, Command>();
   /** The messages Up took back, oldest first, with the words, mentions
       and images of each the agent has let go of, the place among the
       messages sent the oldest of them had, and the composer's words as Up
@@ -325,9 +328,9 @@ function claim(id: string): IntegratedEventBody[] {
 /** Whether an event is the agent's own doing rather than its keeping house.
     Housekeeping is a compaction and what a run reports of itself: its
     state, settings, limits, context and notices, a retry, a turn's start
-    and end, and the user's messages. A turn that answers a message is the
-    agent's doing, and so is everything else, an event of a kind not named
-    here included. */
+    and end, and the user's messages and commands. A turn that answers a
+    message is the agent's doing, and so is everything else, an event of a
+    kind not named here included. */
 function isWork(body: IntegratedEventBody): boolean {
   switch (body.type) {
     case "turnStarted":
@@ -348,6 +351,8 @@ function isWork(body: IntegratedEventBody): boolean {
     case "skipped":
     case "turnEnded":
     case "message":
+    case "command":
+    case "commandOutput":
     case "answered":
     case "withdrawn":
     case "ended":
@@ -368,13 +373,18 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
   const back =
     body.type === "message" && body.state === "withdrawn" ? link.takingBack.get(body.message) : undefined;
   if (back !== undefined) link.takingBack.delete(back.id);
+  const backRun =
+    body.type === "command" && body.state === "withdrawn" ? link.commandsBack.get(body.command) : undefined;
+  if (backRun !== undefined) link.commandsBack.delete(backRun.id);
   const granting = body.type === "answered" && body.choice === "allowSession" ? grantOf(link, body.request) : null;
   link.conversation.apply(body);
   if (granting !== null) link.granted = [...link.granted, granting];
   if (back !== undefined) restore(key, back);
+  if (backRun !== undefined) restoreCommand(key, backRun);
   // What failed to go now, or to come back, is old news once the waiting
   // messages or the turn move on.
-  if (body.type === "message" || body.type === "turnStarted" || body.type === "turnEnded") link.nowError = null;
+  if (body.type === "message" || body.type === "command" || body.type === "turnStarted" || body.type === "turnEnded")
+    link.nowError = null;
   if (body.type === "message" && body.state !== "sent" && link.sentNow.includes(body.message))
     link.sentNow = link.sentNow.filter((id) => id !== body.message);
   if (body.type === "turnStarted" && link.sentNow.length > 0)
@@ -1227,6 +1237,78 @@ export function send(
   return id;
 }
 
+/** Runs a line the user typed after a `!`, without it, in the session's
+    folder, under an id of the window's own. Null when there is no agent
+    to run it for, or nothing to run. */
+export function run(key: string, text: string): string | null {
+  const link = links.get(key);
+  const session = byKey(key);
+  if (link === undefined || link.handle === null || session === null) return null;
+  const line = text.trim();
+  if (line === "") return null;
+  const id = crypto.randomUUID();
+  link.conversation.running(id, line);
+  link.backSaid = null;
+  link.nowError = null;
+  // The command and its output go into the conversation the agent reads.
+  session.engaged = true;
+  userWrote(key);
+  core()
+    .integratedRun(link.handle, id, line)
+    .catch((error) => link.conversation.runFailed(id, message(error)));
+  return id;
+}
+
+/** Stops a running command; it ends as stopped. */
+export function stopCommand(key: string, id: string) {
+  const link = links.get(key);
+  const command = link?.conversation.commands[id];
+  if (link === undefined || link.handle === null || command?.state !== "running") return;
+  core()
+    .integratedStopCommand(link.handle, id)
+    .catch((error) => (link.nowError = `Not stopped: ${message(error)}`));
+}
+
+/** Takes back a command that waits. Its line goes back to the composer
+    when the core lets go of it, and it stays in the thread while it has
+    not. Resolves false, saying why, when it began first. */
+export async function takeBackCommand(key: string, id: string): Promise<boolean> {
+  const link = links.get(key);
+  const command = link?.conversation.commands[id];
+  if (link === undefined || link.handle === null || command === undefined) return false;
+  link.nowError = null;
+  link.commandsBack.set(id, { ...command });
+  try {
+    await core().integratedWithdraw(link.handle, id);
+    return true;
+  } catch (error) {
+    link.commandsBack.delete(id);
+    if (link.conversation.commands[id] === undefined) return true;
+    link.nowError = `Not taken back: ${message(error)}`;
+    return false;
+  }
+}
+
+/** Puts a command's line back in the session's composer, with its `!`,
+    with the keyboard at its end. Into a composer that holds words it goes
+    after them, so what was written is not run as part of it. One that
+    never stood in the thread leaves it. */
+export function restoreCommand(key: string, command: Command) {
+  const link = links.get(key);
+  if (link === undefined) return;
+  const line = `!${command.text}`;
+  link.upChain = null;
+  link.draft = link.draft.trim() === "" ? line : `${link.draft}\n\n${line}`;
+  if (!command.placed) link.conversation.forget(command.id);
+  void tick().then(() => {
+    const field = document.querySelector<HTMLTextAreaElement>(
+      `[data-session="${key}"] [data-testid="composer-input"]`,
+    );
+    field?.focus();
+    field?.setSelectionRange(field.value.length, field.value.length);
+  });
+}
+
 /** The context from which a cold conversation is large, as the core
     judges it: a row with less is not looked at again. */
 const LARGE = 100_000;
@@ -1281,7 +1363,7 @@ function restingLarge(key: string, now: number): { session: Session; link: Link 
   if (link.busy || link.handle === null || session.working || link.sendingNow || link.goingBack !== null) return null;
   // A message on its way, the user's or another session's, goes to the run
   // it was sent to.
-  if (link.conversation.working || link.conversation.waiting.length > 0) return null;
+  if (link.conversation.working || link.conversation.waiting.length > 0 || link.conversation.commanding) return null;
   // Only a run this window has seen grow large: one whose context is not
   // known yet has just started, or is taken up after a reload.
   const used = link.conversation.context?.used ?? null;
@@ -1391,6 +1473,7 @@ function atRest(key: string): { session: Session; link: Link } | null {
   if (session.agent !== "claude-code" || session.id === null || session.status !== "running") return null;
   if (link.busy || link.handle === null || session.working || link.sendingNow || link.goingBack !== null) return null;
   if (session.needs !== null || link.conversation.working || link.conversation.waiting.length > 0) return null;
+  if (link.conversation.commanding) return null;
   return { session, link };
 }
 

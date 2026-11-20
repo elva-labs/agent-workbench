@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Conversation, type Part, type TextPart, type ToolCall } from "$lib/conversation.svelte";
+import { Conversation, type Command, type Part, type TextPart, type ToolCall } from "$lib/conversation.svelte";
 import type { IntegratedEventBody, PermissionOffer } from "$lib/core";
 import { REPORTS_HEAD } from "$lib/instructions";
 import {
   asks,
   clock,
+  commandEnd,
   dayName,
   foldKey,
   held,
@@ -16,6 +17,7 @@ import {
   choiceMeansIn,
   inputPath,
   lastRun,
+  lineCount,
   mcpName,
   nameSessionsBy,
   requestPaths,
@@ -1168,6 +1170,87 @@ describe("what the thread holds, drawn or not", () => {
     const c = new Conversation(() => 0);
     c.apply({ type: "message", message: "m-1", state: "sent", error: null, text: "a\u202eb", images: [] });
     expect(held(c)[0].text).toBe("a⟨U+202E⟩b");
+  });
+});
+
+describe("a command the user ran, in the thread", () => {
+  const ran = (over: Partial<Command> = {}): Command => ({
+    id: "k-1",
+    text: "npm test",
+    state: "done",
+    output: "",
+    exitCode: 0,
+    truncated: false,
+    error: null,
+    gap: false,
+    at: null,
+    placed: true,
+    ...over,
+  });
+  const told = (command: string, state: Command["state"], output: string | null = null) =>
+    ({ type: "command", command, state, text: "npm test", exitCode: null, output, truncated: false, error: null }) as IntegratedEventBody;
+
+  it("says how it ended when that is news, and nothing while it runs or once it went well", () => {
+    expect(commandEnd(ran())).toBeNull();
+    expect(commandEnd(ran({ exitCode: null }))).toBeNull();
+    expect(commandEnd(ran({ exitCode: 2 }))).toEqual({ text: "Exit code 2", bad: true });
+    expect(commandEnd(ran({ state: "stopped", exitCode: null }))).toEqual({ text: "Stopped", bad: false });
+    expect(commandEnd(ran({ state: "timedOut", exitCode: null }))).toEqual({ text: "Stopped after 10 minutes", bad: false });
+    expect(commandEnd(ran({ state: "failed", exitCode: null, error: "no shell to run it in" }))).toEqual({
+      text: "no shell to run it in",
+      bad: true,
+    });
+    expect(commandEnd(ran({ state: "failed", exitCode: null }))).toEqual({ text: "Could not run", bad: true });
+    expect(commandEnd(ran({ state: "dropped", exitCode: null, error: "the session ended while it ran" }))).toEqual({
+      text: "Not finished: the session ended while it ran",
+      bad: true,
+    });
+    expect(commandEnd(ran({ state: "dropped", exitCode: null }))).toEqual({ text: "Not finished", bad: true });
+    for (const state of ["sending", "queued", "running"] as const) expect(commandEnd(ran({ state, exitCode: null }))).toBeNull();
+  });
+
+  it("counts the lines it printed, a newline at the end closing the last", () => {
+    expect(lineCount("")).toBe(0);
+    expect(lineCount("a")).toBe(1);
+    expect(lineCount("a\n")).toBe(1);
+    expect(lineCount("a\nb")).toBe(2);
+    expect(lineCount("a\nb\n")).toBe(2);
+    expect(lineCount("\n\n")).toBe(2);
+  });
+
+  it("is held as its line with the ! and the output under it, in the thread and under it", () => {
+    const c = new Conversation(() => 1_000);
+    c.apply(told("k-1", "running"));
+    // Nothing printed yet: its line is all it holds.
+    const entry = c.entries.find((one) => one.kind === "command")!.key;
+    expect(held(c)).toMatchObject([{ id: "k-1", key: "k-1", entry, folds: [], text: "!npm test", markdown: null }]);
+    c.apply({ type: "commandOutput", command: "k-1", delta: "ok 1\n" });
+    expect(held(c).map((one) => [one.key, one.text])).toEqual([
+      ["k-1", "!npm test"],
+      ["k-1:output", "ok 1\n"],
+    ]);
+    expect(locate(c, "k-1")).toMatchObject({ key: "k-1", entry, folds: [] });
+    // One run while a turn runs waits under the thread, in no entry.
+    c.apply({ type: "turnStarted", messages: [] });
+    c.apply(told("k-2", "running"));
+    c.apply({ type: "commandOutput", command: "k-2", delta: "listening" });
+    expect(held(c).filter((one) => one.id === "k-2")).toMatchObject([
+      { key: "k-2", entry: null, text: "!npm test" },
+      { key: "k-2:output", entry: null, text: "listening" },
+    ]);
+  });
+
+  it("is heard once as its line, as soon as it is told", () => {
+    let now = 1_000;
+    const c = new Conversation(() => now);
+    const heard = new Set<string>();
+    const words = { message: (message: { text: string }) => message.text, block: (markdown: string) => markdown };
+    now = 2_000;
+    c.apply(told("k-1", "running"));
+    expect(toHear(c, heard, 500, words)).toEqual(["!npm test"]);
+    c.apply({ type: "commandOutput", command: "k-1", delta: "ok" });
+    c.apply(told("k-1", "done", "ok"));
+    expect(toHear(c, heard, 500, words)).toEqual([]);
   });
 });
 

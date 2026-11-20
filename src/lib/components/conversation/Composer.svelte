@@ -4,7 +4,8 @@
   import type { Attached } from "$lib/integrated.svelte";
   import type { Conversation } from "$lib/conversation.svelte";
   import { register, unregister } from "$lib/drops.svelte";
-  import { compact, follow, goOnIfCold, interrupt, linkFor, send } from "$lib/integrated.svelte";
+  import { compact, follow, goOnIfCold, interrupt, linkFor, run, send } from "$lib/integrated.svelte";
+  import { bangLine } from "$lib/bang";
   import { layout, overlayHoldsKeyboard } from "$lib/layout.svelte";
   import {
     choose,
@@ -315,6 +316,9 @@
   }
 
   let link = $derived(linkFor(sessionKey));
+  /** The command the message runs in the shell, when it begins with `!`;
+      null for a message to the agent. */
+  let shell = $derived(bangLine(link.draft));
   let field = $state<HTMLTextAreaElement | null>(null);
   let box = $state<HTMLDivElement | null>(null);
   /** The menu open over the composer's bar, if one is. */
@@ -400,12 +404,13 @@
   let typed = $derived(typedPaths(typing));
   /** Where the mentions stand in the message: those picked, and those
       typed whole. */
-  let spans = $derived(mentionSpans(link.draft, [...link.mentions, ...typed]));
+  let spans = $derived(shell !== null ? [] : mentionSpans(link.draft, [...link.mentions, ...typed]));
   /** Something about a file that did not go in: said under the field until
       the message is sent or something else is said. */
   let notice = $state<string | null>(null);
   let mword = $derived.by(() => {
-    if (root === null || !focused || composing || word !== null || dismissed === link.draft) return null;
+    if (root === null || !focused || composing || word !== null || dismissed === link.draft || shell !== null)
+      return null;
     const found = mentionWord(link.draft, caret);
     if (found === null || spans.some((span) => caret > span.start && caret <= span.end)) return null;
     return found;
@@ -525,10 +530,11 @@
     return true;
   }
 
-  /** The field draws its text itself unless a mention is in it: then the
-      text is drawn behind it, the mentions in the accent, and the field's
-      own is clear. While an input method composes, the field draws. */
-  let drawn = $derived((spans.length > 0 || mword !== null) && !composing);
+  /** The field draws its text itself unless a mention is in it, or it is a
+      command: then the text is drawn behind it, the mentions or the
+      command's `!` in the accent, and the field's own is clear. While an
+      input method composes, the field draws. */
+  let drawn = $derived((spans.length > 0 || mword !== null || shell !== null) && !composing);
   /** What the text behind the field draws in the accent: the picked
       mentions, and the `@` word being typed. */
   let accented = $derived(
@@ -661,8 +667,10 @@
   let hasWords = $derived(link.draft.trim() !== "" || link.images.length > 0 || link.files.length > 0);
   /** The keys the empty field names, for what the agent and project take. */
   let keysSaid = $derived.by(() => {
-    const keys = [slash ? "/ for commands" : null, root !== null ? "@ for files" : null].filter((key) => key !== null);
-    return keys.length === 0 ? "" : `. Type ${keys.join(", ")}`;
+    const keys = [slash ? "/ for commands" : null, root !== null ? "@ for files" : null, "! for the shell"].filter(
+      (key) => key !== null,
+    );
+    return `. Type ${keys.join(", ")}`;
   });
 
   /** The kinds of image the agent takes. */
@@ -703,6 +711,7 @@
     const judged = again && heldJudged;
     heldJudged = false;
     if (!ready || !hasWords || unlisted) return false;
+    if (shell !== null) return runLine(shell);
     // After a rest, a cold and large conversation goes on from its notes
     // before the message goes: it counts as starting again meanwhile, so
     // the message is held below and goes to whichever run is left, once.
@@ -749,6 +758,25 @@
     return true;
   }
 
+  /** Runs the command written after the `!`, held while the session
+      starts again or goes back. What is attached stays for the next
+      message, since a command takes no files. */
+  function runLine(line: string): boolean {
+    if (line === "") return false;
+    if (link.restarting || link.goingBack !== null) {
+      held = true;
+      heldMissed = link.backMissed;
+      heldJudged = false;
+      return true;
+    }
+    if (run(sessionKey, line) === null) return false;
+    notice = null;
+    link.draft = "";
+    link.mentions = [];
+    void tick().then(grow);
+    return true;
+  }
+
   function stop() {
     interrupt(sessionKey);
   }
@@ -764,6 +792,7 @@
     if (chord === null || actionOf(chord) !== null) return false;
     e.preventDefault();
     if (e.shiftKey) onTakeBack?.();
+    else if (shell !== null) submit();
     else if (hasWords) {
       // Sent as Enter sends it, to go now as soon as it waits. What sends
       // no message, such as a command, leaves nothing to go now.
@@ -1120,7 +1149,7 @@
   });
 </script>
 
-<div class="composer" bind:this={box} data-drop={sessionKey} data-testid="composer">
+<div class="composer" class:sh={shell !== null} bind:this={box} data-drop={sessionKey} data-testid="composer">
   {#if back.phase === "list"}
     <CompletionMenu
       id={backId}
@@ -1336,10 +1365,10 @@
   <div class="write">
     {#if drawn}
       <div class="backdrop" style:right="{gutter}px" aria-hidden="true" bind:this={backdrop} data-testid="composer-drawn"
-        >{#each parts(link.draft, accented) as part, at (at)}{#if part.path !== undefined}<span
+        >{#if shell !== null}<span class="bang" data-testid="composer-bang">!</span>{link.draft.slice(1)}{:else}{#each parts(link.draft, accented) as part, at (at)}{#if part.path !== undefined}<span
               class="mention"
               data-testid={part.path === "" ? "composer-typing" : "composer-mention"}>{part.text}</span
-            >{:else}{part.text}{/if}{/each}{#if link.draft.endsWith("\n")}{"\u200b"}{/if}</div
+            >{:else}{part.text}{/if}{/each}{/if}{#if link.draft.endsWith("\n")}{"\u200b"}{/if}</div
       >
     {/if}
     <textarea
@@ -1408,7 +1437,11 @@
     </p>
   {:else if held}
     <p class="hint" data-testid="composer-held">
-      {reading > 0 ? "Sends once the images are read." : `Sends once ${agent} is ready.`}
+      {shell !== null
+        ? `Runs once ${agent} is ready.`
+        : reading > 0
+          ? "Sends once the images are read."
+          : `Sends once ${agent} is ready.`}
     </p>
   {:else if notice !== null}
     <p class="hint" data-testid="composer-notice"><Plain text={notice} /></p>
@@ -1420,8 +1453,14 @@
   <!-- Why a message could not be sent now, or taken back, said aloud. -->
   <p class="sr" aria-live="polite" data-testid="composer-now-said">{link.nowError ?? ""}</p>
   <div class="bar">
-    <button class="chip bare" tabindex="0" onclick={() => void pickFiles()} aria-label="Attach files" title="Attach files" data-testid="attach"
-      ><Icon name="clip" /></button
+    <button
+      class="chip bare"
+      tabindex="0"
+      onclick={() => void pickFiles()}
+      disabled={shell !== null}
+      aria-label="Attach files"
+      title={shell !== null ? "A command takes no files" : "Attach files"}
+      data-testid="attach"><Icon name="clip" /></button
     >
     <div class="picker">
       {#if workflow !== null && heldName !== null}
@@ -1600,7 +1639,13 @@
       >
     {/if}
     <span class="end">
-      <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
+      {#if shell !== null}
+        <span class="ctx where" title="Runs in {dir || root || project}" data-testid="composer-where"
+          ><Icon name="folder" size={12} />{lastSegment(dir || root || "") || project}</span
+        >
+      {:else}
+        <span class="ctx" title={context?.title}>{context?.text ?? ""}</span>
+      {/if}
       {#if running}
         <button class="round stop" tabindex="0" onclick={stop} aria-label="Stop" title="Stop the agent (Esc)" data-testid="stop"
           ><Icon name="stop" size={12} /></button
@@ -1611,13 +1656,15 @@
           class="round send"
           tabindex="0"
           onclick={() => submit()}
-          disabled={!ready || !hasWords || reading > 0 || unlisted}
-          aria-label={running ? "Send, to wait for the agent" : "Send"}
-          title={unlisted
-            ? `Sends once ${agent} has listed its commands`
-            : running
-              ? "Send; it waits until the agent is done (Enter)"
-              : "Send (Enter)"}
+          disabled={shell !== null ? !ready || shell === "" : !ready || !hasWords || reading > 0 || unlisted}
+          aria-label={shell !== null ? "Run" : running ? "Send, to wait for the agent" : "Send"}
+          title={shell !== null
+            ? "Run in the shell (Enter)"
+            : unlisted
+              ? `Sends once ${agent} has listed its commands`
+              : running
+                ? "Send; it waits until the agent is done (Enter)"
+                : "Send (Enter)"}
           data-testid="send"><Icon name="up" size={14} /></button
         >
       {/if}
@@ -1639,6 +1686,24 @@
 
   .composer:focus-within {
     box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 60%, var(--divider, var(--rule)));
+  }
+
+  /* A command: the ring whole in the accent, the line in the shell's
+     type, and its `!` in the accent. */
+  .composer.sh,
+  .composer.sh:focus-within {
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+
+  .sh textarea,
+  .sh .backdrop {
+    font-family: var(--mono);
+    font-size: calc(var(--conv-size) - 1px);
+  }
+
+  .bang {
+    color: var(--accent);
+    font-weight: 600;
   }
 
   :global([data-drop].target) .composer,
@@ -2125,6 +2190,20 @@
     color: var(--ink-2);
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* The folder a command runs in, where the context share stands. */
+  .ctx.where {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    font-family: var(--mono);
+    font-size: var(--conv-fine);
+  }
+
+  .ctx.where :global(.icon) {
+    color: var(--ink-3);
   }
 
   .round {

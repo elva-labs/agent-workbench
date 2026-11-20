@@ -47,6 +47,8 @@ async function install(options: FakeIntegratedOptions = {}) {
     integratedSend: async (id: string, message: string, text: string, images?: never[]) =>
       fake.send(id, message, text, images),
     integratedWithdraw: async (id: string, message: string) => fake.withdraw(id, message),
+    integratedRun: async (id: string, command: string, text: string) => fake.run(id, command, text),
+    integratedStopCommand: async (id: string, command: string) => fake.stopCommand(id, command),
     integratedSnapshot: async (id: string) => fake.snapshot(id),
     integratedHistory: async (options: Parameters<FakeIntegrated["history"]>[0]) => fake.history(options),
     integratedStop: async (id: string) => fake.stop(id),

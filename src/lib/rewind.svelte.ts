@@ -109,6 +109,7 @@ export function unrested(key: string): string | null {
   if (conversation.current !== null || conversation.compacting) return "a turn runs";
   if (conversation.open.length > 0) return "it waits for an answer";
   if (conversation.waiting.some((message) => message.state !== "failed")) return "a message waits";
+  if (conversation.commanding) return "a command runs";
   if (conversation.state !== null && conversation.state !== "idle") return "it is at work";
   return null;
 }

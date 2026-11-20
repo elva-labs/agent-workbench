@@ -8,7 +8,7 @@ const M3 = "33333333-3333-4333-8333-333333333333";
 
 /** A scripted session whose every event goes to a conversation, as the
     window plays them, with a clock the test moves. */
-function played(options: FakeIntegratedOptions = {}) {
+function played(options: FakeIntegratedOptions = {}, agent: "claude-code" | "codex" = "claude-code") {
   const fake = fakeIntegrated(options);
   let now = 1_000;
   const conversation = new Conversation(() => now);
@@ -20,19 +20,24 @@ function played(options: FakeIntegratedOptions = {}) {
   });
   // The ready that goes out before the start answers is the session's.
   id = "int-1";
-  fake.start({ agent: "claude-code", project: "/repo", model: "sonnet" });
+  fake.start({ agent, project: "/repo", model: agent === "codex" ? undefined : "sonnet" });
   const tick = (ms = 1000) => (now += ms);
   const send = (message: string, text: string) => {
     conversation.sending(message, text);
     fake.send(id, message, text);
   };
-  return { fake, conversation, id, tick, send };
+  const run = (command: string, text: string) => {
+    conversation.running(command, text);
+    fake.run(id, command, text);
+  };
+  return { fake, conversation, id, tick, send, run };
 }
 
 /** The thread as kinds and what each holds, for an assertion to read. */
 function outline(entries: Entry[]): string[] {
   return entries.map((entry) => {
     if (entry.kind === "user") return `you:${entry.message}`;
+    if (entry.kind === "command") return `command:${entry.command}`;
     if (entry.kind === "agent")
       return `agent:${entry.turn}:${entry.parts.map((part) => part.kind).join(",")}`;
     if (entry.kind === "note") return `note:${entry.tone}:${entry.text}`;
@@ -874,5 +879,153 @@ describe("a conversation nothing has been said in", () => {
     conversation.restarted(null, false);
     expect(conversation.ready).toBeNull();
     expect(conversation.settings).toEqual({ model: null, mode: null, effort: null });
+  });
+});
+
+describe("a command of the user's", () => {
+  const C1 = "c1111111-1111-4111-8111-111111111111";
+  const C2 = "c2222222-2222-4222-8222-222222222222";
+  const C3 = "c3333333-3333-4333-8333-333333333333";
+
+  it("runs at once, streams its output, and the output it ends with replaces what streamed", () => {
+    const { fake, conversation, id, run } = played();
+    run(C1, "npm test");
+    expect(conversation.commands[C1]).toMatchObject({ text: "npm test", state: "running", output: "" });
+    expect(outline(conversation.entries)).toEqual([`command:${C1}`]);
+    expect(conversation.commandRunning?.id).toBe(C1);
+    expect(conversation.commanding).toBe(true);
+    // The session stays as it was while a command runs.
+    expect(conversation.state).toBe("idle");
+    expect(conversation.working).toBe(false);
+    fake.commandOutput(id, C1, "PASS 1\n");
+    fake.skip(id, 1);
+    fake.commandOutput(id, C1, "PASS 3\n");
+    expect(conversation.commands[C1]).toMatchObject({ output: "PASS 1\nPASS 3\n", gap: true });
+    fake.finishCommand(id, C1, { exitCode: 1, output: "PASS 1\nPASS 2\nPASS 3\nFAIL 4\n", truncated: true });
+    expect(conversation.commands[C1]).toMatchObject({
+      state: "done",
+      exitCode: 1,
+      output: "PASS 1\nPASS 2\nPASS 3\nFAIL 4\n",
+      truncated: true,
+      gap: false,
+    });
+    expect(conversation.commandRunning).toBeNull();
+    expect(conversation.commanding).toBe(false);
+    expect(conversation.below).toEqual([]);
+  });
+
+  it("runs while a Claude Code turn does, and takes its place in the thread once the turn ends", () => {
+    const { fake, conversation, id, send, run } = played();
+    send(M1, "look around");
+    fake.startTurn(id);
+    fake.emit(id, { type: "text", block: "b1", parent: null, text: "Looking.", done: true });
+    run(C1, "git status");
+    expect(conversation.commands[C1].state).toBe("running");
+    expect(conversation.below.map((item) => item.kind)).toEqual(["command"]);
+    fake.finishCommand(id, C1, { output: "clean\n" });
+    expect(outline(conversation.entries)).toEqual([`you:${M1}`, "agent:1:text"]);
+    fake.endTurn(id);
+    expect(outline(conversation.entries)).toEqual([`you:${M1}`, "agent:1:text", `command:${C1}`]);
+    expect(conversation.below).toEqual([]);
+  });
+
+  it("waits behind a Codex turn, can be taken back while it does, and runs once the turn ends", () => {
+    const { fake, conversation, id, send, run } = played({}, "codex");
+    send(M1, "look around");
+    fake.startTurn(id);
+    run(C1, "ls");
+    expect(conversation.commands[C1].state).toBe("queued");
+    expect(conversation.commanding).toBe(true);
+    fake.withdraw(id, C1);
+    expect(conversation.commands[C1]).toBeUndefined();
+    expect(conversation.order).not.toContain(C1);
+    run(C2, "pwd");
+    expect(conversation.below.map((item) => item.kind === "command" && item.command.state)).toEqual(["queued"]);
+    fake.endTurn(id);
+    expect(conversation.commands[C2].state).toBe("running");
+    expect(outline(conversation.entries)).toEqual([`you:${M1}`, "agent:1:", `command:${C2}`]);
+    // Once it runs, it cannot be taken back.
+    expect(() => fake.withdraw(id, C2)).toThrow("the command runs already");
+  });
+
+  it("runs one at a time, the next once the one before is over", async () => {
+    const { fake, conversation, id, run } = played();
+    run(C1, "sleep 5");
+    run(C2, "echo two");
+    expect([conversation.commands[C1].state, conversation.commands[C2].state]).toEqual(["running", "queued"]);
+    fake.stopCommand(id, C1);
+    await Promise.resolve();
+    expect(conversation.commands[C1].state).toBe("stopped");
+    expect(conversation.commands[C2].state).toBe("running");
+    expect(outline(conversation.entries)).toEqual([`command:${C1}`, `command:${C2}`]);
+  });
+
+  it("says a command could not run, or ran too long", () => {
+    const { fake, conversation, id, run } = played();
+    run(C1, "nosuch");
+    fake.finishCommand(id, C1, { state: "failed", error: "nosuch: command not found" });
+    expect(conversation.commands[C1]).toMatchObject({ state: "failed", error: "nosuch: command not found", exitCode: null });
+    run(C2, "sleep 900");
+    fake.finishCommand(id, C2, { state: "timedOut" });
+    expect(conversation.commands[C2]).toMatchObject({ state: "timedOut", exitCode: null });
+  });
+
+  it("is dropped when the session ends before it is over", () => {
+    const { fake, conversation, id, run } = played();
+    run(C1, "sleep 5");
+    run(C2, "echo two");
+    fake.end(id);
+    expect(conversation.commands[C1]).toMatchObject({ state: "dropped", error: "the session ended while it ran" });
+    expect(conversation.commands[C2]).toMatchObject({ state: "dropped", error: "the session ended before it ran" });
+    expect(conversation.commanding).toBe(false);
+    expect(outline(conversation.entries).slice(0, 2)).toEqual([`command:${C1}`, `command:${C2}`]);
+  });
+
+  it("stays under the thread when the core refused it, until it is put back", () => {
+    const { conversation } = played();
+    conversation.running(C1, "ls");
+    expect(conversation.commands[C1].state).toBe("sending");
+    conversation.runFailed(C1, "the session is not running");
+    expect(conversation.commands[C1]).toMatchObject({ state: "unsent", error: "the session is not running" });
+    expect(conversation.commanding).toBe(false);
+    expect(conversation.below.map((item) => item.kind)).toEqual(["command"]);
+    conversation.forget(C1);
+    expect(conversation.commands[C1]).toBeUndefined();
+    expect(conversation.below).toEqual([]);
+  });
+
+  it("is told of a command another window ran", () => {
+    const { fake, conversation, id } = played();
+    fake.run(id, C1, "make");
+    expect(conversation.commands[C1]).toMatchObject({ text: "make", state: "running" });
+    expect(outline(conversation.entries)).toEqual([`command:${C1}`]);
+  });
+
+  it("comes to a late window from the snapshot, a running one with its output so far", () => {
+    const { fake, id, run } = played();
+    run(C1, "npm run build");
+    fake.commandOutput(id, C1, "building\n");
+    run(C2, "npm test");
+    const late = new Conversation(() => 5_000);
+    late.restore(fake.snapshot(id));
+    expect(late.commands[C1]).toMatchObject({ state: "running", output: "building\n", at: null });
+    expect(late.commands[C2]).toMatchObject({ state: "queued", output: "" });
+    late.apply({ type: "commandOutput", command: C1, delta: "built\n" });
+    expect(late.commands[C1].output).toBe("building\nbuilt\n");
+  });
+
+  it("reads back from the transcript where it ran", async () => {
+    const { fake, id, send, run } = played();
+    send(M1, "hello");
+    fake.turn(id, "hi");
+    run(C3, "ls");
+    fake.finishCommand(id, C3, { output: "a\nb\n" });
+    send(M2, "thanks");
+    fake.turn(id, "welcome");
+    const read = new Conversation(() => 99_000);
+    const history = await fake.history({ agent: "claude-code", project: "/repo", session: "integrated-session-1" });
+    read.lay(history!, null);
+    expect(outline(read.entries)).toEqual([`you:${M1}`, "agent:1:text", `command:${C3}`, `you:${M2}`, "agent:2:text"]);
+    expect(read.commands[C3]).toMatchObject({ text: "ls", state: "done", exitCode: 0, output: "a\nb\n" });
   });
 });
