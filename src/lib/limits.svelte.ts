@@ -217,15 +217,15 @@ export function resetWords(figure: Figure, now: number): string {
   return figure.reached ? `Reached, ${when}` : when;
 }
 
-/** An age in words: `3 h` where room is short, `3 hours ago` in full. */
-function aged(ms: number): { short: string; long: string } {
+/** An age in words, such as `3 hours ago`. */
+function aged(ms: number): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  if (minutes < 1) return { short: "now", long: "just now" };
-  if (minutes < 60) return { short: `${minutes} min`, long: `${minutes} min ago` };
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return { short: `${hours} h`, long: hours === 1 ? "an hour ago" : `${hours} hours ago` };
+  if (hours < 24) return hours === 1 ? "an hour ago" : `${hours} hours ago`;
   const days = Math.floor(hours / 24);
-  return { short: `${days} d`, long: days === 1 ? "a day ago" : `${days} days ago` };
+  return days === 1 ? "a day ago" : `${days} days ago`;
 }
 
 /** How old a report's figures are by `now`: as old as its oldest, which
@@ -237,13 +237,13 @@ function aged(ms: number): { short: string; long: string } {
 export function ageOf(
   report: Pick<LimitsReport, "readAt" | "takenAt">,
   now: number,
-): { stale: boolean; moved: boolean; short: string; long: string; newer: string } {
+): { stale: boolean; moved: boolean; long: string; newer: string } {
   const ms = now - (report.readAt ?? report.takenAt) * 1000;
   return {
     stale: ms >= STALE_AFTER,
     moved: report.readAt !== null && report.takenAt - report.readAt >= 60,
-    ...aged(ms),
-    newer: aged(now - report.takenAt * 1000).long,
+    long: aged(ms),
+    newer: aged(now - report.takenAt * 1000),
   };
 }
 

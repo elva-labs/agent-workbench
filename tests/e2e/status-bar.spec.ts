@@ -119,13 +119,12 @@ test.describe("the session on screen", () => {
     await expect(page.getByTestId("account-readout")).toHaveText("account: Work");
     await expect(page.getByTestId("limit-figure")).toHaveText(["5h11%", "Week34%", "Fable52%"]);
     // Nothing shouts: every figure is in the bar's own ink, at no more
-    // than medium weight, and no age shows for figures just taken.
+    // than medium weight.
     const ink = await token(page, "--ink-2");
     for (const kind of ["session", "weekly", "weeklyScoped"]) {
       await expect(figure(page, kind)).toHaveAttribute("data-tone", "normal");
       expect(await style(figure(page, kind), "color")).toBe(ink);
     }
-    await expect(page.getByTestId("limits-age")).toHaveCount(0);
     // In order: the focus, what the session is doing and where, the model
     // and effort, the account and its figures. The mode is the corner's
     // switch to say, so the bar does not.
@@ -222,16 +221,13 @@ test.describe("the session on screen", () => {
     await expect(figure(page, "weekly")).toHaveAttribute("data-tone", "warn");
   });
 
-  test("shows a clock and the age once the figures are fifteen minutes old", async ({ page }) => {
+  test("keeps the age out of the bar and says it in the popover once the figures are old", async ({ page }) => {
     await open(page, { accounts: WORK });
     await report(page, THREE, { age: 3 * HOUR + 60 });
-    await expect(page.getByTestId("limits-age")).toHaveText("3 h ago");
-    await expect(page.getByTestId("limits-age").locator("svg")).toBeVisible();
-    // Each report newer than the last, as the store keeps only the newest.
-    await report(page, THREE, { age: 15 * 60 + 30 });
-    await expect(page.getByTestId("limits-age")).toHaveText("15 min ago");
-    await report(page, THREE, { age: 14 * 60 });
-    await expect(page.getByTestId("limits-age")).toHaveCount(0);
+    await expect(page.getByTestId("limit-figure")).toHaveCount(3);
+    await expect(page.getByTestId("account-group")).not.toContainText("ago");
+    await page.getByTestId("account-group").click();
+    await expect(page.getByTestId("allowance-updated")).toHaveText("Figures from 3 hours ago");
   });
 
   test("counts the age from the last read, not from a push since", async ({ page }) => {
@@ -239,11 +235,9 @@ test.describe("the session on screen", () => {
     // With no read answered, a push's own time is all there is.
     await report(page, THREE, { age: 60, read: null });
     await expect(page.getByTestId("limit-figure")).toHaveCount(3);
-    await expect(page.getByTestId("limits-age")).toHaveCount(0);
     // A push just now moved the session window; the read before it, which
     // the other windows are from, is twenty minutes old.
     await report(page, THREE, { age: 0, read: 20 * 60 + 30 });
-    await expect(page.getByTestId("limits-age")).toHaveText("20 min ago");
     await page.getByTestId("account-group").click();
     await expect(page.getByTestId("allowance-updated")).toHaveText(
       "Some figures are from just now, the rest from 20 min ago",
@@ -287,7 +281,7 @@ test.describe("the bar's text", () => {
           ],
           { age: 3 * HOUR },
         );
-        await expect(page.getByTestId("limits-age")).toBeVisible();
+        await expect(page.getByTestId("limit-figure").first()).toBeVisible();
         const ratios = await bar(page).evaluate((foot) => {
           const rgb = (color: string): number[] => {
             const srgb = /color\(srgb ([\d.]+) ([\d.]+) ([\d.]+)/.exec(color);
@@ -381,7 +375,6 @@ test.describe("a terminal session", () => {
     await expect(page.locator("section[data-pane='agent'] .xterm")).toBeVisible();
     // No session on the account is integrated, and its figures show.
     await expect(page.getByTestId("limit-figure")).toHaveText(["5h11%", "Week34%"]);
-    await expect(page.getByTestId("limits-age")).toHaveText("3 h ago");
     // What was kept was asked for first, then a read.
     const asked = await page.evaluate(() => (window as unknown as { __limitsAsked: unknown[] }).__limitsAsked);
     expect(asked.slice(0, 2)).toMatchObject([
@@ -389,12 +382,11 @@ test.describe("a terminal session", () => {
       { project: PROJECT, agent: "claude-code", configDir: "~/.claude-work", read: true },
     ]);
     // A session that comes on screen asks again, and fresh figures replace
-    // the old, their age gone.
+    // the old.
     await kept([12, 35], 0);
     await page.getByTestId("new-session").click();
     await page.keyboard.press("Enter");
     await expect(page.getByTestId("limit-figure")).toHaveText(["5h12%", "Week35%"]);
-    await expect(page.getByTestId("limits-age")).toHaveCount(0);
   });
 });
 
