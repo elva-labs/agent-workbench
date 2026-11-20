@@ -670,8 +670,10 @@ order sent. Each agent takes a command its own way.
   where it did not exit with 0, its exit code. A command a signal ended
   has the code a shell gives it, 128 and the signal's number, and a line
   saying which signal ended it. Once the record is written, whatever the
-  command left running, such as a server it sent to the background, is
-  ended with its process group, so nothing a command starts outlives it.
+  command left in its process group, such as a server it sent to the
+  background, is ended with that group, on macOS and Linux; on Windows it
+  runs on. A process the command moved to a process group or session of
+  its own, as a shell's job control or a daemon does, runs on everywhere.
   Claude Code takes that record once the running turn is over, or
   at once where none runs, in a turn that asks no model and is not told
   as one. A message sent meanwhile waits until the agent has taken the
@@ -684,7 +686,8 @@ order sent. Each agent takes a command its own way.
   its thread for the next turn to read. It is handed over only when no
   turn runs and Codex has named the message handed over before, so a
   command sent while a turn runs waits for that turn to end. The command
-  ends with the turn it runs in.
+  ends with the turn it runs in. Should Codex end while the command runs,
+  what is left in the command's process group is ended with it.
 
 What a command prints streams to the window as it comes, up to a megabyte.
 The agent is given at most thirty thousand bytes of each stream, standard
