@@ -71,6 +71,22 @@ describe("taking a conversation up again", () => {
     expect(briefingFor("row-1")).toBe("BRIEFING");
   });
 
+  it("asks for the notes whatever the size and rest for a conversation that goes on by itself, the user's ask for the whole left for later", async () => {
+    // Small and warm as the core judges it, it is still briefed.
+    answer = { context: 40_000, idle: 60, goesOn: true, briefing: "BRIEFING" };
+    askWhole("row-1");
+    expect(await takeUp(row(), true)).toBeNull();
+    expect(asked[0]).toMatchObject({ session: "old-id", always: true });
+    expect(briefingFor("row-1")).toBe("BRIEFING");
+    // Where the core writes no briefing, the id comes back and nothing went on.
+    answer = { context: null, idle: null, goesOn: false, briefing: null };
+    expect(await takeUp(row({ key: "row-2" }), true)).toBe("old-id");
+    expect(wentOn("row-2")).toBeNull();
+    // Asked without it, nothing of it is sent.
+    await takeUp(row({ key: "row-3" }));
+    expect(asked.at(-1)).not.toHaveProperty("always");
+  });
+
   it("asks nothing for a new conversation or another agent's, and resumes whole once the user asks", async () => {
     answer = COLD;
     expect(await takeUp(row({ resumedFrom: null }))).toBeNull();

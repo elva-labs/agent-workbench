@@ -75,6 +75,7 @@
   import { openResume } from "$lib/resume.svelte";
   import { hasNotes, openNotes } from "$lib/notes";
   import { tokensText, wholeOf } from "$lib/goingOn.svelte";
+  import { resumesWords } from "$lib/autoResume.svelte";
   import { resumeWhole } from "$lib/integrated.svelte";
   import { lastSegment } from "$lib/paths";
   import {
@@ -1666,12 +1667,29 @@
        or why it stays, on its second line unless that says something of
        the agent's, and then a word of it where the model stands. -->
   {@const stays = holdWords(session)}
+  <!-- A row the usage limit cut short that goes on by itself: when, on
+       its second line unless that says something of the agent's, and
+       then where the model stands. -->
+  {@const resumes = resumesWords(session)}
+  {@const resumesSaid =
+    resumes !== null && !folded && session.note === null && kids.length === 0 && news.length === 0}
   {@const staysSaid =
-    stays !== null && !folded && session.note === null && kids.length === 0 && news.length === 0}
+    stays !== null &&
+    !resumesSaid &&
+    !folded &&
+    session.note === null &&
+    kids.length === 0 &&
+    news.length === 0}
   {@const line = folded
     ? startedWords(kids)
     : (session.note ??
-      (kids.length > 0 || news.length > 0 ? startedWords(kids) : staysSaid ? stays!.line : subsSaid))}
+      (kids.length > 0 || news.length > 0
+        ? startedWords(kids)
+        : resumesSaid
+          ? resumes
+          : staysSaid
+            ? stays!.line
+            : subsSaid))}
   {@const owned = session.note !== null && !folded}
   <div
     class="session"
@@ -1717,10 +1735,16 @@
                 : kids.some(isAsking)}
             class:first-say={news.length > 0}
             class:shares={!folded && news.length === 0 && woken !== null}
-            title={staysSaid ? stays!.full : line}
+            title={resumesSaid
+              ? "Goes on by itself when the usage limit resets"
+              : staysSaid
+                ? stays!.full
+                : line}
             data-testid={owned
               ? "session-note"
-              : staysSaid
+              : resumesSaid
+                ? "session-resumes"
+                : staysSaid
                 ? "session-stays"
                 : subsSaid !== null
                   ? "subagent-summary"
@@ -1760,6 +1784,12 @@
               data-testid="starter-woken"
               ><span class="woken-by">{"woken by "}</span
               >{#if words.name !== null}<span class="woken-name">{words.name}</span>{:else}{words.count}{/if}</span
+            >
+          {:else if news.length === 0 && resumes !== null && !resumesSaid}
+            <span
+              class="meta"
+              title="Goes on by itself when the usage limit resets"
+              data-testid="session-resumes">{resumes}</span
             >
           {:else if stays !== null && !staysSaid && news.length === 0}
             <span class="meta" title={stays.full} data-testid="session-stays-mark">{stays.short}</span>
@@ -1977,6 +2007,12 @@
             </span>
             {#if isAsking(kid)}
               <span class="model asking" data-testid="started-asking">asking</span>
+            {:else if resumesWords(kid) !== null}
+              <span
+                class="model"
+                title="Goes on by itself when the usage limit resets"
+                data-testid="started-resumes">{resumesWords(kid)}</span
+              >
             {:else if kidStays !== null}
               <!-- Not moved yet by its agent's setting, and why. -->
               <span class="model" title={kidStays.full} data-testid="started-stays">{kidStays.short}</span>

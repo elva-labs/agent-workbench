@@ -162,7 +162,8 @@ export function topFigure(figures: Figure[]): Figure | null {
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function clock(at: number): string {
+/** A time of day as the user's own clock writes it. */
+export function clock(at: number): string {
   return new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 

@@ -6,6 +6,8 @@
  * its last exchanges and where its transcript is. Warm or small, it is
  * resumed whole, and so is one the user asks to have whole from the row's
  * menu. The core judges which from the transcript; the window acts on it.
+ * A conversation that goes on by itself once a usage limit resets goes on
+ * from its notes whatever its size and rest.
  *
  * The fresh conversation's id is kept as going on from the old one, so
  * its row draws the old conversation's messages above its own after a
@@ -74,13 +76,15 @@ function save() {
  * Decides how a row about to start takes its conversation up again, and
  * answers the agent's id to resume, or null to start a fresh conversation
  * that goes on from the notes. Only a Claude Code conversation is judged;
- * a judgement that fails resumes whole.
+ * a judgement that fails resumes whole. With `always` the conversation
+ * goes on from its notes whatever its size and rest, and the id comes
+ * back only where it cannot.
  */
-export async function takeUp(session: Session): Promise<string | null> {
+export async function takeUp(session: Session, always = false): Promise<string | null> {
   const from = session.resumedFrom;
   delete going.runs[session.key];
   if (from === null) return null;
-  if (whole.delete(session.key) || session.agent !== "claude-code") {
+  if ((!always && whole.delete(session.key)) || session.agent !== "claude-code") {
     logUsage(session, "resume", { from, whole: true, asked: session.agent === "claude-code" });
     return from;
   }
@@ -92,9 +96,10 @@ export async function takeUp(session: Session): Promise<string | null> {
       session: from,
       configDir: dirFor(session.account, session.agent),
       token: session.token,
+      ...(always ? { always: true } : {}),
     });
     const goes = judged.goesOn && judged.briefing !== null;
-    logUsage(session, "resume", { from, whole: !goes, context: judged.context, idle: judged.idle });
+    logUsage(session, "resume", { from, whole: !goes, context: judged.context, idle: judged.idle, ...(always ? { afterLimit: true } : {}) });
     if (!goes) return from;
     going.runs[session.key] = { from, context: judged.context, briefing: judged.briefing, spoken: false };
     return null;

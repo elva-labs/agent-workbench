@@ -22,6 +22,7 @@ import { adoptNotify, notifySettings } from "$lib/notify.svelte";
 import { adoptStartAsk, startAskSettings } from "$lib/startAsk.svelte";
 import { adoptCompact, compactSettings } from "$lib/compact.svelte";
 import { adoptLastChosen, lastChosenSettings } from "$lib/lastChosen.svelte";
+import { adoptAutoResume, autoResumeSettings } from "$lib/autoResume.svelte";
 import { flush, holdUntil, onRefused, onSettled, sending } from "$lib/persist";
 import { showRefusal } from "$lib/refusal.svelte";
 import { adoptTheme, themeSettings } from "$lib/theme.svelte";
@@ -45,6 +46,7 @@ export function currentSettings(): Settings {
     ...startAskSettings(),
     ...compactSettings(),
     ...lastChosenSettings(),
+    ...autoResumeSettings(),
   };
 }
 
@@ -65,6 +67,7 @@ export function adopt(settings: Settings) {
   adoptStartAsk(settings.askEveryStart);
   adoptCompact(settings.compact);
   adoptLastChosen(settings.lastChosen);
+  adoptAutoResume(settings.autoResume);
   adoptPastSessions(settings.pastSessions);
   adoptSessionKinds(settings.integrated);
   adoptInactiveAfter(settings.inactiveAfter);

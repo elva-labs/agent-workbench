@@ -751,7 +751,8 @@
               from a chip. Plan, Bypass permissions and Full
               access are not carried over. A terminal session takes the model and the mode. A session
               another one starts begins as its starter says, and a workflow sets the model of its
-              sessions.
+              sessions. Whether a Claude Code conversation goes on by itself once a usage limit resets
+              is carried over from its chip the same way.
             </p>
             <div data-testid="chosen-list">
               {#each installed().length > 0 ? installed() : AGENTS as id (id)}

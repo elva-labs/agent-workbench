@@ -16,6 +16,7 @@
     chime: "chime choice",
     askEveryStart: "choice on asking before every start",
     lastChosen: "choices new sessions start on",
+    autoResume: "choice on going on after a usage limit",
     compact: "compact mode choice",
   };
 

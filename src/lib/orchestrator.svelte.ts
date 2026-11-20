@@ -12,6 +12,7 @@
  */
 
 import { dirsOf } from "$lib/accounts.svelte";
+import { parentsFrom, resumesWords } from "$lib/autoResume.svelte";
 import { core, type Worktree } from "$lib/core";
 import {
   allowedProjects,
@@ -124,6 +125,11 @@ export function stateWord(session: Session | null): string {
   if (session !== null && session.status === "running" && session.workflowLost === null && !session.working && conducting(session)) {
     const count = startedRows(session).filter((child) => isLive(child) && child.working).length;
     return count === 1 ? "a session working" : `${count} sessions working`;
+  }
+  // At rest on a usage limit it goes on after by itself: when.
+  if (session !== null && !session.working && session.needs === null) {
+    const resumes = resumesWords(session);
+    if (resumes !== null) return resumes;
   }
   return statusLabel(session);
 }
@@ -453,3 +459,7 @@ export function cleanQuestion(trees: LeftTree[]): Question {
     action: "Clean up",
   };
 }
+
+// A session another started goes on after a usage limit as its starter's
+// choice says.
+parentsFrom(parentOf);

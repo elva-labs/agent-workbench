@@ -697,6 +697,7 @@ describe("adopt", () => {
       hooks: { everywhere: false, overrides: { "/x": true } },
       compact: true,
       lastChosen: { "claude-code": { model: "opus", mode: "acceptEdits" } },
+      autoResume: true,
     };
     adopt(settings);
     expect(currentSettings()).toEqual(settings);
