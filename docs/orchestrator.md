@@ -35,6 +35,8 @@ that it answers a message from the user that comes while they run as the
 final message of its turn and ends the turn there rather than waiting
 after the answer, that a message from the
 workbench, not the user, is what those sessions did while it was idle,
+both only where the workbench can wake it (see [when the user writes to
+it](#when-the-user-writes-to-it)),
 and that the workbench puts away a session it started once that session's
 work is over, as [when the work is over](#when-the-work-is-over) describes,
 so it stops one only when its work is not wanted.
@@ -432,6 +434,14 @@ A wait the user's message cuts short answers nothing the agent reads:
 Claude Code ends the call itself and records only that it did not
 complete. The note on that message is what says which sessions are still
 out.
+
+An answer that ends the turn leaves it to the wake to take the starter up
+again, so a starter is told to end its turn there only where the workbench
+can wake it: in a conversation, and in a terminal whose project has the
+hooks on, since they are how the workbench hears a terminal's turns end.
+A starter in a terminal without them is told to answer the user and then
+call `wait` again, as nothing would take it up once its turn ended; its
+tool server learns which from the environment the workbench started it in.
 
 ## When it is idle
 

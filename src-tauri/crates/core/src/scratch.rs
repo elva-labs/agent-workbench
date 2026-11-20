@@ -28,6 +28,7 @@ const ALSO_ISOLATED: &[&str] = &[
     crate::adapter::SESSION_VAR,
     crate::adapter::ROLE_VAR,
     crate::adapter::VIEW_VAR,
+    crate::adapter::WAKE_VAR,
 ];
 
 fn is_isolated(name: &str) -> bool {

@@ -55,11 +55,37 @@ macro_rules! turn_in_a_conversation {
     };
 }
 
-/// What every session is told after how its turns end: the browser, the
-/// settings and the sessions it started.
+/// What every session is told after how its turns end: its notes, the
+/// browser and the settings.
 macro_rules! instructions_tail {
     () => {
-        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user or the user wrote to you. When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting. Once you hand the turn back, the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
+        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. "
+    };
+}
+
+/// What a session the workbench can wake is told of the sessions it
+/// started: a conversation, or a terminal whose turns the workbench hears
+/// end through the hooks. An answer to the user ends the turn, and the
+/// workbench writes to the agent when one of its sessions stops or asks.
+macro_rules! sessions_when_woken {
+    () => {
+        "Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user or the user wrote to you. When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting. Once you hand the turn back, the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. "
+    };
+}
+
+/// What a session the workbench cannot wake is told of the sessions it
+/// started: a terminal without the hooks, whose turns the workbench does
+/// not hear end. The agent answers the user and waits on.
+macro_rules! sessions_when_not_woken {
+    () => {
+        "Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. When the user writes to you while your sessions run, answer them, then call wait again: the workbench does not hear this session's turns end, so once you hand the turn back it cannot write to you when one of your sessions stops or asks. "
+    };
+}
+
+/// What every session is told last: the sessions it started are put away.
+macro_rules! put_away {
+    () => {
+        "The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
     };
 }
 
@@ -99,18 +125,33 @@ macro_rules! orchestrator_instructions {
     };
 }
 
-/// What a session in a terminal is told when it connects.
+/// What a session in a terminal is told when it connects, where the
+/// workbench does not hear its turns end.
 pub const INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
-    instructions_tail!()
+    instructions_tail!(),
+    sessions_when_not_woken!(),
+    put_away!()
+);
+
+/// What a session in a terminal is told where the workbench hears its
+/// turns end.
+pub const WOKEN_INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_terminal!(),
+    instructions_tail!(),
+    sessions_when_woken!(),
+    put_away!()
 );
 
 /// What a session the workbench draws as a conversation is told.
 pub const CONVERSATION_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_conversation!(),
-    instructions_tail!()
+    instructions_tail!(),
+    sessions_when_woken!(),
+    put_away!()
 );
 
 /// What a session in a terminal that directs the others is told: the
@@ -119,6 +160,18 @@ pub const ORCHESTRATOR_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_terminal!(),
     instructions_tail!(),
+    sessions_when_not_woken!(),
+    put_away!(),
+    orchestrator_instructions!()
+);
+
+/// The same where the workbench hears its turns end.
+pub const ORCHESTRATOR_WOKEN_INSTRUCTIONS: &str = concat!(
+    instructions_head!(),
+    turn_in_a_terminal!(),
+    instructions_tail!(),
+    sessions_when_woken!(),
+    put_away!(),
     orchestrator_instructions!()
 );
 
@@ -127,19 +180,44 @@ pub const ORCHESTRATOR_CONVERSATION_INSTRUCTIONS: &str = concat!(
     instructions_head!(),
     turn_in_a_conversation!(),
     instructions_tail!(),
+    sessions_when_woken!(),
+    put_away!(),
     orchestrator_instructions!()
 );
 
-/// The instructions for a session with this role and this view, which the
-/// workbench put in the agent's environment and the agent passed on.
-pub fn instructions_for(role: Option<&str>, view: Option<&str>) -> &'static str {
+/// Whether the workbench can wake a session with this view and this word
+/// on waking: a conversation always, a terminal only where the workbench
+/// hears its turns end.
+pub fn woken(view: Option<&str>, wake: Option<&str>) -> bool {
+    view == Some(crate::adapter::CONVERSATION_VIEW) || wake == Some(crate::adapter::WAKES)
+}
+
+/// The instructions for a session with this role, this view and this word
+/// on waking, which the workbench put in the agent's environment and the
+/// agent passed on.
+pub fn instructions_for(
+    role: Option<&str>,
+    view: Option<&str>,
+    wake: Option<&str>,
+) -> &'static str {
     let conversation = view == Some(crate::adapter::CONVERSATION_VIEW);
-    match (role, conversation) {
-        (Some(crate::adapter::ORCHESTRATOR_ROLE), false) => ORCHESTRATOR_INSTRUCTIONS,
-        (Some(crate::adapter::ORCHESTRATOR_ROLE), true) => ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
-        (_, false) => INSTRUCTIONS,
-        (_, true) => CONVERSATION_INSTRUCTIONS,
+    let directs = role == Some(crate::adapter::ORCHESTRATOR_ROLE);
+    match (directs, conversation, woken(view, wake)) {
+        (true, true, _) => ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        (true, false, true) => ORCHESTRATOR_WOKEN_INSTRUCTIONS,
+        (true, false, false) => ORCHESTRATOR_INSTRUCTIONS,
+        (false, true, _) => CONVERSATION_INSTRUCTIONS,
+        (false, false, true) => WOKEN_INSTRUCTIONS,
+        (false, false, false) => INSTRUCTIONS,
     }
+}
+
+/// Whether the workbench can wake this session, from the environment it
+/// was started in.
+fn woken_here() -> bool {
+    let view = std::env::var(crate::adapter::VIEW_VAR).ok();
+    let wake = std::env::var(crate::adapter::WAKE_VAR).ok();
+    woken(view.as_deref(), wake.as_deref())
 }
 
 /// Read when the agent asks rather than when the server starts, so what a
@@ -147,7 +225,8 @@ pub fn instructions_for(role: Option<&str>, view: Option<&str>) -> &'static str 
 fn instructions() -> &'static str {
     let role = std::env::var(crate::adapter::ROLE_VAR).ok();
     let view = std::env::var(crate::adapter::VIEW_VAR).ok();
-    instructions_for(role.as_deref(), view.as_deref())
+    let wake = std::env::var(crate::adapter::WAKE_VAR).ok();
+    instructions_for(role.as_deref(), view.as_deref(), wake.as_deref())
 }
 
 /// The app's own tools, as the agent sees them.
@@ -859,11 +938,23 @@ pub fn stop_tool() -> Value {
     })
 }
 
-/// The wait tool as the agent sees it.
+/// The wait tool as the agent sees it, told as the session it serves can
+/// be woken or not.
 pub fn wait_tool() -> Value {
+    wait_tool_for(woken_here())
+}
+
+/// The wait tool as a session sees it that the workbench can wake, or one
+/// it cannot.
+pub fn wait_tool_for(woken: bool) -> Value {
+    let user = if woken {
+        "A message from the user ends it: answer them as the final message of your turn and end the turn without calling wait again, since the workbench writes to you when one of your sessions stops or asks."
+    } else {
+        "When the user writes to you while you wait, answer them, then call wait again: the workbench does not hear this session's turns end, so it cannot write to you once your turn is over."
+    };
     json!({
         "name": "wait",
-        "description": "Waits until a session you started stops or asks a question, and says which one and what it said. It blocks and costs nothing while it waits, so wait rather than asking for the sessions again in a loop. With no session named it comes back for whichever of yours moves first. A question a session asks comes back here: relay it to the user, and answer it with the send tool. When nothing has happened by the time it gives up, it says so and you can call it again. A message from the user ends it: answer them as the final message of your turn and end the turn without calling wait again, since the workbench writes to you when one of your sessions stops or asks. A start or a line that was answered as waiting on the user's answer comes back here first, with how it went, once they answer.",
+        "description": format!("Waits until a session you started stops or asks a question, and says which one and what it said. It blocks and costs nothing while it waits, so wait rather than asking for the sessions again in a loop. With no session named it comes back for whichever of yours moves first. A question a session asks comes back here: relay it to the user, and answer it with the send tool. When nothing has happened by the time it gives up, it says so and you can call it again. {user} A start or a line that was answered as waiting on the user's answer comes back here first, with how it went, once they answer."),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2115,16 +2206,22 @@ mod tests {
         }
         // In a terminal Claude Code's own view folds what comes before a
         // call, so the answer goes after the last one.
-        for told in [INSTRUCTIONS, ORCHESTRATOR_INSTRUCTIONS] {
+        for told in [
+            INSTRUCTIONS,
+            WOKEN_INSTRUCTIONS,
+            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS,
+        ] {
             assert!(told.contains("folded into one line on screen"));
             assert!(told.contains("write the answer again in full after it"));
         }
-        // Nowhere is an agent asked to answer the user and then wait: the
-        // answer ends the turn, and the workbench wakes the agent.
+        // Where the workbench can wake the agent, an answer to the user
+        // ends the turn, and the workbench writes to the agent when one of
+        // its sessions stops or asks.
         for told in [
-            INSTRUCTIONS,
+            WOKEN_INSTRUCTIONS,
             CONVERSATION_INSTRUCTIONS,
-            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS,
             ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
         ] {
             assert!(!told.contains("call wait again"));
@@ -2132,10 +2229,22 @@ mod tests {
             assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
             assert!(told.contains("the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user"));
         }
+        // Where it cannot, the agent answers the user and waits on, and is
+        // not promised a message that never comes.
+        for told in [INSTRUCTIONS, ORCHESTRATOR_INSTRUCTIONS] {
+            assert!(told.contains("When the user writes to you while your sessions run, answer them, then call wait again"));
+            assert!(told.contains("once you hand the turn back it cannot write to you"));
+            assert!(!told.contains("end the turn there rather than calling wait"));
+            assert!(!told
+                .contains("the workbench writes to you when one of your sessions stops or asks"));
+            assert!(!told.contains("or the user wrote to you"));
+        }
         for told in [
             INSTRUCTIONS,
+            WOKEN_INSTRUCTIONS,
             CONVERSATION_INSTRUCTIONS,
             ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS,
             ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
         ] {
             assert!(told.contains("call the notify tool with one line"));
@@ -2342,7 +2451,7 @@ mod tests {
         // The role comes from the environment the workbench started the
         // agent in, which a test cannot set without reaching into every
         // other test running beside it, so the picking is what is checked.
-        let general = instructions_for(None, None);
+        let general = instructions_for(None, None, None);
         assert!(general.contains("show tool"));
         assert!(!general.contains("start tool"));
         // A session that started others, as any session may, keeps waiting
@@ -2351,23 +2460,46 @@ mod tests {
         // And is told the workbench puts finished ones away, so it need not
         // tidy them.
         assert!(general.contains("The workbench puts away a session you started"));
-        assert_eq!(instructions_for(Some("something else"), None), general);
+        assert_eq!(
+            instructions_for(Some("something else"), None, None),
+            general
+        );
+        // A terminal is told the workbench wakes it only where it hears the
+        // terminal's turns end.
+        let wakes = Some(crate::adapter::WAKES);
+        assert_eq!(general, INSTRUCTIONS);
+        assert_eq!(instructions_for(None, None, wakes), WOKEN_INSTRUCTIONS);
+        assert_eq!(
+            instructions_for(None, None, Some("something else")),
+            general
+        );
 
-        let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), None);
+        let directing = instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), None, None);
         assert!(directing.starts_with(general));
+        assert_eq!(
+            instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), None, wakes),
+            ORCHESTRATOR_WOKEN_INSTRUCTIONS
+        );
+        assert!(ORCHESTRATOR_WOKEN_INSTRUCTIONS.starts_with(WOKEN_INSTRUCTIONS));
         // A session drawn as a conversation is told the same, but for how
         // its turns end.
         let conversation = Some(crate::adapter::CONVERSATION_VIEW);
-        assert_eq!(
-            instructions_for(None, conversation),
-            CONVERSATION_INSTRUCTIONS
-        );
-        assert_eq!(
-            instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), conversation),
-            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS
-        );
+        // A conversation's turns are always heard, with or without the word.
+        for wake in [None, wakes] {
+            assert_eq!(
+                instructions_for(None, conversation, wake),
+                CONVERSATION_INSTRUCTIONS
+            );
+            assert_eq!(
+                instructions_for(Some(crate::adapter::ORCHESTRATOR_ROLE), conversation, wake),
+                ORCHESTRATOR_CONVERSATION_INSTRUCTIONS
+            );
+        }
         assert!(ORCHESTRATOR_CONVERSATION_INSTRUCTIONS.starts_with(CONVERSATION_INSTRUCTIONS));
-        assert_eq!(instructions_for(None, Some("something else")), general);
+        assert_eq!(
+            instructions_for(None, Some("something else"), None),
+            general
+        );
         for expected in [
             "directs work rather than doing it here",
             "start tool",
@@ -2439,11 +2571,22 @@ mod tests {
             .unwrap()
             .contains("resumes one"));
         assert!(ORCHESTRATOR_INSTRUCTIONS.contains("Start a new session for each new task"));
-        // The user's message ends a wait, and the answer to it ends the
-        // turn rather than going ahead of another wait.
-        assert!(named("wait")["description"].as_str().unwrap().contains(
+        // Where the workbench can wake the session, the answer to the user
+        // ends the turn rather than going ahead of another wait; where it
+        // cannot, the agent answers and waits on.
+        let wait = |woken| {
+            wait_tool_for(woken)["description"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert!(wait(true).contains(
             "A message from the user ends it: answer them as the final message of your turn and end the turn without calling wait again"
         ));
+        assert!(!wait(true).contains("then call wait again"));
+        assert!(wait(false).contains("answer them, then call wait again"));
+        assert!(!wait(false).contains("end the turn without calling wait again"));
+        assert!(!wait(false).contains("the workbench writes to you"));
         assert_eq!(
             start["inputSchema"]["properties"]["agent"]["enum"],
             json!(["claude-code", "codex"])

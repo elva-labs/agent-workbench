@@ -302,7 +302,10 @@ whatever the user should read goes in a message's text, and that an answer
 to the user goes in the turn's final message, with notify just before it
 and no call after it. A starter the user writes to while its sessions run
 answers that way and ends its turn, and the workbench wakes it when one of
-the sessions stops or asks (see [orchestrator](orchestrator.md)). It cannot tell whether
+the sessions stops or asks (see [orchestrator](orchestrator.md)). In a
+terminal that holds only with these hooks on, since they are how the
+workbench hears the turn end; without them the starter is told to answer
+and then wait again. It cannot tell whether
 the user is watching, so it calls regardless, and never for progress. A
 turn that ends without the call leaves a line all the same: the stop hook
 brings the agent's last message, and the row takes its first line.

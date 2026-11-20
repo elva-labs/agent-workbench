@@ -633,6 +633,13 @@ impl Core {
             && adapter
                 .detect(vars)
                 .is_some_and(|binary| env::is_shell_script(&binary));
+        // The workbench hears a terminal's turns end through the hooks in
+        // the folder it runs in, and only then can it write to the agent
+        // once a session it started stops or asks after the turn ended.
+        let wakes = self
+            .home
+            .as_deref()
+            .is_some_and(|home| hook::hears_turns(home, project, agent));
         let prompt = prompt.filter(|prompt| !prompt.trim().is_empty());
         let prompt = first_prompt(prompt, through_cmd, &mut files, self.home.as_deref())?;
         let ctx = LaunchCtx {
@@ -653,6 +660,7 @@ impl Core {
             configured: configured.as_deref(),
             afresh: resumed && afresh,
             compact_at,
+            wakes,
         };
         let surface = match &session_id {
             Some(id) if resumed => adapter.resume(&ctx, id)?,
