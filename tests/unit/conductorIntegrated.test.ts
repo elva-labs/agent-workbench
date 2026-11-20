@@ -601,6 +601,30 @@ describe("the orchestrator's tools with an integrated session", () => {
         expect(unheard(byKey(key)!)).toEqual([kid]);
       });
 
+      it("is woken after it answered the user's message, which ended its wait, and ended its turn with its sessions still out", async () => {
+        const { key, token, kid, handle: core } = await starter();
+        fake.startTurn(core);
+        const waiting = { ...call("wait", {}), session: token };
+        const waited = handle(waiting);
+        await settle();
+        send(key, "How is it going?");
+        await waited;
+        expect(answerTo(waiting)?.content).toBe(USER_WROTE);
+        // The turn that held the wait ends, and the agent answers the user in
+        // a turn of its own that ends with no wait.
+        fake.endTurn(core);
+        fake.turn(core, "The scan is halfway.");
+        flushSync();
+        expect(byKey(key)!.turnEnd).toBe("done");
+        expect(conductor.listening[token] ?? 0).toBe(0);
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        kid.note = "the scan is done";
+        kid.working = false;
+        flushSync();
+        await vi.advanceTimersByTimeAsync(WAKE_AFTER);
+        expect(wakes()).toEqual([`${REPORTS_HEAD}\nSession kid-1 stopped working. Its last line: "the scan is done"`]);
+      });
+
       it("gives a forged name as one bounded quote, and the thread shows the line as it is", async () => {
         const { kid } = await idle();
         kid.id = null;
@@ -687,8 +711,12 @@ describe("the orchestrator's tools with an integrated session", () => {
       send(key, "Stop for a moment");
       await waited;
       expect(answerTo(waiting)?.content).toBe(USER_WROTE);
+      // The answer to the user ends the turn, and no wait follows it.
+      expect(USER_WROTE).toContain(
+        "Answer it as the final message of your turn, with notify just before it, and end the turn there without calling wait again",
+      );
       expect(sentTexts().at(-1)).toBe(
-        `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Call wait to hear from them once you have answered.\n\nStop for a moment`,
+        `${REPORTS_HEAD}\nStill at work when the user wrote: kid-1. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.\n\nStop for a moment`,
       );
     });
 

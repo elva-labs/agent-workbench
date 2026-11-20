@@ -15,7 +15,7 @@ import {
 const NOTE = [
   REPORTS_HEAD,
   'Session sid-1 stopped working. Its last line: "the cache is fixed"',
-  "Still at work when the user wrote: sid-2 and sid-3. Call wait to hear from them once you have answered.",
+  "Still at work when the user wrote: sid-2 and sid-3. Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.",
 ].join("\n");
 
 describe("the workbench's note in a message", () => {
@@ -102,6 +102,14 @@ describe("the workbench's note in a message", () => {
         'Fix the cache stopped working. Its last line: "the cache is fixed"',
         "Still at work when you wrote: Run the tests and a session.",
       ].join("\n"),
+    );
+  });
+
+  it("reads the line on sessions still at work as an earlier version ended it", () => {
+    const before = `${REPORTS_HEAD}\nStill at work when the user wrote: sid-2. Call wait to hear from them once you have answered.`;
+    const names: Record<string, string> = { "sid-2": "Run the tests" };
+    expect(reportsShown(spoken(`${before}\n\nHi`, true).reports!, (id) => names[id] ?? null)).toBe(
+      "Still at work when you wrote: Run the tests.",
     );
   });
 });

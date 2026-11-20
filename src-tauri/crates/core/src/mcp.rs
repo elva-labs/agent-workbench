@@ -48,10 +48,10 @@ macro_rules! turn_in_a_terminal {
 }
 
 /// How a turn ends in the workbench's conversation, which draws an agent's
-/// text whole and draws no wait, notify, note or notes call.
+/// text whole and its thinking only as a summary.
 macro_rules! turn_in_a_conversation {
     () => {
-        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. The workbench's conversation does not show the wait, notify, note and notes calls, and they fold nothing, so a message followed only by them stays on screen in full: when the user asks you something while you wait on your sessions, answer it in full there, then call wait again. Your thinking is never shown to the user, so whatever they should read goes in a message's text, the message right before a wait or note call too. "
+        "Call it just before your final message, and write nothing after that message; once per turn, never for progress. Without the call the row shows the first line of your last message, so open that message with the line that matters. Write an answer whole, in a message of its own after the work it reports, never above more work with a line below pointing at it. Your thinking is never shown to the user, so whatever they should read goes in a message's text, and an answer to them goes in the turn's final message, with no call after it but notify before it. "
     };
 }
 
@@ -59,7 +59,7 @@ macro_rules! turn_in_a_conversation {
 /// settings and the sessions it started.
 macro_rules! instructions_tail {
     () => {
-        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user. If you do hand it back, the workbench writes to you when one of them stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
+        "Keep notes of this conversation as you work, with the note tool, so it can go on later from them instead of being read again whole: a brief of what is being built, kept current, and a short note whenever something settles: a decision and why, a finding, what the user asked for or prefers, what is left open; never a key, token, password or personal data. Make the call alongside another one, notify at a turn's end most of all, so it costs no step of its own. When the user refers to something you have no context for, read the matching notes with the notes tool before asking or guessing. The workbench also has a real browser: when the user asks to see a page or a web app, open it with browser_open. After changing a web app, reload it and check browser_console and browser_snapshot rather than asking the user what they see; browser_snapshot is the cheap way to read a page, and browser_screenshot is worth the extra cost only when looks are what matters. The workbench's own settings, its appearance, look, colours, fonts and key chords, are read with the settings tool and changed with settings_change, or given a theme of the user's own with theme_save, and only when the user asks for a change to the workbench itself: the user sees every change and allows it or not. Once you have started sessions of your own, keep calling wait until all of them are done, and do not hand the turn back while any is running unless you need the user or the user wrote to you. When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting. Once you hand the turn back, the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user: take the work up from there as you would after a wait. The workbench puts away a session you started once it has rested a few minutes after you heard it was done, and a line you send it after that resumes it, so there is nothing to tidy; stop one with the stop tool only when its work is not wanted."
     };
 }
 
@@ -863,7 +863,7 @@ pub fn stop_tool() -> Value {
 pub fn wait_tool() -> Value {
     json!({
         "name": "wait",
-        "description": "Waits until a session you started stops or asks a question, and says which one and what it said. It blocks and costs nothing while it waits, so wait rather than asking for the sessions again in a loop. With no session named it comes back for whichever of yours moves first. A question a session asks comes back here: relay it to the user, and answer it with the send tool. When nothing has happened by the time it gives up, it says so and you can call it again. A start or a line that was answered as waiting on the user's answer comes back here first, with how it went, once they answer.",
+        "description": "Waits until a session you started stops or asks a question, and says which one and what it said. It blocks and costs nothing while it waits, so wait rather than asking for the sessions again in a loop. With no session named it comes back for whichever of yours moves first. A question a session asks comes back here: relay it to the user, and answer it with the send tool. When nothing has happened by the time it gives up, it says so and you can call it again. A message from the user ends it: answer them as the final message of your turn and end the turn without calling wait again, since the workbench writes to you when one of your sessions stops or asks. A start or a line that was answered as waiting on the user's answer comes back here first, with how it went, once they answer.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -2103,15 +2103,14 @@ mod tests {
 
     #[test]
     fn tells_how_a_turn_ends_where_the_user_reads_it() {
-        // In a conversation the wait and notify calls are not drawn, so an
-        // answer before them stays in sight.
+        // In a conversation thinking shows only as a summary, so an answer
+        // is the turn's final message, which is text.
         for told in [
             CONVERSATION_INSTRUCTIONS,
             ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
         ] {
-            assert!(told.contains("a message followed only by them stays on screen in full"));
-            assert!(told.contains("then call wait again"));
             assert!(told.contains("Your thinking is never shown to the user"));
+            assert!(told.contains("an answer to them goes in the turn's final message, with no call after it but notify before it"));
             assert!(!told.contains("folded into one line"));
         }
         // In a terminal Claude Code's own view folds what comes before a
@@ -2119,7 +2118,19 @@ mod tests {
         for told in [INSTRUCTIONS, ORCHESTRATOR_INSTRUCTIONS] {
             assert!(told.contains("folded into one line on screen"));
             assert!(told.contains("write the answer again in full after it"));
-            assert!(!told.contains("then call wait again"));
+        }
+        // Nowhere is an agent asked to answer the user and then wait: the
+        // answer ends the turn, and the workbench wakes the agent.
+        for told in [
+            INSTRUCTIONS,
+            CONVERSATION_INSTRUCTIONS,
+            ORCHESTRATOR_INSTRUCTIONS,
+            ORCHESTRATOR_CONVERSATION_INSTRUCTIONS,
+        ] {
+            assert!(!told.contains("call wait again"));
+            assert!(!told.contains("then call wait"));
+            assert!(told.contains("When the user writes to you while your sessions run, answer them as the final message of your turn, with notify just before it, and end the turn there rather than calling wait after the answer; with nothing to tell the user, keep waiting."));
+            assert!(told.contains("the workbench writes to you when one of your sessions stops or asks, in a message that begins From the workbench, not the user"));
         }
         for told in [
             INSTRUCTIONS,
@@ -2428,6 +2439,11 @@ mod tests {
             .unwrap()
             .contains("resumes one"));
         assert!(ORCHESTRATOR_INSTRUCTIONS.contains("Start a new session for each new task"));
+        // The user's message ends a wait, and the answer to it ends the
+        // turn rather than going ahead of another wait.
+        assert!(named("wait")["description"].as_str().unwrap().contains(
+            "A message from the user ends it: answer them as the final message of your turn and end the turn without calling wait again"
+        ));
         assert_eq!(
             start["inputSchema"]["properties"]["agent"]["enum"],
             json!(["claude-code", "codex"])

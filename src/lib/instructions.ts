@@ -67,7 +67,15 @@ export function filesBackNote(files: { path: string; line: string }[]): string {
 /** The lines a note holds: a session at rest, or the ones still at work. */
 const SESSION_LINE = /^Session (\S+) (.+)$/;
 const STILL_OUT = "Still at work when the user wrote: ";
-const STILL_OUT_END = ". Call wait to hear from them once you have answered.";
+const STILL_OUT_END =
+  ". Answer the user as your turn's final message and end the turn there; the workbench writes to you when one of them stops or asks.";
+/** How the line ended in an earlier version, which a conversation it
+    began still holds. */
+const STILL_OUT_ENDED_BEFORE = [". Call wait to hear from them once you have answered."];
+
+/** The line that names the sessions still at work, as a note on the
+    user's message ends. */
+export const stillOutLine = (names: string) => `${STILL_OUT}${names}${STILL_OUT_END}`;
 /** The last line of the workbench's message to a session it woke, when
     some of the sessions it started are still at work. */
 const AT_WORK = "Still at work: ";
@@ -143,8 +151,9 @@ export function reportsShown(reports: string, name: (id: string) => string | nul
     .map((line) => {
       const session = SESSION_LINE.exec(line);
       if (session !== null) return `${name(session[1]) ?? unnamed(session[1], "A session", "Session")} ${session[2]}`;
-      if (line.startsWith(STILL_OUT) && line.endsWith(STILL_OUT_END))
-        return `Still at work when you wrote: ${namesShown(line.slice(STILL_OUT.length, -STILL_OUT_END.length), name)}.`;
+      const ending = [STILL_OUT_END, ...STILL_OUT_ENDED_BEFORE].find((end) => line.endsWith(end));
+      if (line.startsWith(STILL_OUT) && ending !== undefined)
+        return `Still at work when you wrote: ${namesShown(line.slice(STILL_OUT.length, -ending.length), name)}.`;
       if (line.startsWith(AT_WORK) && line.endsWith(AT_WORK_END))
         return `Still at work: ${namesShown(line.slice(AT_WORK.length, -AT_WORK_END.length), name)}.`;
       return line;

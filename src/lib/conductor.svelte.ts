@@ -119,7 +119,7 @@ import { lastRun, nameSessionsBy } from "$lib/thread";
 import { logUsage } from "$lib/usageLog";
 import { defaultModelOf } from "$lib/lastChosen.svelte";
 import { failureOnScreen, type Failure } from "$lib/turnFailure";
-import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD } from "$lib/instructions";
+import { atWorkLine, OUTCOME_ASK, REPORTS_HEAD, stillOutLine } from "$lib/instructions";
 import { nameKeptBy, outsideCaller, outsideFolder, senderOf, startersFrom } from "$lib/senders.svelte";
 import { mixesScripts, readsAsWorkbench, readsAsYou, reservedName, shown } from "$lib/unseen";
 import { within } from "$lib/show.svelte";
@@ -1522,7 +1522,7 @@ export function cancelled(id: string) {
 
 /** What a wait the user's message ended answers. */
 export const USER_WROTE =
-  "The user wrote to you, which ends this wait. Read their message, ending your turn if it has not reached you yet, and answer it before you wait again.";
+  "The user wrote to you, which ends this wait. If their message has not reached you yet, end your turn now so that it does. Answer it as the final message of your turn, with notify just before it, and end the turn there without calling wait again: the workbench writes to you when one of your sessions stops or asks.";
 
 /** Ends the waits these callers hold, each with the answer given. */
 function endWaits(callers: string[], answer: string) {
@@ -2108,9 +2108,7 @@ function reportNote(caller: string, ending: boolean): Note | null {
   const lines = [...went.lines, ...news.map((kid) => restText(kid))];
   const out = holding.length > 0 || lapsed ? kids.filter(atWork) : [];
   if (out.length > 0)
-    lines.push(
-      `Still at work when the user wrote: ${either(out.map(namedAs), "and")}. Call wait to hear from them once you have answered.`,
-    );
+    lines.push(stillOutLine(either(out.map(namedAs), "and")));
   if (lines.length === 0) return null;
   // What each report was counted as before it was told, to count it so
   // again should the conversation go back on the message.
