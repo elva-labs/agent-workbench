@@ -468,7 +468,7 @@ test.describe("plugins", () => {
     );
     await expect(known).toHaveAttribute("data-known", "true");
     await expect(known).toHaveAttribute("data-fetched", "false");
-    await expect(known).toContainText("agent-workbench-plugins");
+    await expect(known).toContainText("chord-plugins");
     await expect(known).toContainText("known");
     const rows = known.getByTestId("plugin-row");
     await expect(rows).toHaveCount(2);
@@ -504,7 +504,7 @@ test.describe("plugins", () => {
     // The question names where the plugin comes from and what it is for,
     // and is asked once: agreeing fetches the source and turns it on.
     const ask = known.getByTestId("plugin-ask");
-    await expect(ask).toContainText("agent-workbench-plugins");
+    await expect(ask).toContainText("chord-plugins");
     await expect(ask).toContainText("The TODOs in the code");
     await expect(ask).toContainText("with your privileges");
     await page.getByTestId("plugin-agree").click();

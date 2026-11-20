@@ -234,6 +234,7 @@ The redirect lasts only while no repository takes that name. Never give
 the earlier address, `agent-workbench`, to a new repository in the
 organisation, nor rename another repository to it, not even for a moment:
 GitHub then serves that repository there, and every copy above breaks, or
-fetches from whatever the new repository holds. The plugins repository,
-`elva-labs/agent-workbench-plugins`, is a repository of its own and keeps
-its name.
+fetches from whatever the new repository holds. The plugins repository is
+`elva-labs/chord-plugins`; an install that stored its earlier address,
+`elva-labs/agent-workbench-plugins`, is moved to the new one when the app
+starts.

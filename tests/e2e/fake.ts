@@ -568,7 +568,7 @@ export async function installFakeCore(
       const offered = (): FakeSource => ({
         id: "known-elva-labs",
         kind: "git",
-        location: "https://github.com/elva-labs/agent-workbench-plugins",
+        location: "https://github.com/elva-labs/chord-plugins",
         reference: "main",
         commit: null,
         newer: null,

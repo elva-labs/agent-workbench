@@ -57,7 +57,7 @@ const OLD = { test: (line) => OLD_NAME.test(line) || OLD_IDENTIFIER.test(line) }
     one. */
 const KEPT = [
   [/com\.elva-labs\.agent-workbench/, "the bundle identifier, which the window's storage, notifications and grants are kept under"],
-  [/agent-workbench-plugins/, "the plugins repository, which keeps its name"],
+  [/former = \[.*agent-workbench-plugins|`elva-labs\/agent-workbench-plugins`/, "the plugins repository's former address, which installs that stored it are moved off", /known-plugins\.toml$|release\.md$/],
   [/agent-workbench1/, "the embedded browser's data store, which holds its sign-ins"],
   [OLD, "the migration from the earlier names, the one place that knows them, and its tests", MIGRATION],
   [/mcp__agent-workbench__wait|\.agent-workbench\/"|"workbench\.open"/, "the migration's tests", /thread\.test\.ts$|orchestrator\.spec\.ts$/],
