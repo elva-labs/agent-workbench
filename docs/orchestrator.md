@@ -391,9 +391,8 @@ An id of any other shape than the agents' own, up to 64 letters, digits,
 dashes and underscores, is quoted the same way. When the user's message cuts a
 wait short, or comes while one is held, the note also names the sessions
 still at work and tells it, when there is something to tell the user, to
-answer them as its turn's final message and end the turn there, since the workbench wakes it when one of them stops
-or asks. A wait
-still held answers for the sessions it watches, so the note leaves those
+answer them as its turn's final message and end the turn there, since the
+workbench wakes it when one of them stops or asks. A wait still held answers for the sessions it watches, so the note leaves those
 out and gives the rest. A message with nothing to tell goes as it is.
 Nothing is typed into its terminal, and no turn is started for it.
 
@@ -442,6 +441,13 @@ hooks on, since they are how the workbench hears a terminal's turns end.
 A starter in a terminal without them is told to answer the user and then
 call `wait` again, as nothing would take it up once its turn ended; its
 tool server learns which from the environment the workbench started it in.
+
+The wake does not always come at once. It comes up to half a minute after
+a session comes to rest while others are still at work, and a starter
+whose prompt cache has lapsed is woken only once all of its sessions are
+done, or twenty minutes after the first came to rest. After a turn that
+failed or that the user cut short, no wake comes until the user's next
+turn has ended. [When it is idle](#when-it-is-idle) has the details.
 
 ## When it is idle
 
