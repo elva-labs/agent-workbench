@@ -106,7 +106,12 @@ pub fn status(root: &Path) -> Result<Vec<ChangedFile>, String> {
     let changed: Vec<(String, Status)> = statuses
         .iter()
         .filter(|entry| entry.status() != Status::CURRENT)
-        .filter_map(|entry| entry.path().map(|path| (path.to_string(), entry.status())))
+        .filter_map(|entry| {
+            entry
+                .path()
+                .ok()
+                .map(|path| (path.to_string(), entry.status()))
+        })
         .filter(|(path, _)| !is_directory(path))
         .collect();
 
@@ -404,7 +409,7 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     if let Ok(statuses) = repo.statuses(Some(&mut options)) {
         for entry in statuses.iter() {
             if entry.status().is_wt_new() {
-                if let Some(path) = entry.path() {
+                if let Ok(path) = entry.path() {
                     if !is_directory(path) {
                         paths.push(path.to_string());
                     }
