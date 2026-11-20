@@ -338,10 +338,14 @@ alone: when every other command in the line prints nothing. Those are:
 
 Anything else counts as printing: `pushd` and `popd`, `export -p`, `set -x`
 and `set -v`, which print the commands that follow, and a bare `set -o`.
-So does one of the commands above when it holds `$(`, a backquote or `$'`.
+So does one of the commands above when it expands anything, with a `$`, a
+backquote, `<(` or `>(`, since an expansion can print what it holds in an
+error, as `${NAME:?$TOKEN}` does. So does one opened by `env`, `time`,
+`exec`, `command` or `nohup`, and `env` alone prints the whole environment.
 Otherwise `output` is null and `withheld` is true, and a plugin that needs
-the result looks it up itself, with `gh pr view` for one. When it is sent, `output` is the end of what was
-printed, at most 16 KiB, with `truncated` true when there was more.
+the result looks it up itself, with `gh pr view` for one. When it is sent,
+`output` is the end of what was printed, at most 16 KiB, with `truncated`
+true when there was more.
 
 Each matched command is told once, however many ways the app heard it; a
 line that runs two matched commands is told as two messages.

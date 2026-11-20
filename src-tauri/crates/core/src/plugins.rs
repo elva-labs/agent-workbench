@@ -1102,11 +1102,12 @@ const COMMANDS_TOLD: usize = 256;
 const SHELL_DEPTH: usize = 3;
 
 /// Words a simple command can open with before the program it runs, and
-/// the words that close a compound one.
+/// the words that close a compound one: the shell's own words, which run
+/// nothing, and the programs that run the command after them.
 const LEADING_WORDS: &[&str] = &[
-    "!", "{", "}", "if", "then", "elif", "else", "fi", "while", "until", "do", "done", "time",
-    "exec", "command", "nohup", "env",
+    "!", "{", "}", "if", "then", "elif", "else", "fi", "while", "until", "do", "done",
 ];
+const RUNNERS: &[&str] = &["time", "exec", "command", "nohup", "env"];
 
 /// The options to `set` that change how the shell runs and print nothing,
 /// by their letters and by the names `-o` takes.
@@ -1125,25 +1126,38 @@ const QUIET_SET_OPTIONS: &[&str] = &[
 /// word.
 #[derive(Debug, Clone, PartialEq)]
 struct Part {
+    /// The words from the program on, with quotes taken off; none for a
+    /// part that only sets variables or closes a compound command.
     words: Vec<String>,
+    /// The line from the program to the last word.
     text: String,
+    /// The line from the part's first word, the words before the program
+    /// among them.
+    whole: String,
+    /// Whether a program such as `env` or `time` stands before the program.
+    runner: bool,
 }
 
 impl Part {
-    /// Whether the command surely prints nothing of its own: `cd` to
-    /// anywhere but `-`, `export` with only `NAME=value` words, and `set`
-    /// with only those and options that print nothing. A command that runs
-    /// another inside it, or quotes in a way the line is not read for, is
-    /// never quiet.
+    /// Whether the command surely prints nothing of its own: `NAME=value`
+    /// words alone, `cd` to anywhere but `-`, `export` with only
+    /// `NAME=value` words, and `set` with only those and options that print
+    /// nothing. A part that expands anything, with `$`, a backquote or a
+    /// process substitution, may print what it expands in an error, and a
+    /// part a runner such as `env` or `time` opens prints of its own, so
+    /// neither is ever quiet.
     fn quiet(&self) -> bool {
-        if ["$(", "`", "$'"]
-            .iter()
-            .any(|runs| self.text.contains(runs))
+        if self.runner
+            || ["$", "`", "<(", ">("]
+                .iter()
+                .any(|expands| self.whole.contains(expands))
         {
             return false;
         }
-        let words = &self.words[1..];
-        match self.words[0].as_str() {
+        let Some((program, words)) = self.words.split_first() else {
+            return true;
+        };
+        match program.as_str() {
             "cd" => words.iter().all(|word| word != "-"),
             "export" => !words.is_empty() && words.iter().all(|word| assignment(word)),
             "set" => !words.is_empty() && quiet_set(words),
@@ -1376,23 +1390,36 @@ fn end_part(
     parts: &mut Vec<Part>,
 ) {
     let mut words = std::mem::take(words);
-    let program = words
-        .iter()
-        .position(|(word, _, _)| !LEADING_WORDS.contains(&word.as_str()) && !assignment(word))
-        .unwrap_or(words.len());
-    words.drain(..program);
-    let (Some((_, start, _)), Some((_, _, end))) = (words.first(), words.last()) else {
+    let (Some((_, first, _)), Some((_, _, end))) = (words.first(), words.last()) else {
         return;
     };
-    let text = line[*start..*end].to_string();
-    let words: Vec<String> = words.into_iter().map(|(word, _, _)| word).collect();
+    let (first, end) = (*first, *end);
+    let program = words
+        .iter()
+        .position(|(word, _, _)| {
+            let word = word.as_str();
+            !LEADING_WORDS.contains(&word) && !RUNNERS.contains(&word) && !assignment(word)
+        })
+        .unwrap_or(words.len());
+    let runner = words[..program]
+        .iter()
+        .any(|(word, _, _)| RUNNERS.contains(&word.as_str()));
+    let text = words
+        .get(program)
+        .map_or(String::new(), |(_, start, _)| line[*start..end].to_string());
+    let words: Vec<String> = words.drain(program..).map(|(word, _, _)| word).collect();
     if depth < SHELL_DEPTH {
         if let Some(script) = shell_script(&words) {
             split_command(script, depth + 1, parts);
             return;
         }
     }
-    parts.push(Part { words, text });
+    parts.push(Part {
+        words,
+        text,
+        whole: line[first..end].to_string(),
+        runner,
+    });
 }
 
 /// Whether a word sets a variable for the command after it.
@@ -5454,6 +5481,14 @@ run = ["sh", "main.sh"]
             ("popd; gh pr create", "gh pr create"),
             ("cd -; gh pr create", "gh pr create"),
             ("cd \"`cat .env`\"; gh pr create", "gh pr create"),
+            ("X=${B:?$TOKEN}; gh pr create", "gh pr create"),
+            ("A=${B:?$TOKEN} cd x; gh pr create", "gh pr create"),
+            ("export A=${B:?$TOKEN}; gh pr create", "gh pr create"),
+            ("cd \"$DIR\"; gh pr create", "gh pr create"),
+            ("cd <(cat .env); gh pr create", "gh pr create"),
+            ("env; gh pr create", "gh pr create"),
+            ("env A=1; gh pr create", "gh pr create"),
+            ("time cd x; gh pr create", "gh pr create"),
             ("echo $(gh pr create)", "gh pr create"),
             ("zsh -lc 'cat .env; gh pr create'", "gh pr create"),
         ] {
