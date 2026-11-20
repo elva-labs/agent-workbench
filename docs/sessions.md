@@ -696,10 +696,12 @@ count in the line work folds into, or a line at the foot of its own, and
 neither folds anything: what the agent wrote before them stays the last
 thing in its run, in full, and a wait that follows a wake leaves it so as
 well. The last thinking in a run, when one of the workbench's own calls
-comes right after it, is not folded into work: it is drawn in sight under a
-label that calls it a summary of the agent's thinking, as an agent often
-puts its answer there and keeps only a closing line, or nothing, for its
-words. Thinking with words right after it stays folded. While a turn is only waiting, its foot says on what, in the
+comes right after it and the run ends there or goes on only in words, is
+not folded into work: it is drawn in sight under a label that calls it a
+summary of the agent's thinking, as an agent often puts its answer there
+and keeps only a closing line, or nothing, for its words. Thinking with
+words right after it, or with more work after those calls, stays folded.
+The session's row takes its line by the same rule. While a turn is only waiting, its foot says on what, in the
 wait's own words: waiting on a session by its name, or on the sessions it
 started. A plan is drawn
 where it came and changed in place, a question the user answered with the

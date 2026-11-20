@@ -386,6 +386,11 @@ describe("the workbench's wait and notify in a run", () => {
     expect(shape([thought(), call({ name: "Bash" }), wait()])).toEqual(["work:thinking+Bash"]);
     expect(shape([thought(), text({ text: "Yes." }), notify()])).toEqual(["work:thinking", "text"]);
     expect(shape([thought()])).toEqual(["work:thinking"]);
+    // Work after the calls, with or without words after it: the thinking stays work.
+    const noted = () => call({ name: "mcp__chord__note", tool: "mcp" });
+    expect(shape([thought(), noted(), call({ name: "Bash" })])).toEqual(["work:thinking+Bash"]);
+    expect(shape([thought(), noted(), call({ name: "Bash" }), text({ text: "Done." })])).toEqual(["work:thinking+Bash", "text"]);
+    expect(shape([thought(), noted(), notify(), text({ text: "Yes." })])).toEqual(["thought", "text"]);
     // Only the last: what it thought at each earlier wait is work.
     expect(shape([thought(), wait(), thought("Still waiting."), wait(false)])).toEqual(["work:thinking", "thought"]);
     const note = call({ name: "mcp__chord__note", tool: "mcp" });

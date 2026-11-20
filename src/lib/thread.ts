@@ -72,15 +72,20 @@ export function segments(parts: Part[]): Segment[] {
 const UNDRAWN = new Set(["wait", "notify", "note", "notes"]);
 
 /** The last thinking in a run that has something in it, when one of the
-    workbench's own calls comes right after it: what the agent says there
-    is often its answer, put before the call, with at most a closing line
-    in words after it. Thinking with text right after it stays folded. */
+    workbench's own calls comes right after it and the run ends there or
+    goes on in words: what the agent says there is often its answer, put
+    before the call, with at most a closing line after it. Thinking with
+    text right after it, or with more work after the calls, stays folded. */
 export function thoughtAnswer(parts: Part[]): TextPart | null {
   for (let at = parts.length - 1; at >= 0; at--) {
     const part = parts[at];
     if (part.kind !== "thinking" || part.text.trim() === "") continue;
-    const after = parts[at + 1];
-    return part.done && after !== undefined && !drawnPart(after) ? part : null;
+    if (!part.done) return null;
+    let next = at + 1;
+    while (next < parts.length && !drawnPart(parts[next])) next++;
+    if (next === at + 1) return null;
+    const after = parts[next];
+    return after === undefined || after.kind === "text" ? part : null;
   }
   return null;
 }
