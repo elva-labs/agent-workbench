@@ -486,6 +486,11 @@ naming the session and its kind:
   where the agent says; the plan, where the agent names it; when the last
   read of the limits was taken; and when a figure last moved. It names the
   agent but not the account, which the window knows from the session.
+- **limitReached**: the turn that ends next was refused by the account's
+  own usage limit, as [going on after a limit](#going-on-after-a-limit)
+  describes: the limit window that was used up, where it is one told
+  apart, and when it starts over, where the agent says. It comes just
+  before the turn's end, and for no turn that ended any other way.
 - **notice**: something the agent says that is neither an error nor part
   of a turn, such as that it fell back to another model, as information or
   as a warning.
@@ -790,6 +795,62 @@ either agent may refuse a read or answer in a shape the workbench does not
 know. The session then goes on with no figures, or with the last ones it
 had, and says nothing of it.
 
+### Going on after a limit
+
+A conversation whose turn the session window's limit cut short can go on
+by itself once that window starts over. It is the conversation's own
+choice, a chip on its composer beside the model, the effort and the mode,
+off unless the user turns it on. The last choice made is kept with the
+settings, and a conversation takes it when its run first starts in the
+window. A session another session started has no choice of its own: it
+goes by the choice of the session that started it, for as long as the
+window has that one, and its chip says so.
+
+The chip is there only for a Claude Code conversation whose account's
+figures hold a session window. An account metered some other way has no
+such window and is offered nothing, and a conversation moved to one stops
+waiting. Codex and terminal sessions are not offered it: only a Claude
+Code conversation goes on from its notes, and only an integrated session
+says for certain what ended its turn.
+
+Only the agent's own word is taken that the limit ended a turn. Claude
+Code names a request that the account's usage limit refused with a kind
+of its own, on the message it writes for the refusal and on the result
+that ends the turn, and gives the limit window and the time it starts
+over with the message. The core sends the limitReached event only where
+the turn failed and both name that kind; a refusal by a throttle, a
+capacity switch-off or an organization's policy does not carry it. So a
+turn the user stopped, one that finished, one that failed for any other
+reason and a session waiting on an answer are never waited for. Nor is a
+refusal by the week's limit, by the credits bought beyond the plan, or by
+one that names no time. A message the user sends while the limit holds
+is refused the same way, and is waited for the same.
+
+While a conversation waits, its row and the status bar read that it
+resumes and when, and so does its chip. The wait is held in the window
+alone: quitting the app ends it, and so does the session stopping, a turn
+beginning in it, or the choice being turned off. Turned on while the
+limit still holds, the wait begins then.
+
+A minute after the time the window starts over, the account's usage is
+read again, with a read asked for whatever the age of the figures held,
+since figures taken before that time say nothing of the window after it.
+The conversation goes on only where figures read since show the session
+window open. A window that reads as used up until a later time is waited
+for until then. Where no figures read since come within a quarter of an
+hour, or the window reads as used up with no time, the wait ends and the
+conversation says so.
+
+Going on, the run is started again as a fresh conversation from its
+notes, as [sessions](sessions.md#going-on-from-the-notes) describes,
+whatever its size and however long it rested: the whole conversation is
+never read again for it. Where the core cannot write the briefing, the
+run is left as it is and the conversation says so. The fresh conversation
+is sent one line, as the workbench's own, asking it to go on, and the
+line where the run began says it went on by itself. That turn is the one
+try: where the limit refuses it too, the conversation says so and waits
+for the user.
+
 ### Reading the limits with no session
 
 The window asks for the figures of every account in use: each account a
@@ -810,7 +871,10 @@ worked since its figures were read: one is at work now, or was seen at
 work after the read. The core reads an account only when a read is due:
 when the newest full read of its limits, the core's own or one an
 integrated session's agent answered, is five minutes old where a session
-worked since, or half an hour old where none did. An account nobody here
+worked since, or half an hour old where none did. A question can also
+name a time that figures read before say nothing of, as the wait for a
+limit to reset does, and a read is then due where the newest is older
+than that time. An account nobody here
 worked on can only have moved through its use elsewhere, on another
 machine or the web, and its figures show their age while they wait. What
 an integrated session reports counts

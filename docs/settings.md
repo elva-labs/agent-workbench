@@ -308,7 +308,11 @@ agent's own defaults where nothing is kept. Each agent's line says what
 it keeps, and Use defaults beside it lets go of all three. Choosing the
 agent's own default model on a chip lets go of the model alone. The
 choices are kept by the window as the user makes them, and an agent's
-settings tools refuse them.
+settings tools refuse them. Whether a Claude Code conversation goes on by
+itself once a usage limit resets is kept the same way, from the chip on a
+conversation's composer, as
+[integrated](integrated.md#going-on-after-a-limit) describes; a file from
+before has none, which reads as off.
 
 Whether you are asked before every session another session starts. Off to
 begin with: a session that starts one in its own project, on its own agent
