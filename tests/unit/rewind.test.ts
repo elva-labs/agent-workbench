@@ -25,6 +25,7 @@ import {
   backSaidOf,
   canGoBack,
   choicesOf,
+  unrested,
   closeBack,
   markedOf,
   moveBack,
@@ -452,6 +453,18 @@ describe("going back from the window", () => {
     expect(await goBack(key, second, "conversation", [])).toBeNull();
     expect(untold).toBe(1);
     notesFrom(() => null);
+  });
+
+  it("says whether a command of the user's waits or runs when that keeps it from going back", async () => {
+    const key = await started();
+    await said(key, "One.");
+    const conversation = linkFor(key).conversation;
+    const told = (state: "queued" | "running") =>
+      conversation.apply({ type: "command", command: "c-1", state, text: "npm test", exitCode: null, output: null, truncated: false, error: null });
+    told("queued");
+    expect(unrested(key)).toBe("a command waits");
+    told("running");
+    expect(unrested(key)).toBe("a command runs");
   });
 
   it("does not open while the session works", async () => {

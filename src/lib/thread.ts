@@ -921,23 +921,24 @@ export function tokens(count: number): string {
   return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
 }
 
-/** How a command that is over ended, as the line under it says it, and
-    whether that reads as bad news; null for one that ended well, which
-    says nothing, and for one not over. */
+/** How a command that is over ended, as the line under it says it, with
+    the error the core gave, and whether that reads as bad news, as an
+    error always does; null for one that ended well, which says nothing,
+    and for one not over. */
 export function commandEnd(command: Command): { text: string; bad: boolean } | null {
+  const said = (text: string, bad: boolean) => (command.error === null ? { text, bad } : { text: `${text}: ${command.error}`, bad: true });
   switch (command.state) {
     case "done":
-      return command.exitCode === null || command.exitCode === 0
-        ? null
-        : { text: `Exit code ${command.exitCode}`, bad: true };
+      if (command.exitCode !== null && command.exitCode !== 0) return said(`Exit code ${command.exitCode}`, true);
+      return command.error === null ? null : said("Ran", true);
     case "stopped":
-      return { text: "Stopped", bad: false };
+      return said("Stopped", false);
     case "timedOut":
-      return { text: "Stopped after 10 minutes", bad: false };
+      return said("Timed out", false);
     case "failed":
       return { text: command.error ?? "Could not run", bad: true };
     case "dropped":
-      return { text: command.error === null ? "Not finished" : `Not finished: ${command.error}`, bad: true };
+      return said("Not finished", true);
     default:
       return null;
   }

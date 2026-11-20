@@ -1195,7 +1195,7 @@ describe("a command the user ran, in the thread", () => {
     expect(commandEnd(ran({ exitCode: null }))).toBeNull();
     expect(commandEnd(ran({ exitCode: 2 }))).toEqual({ text: "Exit code 2", bad: true });
     expect(commandEnd(ran({ state: "stopped", exitCode: null }))).toEqual({ text: "Stopped", bad: false });
-    expect(commandEnd(ran({ state: "timedOut", exitCode: null }))).toEqual({ text: "Stopped after 10 minutes", bad: false });
+    expect(commandEnd(ran({ state: "timedOut", exitCode: null }))).toEqual({ text: "Timed out", bad: false });
     expect(commandEnd(ran({ state: "failed", exitCode: null, error: "no shell to run it in" }))).toEqual({
       text: "no shell to run it in",
       bad: true,
@@ -1207,6 +1207,14 @@ describe("a command the user ran, in the thread", () => {
     });
     expect(commandEnd(ran({ state: "dropped", exitCode: null }))).toEqual({ text: "Not finished", bad: true });
     for (const state of ["sending", "queued", "running"] as const) expect(commandEnd(ran({ state, exitCode: null }))).toBeNull();
+  });
+
+  it("says the error the core gave under any command that ended, as bad news", () => {
+    const error = "the agent was not given the command: broken pipe";
+    expect(commandEnd(ran({ error }))).toEqual({ text: `Ran: ${error}`, bad: true });
+    expect(commandEnd(ran({ exitCode: 2, error }))).toEqual({ text: `Exit code 2: ${error}`, bad: true });
+    expect(commandEnd(ran({ state: "stopped", exitCode: null, error }))).toEqual({ text: `Stopped: ${error}`, bad: true });
+    expect(commandEnd(ran({ state: "timedOut", exitCode: null, error }))).toEqual({ text: `Timed out: ${error}`, bad: true });
   });
 
   it("counts the lines it printed, a newline at the end closing the last", () => {
