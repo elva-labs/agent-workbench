@@ -22,6 +22,7 @@ import {
 } from "$lib/browser.svelte";
 import type { BrowserOwner } from "$lib/core";
 import {
+  chosenView,
   closeViewer,
   files,
   select,
@@ -86,7 +87,7 @@ export function snapshot(
     kind: "file",
     project,
     path: files.selected,
-    view: files.view,
+    view: chosenView(),
     target: files.target?.path === files.selected ? files.target : null,
     picked: files.picked?.path === files.selected ? files.picked : null,
   };
@@ -132,6 +133,7 @@ async function restore(what: Viewed) {
       await setScope("all");
     }
     files.view = what.view;
+    files.renderedFor = what.view === "rendered" ? what.path : null;
     files.target = what.target;
     await select(what.path);
     files.picked = what.picked;

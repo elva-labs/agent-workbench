@@ -1447,6 +1447,7 @@ async function showInViewer() {
     return;
   }
   files.view = VIEWER[tab.view];
+  files.renderedFor = tab.view === "preview" ? tab.path : null;
   if (files.selected !== tab.path || otherKindShown()) await select(tab.path);
 }
 

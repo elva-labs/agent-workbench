@@ -811,3 +811,44 @@ describe("basename", () => {
     expect(basename("Cargo.toml")).toBe("Cargo.toml");
   });
 });
+
+describe("previewing the kinds besides Markdown", () => {
+  const html = async () => {
+    fake.status = [
+      { path: "page.html", status: "M", add: 1, del: 1, binary: false },
+      { path: "main.rs", status: "M", add: 1, del: 1, binary: false },
+      { path: "other.html", status: "M", add: 1, del: 1, binary: false },
+    ];
+    await refresh();
+    await select("page.html");
+  };
+
+  it("cycles the diff, the source and the preview of an HTML file", async () => {
+    await html();
+    expect(views()).toEqual(["diff", "content", "rendered"]);
+    expect(effectiveView()).toBe("diff");
+    toggleView();
+    expect(effectiveView()).toBe("content");
+    toggleView();
+    expect(effectiveView()).toBe("rendered");
+    toggleView();
+    expect(effectiveView()).toBe("diff");
+  });
+
+  it("shows the source again on a file closed and opened again", async () => {
+    await html();
+    setView("rendered");
+    deselect();
+    await select("page.html");
+    expect(effectiveView()).toBe("diff");
+  });
+
+  it("shows the source again on another file, and on the same file reopened", async () => {
+    await html();
+    setView("rendered");
+    await select("other.html");
+    expect(effectiveView()).toBe("diff");
+    await select("page.html");
+    expect(effectiveView()).toBe("diff");
+  });
+});

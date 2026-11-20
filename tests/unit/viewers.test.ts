@@ -120,6 +120,19 @@ describe("what a session had in the viewer", () => {
     });
   });
 
+  it("is the source for a file that was not the one previewed", () => {
+    layout.mode = "reviewing";
+    files.everything = [{ path: "page.html", status: "M" }];
+    files.scope = "all";
+    files.selected = "page.html";
+    files.view = "rendered";
+    files.renderedFor = "other.html";
+    expect(snapshot()).toMatchObject({ kind: "file", path: "page.html", view: "diff" });
+    files.renderedFor = "page.html";
+    expect(snapshot()).toMatchObject({ view: "rendered" });
+    files.renderedFor = null;
+  });
+
   it("is what the agent presented", () => {
     showMedia(item);
     expect(snapshot()).toEqual({ kind: "media", project: "/one", item });

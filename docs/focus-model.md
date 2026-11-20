@@ -107,14 +107,21 @@ the agent while reviewing, so the viewer stays, and in a window too narrow for
 the pane, or in compact mode, it stays as the user set it and the keyboard
 goes to the agent pane's New session button. <kbd>Cmd</kbd><kbd>Enter</kbd> on either starts a session
 in that project, as below. A <kbd>&gt;</kbd> typed as the first character
-switches to the commands, with the rest of what was typed. With nothing open
+switches to the commands, with the rest of what was typed. Go to lists no
+commands, except that once something is typed the command for the file in the
+viewer is listed when it matches, after the sessions and projects, or before
+them when what was typed is the start of its name, so Enter on "preview" runs
+Preview file.
+With nothing open
 the list holds one row, Open project. The footer names only what the list on
 screen can do.
 
 **Commands** open on <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>P</kbd> and list every
 action the keys can do, each with its chord, and the ones that have none: new
 session, new session in the project on screen, open project and open remote
-project. Picking an action does what its chord does. The first entry goes to
+project, and Preview file or Show source for the file in the viewer when it
+is Markdown, HTML, Mermaid or SVG (the commands have no chord). Picking an
+action does what its chord does. The first entry goes to
 the next session that needs you, as <kbd>Cmd</kbd><kbd>.</kbd> does (see
 [sessions](sessions.md)). It shows how many are waiting, and with none it
 cannot be picked.

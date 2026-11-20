@@ -26,7 +26,9 @@ import {
   stepsLeft,
   type PaletteItem,
 } from "$lib/palette.svelte";
-import { matches } from "$lib/files.svelte";
+import { canPreview, effectiveView, files, matches, select as selectFile } from "$lib/files.svelte";
+import { browser } from "$lib/browser.svelte";
+import { layout } from "$lib/layout.svelte";
 import { accounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { agent } from "$lib/agent.svelte";
 import { create, exact, reset, select, sessions, started } from "$lib/sessions.svelte";
@@ -489,6 +491,126 @@ describe("commands", () => {
     const zoom = commandItems("zoom in")[0];
     expect(pickItem(zoom)).toEqual({ type: "perform", action: { type: "zoom", step: 1 } });
     expect(pickItem(commandItems("go to")[0])).toEqual({ type: "perform", action: { type: "goto" } });
+  });
+});
+
+describe("previewing the file in the viewer", () => {
+  const open = (path: string, status: string | null = "M") => {
+    files.scope = "all";
+    files.everything = [{ path, status }];
+    files.selected = path;
+    files.view = "diff";
+    files.renderedFor = null;
+    layout.mode = "reviewing";
+  };
+  const labels = (query: string) => goToItems(query).map((item) => item.label);
+
+  beforeEach(() => {
+    files.media = null;
+    files.pluginView = null;
+  });
+
+  it.each(["notes.md", "page.html", "flow.mmd", "logo.svg"])(
+    "offers Preview file for %s, in go to once something is typed and in the commands",
+    (path) => {
+      open(path);
+      expect(canPreview({ path, status: "M" })).toBe(true);
+      expect(labels("preview")).toEqual(["Preview file"]);
+      expect(labels("")).not.toContain("Preview file");
+      expect(commandItems("preview").map((item) => item.label)).toEqual(["Preview file"]);
+    },
+  );
+
+  it("is not offered for a file the app cannot render, a deleted one, or with no viewer", () => {
+    open("main.rs");
+    expect(labels("preview")).toEqual([]);
+    expect(commandItems("preview")).toEqual([]);
+    open("gone.md", "D");
+    expect(labels("preview")).toEqual([]);
+    open("page.html");
+    layout.mode = "working";
+    expect(labels("preview")).toEqual([]);
+    layout.mode = "editing";
+    expect(commandItems("preview")).toEqual([]);
+  });
+
+  it("previews the file, then shows its source again", () => {
+    open("page.html");
+    const preview = goToItems("preview")[0];
+    const outcome = pickItem(preview);
+    expect(outcome.type).toBe("close");
+    if (outcome.type === "close") outcome.then();
+    expect(effectiveView()).toBe("rendered");
+    expect(labels("source")).toEqual(["Show source"]);
+    expect(labels("preview")).toEqual([]);
+    const back = pickItem(goToItems("source")[0]);
+    if (back.type === "close") back.then();
+    expect(effectiveView()).toBe("content");
+  });
+
+  it("shows source for another HTML file, and for the same file reopened", async () => {
+    open("page.html");
+    files.everything = [
+      { path: "page.html", status: "M" },
+      { path: "other.html", status: "M" },
+    ];
+    const outcome = pickItem(goToItems("preview")[0]);
+    if (outcome.type === "close") outcome.then();
+    expect(effectiveView()).toBe("rendered");
+    await selectFile("other.html");
+    expect(effectiveView()).toBe("diff");
+    await selectFile("page.html");
+    expect(effectiveView()).toBe("diff");
+  });
+
+  it("keeps the rendered view across a code file for Markdown", async () => {
+    open("notes.md");
+    files.everything = [
+      { path: "notes.md", status: "M" },
+      { path: "main.rs", status: "M" },
+      { path: "more.md", status: "M" },
+    ];
+    const outcome = pickItem(goToItems("preview")[0]);
+    if (outcome.type === "close") outcome.then();
+    await selectFile("main.rs");
+    await selectFile("more.md");
+    expect(effectiveView()).toBe("rendered");
+  });
+
+  it.each([
+    ["media", () => (files.media = { id: "m", owner: "a", project: "/p", files: ["/x.md"], caption: "", at: 1 })],
+    ["a plugin page", () => (files.pluginView = { plugin: "p", id: "v", title: "V", html: "" } as never)],
+    ["the browser", () => (browser.showing = true)],
+  ])("is not offered while %s fills the viewer", (_name, fill) => {
+    open("page.html");
+    expect(labels("preview")).toEqual(["Preview file"]);
+    fill();
+    expect(labels("preview")).toEqual([]);
+    expect(commandItems("preview")).toEqual([]);
+    browser.showing = false;
+  });
+
+  it("stops being offered when the previewed file is deleted or changes kind", () => {
+    open("page.html");
+    files.renderedFor = "page.html";
+    files.view = "rendered";
+    expect(labels("source")).toEqual(["Show source"]);
+    files.everything = [{ path: "page.html", status: "D" }];
+    expect(labels("source")).toEqual([]);
+    expect(labels("preview")).toEqual([]);
+    open("main.rs");
+    files.view = "rendered";
+    expect(labels("source")).toEqual([]);
+    expect(labels("preview")).toEqual([]);
+  });
+
+  it("ranks the command first when the text starts its name, and not otherwise", () => {
+    open("page.html");
+    expect(labels("preview")[0]).toBe("Preview file");
+    // "e" matches projects as well, and starts no command name.
+    const both = labels("e");
+    expect(both).toContain("Preview file");
+    expect(both[0]).not.toBe("Preview file");
   });
 });
 

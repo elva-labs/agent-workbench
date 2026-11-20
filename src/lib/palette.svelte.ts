@@ -1,7 +1,14 @@
 import { tick } from "svelte";
 import { ACTIONS, chordFor, describe, type ActionKey } from "$lib/keys.svelte";
 import { actionFor, type Action } from "$lib/keymap";
-import { matches } from "$lib/files.svelte";
+import {
+  canPreview,
+  effectiveView,
+  files,
+  matches,
+  selectedEntry,
+  setView,
+} from "$lib/files.svelte";
 import { openRemote } from "$lib/remote.svelte";
 import {
   focusPane,
@@ -48,6 +55,7 @@ import { unfoldSessions } from "$lib/viewers.svelte";
 import { reduced } from "$lib/motion";
 import { canGoBack, openBack } from "$lib/rewind.svelte";
 import { compact } from "$lib/compact.svelte";
+import { browser } from "$lib/browser.svelte";
 
 /**
  * The palette: one field over the workbench in two lists. Go to narrows the
@@ -71,7 +79,7 @@ import { compact } from "$lib/compact.svelte";
 
 export type Mode = "goto" | "commands" | "new";
 
-export type CommandId = "new" | "newHere" | "newOther" | "open" | "remote" | "goBack";
+export type CommandId = "new" | "newHere" | "newOther" | "open" | "remote" | "goBack" | "preview" | "source";
 
 /** An answer to one of the questions a new session asks. */
 export type Step =
@@ -282,7 +290,31 @@ function standing(path: string): string {
   return used === null ? "" : since(used);
 }
 
-/** The sessions and the projects a query leaves, in that order. */
+/** The command that shows the file open in the viewer the other way, when
+    it is one the app renders: Preview file while its source is shown, Show
+    source while its rendering is. Offered with the viewer holding a file,
+    outside editor mode, which has its own views. */
+function viewCommand(): PaletteItem | null {
+  if (layout.mode !== "reviewing" || files.media !== null || files.pluginView !== null)
+    return null;
+  if (browser.showing) return null;
+  const entry = selectedEntry();
+  if (entry === null || !canPreview(entry)) return null;
+  const rendered = effectiveView() === "rendered";
+  return {
+    kind: "command",
+    id: rendered ? "command:source" : "command:preview",
+    label: rendered ? "Show source" : "Preview file",
+    group: null,
+    command: rendered ? "source" : "preview",
+    chord: "",
+  };
+}
+
+/** The sessions and the projects a query leaves, in that order, then the
+    command for the file in the viewer when something is typed that it
+    matches, first when the text is the start of its name: go to lists no
+    commands otherwise. */
 export function goToItems(query: string): PaletteItem[] {
   const now = Date.now();
   const rows = [...sessions.all]
@@ -311,6 +343,14 @@ export function goToItems(query: string): PaletteItem[] {
       end: standing(path),
     }))
     .filter((item) => matches(item.label, query));
+  const view = viewCommand();
+  const shown =
+    view !== null && query.trim() !== "" && matches(view.label, query) ? [view] : [];
+  // Typing the start of the command's name puts it first, so Enter runs it.
+  const first =
+    view !== null &&
+    shown.length > 0 &&
+    view.label.toLowerCase().startsWith(query.trim().toLowerCase());
   if (sessions.all.length === 0 && workspace.open.length === 0) {
     const open: PaletteItem = {
       kind: "command",
@@ -320,9 +360,9 @@ export function goToItems(query: string): PaletteItem[] {
       command: "open",
       chord: "",
     };
-    return matches(open.label, query) ? [open] : [];
+    return [...(matches(open.label, query) ? [open] : []), ...shown];
   }
-  return [...rows, ...projects];
+  return first ? [...shown, ...rows, ...projects] : [...rows, ...projects, ...shown];
 }
 
 /** The commands a query leaves: the jump to who needs you, then the ones
@@ -352,6 +392,7 @@ export function commandItems(query: string): PaletteItem[] {
   // only New session is offered, which asks for the project.
   const here = startsIn(onScreen()) ? onScreen() : null;
   const other = here === null ? null : otherWay(here);
+  const view = viewCommand();
   const commands: PaletteItem[] = [
     ...(workspace.open.length === 0 ? [] : [command("new", "New session")]),
     ...(here === null
@@ -373,6 +414,7 @@ export function commandItems(query: string): PaletteItem[] {
     ...(sessions.active !== null && canGoBack(sessions.active)
       ? [command("goBack", "Go back to an earlier message")]
       : []),
+    ...(view === null ? [] : [view]),
     command("open", "Open project"),
     command("remote", "Open remote project"),
   ];
@@ -714,6 +756,10 @@ export function pickItem(item: PaletteItem, alone = false): Outcome {
           return { type: "close", then: () => void pick() };
         case "remote":
           return { type: "close", then: () => void openRemote() };
+        case "preview":
+          return { type: "close", then: () => setView("rendered") };
+        case "source":
+          return { type: "close", then: () => setView("content") };
         case "goBack": {
           const key = sessions.active;
           if (key === null) return { type: "stay" };
