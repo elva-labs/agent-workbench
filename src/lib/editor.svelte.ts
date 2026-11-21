@@ -1027,9 +1027,11 @@ function change(key: string, spec: TransactionSpec) {
 }
 
 /** Colours a buffer as the language its path names: plain at once for a
-    path that names none, and once the language has loaded otherwise, if
-    the buffer still has that path. Only the colours change, never the
-    text, the cursor, the scroll or the history. */
+    path that names none, and once the language has loaded otherwise. A
+    buffer's key holds its path, so a buffer closed or renamed while its
+    language loads has no state under the key any more, and nothing is
+    coloured. Only the colours change, never the text, the cursor, the
+    scroll or the history. */
 function colour(key: string, path: string) {
   const colouring = colouringOf(path);
   if (colouring === null) {
@@ -1044,7 +1046,7 @@ function colour(key: string, path: string) {
 function setColouring(key: string, extension: Extension) {
   const state = states.get(key);
   if (state === undefined || language.get(state) === extension) return;
-  change(key, { effects: language.reconfigure(extension), annotations: Transaction.addToHistory.of(false) });
+  change(key, { effects: language.reconfigure(extension) });
 }
 
 /**
