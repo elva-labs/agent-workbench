@@ -2324,3 +2324,48 @@ test.describe("the window's own controls", () => {
       .toBe(true);
   });
 });
+
+// A row whose conversation went on from its notes lists the media its
+// earlier conversations presented, left from the last quit.
+test("lists the media of the conversations a row went on from", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  await installFakeCore(page, {
+    open: [PROJECT],
+    transcripts: [
+      { id: "c41d7e90-went-on", modified: now - 60, size: 100, title: "Pick this up from the notes" },
+      { id: "a2f06b13-first", modified: now - 3600, size: 100, title: "Layout rework" },
+    ],
+  });
+  await page.addInitScript(
+    ({ project }) => {
+      const ids = ["c41d7e90-went-on"];
+      const item = (id: string, owner: string, name: string, caption: string, at: number) => ({
+        id,
+        owner,
+        project,
+        files: [`${project}/shots/${name}.png`],
+        caption,
+        at,
+      });
+      localStorage.setItem("chord.mine", JSON.stringify({ [project]: ids }));
+      localStorage.setItem("chord.wentOn", JSON.stringify({ "c41d7e90-went-on": "a2f06b13-first" }));
+      localStorage.setItem(
+        "chord.media",
+        JSON.stringify([
+          item("m1", "a2f06b13-first", "one", "Layout before.", 1_700_000_001),
+          item("m2", "c41d7e90-went-on", "two", "Layout after.", 1_700_000_002),
+          item("m3", "ffffffff-other", "three", "Another row's.", 1_700_000_003),
+        ]),
+      );
+    },
+    { project: PROJECT },
+  );
+  await page.goto("/");
+  await page.getByTestId("past-session").filter({ hasText: "Pick this up from the notes" }).click();
+  await expect(page.getByTestId("media-fold")).toContainText("Media (2)");
+  await page.getByTestId("media-fold").click();
+  const rows = page.getByTestId("media-item");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText("Layout after.");
+  await expect(rows.nth(1)).toContainText("Layout before.");
+});
