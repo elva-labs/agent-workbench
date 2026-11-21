@@ -188,3 +188,21 @@
   --accent: #d8d8d8;
   --accent-soft: #2c2c2c;
 }
+
+/* Code on indigo, amber and rose: their cyan is the accent, close to their
+   blue, yellow or red, so types and headings take the default teal through
+   --code-cyan and stay apart from the other kinds of word. Mono keeps cyan
+   teal everywhere. */
+:root:is([data-palette="indigo"], [data-palette="amber"], [data-palette="rose"]) {
+  --code-cyan: #16706a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:is([data-palette="indigo"], [data-palette="amber"], [data-palette="rose"]):not([data-theme="light"]) {
+    --code-cyan: #58c0b4;
+  }
+}
+
+:root:is([data-palette="indigo"], [data-palette="amber"], [data-palette="rose"])[data-theme="dark"] {
+  --code-cyan: #58c0b4;
+}

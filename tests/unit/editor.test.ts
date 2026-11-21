@@ -41,10 +41,12 @@ import {
   walkView,
   zoomEditor,
   loadEditorSize,
+  moved,
 } from "$lib/editor.svelte";
-import { languageOf } from "$lib/codeEditor";
+import { language, plain } from "$lib/codeEditor";
+import { colouringOf } from "$lib/languages";
 import { flash } from "$lib/flash.svelte";
-import { undo } from "@codemirror/commands";
+import { undo, undoDepth } from "@codemirror/commands";
 import { clear, files, refresh, setScope } from "$lib/files.svelte";
 import { layout } from "$lib/layout.svelte";
 import { sessions } from "$lib/sessions.svelte";
@@ -68,6 +70,27 @@ const readOnly = new Set<string>();
 const writeErrors = new Map<string, string>();
 /** A stamp names exact content. */
 const stampOf = (text: string) => `s:${text}`;
+
+/** Go and Java load only once a test lets them, so a file can be closed or
+    renamed while its language is still loading. */
+const held = vi.hoisted(() => {
+  const gate = () => {
+    let open!: () => void;
+    const shut = new Promise<void>((resolve) => (open = resolve));
+    return { shut, open };
+  };
+  return { go: gate(), java: gate() };
+});
+
+vi.mock("@codemirror/lang-go", async (actual) => {
+  await held.go.shut;
+  return actual();
+});
+
+vi.mock("@codemirror/lang-java", async (actual) => {
+  await held.java.shut;
+  return actual();
+});
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -369,13 +392,70 @@ describe("the editor's text size", () => {
   });
 });
 
-describe("the language at the foot", () => {
-  it("is named from the file's extension", () => {
-    expect(languageOf("docs/layout.md")).toBe("Markdown");
-    expect(languageOf("src/lib/layout.svelte.ts")).toBe("TypeScript");
-    expect(languageOf("Dockerfile")).toBe("Dockerfile");
-    expect(languageOf("LICENSE")).toBe("Plain text");
-    expect(languageOf(".gitignore")).toBe("Plain text");
+describe("the colours of a file", () => {
+  it("come once its language has loaded, leaving the text, the cursor and the history as they were", async () => {
+    await openFile("src/b.rs");
+    const key = keyOf("/one", "src/b.rs");
+    const view = mount();
+    view.dispatch({ changes: { from: 0, insert: "// b\n" }, selection: { anchor: 3 } });
+    await colouringOf("src/b.rs");
+    await settle();
+    const state = stateOf(key)!;
+    expect(language.get(state)).not.toBe(plain);
+    expect(view.state).toBe(state);
+    expect(state.doc.toString()).toBe("// b\nfn b() {}\n");
+    expect(state.selection.main.head).toBe(3);
+    expect(undoDepth(state)).toBe(1);
+    undo(view);
+    expect(view.state.doc.toString()).toBe("fn b() {}\n");
+  });
+
+  it("come to a file not on screen, in its own state", async () => {
+    await openFile("src/b.rs", { keep: true });
+    await openFile("docs/a.md", { keep: true });
+    await colouringOf("src/b.rs");
+    await settle();
+    expect(language.get(stateOf(keyOf("/one", "src/b.rs"))!)).not.toBe(plain);
+  });
+
+  it("follow a file renamed to another language, and go for one renamed to none", async () => {
+    await openFile("src/b.rs");
+    await colouringOf("src/b.rs");
+    await settle();
+    const rust = language.get(stateOf(keyOf("/one", "src/b.rs"))!);
+    moved("/one", "src/b.rs", "src/b.txt");
+    expect(language.get(stateOf(keyOf("/one", "src/b.txt"))!)).toBe(plain);
+    moved("/one", "src/b.txt", "src/b.py");
+    await colouringOf("src/b.py");
+    await settle();
+    const python = language.get(stateOf(keyOf("/one", "src/b.py"))!);
+    expect(python).not.toBe(plain);
+    expect(python).not.toBe(rust);
+  });
+
+  it("do nothing for a file closed while its language loads", async () => {
+    disk.set("src/d.go", "package d\n");
+    await openFile("src/d.go");
+    const key = keyOf("/one", "src/d.go");
+    const loading = colouringOf("src/d.go")!;
+    closeTab(key);
+    expect(stateOf(key)).toBeNull();
+    held.go.open();
+    expect(await loading).not.toBeNull();
+    await settle();
+    expect(stateOf(key)).toBeNull();
+  });
+
+  it("do not reach a file renamed while its language loads", async () => {
+    disk.set("src/e.java", "class E {}\n");
+    await openFile("src/e.java");
+    const loading = colouringOf("src/e.java")!;
+    moved("/one", "src/e.java", "src/e.txt");
+    held.java.open();
+    expect(await loading).not.toBeNull();
+    await settle();
+    expect(stateOf(keyOf("/one", "src/e.java"))).toBeNull();
+    expect(language.get(stateOf(keyOf("/one", "src/e.txt"))!)).toBe(plain);
   });
 });
 

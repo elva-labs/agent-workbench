@@ -35,6 +35,22 @@
   /* A session that was open when the app last quit and has not started
      since. The terminal's yellow, so a theme that sets one sets both. */
   --dormant: var(--ansi-yellow);
+  /* What each kind of word in code is drawn in, in the editor: the
+     terminal's colours and the faint ink, so a palette or a theme that sets
+     those sets these, and a stylesheet can restate any one of them. Types
+     and headings take --code-cyan, which only a palette whose cyan is its
+     accent sets, and the terminal's cyan otherwise. */
+  --code-keyword: var(--ansi-magenta);
+  --code-string: var(--ansi-green);
+  --code-literal: var(--ansi-yellow);
+  --code-comment: var(--ink-3);
+  --code-function: var(--ansi-blue);
+  --code-type: var(--code-cyan, var(--ansi-cyan));
+  --code-tag: var(--ansi-red);
+  --code-attribute: var(--ansi-yellow);
+  --code-heading: var(--code-cyan, var(--ansi-cyan));
+  --code-link: var(--ansi-blue);
+  --code-invalid: var(--ansi-red);
 
   /* ansi */
   --ansi-black: #14181a;

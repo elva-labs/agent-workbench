@@ -1,6 +1,6 @@
 # The editor
 
-Editor mode puts the file tree and a plain text editor in the middle of the
+Editor mode puts the file tree and a text editor in the middle of the
 window and moves the agent to the right pane, where it keeps running. The
 switch at the end of the rightmost header flips between agent mode and
 editor mode, and so does <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd> or the
@@ -34,11 +34,48 @@ starts an [untitled file](#untitled-files).
 
 ## The editor
 
-A plain editor: line numbers, the line the cursor is on, undo, and find in
-the file, and nothing that completes or highlights. It is drawn in the
-terminal's [font](settings.md#font) and the look's colours, at a size of its
-own that the zoom chords step while it has the keyboard, kept in the
-window's storage.
+A plain editor: line numbers, the line the cursor is on, undo, find in the
+file, and code in colours by what each word is, and nothing that completes
+or checks. It is drawn in the terminal's [font](settings.md#font) and the
+look's colours, at a size of its own that the zoom chords step while it has
+the keyboard, kept in the window's storage.
+
+A file's name says what it is written in, by its extension or by its whole
+name, and the same reading names the language in the foot. The common
+languages are coloured: TypeScript and JavaScript, both with JSX, JSON with
+or without comments, HTML, CSS and SCSS, Markdown with the code blocks in
+it, Rust, Python, Go, Java, Kotlin, Swift, C, C++, C#, Ruby, Lua, YAML,
+TOML, XML and SVG, SQL, shell, PowerShell and Dockerfiles. A Dockerfile is
+known by its name, as are `Dockerfile.dev`, `prod.dockerfile` and a
+`Containerfile`; shell by `.bashrc`, `.bash_profile`, `.profile`,
+`.zshrc`, `.zprofile` and `.zshenv`, exactly; and JSON with comments by
+`.jsonc` and by `tsconfig.json`, `jsconfig.json` and the likes of
+`tsconfig.base.json`. Svelte and Vue files are coloured as
+HTML, which colours their scripts and styles and leaves their own template
+syntax plain. Any other file, and one with no extension, is plain. Each
+language is loaded the first time a file in it is opened, so the text
+shows at once and its colours follow a moment later, without the cursor,
+the scroll or the undo history moving. A code block in Markdown whose
+language fails to load stays plain. A file renamed, or an untitled file
+given a name, takes the colours of its new name.
+
+<kbd>Enter</kbd> starts a new line at the indentation of the line it
+leaves, in every file. In a coloured file, <kbd>Cmd</kbd><kbd>/</kbd>
+comments the lines out in its language's own syntax.
+
+The colours are the terminal's: keywords in its magenta, strings in green,
+numbers and other literals in yellow, functions in blue, types in cyan,
+tags in red and comments in the faint ink. In Markdown the marks around
+the prose, such as `#`, `-`, `>`, `*` and `~~`, are faint too. They follow the appearance, the
+palette and a [theme](settings.md#colour) of your own, which colours code
+through the terminal colours it sets. Indigo, amber and rose give the
+terminal's cyan their accent, so on them types and Markdown headings keep
+the default teal, apart from the other colours. Each kind of word has a custom
+property on the root, `--code-keyword`, `--code-string`,
+`--code-literal`, `--code-comment`, `--code-function`, `--code-type`,
+`--code-tag`, `--code-attribute`, `--code-heading`, `--code-link` and
+`--code-invalid`, so a [stylesheet of your own](settings.md#custom-styles)
+can restate any one of them. The viewer shows a file's text plain.
 
 Find opens a bar over the editor: the text, how many matches it has,
 Previous, Next and All, and whether case, whole words or a regular

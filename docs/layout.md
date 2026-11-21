@@ -14,8 +14,8 @@ content takes the rest. You enter it by opening a file or with
 <kbd>Cmd</kbd><kbd>D</kbd>, and leave it with <kbd>Esc</kbd>, the same chord,
 or the control in the viewer's bar.
 
-**Editing** is the window's other mode: the file tree and a plain text
-editor take the middle, and the agent moves to the right pane and keeps
+**Editing** is the window's other mode: the file tree and a text editor
+take the middle, and the agent moves to the right pane and keeps
 running. A two-part switch, Agent and Editor, flips between working and
 editing, and so does <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd> or the
 command palette. The mode belongs to the window and is remembered across a
