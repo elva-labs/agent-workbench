@@ -526,7 +526,7 @@ dependencies = [
 
 [[package]]
 name = "chord"
-version = "1.0.0-beta.7"
+version = "1.0.0-beta.8"
 dependencies = [
  "block2",
  "chord-core",
@@ -551,7 +551,7 @@ dependencies = [
 
 [[package]]
 name = "chord-core"
-version = "1.0.0-beta.7"
+version = "1.0.0-beta.8"
 dependencies = [
  "base64 0.23.1",
  "chord-core",
