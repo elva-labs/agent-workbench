@@ -60,7 +60,8 @@ comes from a small set of semantic tokens, ink, surface, rule, accent, add,
 del, and a palette restates the accent and the cast of the greys for both
 appearances while add and del stay what they are. The terminal's sixteen
 ANSI colours are derived from the same tokens, so the agent's own interface
-sits in the palette rather than beside it.
+sits in the palette rather than beside it, and the editor colours code in
+those sixteen too.
 
 Themes of your own sit after the five. A theme restates some of those
 tokens, for the light appearance and the dark, and may set a few measures of
@@ -71,7 +72,8 @@ the light ground into the dark appearance. Colours are taken only as hex and
 measures only as whole pixels within a limit, so a theme can recolour and
 reshape the window and do nothing else. A theme is chosen like a palette and
 deleted with the cross beside it; deleting the one in use goes back to
-teal. An agent can make one for you, as the next section describes, and the
+teal. A theme colours the editor's code through the terminal colours it
+sets. An agent can make one for you, as the next section describes, and the
 file described under [where they are kept](#where-they-are-kept) holds them
 for editing by hand.
 

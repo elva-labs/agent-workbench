@@ -1259,6 +1259,70 @@ test.describe("the find bar", () => {
   });
 });
 
+/** The colour a word in the editor is drawn in, and the colour a token
+    resolves to, both as the page computes them. */
+async function colours(page: Page, word: string, token: string) {
+  return page.evaluate(
+    ({ word, token }) => {
+      const span = [...document.querySelectorAll(".cm-line span")].find((each) => each.textContent === word);
+      const probe = document.createElement("span");
+      probe.style.color = `var(${token})`;
+      document.querySelector(".cm-content")!.append(probe);
+      const wanted = getComputedStyle(probe).color;
+      probe.remove();
+      return { drawn: span === undefined ? null : getComputedStyle(span).color, wanted };
+    },
+    { word, token },
+  );
+}
+
+test.describe("the colours of the code", () => {
+  test("arrive under what was typed, in the theme's colours, and follow it", async ({ page }) => {
+    await open(page, 1728);
+    await flip(page);
+    await treeRow(page, "mod.rs").click();
+    await expect.poll(() => editorText(page)).toContain("// src/cache/mod.rs");
+    await page.locator(".cm-content").click();
+    await page.keyboard.press("ControlOrMeta+End");
+    await page.keyboard.type("x");
+    await expect(page.getByTestId("editor-foot")).toContainText("Rust");
+
+    await expect.poll(async () => (await colours(page, "use", "--code-keyword")).drawn).not.toBeNull();
+    const keyword = await colours(page, "use", "--code-keyword");
+    expect(keyword.drawn).toBe(keyword.wanted);
+    const comment = await colours(page, "// src/cache/mod.rs", "--code-comment");
+    expect(comment.drawn).toBe(comment.wanted);
+    expect(keyword.drawn).not.toBe(comment.drawn);
+
+    // The colours came without moving the cursor or the history: one undo
+    // takes back what was typed.
+    await expect(page.getByTestId("editor-position")).toHaveText("Ln 4, Col 2");
+    await page.keyboard.press(`${MOD}+z`);
+    await expect.poll(() => editorText(page)).not.toContain("x");
+
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
+    const dark = await colours(page, "use", "--code-keyword");
+    expect(dark.drawn).toBe(dark.wanted);
+    expect(dark.drawn).not.toBe(keyword.drawn);
+  });
+
+  test("take a stylesheet's types and headings on a palette whose cyan is its accent", async ({ page }) => {
+    await page.setViewportSize({ width: 1728, height: 900 });
+    await installFakeCore(page, {
+      settings: { palette: "amber", userStyles: true },
+      styles: ":root { --code-type: rgb(1, 2, 3); --code-heading: rgb(4, 5, 6); }",
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-palette", "amber");
+    await flip(page);
+    await diskWrite(page, "kinds.rs", "fn take(cache: Cache) {}\n");
+    await treeRow(page, "kinds.rs").click();
+    await expect.poll(async () => (await colours(page, "Cache", "--code-type")).drawn).toBe("rgb(1, 2, 3)");
+    expect((await colours(page, "Cache", "--code-heading")).wanted).toBe("rgb(4, 5, 6)");
+  });
+});
+
 test.describe("a reload keeps the editor's place", () => {
   test.beforeEach(async ({ page }) => {
     await open(page, 1728);
