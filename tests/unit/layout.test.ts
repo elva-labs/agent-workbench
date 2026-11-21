@@ -117,24 +117,41 @@ describe("working layout", () => {
     layout.sessions = 400;
     layout.changes = 500;
     applyLayout(1100);
-    expect(layout.sessions).toBe(400);
-    expect(layout.changes).toBeLessThan(500);
-    expect(layout.changes).toBeGreaterThanOrEqual(MIN.changes);
+    expect(layout.sessionsDrawn).toBe(400);
+    expect(layout.changesDrawn).toBeLessThan(500);
+    expect(layout.changesDrawn).toBeGreaterThanOrEqual(MIN.changes);
   });
 
   it("only then squeezes the sessions pane", () => {
     layout.sessions = 400;
     layout.changes = 500;
     applyLayout(900);
-    expect(layout.changes).toBe(MIN.changes);
-    expect(layout.sessions).toBeLessThan(400);
-    expect(layout.sessions).toBeGreaterThanOrEqual(MIN.sessions);
+    expect(layout.changesDrawn).toBe(MIN.changes);
+    expect(layout.sessionsDrawn).toBeLessThan(400);
+    expect(layout.sessionsDrawn).toBeGreaterThanOrEqual(MIN.sessions);
+  });
+
+  it("keeps the widths chosen while it squeezes them, and draws them again with room", () => {
+    layout.sessions = 400;
+    layout.changes = 500;
+    applyLayout(900);
+    expect(layout.sessions).toBe(400);
+    expect(layout.changes).toBe(500);
+    // Anything saved while squeezed saves the widths chosen.
+    togglePane("sessions");
+    togglePane("sessions");
+    const saved = JSON.parse(localStorage.getItem("chord.layout")!);
+    expect(saved.sessions).toBe(400);
+    expect(saved.changes).toBe(500);
+    applyLayout(1600);
+    expect(layout.sessionsDrawn).toBe(400);
+    expect(layout.changesDrawn).toBe(500);
   });
 
   it("raises a pane that is somehow already under its minimum", () => {
     layout.sessions = 40;
     applyLayout(1600);
-    expect(layout.sessions).toBe(MIN.sessions);
+    expect(layout.sessionsDrawn).toBe(MIN.sessions);
   });
 });
 
@@ -291,7 +308,7 @@ describe("review mode", () => {
     layout.review = 2000;
     layout.mode = "reviewing";
     applyLayout(1200);
-    expect(1200 - 6 - layout.review).toBeGreaterThanOrEqual(MIN.agent);
+    expect(1200 - 6 - layout.reviewDrawn).toBeGreaterThanOrEqual(MIN.agent);
   });
 
   it("keeps the viewer readable even in a narrow window", () => {
@@ -318,8 +335,8 @@ describe("review mode", () => {
   });
 
   it("takes more than that when the changes pane was already wide", () => {
-    applyLayout(1600);
     layout.changes = 1200;
+    applyLayout(1600);
     enterReview();
     expect(layout.review).toBeGreaterThan(Math.round(1600 * REVIEW_SHARE));
   });
@@ -336,8 +353,10 @@ describe("review mode", () => {
     layout.mode = "reviewing";
     layout.review = DEFAULT.review;
     applyLayout(FOLDED + SPLITTER + MIN_REVIEW + SPLITTER + MIN.agent);
-    expect(layout.review).toBe(MIN_REVIEW);
-    expect(layout.tree).toBe(MIN.tree);
+    expect(layout.reviewDrawn).toBe(MIN_REVIEW);
+    expect(layout.treeDrawn).toBe(MIN.tree);
+    expect(layout.review).toBe(DEFAULT.review);
+    expect(layout.tree).toBe(DEFAULT.tree);
   });
 
   it("remembers the two widths separately", () => {
@@ -571,7 +590,7 @@ describe("the tree column", () => {
     enterReview();
     layout.tree = 900;
     applyLayout(1600);
-    expect(layout.review - INNER - layout.tree).toBeGreaterThanOrEqual(
+    expect(layout.reviewDrawn - INNER - layout.treeDrawn).toBeGreaterThanOrEqual(
       MIN.viewer,
     );
   });
@@ -581,7 +600,7 @@ describe("the tree column", () => {
     layout.review = MIN_REVIEW;
     layout.tree = 10;
     applyLayout(1600);
-    expect(layout.tree).toBe(MIN.tree);
+    expect(layout.treeDrawn).toBe(MIN.tree);
   });
 
   it("is persisted with the other widths", () => {
@@ -629,14 +648,15 @@ describe("the terminal panel", () => {
     layout.terminalChosen = true;
     layout.terminal = 2000;
     applyLayout(1600, 700);
-    expect(700 - SPLITTER - layout.terminal).toBeGreaterThanOrEqual(MIN.panes);
+    expect(700 - SPLITTER - layout.terminalDrawn).toBeGreaterThanOrEqual(MIN.panes);
+    expect(layout.terminal).toBe(2000);
   });
 
   it("never drops below its own minimum", () => {
     layout.terminalChosen = true;
     layout.terminal = 10;
     applyLayout(1600, 900);
-    expect(layout.terminal).toBe(MIN.terminal);
+    expect(layout.terminalDrawn).toBe(MIN.terminal);
   });
 
   // The same rule as the side panes: fold rather than squeeze, and come back
@@ -708,7 +728,7 @@ describe("the terminal list", () => {
   it("gives way before the shells do", () => {
     layout.terminalList = 900;
     applyLayout(1000, 900);
-    expect(1000 - INNER - layout.terminalList).toBeGreaterThanOrEqual(
+    expect(1000 - INNER - layout.terminalListDrawn).toBeGreaterThanOrEqual(
       MIN.shells,
     );
   });
@@ -716,7 +736,7 @@ describe("the terminal list", () => {
   it("never drops below its own minimum", () => {
     layout.terminalList = 10;
     applyLayout(1600, 900);
-    expect(layout.terminalList).toBe(MIN.terminalList);
+    expect(layout.terminalListDrawn).toBe(MIN.terminalList);
   });
 
   it("is persisted with the other widths", () => {
@@ -1181,10 +1201,10 @@ describe("the changes pane's least width", () => {
         layout.changes = DEFAULT.changes + CONTROLS_STEP;
         applyLayout(NEEDS_CHANGES + CONTROLS_STEP);
         expect(changesVisible()).toBe(true);
-        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        expect(layout.changesDrawn).toBe(MIN.changes + CONTROLS_STEP);
         layout.changes = MIN.changes;
         applyLayout(1200);
-        expect(layout.changes).toBe(MIN.changes + CONTROLS_STEP);
+        expect(layout.changesDrawn).toBe(MIN.changes + CONTROLS_STEP);
         // Below what it needs beside the folded sessions pane, it goes.
         applyLayout(NEEDS_CHANGES + CONTROLS_STEP - 1);
         expect(changesVisible()).toBe(false);

@@ -355,11 +355,15 @@ A pane can be folded or missing for two reasons, and they are kept apart:
 - **forced**: the window cannot hold it. Transient, never persisted.
 
 Without the distinction, one stint in split-screen would permanently forget
-that you like the sessions pane open. The same holds for the tree column and
-the agent while editing: hidden by the window, they come back when it grows,
-and narrowed by it, they widen again to the width chosen, which a squeeze
-never replaces; the agent hidden with its toggle stays hidden until asked
-for.
+that you like the sessions pane open. Widths and heights are kept the same
+way: every pane, the viewer, the tree column, the terminal panel and its list
+have the size you dragged them to and the size the window leaves them. A
+narrow window draws them smaller, and widens them again to the size chosen
+once it grows, which a squeeze never replaces; only the sizes chosen are
+saved, so a restart in a small window does not shrink them for good. The
+same holds for the tree column and the agent while editing: hidden by the
+window, they come back when it grows; the agent hidden with its toggle stays
+hidden until asked for.
 
 ## Hiding is free, resizing is not
 

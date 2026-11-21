@@ -592,8 +592,8 @@
       tree stands beside it. */
   let peekWidth = $derived(
     editing && editTreeVisible()
-      ? `max(${layout.sessions}px, calc(${folded() + layout.editTreeDrawn}px + var(--splitter-w) + var(--splitter-inner-w)))`
-      : `${layout.sessions}px`,
+      ? `max(${layout.sessionsDrawn}px, calc(${folded() + layout.editTreeDrawn}px + var(--splitter-w) + var(--splitter-inner-w)))`
+      : `${layout.sessionsDrawn}px`,
   );
 
   // Turning compact mode on or off lays the window out again in one step,
@@ -650,16 +650,16 @@
   });
 
   function resizeSessions(dx: number) {
-    layout.sessions = Math.max(MIN.sessions, layout.sessions + dx);
+    layout.sessions = Math.max(MIN.sessions, layout.sessionsDrawn + dx);
     applyLayout(viewport);
   }
 
   function resizeChanges(dx: number) {
     if (reviewing) {
-      layout.review = Math.max(MIN_REVIEW, layout.review - dx);
+      layout.review = Math.max(MIN_REVIEW, layout.reviewDrawn - dx);
       layout.reviewTouched = true;
     } else {
-      layout.changes = Math.max(minChanges(), layout.changes - dx);
+      layout.changes = Math.max(minChanges(), layout.changesDrawn - dx);
       layout.changesDragged = true;
     }
     applyLayout(viewport);
@@ -679,7 +679,7 @@
 
   // The bar sits above the panel, so dragging it down makes the panel shorter.
   function resizeTerminal(dy: number) {
-    layout.terminal = Math.max(MIN.terminal, layout.terminal - dy);
+    layout.terminal = Math.max(MIN.terminal, layout.terminalDrawn - dy);
     applyLayout(viewport, stack);
   }
 
@@ -709,7 +709,7 @@
 
   /** What moves the meeting points: the columns, the panel's height and
       the window. */
-  let meetingKey = $derived(`${columns}|${layout.terminal}|${viewport}|${stack}|${theme.look}`);
+  let meetingKey = $derived(`${columns}|${layout.terminalDrawn}|${viewport}|${stack}|${theme.look}`);
 
   /** Whether a modal dialog other than the palette is on screen: the
       settings, the remote and resume lists, an action's input, or a prompt
@@ -1075,7 +1075,7 @@
       class:compact={compact.on}
       class:out={compact.on && !layout.sessionsPeek}
       inert={compact.on && !layout.sessionsPeek}
-      style:--sessions-w="{layout.sessions}px"
+      style:--sessions-w="{layout.sessionsDrawn}px"
       style:--peek-w={peekWidth}
       data-testid="sessions-slot"
     >
@@ -1144,7 +1144,7 @@
     class="terminal-group"
     class:hidden={!terminalVisible() && terminalOpen.current === 0}
     class:sliding={terminalOpen.current !== 1}
-    style:height="calc({layout.terminal * terminalOpen.current}px + var(--splitter-w) * {terminalOpen.current})"
+    style:height="calc({layout.terminalDrawn * terminalOpen.current}px + var(--splitter-w) * {terminalOpen.current})"
   >
     {#if terminalVisible() || terminalOpen.current > 0}
       <Splitter
@@ -1156,7 +1156,7 @@
         onCommit={saveLayout}
       />
     {/if}
-    <div class="terminal-slot" style:height="{layout.terminal}px" data-testid="terminal-slot">
+    <div class="terminal-slot" style:height="{layout.terminalDrawn}px" data-testid="terminal-slot">
       <TerminalPanel />
     </div>
   </div>

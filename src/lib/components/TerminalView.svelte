@@ -436,8 +436,8 @@
     shown;
     layout.width;
     layout.height;
-    layout.tree;
-    layout.terminal;
+    layout.treeDrawn;
+    layout.terminalDrawn;
     const held = sliding();
     if (active && shown && !held) {
       untrack(() => queueMicrotask(() => measure()));

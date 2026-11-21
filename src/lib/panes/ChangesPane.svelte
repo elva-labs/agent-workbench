@@ -720,7 +720,7 @@
   }
 
   function resizeTree(dx: number) {
-    layout.tree = Math.max(MIN.tree, layout.tree + dx);
+    layout.tree = Math.max(MIN.tree, layout.treeDrawn + dx);
     applyLayout(layout.width);
   }
 
@@ -1116,7 +1116,7 @@
     class:editing
     class:treeless={editing && !editTreeVisible()}
     class:full={fullView}
-    style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
+    style:--tree-w="{editing ? layout.editTreeDrawn : layout.treeDrawn}px"
     style:width={changesHeld() === 0 ? null : `calc(100% + ${changesHeld()}px)`}
   >
     <!-- The tree's column: the tree, and beneath it what the agent

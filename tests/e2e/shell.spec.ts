@@ -385,6 +385,40 @@ test.describe("responsive collapse", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await sessionsFolded(page);
   });
+
+  // A narrow stint squeezes the width the user dragged to, and whatever is
+  // saved meanwhile keeps the width chosen, so it comes back with the room
+  // and after a restart.
+  test("gives a dragged width back when the window grows, and after a reload", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await columnsAtRest(page);
+    const divider = (await page.locator(".splitter[data-divider='changes']").boundingBox())!;
+    const x = divider.x + divider.width / 2;
+    const y = divider.y + 200;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 200, y, { steps: 5 });
+    await page.mouse.up();
+    await columnsAtRest(page);
+    const chosen = await widthOf(page, CHANGES);
+
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeLessThan(chosen - 100);
+    // Something else saves the layout while the width is squeezed.
+    await page.keyboard.press(`${MOD}+b`);
+    await page.keyboard.press(`${MOD}+b`);
+    await columnsAtRest(page);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeCloseTo(chosen, 0);
+
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeCloseTo(chosen, 0);
+  });
 });
 
 test.describe("the file tree", () => {

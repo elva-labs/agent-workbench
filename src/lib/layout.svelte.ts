@@ -201,6 +201,11 @@ export const NEEDS_TERMINAL = MIN.panes + SPLITTER + MIN.terminal;
 const KEY = "chord.layout";
 
 export const layout = $state({
+  /** The widths and heights below are the ones chosen: by a drag, or the
+      defaults. Each has a drawn counterpart, the size the window leaves it,
+      which is what the panes take. A squeeze never replaces the size
+      chosen, which comes back once there is room, and only the chosen
+      sizes are persisted. */
   sessions: DEFAULT.sessions as number,
   changes: defaultChanges(),
   /** Whether the user dragged the changes pane's width, which then stays
@@ -210,6 +215,12 @@ export const layout = $state({
   tree: DEFAULT.tree as number,
   terminal: DEFAULT.terminal as number,
   terminalList: DEFAULT.terminalList as number,
+  sessionsDrawn: DEFAULT.sessions as number,
+  changesDrawn: defaultChanges(),
+  reviewDrawn: DEFAULT.review as number,
+  treeDrawn: DEFAULT.tree as number,
+  terminalDrawn: DEFAULT.terminal as number,
+  terminalListDrawn: DEFAULT.terminalList as number,
   /** The tree column and the agent pane while editing, remembered apart
       from the other shapes' widths. */
   editTree: DEFAULT.editTree as number,
@@ -353,7 +364,7 @@ export const sessionsOpen = new Tween(1);
 /** The sessions column's width in whole pixels, the splitter beside it
     left out, `open` of the way from folded to open. */
 function sessionsWidth(open: number): number {
-  return Math.round(folded() + (layout.sessions - folded()) * open);
+  return Math.round(folded() + (layout.sessionsDrawn - folded()) * open);
 }
 
 /** The sessions column's width as the grid takes it, folded or open or on
@@ -476,9 +487,9 @@ export function rightmost(): PaneId {
     padding again before the title. */
 export const CONTROLS_INSET = 88;
 
-/** The width the changes pane is currently asking for. */
+/** The width the changes pane is currently asking for, as drawn. */
 export function changesWidth() {
-  return layout.mode === "reviewing" ? layout.review : layout.changes;
+  return layout.mode === "reviewing" ? layout.reviewDrawn : layout.changesDrawn;
 }
 
 /**
@@ -518,6 +529,11 @@ function leaveHiddenPane() {
 function resolveLayout(width: number, height: number) {
   layout.width = width;
   layout.height = height;
+  layout.sessionsDrawn = Math.max(MIN.sessions, layout.sessions);
+  layout.changesDrawn = layout.changes;
+  layout.reviewDrawn = layout.review;
+  layout.treeDrawn = layout.tree;
+  layout.terminalDrawn = layout.terminal;
 
   // The terminal is independent of the shape: it sits under whichever one is
   // showing, and only the height decides whether it fits.
@@ -526,14 +542,11 @@ function resolveLayout(width: number, height: number) {
     if (layout.focus === "terminal") layout.focus = "agent";
   } else {
     const room = height - SPLITTER - MIN.panes;
-    layout.terminal = Math.min(Math.max(layout.terminal, MIN.terminal), room);
+    layout.terminalDrawn = clamp(layout.terminal, MIN.terminal, room);
   }
   // Inside the panel, the shells keep their minimum and the list gives way.
   const listRoom = width - INNER - MIN.shells;
-  layout.terminalList = Math.min(
-    Math.max(layout.terminalList, MIN.terminalList),
-    Math.max(MIN.terminalList, listRoom),
-  );
+  layout.terminalListDrawn = clamp(layout.terminalList, MIN.terminalList, listRoom);
 
   if (layout.mode === "editing") {
     resolveEditing(width);
@@ -548,17 +561,11 @@ function resolveLayout(width: number, height: number) {
 
     const beside = width - foldedColumn();
     const room = layout.agentHidden ? beside : beside - SPLITTER - MIN.agent;
-    layout.review = Math.min(
-      Math.max(layout.review, MIN_REVIEW),
-      Math.max(MIN_REVIEW, room),
-    );
+    layout.reviewDrawn = clamp(layout.review, MIN_REVIEW, room);
 
     // Inside the pane, the content keeps its minimum and the tree gives way.
-    const treeRoom = layout.review - INNER - MIN.viewer;
-    layout.tree = Math.min(
-      Math.max(layout.tree, MIN.tree),
-      Math.max(MIN.tree, treeRoom),
-    );
+    const treeRoom = layout.reviewDrawn - INNER - MIN.viewer;
+    layout.treeDrawn = clamp(layout.tree, MIN.tree, treeRoom);
     return;
   }
 
@@ -596,8 +603,8 @@ function resolveLayout(width: number, height: number) {
     sessions -= Math.min(overflow, sessions - MIN.sessions);
   }
 
-  layout.sessions = sessions;
-  layout.changes = changes;
+  layout.sessionsDrawn = sessions;
+  layout.changesDrawn = changes;
 }
 
 /**
@@ -624,7 +631,7 @@ function resolveEditing(width: number) {
   const tree = layout.editTreeForced ? 0 : layout.editTreeDrawn + INNER;
 
   layout.sessionsForced =
-    !compact.on && width - layout.sessions - SPLITTER - tree - agent < MIN.editor;
+    !compact.on && width - layout.sessionsDrawn - SPLITTER - tree - agent < MIN.editor;
   layout.sessionsPeek &&= compact.on || (!sessionsVisible() && layout.sessionsForced);
 }
 
@@ -634,7 +641,7 @@ function clamp(value: number, least: number, most: number) {
 
 /** What the sessions column takes while editing, the splitter included. */
 function sessionsColumn() {
-  return sessionsVisible() ? layout.sessions + SPLITTER : foldedColumn();
+  return sessionsVisible() ? layout.sessionsDrawn + SPLITTER : foldedColumn();
 }
 
 /** Drags the agent pane's edge while editing, from where it is drawn: the
@@ -720,10 +727,10 @@ export function enterReview() {
   // mode change rather than on every file, and it gets the width straight
   // back on exit.
   if (!layout.reviewTouched) {
-    const freed = sessionsVisible() ? layout.sessions - folded() : 0;
+    const freed = sessionsVisible() ? layout.sessionsDrawn - folded() : 0;
     layout.review = Math.max(
       DEFAULT.review,
-      layout.changes + freed,
+      layout.changesDrawn + freed,
       Math.round(layout.width * REVIEW_SHARE),
     );
   }
@@ -870,6 +877,12 @@ export function loadLayout() {
     layout.editAgentDragged = editAgentDragged;
     // Drawn as read until the layout is laid out for the window, so the
     // first frame after a restart draws them, not the defaults.
+    layout.sessionsDrawn = layout.sessions;
+    layout.changesDrawn = layout.changes;
+    layout.reviewDrawn = layout.review;
+    layout.treeDrawn = layout.tree;
+    layout.terminalDrawn = layout.terminal;
+    layout.terminalListDrawn = layout.terminalList;
     layout.editTreeDrawn = layout.editTree;
     layout.editAgentDrawn = layout.editAgent;
     if (typeof v.agentChosen === "boolean") layout.agentChosen = v.agentChosen;
