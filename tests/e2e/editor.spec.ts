@@ -1305,6 +1305,22 @@ test.describe("the colours of the code", () => {
     expect(dark.drawn).toBe(dark.wanted);
     expect(dark.drawn).not.toBe(keyword.drawn);
   });
+
+  test("take a stylesheet's types and headings on a palette whose cyan is its accent", async ({ page }) => {
+    await page.setViewportSize({ width: 1728, height: 900 });
+    await installFakeCore(page, {
+      settings: { palette: "amber", userStyles: true },
+      styles: ":root { --code-type: rgb(1, 2, 3); --code-heading: rgb(4, 5, 6); }",
+    });
+    await page.goto("/");
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-palette", "amber");
+    await flip(page);
+    await diskWrite(page, "kinds.rs", "fn take(cache: Cache) {}\n");
+    await treeRow(page, "kinds.rs").click();
+    await expect.poll(async () => (await colours(page, "Cache", "--code-type")).drawn).toBe("rgb(1, 2, 3)");
+    expect((await colours(page, "Cache", "--code-heading")).wanted).toBe("rgb(4, 5, 6)");
+  });
 });
 
 test.describe("a reload keeps the editor's place", () => {
