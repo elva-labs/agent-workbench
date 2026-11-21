@@ -25,6 +25,7 @@ import {
 } from "$lib/sessions.svelte";
 import { reset as resetWorkspace, workspace } from "$lib/workspace.svelte";
 import { resetHeld, switched } from "$lib/show.svelte";
+import { resetGoingOn } from "$lib/goingOn.svelte";
 
 vi.mock("$lib/core", () => ({
   core: () => ({
@@ -72,6 +73,7 @@ const request = (
 beforeEach(() => {
   localStorage.clear();
   resetMedia();
+  resetGoingOn();
   resetHeld();
   closeViewer();
   resetWorkspace();
@@ -220,6 +222,56 @@ describe("presenting", () => {
     expect(mine).toHaveLength(50);
     expect(mine[0].files).toEqual(["/one/54.png"]);
     expect(mine[49].files).toEqual(["/one/5.png"]);
+  });
+
+  describe("for a session that went on from another conversation", () => {
+    /** A window that left media under a conversation which a later one went
+        on from. */
+    function wentOn(lineage: Record<string, string>) {
+      localStorage.setItem("chord.wentOn", JSON.stringify(lineage));
+      resetGoingOn();
+    }
+
+    it("lists what its earlier conversations presented, from what was stored before", () => {
+      const row = create("/one");
+      started(row.key, "pty-1", "old-id");
+      presented(request(["/one/plan.md"], "/one", "Plan.", row.token), 1_700_000_001_000);
+      resetMedia();
+      loadMedia();
+      wentOn({ "new-id": "old-id" });
+      expect(itemsFor("new-id").map((item) => item.caption)).toEqual(["Plan."]);
+      // The conversation it went on from lists only its own.
+      expect(itemsFor("old-id")).toHaveLength(1);
+      expect(itemsFor("other-id")).toEqual([]);
+    });
+
+    it("lists the whole line, newest first, and a call after going on joins it", () => {
+      wentOn({ second: "first", third: "second" });
+      const row = create("/one");
+      started(row.key, "pty-1", "first");
+      presented(request(["/one/a.png"], "/one", "One.", row.token), 1_700_000_001_000);
+      started(row.key, "pty-1", "second");
+      presented(request(["/one/b.png"], "/one", "Two.", row.token), 1_700_000_002_000);
+      started(row.key, "pty-1", "third");
+      presented(request(["/one/c.png"], "/one", "Three.", row.token), 1_700_000_003_000);
+      expect(itemsFor("third").map((item) => item.caption)).toEqual(["Three.", "Two.", "One."]);
+      select(row.key);
+      expect(listed().map((item) => item.caption)).toEqual(["Three.", "Two.", "One."]);
+    });
+
+    it("keeps one row for a set of files presented again after going on", () => {
+      wentOn({ "new-id": "old-id" });
+      const row = create("/one");
+      started(row.key, "pty-1", "old-id");
+      presented(request(["/one/plan.md"], "/one", "Early.", row.token), 1_700_000_001_000);
+      const first = itemsFor("old-id")[0];
+      started(row.key, "pty-1", "new-id");
+      presented(request(["/one/plan.md"], "/one", "Later.", row.token), 1_700_000_002_000);
+      expect(itemsFor("new-id")).toHaveLength(1);
+      expect(itemsFor("new-id")[0].id).toBe(first.id);
+      expect(itemsFor("new-id")[0].caption).toBe("Later.");
+      expect(media.items).toHaveLength(1);
+    });
   });
 
   it("opens a call again from the list, and closes with the viewer", () => {

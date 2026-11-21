@@ -10,12 +10,14 @@
  * to, or the project itself when no session is. The list names files on
  * disk rather than keeping copies, so a file the agent later removes shows
  * as gone rather than stale, and it survives a restart the way session
- * names do.
+ * names do. A session that goes on from its notes under a new conversation
+ * keeps listing what its earlier conversations presented.
  */
 
 import { marked } from "marked";
 import { runnable } from "$lib/bang";
 import { core, type Media, type PresentRequest } from "$lib/core";
+import { lineageOf } from "$lib/goingOn.svelte";
 import { forProject, sessions } from "$lib/sessions.svelte";
 import { held, projectFor, sessionFor } from "$lib/show.svelte";
 import { activate, workspace } from "$lib/workspace.svelte";
@@ -90,10 +92,24 @@ function sameFiles(a: string[], b: string[]): boolean {
   return [...a].sort().every((file, i) => file === sorted[i]);
 }
 
+/** The owners whose media a session lists: the conversations it went on
+    from and itself, or the project's own alone. */
+function ownersOf(owner: string): Set<string> {
+  return new Set(owner.startsWith("project:") ? [owner] : lineageOf(owner));
+}
+
 /** The items for a session, newest first, and the project's own when it
-    is asked for. */
+    is asked for. A session lists the media of every conversation it went
+    on from as well as its own; a set of files presented in more than one
+    of them is listed once, as its latest call has it. */
 export function itemsFor(owner: string): MediaItem[] {
-  return media.items.filter((item) => item.owner === owner).reverse();
+  const line = ownersOf(owner);
+  const listed: MediaItem[] = [];
+  for (const item of [...media.items].reverse()) {
+    if (!line.has(item.owner)) continue;
+    if (!listed.some((seen) => sameFiles(seen.files, item.files))) listed.push(item);
+  }
+  return listed;
 }
 
 /** What the changes pane lists: the active session's, or with none the
@@ -121,9 +137,10 @@ export function presented(request: PresentRequest, now = Date.now()) {
   });
   if (project === null) return;
   const owner = ownerFor(request, project);
+  const line = ownersOf(owner);
   const again = media.items.find(
     (candidate) =>
-      candidate.owner === owner && sameFiles(candidate.files, request.files),
+      line.has(candidate.owner) && sameFiles(candidate.files, request.files),
   );
   const item: MediaItem = {
     id:
