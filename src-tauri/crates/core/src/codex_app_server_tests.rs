@@ -1646,6 +1646,42 @@ fn an_interrupt_names_the_turn_or_waits_for_it() {
 }
 
 #[test]
+fn an_effort_set_to_none_runs_at_the_model_s_default_and_a_missing_one_is_kept() {
+    let mut driver = ready();
+    let update = |driver: &mut AppServer, settings: Value| {
+        events(
+            driver,
+            &[notification(
+                "thread/settings/updated",
+                json!({"threadId": THREAD, "threadSettings": settings}),
+            )],
+        )
+    };
+    let at = |effort: &str| Event::Configured {
+        model: Some("gpt-a".into()),
+        mode: Some("auto".into()),
+        effort: Some(effort.into()),
+        efforts: vec!["low".into(), "medium".into(), "high".into()],
+    };
+    assert_eq!(update(&mut driver, json!({"effort": "high"})), [at("high")]);
+    // Said nothing of the effort: it stays.
+    assert_eq!(update(&mut driver, json!({"model": "gpt-a"})), []);
+    // Set to none: the model's own default, which the chip follows.
+    assert_eq!(update(&mut driver, json!({"effort": null})), [at("medium")]);
+    assert_eq!(update(&mut driver, json!({"effort": null})), []);
+    // To another model with none: that model's default.
+    assert_eq!(
+        update(&mut driver, json!({"model": "gpt-b", "effort": null})),
+        [Event::Configured {
+            model: Some("gpt-b".into()),
+            mode: Some("auto".into()),
+            effort: Some("minimal".into()),
+            efforts: vec!["minimal".into()],
+        }]
+    );
+}
+
+#[test]
 fn model_effort_and_mode_are_settled_here_and_go_with_the_next_turn() {
     let mut driver = ready();
     let configured = |sending: Sending| match sending {

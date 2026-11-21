@@ -437,7 +437,8 @@ naming the session and its kind:
   says nothing in its stream of a model or an effort that a slash command
   such as `/model` or `/effort` sets, so after a turn that ran a command
   the core reads the agent's settings again, and this follows where they
-  changed.
+  changed. Codex says when a thread's settings change; an effort it sets
+  to none is the model's own default, and the chip shows that one.
 - **titled**: the user named the conversation through the agent's own
   rename command, with the name. Codex, which takes no slash commands
   here, never says it.

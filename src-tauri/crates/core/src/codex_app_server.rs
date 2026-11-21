@@ -2324,18 +2324,25 @@ impl AppServer {
                     self.workspace = Some(settings["sandboxPolicy"].clone());
                 }
                 let model = text(&settings["model"]).filter(|_| self.changes.model.is_none());
-                let effort = text(&settings["effort"]).filter(|_| self.changes.effort.is_none());
                 let mode = mode_of(&settings["approvalPolicy"], &settings["sandboxPolicy"])
                     .filter(|_| self.changes.mode.is_none());
-                for (now, new) in [
-                    (&mut self.model, model),
-                    (&mut self.effort, effort),
-                    (&mut self.mode, mode),
-                ] {
+                for (now, new) in [(&mut self.model, model), (&mut self.mode, mode)] {
                     if new.is_some() && new != *now {
                         *now = new;
                         changed = true;
                     }
+                }
+                // An effort of null is no effort set, so the thread runs at
+                // its model's default; a missing one leaves it as it was.
+                let effort = match settings.get("effort") {
+                    _ if self.changes.effort.is_some() => None,
+                    Some(Value::Null) => self.default_effort(self.model.as_deref()),
+                    Some(effort) => text(effort),
+                    None => None,
+                };
+                if effort.is_some() && effort != self.effort {
+                    self.effort = effort;
+                    changed = true;
                 }
                 if changed && self.ready {
                     out.events.push(self.configured());
