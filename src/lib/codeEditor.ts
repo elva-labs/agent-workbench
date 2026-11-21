@@ -1,4 +1,4 @@
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -12,6 +12,7 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { indentService } from "@codemirror/language";
 import {
   SearchQuery,
   closeSearchPanel,
@@ -373,6 +374,9 @@ export const extensions: Extension[] = [
   ]),
   theme,
   language.of(plain),
+  // Enter gives a new line the indentation of the line it leaves, in every
+  // language: the language's own rules count in a unit the file may not use.
+  Prec.highest(indentService.of(() => null)),
   EditorView.updateListener.of((update) => listener?.(update)),
 ];
 
