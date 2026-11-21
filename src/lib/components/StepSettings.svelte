@@ -13,7 +13,7 @@
   import { tick } from "svelte";
   import type { Workflow, WorkflowModel } from "$lib/core";
   import { installed } from "$lib/agent.svelte";
-  import { AGENT_LABELS, modelsOf, offeredAgents, sameModel } from "$lib/models";
+  import { AGENT_LABELS, offeredAgents, offeredModels, sameModel } from "$lib/models";
   import {
     MOST_PARALLEL,
     MOST_ROUNDS,
@@ -74,7 +74,7 @@
   /** What a group of checkboxes shows for an agent: the models it offers,
       then any the step already names that the list does not hold. */
   function optionsFor(agent: WorkflowModel["agent"]) {
-    const known = modelsOf(agent);
+    const known = offeredModels(agent);
     const extra = step.models
       .filter((model) => model.agent === agent && !known.some((option) => option.model === model.model))
       .map((model) => ({ agent, model: model.model, label: model.model }));

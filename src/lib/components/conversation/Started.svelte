@@ -3,6 +3,7 @@
   import { agentLabel } from "$lib/agent.svelte";
   import { focusPane } from "$lib/layout.svelte";
   import { modelLabel } from "$lib/models";
+  import { hostOf } from "$lib/remote.svelte";
   import { placeTextOf } from "$lib/conductor.svelte";
   import { isLive, label, sessions, type Session } from "$lib/sessions.svelte";
   import { conducting, stateWord } from "$lib/orchestrator.svelte";
@@ -35,6 +36,7 @@
   <div class="card" class:stepped data-testid="started-sessions">
     {#each rows as session (session.key)}
       {@const at = placeTextOf(session.key)}
+      {@const model = session.runsOn ?? session.model}
       <div class="row" data-testid="started-session">
         <span
           class="dot"
@@ -49,7 +51,7 @@
         <span class="state" class:asking={session.needs === "permission"} data-testid="started-state">
           {at?.round == null ? "" : `${at.round}, `}{session.needs === "permission" ? "asking" : stateWord(session)}
         </span>
-        <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
+        <span class="model"><Plain text={model !== null ? modelLabel(session.agent, model, session.account, hostOf(session.project)) : agentLabel(session.agent)} /></span>
         <button class="open" tabindex="-1" data-thread-item onclick={() => open(session)} data-testid="open-started">Open</button>
       </div>
     {/each}

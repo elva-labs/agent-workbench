@@ -1,12 +1,14 @@
 import type { AgentId } from "$lib/core";
+import { catalogName, catalogsOf } from "$lib/modelCatalog.svelte";
 
 /**
  * The models a workflow can name, per agent.
  *
  * Claude Code takes the aliases its command line takes, which follow the
- * newest model of each family. Nothing lists Codex's models, so it offers
- * the one name that means whatever Codex runs by default. A model's name
- * belongs to one agent, so an option is an agent and a name together.
+ * newest model of each family. Codex takes the name that means whatever
+ * Codex runs by default, then the models Codex lists at run time, named as
+ * its list names them. A model's name belongs to one agent, so an option
+ * is an agent and a name together.
  */
 
 export interface ModelOption {
@@ -25,7 +27,7 @@ export const AGENT_LABELS: Record<AgentId, string> = {
 /** The agents in the order they are offered. */
 export const AGENT_ORDER: AgentId[] = ["claude-code", "codex"];
 
-/** Codex's own default, the one name a Codex model has. */
+/** The name that means whatever model Codex runs by default. */
 export const CODEX_DEFAULT = "default";
 
 const MODELS: Record<AgentId, ModelOption[]> = {
@@ -38,9 +40,20 @@ const MODELS: Record<AgentId, ModelOption[]> = {
   codex: [{ agent: "codex", model: CODEX_DEFAULT, label: "Codex" }],
 };
 
-/** The models an agent offers, most capable first. */
+/** The names an agent always takes, most capable first. */
 export function modelsOf(agent: AgentId): ModelOption[] {
   return MODELS[agent];
+}
+
+/** What a picker offers for an agent: the names it always takes, then the
+    models it listed for any account heard, each once, in its list's order
+    and by its list's names. Claude Code's are the names alone. */
+export function offeredModels(agent: AgentId): ModelOption[] {
+  const always = MODELS[agent];
+  const listed = catalogsOf(agent)
+    .filter((listed) => !always.some((option) => option.model === listed.value))
+    .map((listed) => ({ agent, model: listed.value, label: catalogName(agent, listed.value) ?? listed.value }));
+  return [...always, ...listed];
 }
 
 /** The model a workflow's orchestrator starts on when nothing says
@@ -49,10 +62,18 @@ export function mostCapable(): ModelOption {
   return MODELS["claude-code"][0];
 }
 
-/** What a model is called where its name is shown. A name the list does
-    not hold is shown as it is written. */
-export function modelLabel(agent: AgentId, model: string): string {
-  return MODELS[agent]?.find((option) => option.model === model)?.label ?? model;
+/** What a model is called where its name is shown: as the list here
+    names it, else as the agent's own list names it for the account on the
+    machine `host`, null for this one, else as it is written. */
+export function modelLabel(
+  agent: AgentId,
+  model: string,
+  account: string | null = null,
+  host: string | null = null,
+): string {
+  return (
+    MODELS[agent]?.find((option) => option.model === model)?.label ?? catalogName(agent, model, account, host) ?? model
+  );
 }
 
 export function sameModel(

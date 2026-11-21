@@ -418,14 +418,24 @@ export type IntegratedEventBody =
         value: string;
         name: string | null;
         description: string | null;
+        /** From the least to the most, where the agent lists them so. */
         efforts: string[];
+        /** What each effort does, in the agent's words, for those it
+            words. */
+        effortDescriptions?: Record<string, string>;
         /** The model it stands for, where the agent says, as Claude
             Code does for an alias and for its default. */
         resolved?: string;
+        /** The agent marks it as its default in the list, whatever the
+            user's configuration names. */
+        isDefault?: boolean;
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];
       commands: IntegratedCommand[];
+      /** The model a session given none runs on, where the user's own
+          configuration names one. */
+      defaultModel?: string | null;
     }
   /** The slash commands and skills changed, or the agent said more of
       which is which; all of them as they now are. */
@@ -780,6 +790,11 @@ export interface IntegratedHistoryOptions {
   /** It goes on from its notes whatever its size and rest, as one does
       that goes on by itself once a usage limit resets. */
   always?: boolean;
+}
+
+/** The models Codex offers an account, in the order it lists them. */
+export interface CodexModels {
+  models: { value: string; name: string; isDefault?: boolean }[];
 }
 
 /** Whose usage limits `accountLimits` asks for: the agent's account whose
@@ -1647,6 +1662,11 @@ export interface Core {
       history the core does not read. Rejects where the agent could not
       read it, as for a thread Codex does not know. */
   integratedHistory(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
+  /** The models Codex offers the account whose home is `configDir`, read
+      by a Codex of the core's own on the project's machine, which takes a
+      second or two. Rejects where Codex cannot be started or will not list
+      them. */
+  codexModels(project: string, configDir?: string): Promise<CodexModels>;
   /** The usage limits of an account, as its machine holds them or has just
       read them; null where there are none. */
   accountLimits(
@@ -2232,6 +2252,7 @@ const tauriCore: Core = {
   integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
   integratedHistory: (options) =>
     invoke<IntegratedHistory | null>("integrated_history", { ...options }),
+  codexModels: (project, configDir) => invoke<CodexModels>("codex_models", { project, configDir }),
   accountLimits: (options) =>
     invoke<Extract<IntegratedEventBody, { type: "limits" }> | null>("account_limits", { ...options }),
   integratedRewindPoints: (id) => invoke<IntegratedPoints>("integrated_rewind_points", { id }),
@@ -2628,6 +2649,9 @@ const detachedCore: Core = {
   },
   async integratedHistory() {
     return null;
+  },
+  async codexModels() {
+    throw new Error("not connected to the workbench core");
   },
   async accountLimits() {
     return null;

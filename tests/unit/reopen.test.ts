@@ -14,6 +14,7 @@ import {
   reset as resetSessions,
   select,
   sessions,
+  sessionModelName,
   launch,
   loadRemembered,
   started,
@@ -182,6 +183,15 @@ describe("keeping the record", () => {
     expect((record().open[0] as { made?: boolean }).made).toBe(true);
   });
 
+  it("keeps the model a session said it ran on, beside the one chosen for it", () => {
+    stop = reopen();
+    const session = create(A, "one", "codex");
+    session.runsOn = "gpt-5-codex";
+    started(session.key, "pty-1", "one");
+    flushSync();
+    expect(record().open[0]).toMatchObject({ model: null, runsOn: "gpt-5-codex" });
+  });
+
   it("brings a session that follows a workflow back on that workflow after a quit", async () => {
     adoptWorkflows({ list: [defaultWorkflow()], default: "Build and review", overrides: {} });
     stop = reopen();
@@ -230,6 +240,19 @@ describe("coming back", () => {
       expect(session.resumedFrom).toBe(session.id);
       expect(isLive(session)).toBe(false);
     }
+  });
+
+  it("names a row by the model it said it ran on, and starts it again on the one chosen", async () => {
+    onRecord([{ ...entry(A, "one"), agent: "codex", runsOn: "gpt-5-codex" }, { ...entry(A, "two"), agent: "codex" }], null);
+    stop = reopen();
+    const [said, silent] = forProject(A);
+    expect(said.runsOn).toBe("gpt-5-codex");
+    expect(sessionModelName(said)).toBe("gpt-5-codex");
+    expect(silent.runsOn).toBeNull();
+    wake(said.key);
+    await launch(said.key, 80, 24, () => {});
+    expect(spawned.at(-1)?.session).toBe("one");
+    expect(spawned.at(-1)?.model).toBeUndefined();
   });
 
   it("brings back that a session runs in a worktree made for it, which a record from before does not say", () => {

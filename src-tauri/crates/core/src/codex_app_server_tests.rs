@@ -60,9 +60,9 @@ fn models() -> Value {
         {"id": "gpt-a", "model": "gpt-a", "displayName": "GPT A", "description": "The big one",
          "hidden": false, "isDefault": true, "defaultReasoningEffort": "medium",
          "supportedReasoningEfforts": [
-            {"reasoningEffort": "low", "description": ""},
+            {"reasoningEffort": "low", "description": "Fast responses with lighter reasoning"},
             {"reasoningEffort": "medium", "description": ""},
-            {"reasoningEffort": "high", "description": ""}]},
+            {"reasoningEffort": "high", "description": "Greater reasoning depth for complex problems"}]},
         {"id": "gpt-b", "model": "gpt-b", "displayName": "GPT B", "hidden": false,
          "defaultReasoningEffort": "minimal",
          "supportedReasoningEfforts": [{"reasoningEffort": "minimal", "description": ""}]},
@@ -88,7 +88,7 @@ fn thread_started() -> Value {
 /// What `config/read` answers: the user's own workspace sandbox settings
 /// among the rest.
 fn config() -> Value {
-    json!({"config": {"model": "gpt-a", "sandbox_mode": null,
+    json!({"config": {"model": "gpt-b", "sandbox_mode": null,
         "sandbox_workspace_write": {"writable_roots": ["/work/shared"], "network_access": true,
                                     "exclude_tmpdir_env_var": false, "exclude_slash_tmp": false}},
         "origins": {}})
@@ -298,11 +298,17 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
         modes,
         efforts,
         commands,
+        default_model,
     } = &out[0]
     else {
         panic!("{out:?}");
     };
     assert_eq!(session_id, THREAD);
+    // The model the configuration names, and the one the list marks as
+    // its default, are told apart.
+    assert_eq!(default_model.as_deref(), Some("gpt-b"));
+    assert!(models[0].is_default);
+    assert!(!models[1].is_default);
     assert_eq!(model.as_deref(), Some("gpt-a"));
     assert_eq!(effort.as_deref(), Some("medium"));
     assert_eq!(mode.as_deref(), Some("auto"));
@@ -310,6 +316,19 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
     assert_eq!(values, ["gpt-a", "gpt-b"], "hidden ones left out");
     assert_eq!(models[0].name.as_deref(), Some("GPT A"));
+    // Each effort in Codex's words where it has some, in its order.
+    assert_eq!(models[0].efforts, ["low", "medium", "high"]);
+    assert_eq!(
+        models[0].effort_descriptions,
+        BTreeMap::from([
+            ("low".into(), "Fast responses with lighter reasoning".into()),
+            (
+                "high".into(),
+                "Greater reasoning depth for complex problems".into()
+            ),
+        ])
+    );
+    assert!(models[1].effort_descriptions.is_empty());
     assert_eq!(efforts, &["low", "medium", "high"]);
     let modes: Vec<&str> = modes.iter().map(|m| m.value.as_str()).collect();
     assert_eq!(modes, ["read-only", "auto", "full-access"]);
@@ -1646,6 +1665,42 @@ fn an_interrupt_names_the_turn_or_waits_for_it() {
 }
 
 #[test]
+fn an_effort_set_to_none_runs_at_the_model_s_default_and_a_missing_one_is_kept() {
+    let mut driver = ready();
+    let update = |driver: &mut AppServer, settings: Value| {
+        events(
+            driver,
+            &[notification(
+                "thread/settings/updated",
+                json!({"threadId": THREAD, "threadSettings": settings}),
+            )],
+        )
+    };
+    let at = |effort: &str| Event::Configured {
+        model: Some("gpt-a".into()),
+        mode: Some("auto".into()),
+        effort: Some(effort.into()),
+        efforts: vec!["low".into(), "medium".into(), "high".into()],
+    };
+    assert_eq!(update(&mut driver, json!({"effort": "high"})), [at("high")]);
+    // Said nothing of the effort: it stays.
+    assert_eq!(update(&mut driver, json!({"model": "gpt-a"})), []);
+    // Set to none: the model's own default, which the chip follows.
+    assert_eq!(update(&mut driver, json!({"effort": null})), [at("medium")]);
+    assert_eq!(update(&mut driver, json!({"effort": null})), []);
+    // To another model with none: that model's default.
+    assert_eq!(
+        update(&mut driver, json!({"model": "gpt-b", "effort": null})),
+        [Event::Configured {
+            model: Some("gpt-b".into()),
+            mode: Some("auto".into()),
+            effort: Some("minimal".into()),
+            efforts: vec!["minimal".into()],
+        }]
+    );
+}
+
+#[test]
 fn model_effort_and_mode_are_settled_here_and_go_with_the_next_turn() {
     let mut driver = ready();
     let configured = |sending: Sending| match sending {
@@ -1900,6 +1955,10 @@ fn notices_are_told_apart_from_errors_and_turns() {
                 json!({"fromModel": "gpt-a", "toModel": "gpt-b", "reason": "highRiskCyberActivity"}),
             ),
             notification(
+                "model/rerouted",
+                json!({"fromModel": "gpt-b", "toModel": "gpt-unlisted"}),
+            ),
+            notification(
                 "mcpServer/startupStatus/updated",
                 json!({"name": "docs", "status": "failed", "error": "no such command"}),
             ),
@@ -1926,7 +1985,8 @@ fn notices_are_told_apart_from_errors_and_turns() {
             "Model metadata missing",
             "Full-history hydration is deprecated: use excludeTurns",
             "Unknown key",
-            "Codex moved this turn from gpt-a to gpt-b",
+            "Codex moved this turn from GPT A to GPT B",
+            "Codex moved this turn from GPT B to gpt-unlisted",
             "The docs MCP server could not start: no such command",
         ]
     );
@@ -2083,14 +2143,21 @@ const USES: &[(&str, &str, &[&str])] = &[
     ("response model/list", "data.[].displayName", &[]),
     ("response model/list", "data.[].description", &[]),
     ("response model/list", "data.[].hidden", &[]),
+    ("response model/list", "data.[].isDefault", &[]),
     ("response model/list", "data.[].defaultReasoningEffort", &[]),
     (
         "response model/list",
         "data.[].supportedReasoningEfforts.[].reasoningEffort",
         &[],
     ),
+    (
+        "response model/list",
+        "data.[].supportedReasoningEfforts.[].description",
+        &[],
+    ),
     ("request config/read", "cwd", &[]),
     ("request config/read", "includeLayers", &[]),
+    ("response config/read", "config.model", &[]),
     (
         "response config/read",
         "config.sandbox_workspace_write.writable_roots",

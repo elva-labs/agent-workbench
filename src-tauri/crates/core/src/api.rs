@@ -1113,6 +1113,22 @@ impl Core {
         crate::integrated::snapshot(&self.integrated, id)
     }
 
+    /// The models Codex offers the account whose configuration directory
+    /// is given, or Codex's own home, read by a Codex of its own in the
+    /// project, for a window that has heard no session list them.
+    pub fn codex_models(
+        &self,
+        project: &Path,
+        config_dir: Option<&str>,
+    ) -> Result<crate::codex_models::ModelCatalog, String> {
+        let home = self.home.as_ref().ok_or("there is no home folder")?;
+        let environment = env::environment();
+        let config_dir = config_dir
+            .filter(|dir| !dir.trim().is_empty())
+            .map(|dir| account::expand(home, dir));
+        crate::codex_models::read(&environment.vars, config_dir.as_deref(), project)
+    }
+
     /// What a conversation said and did before, read from where its agent
     /// keeps it under the account whose configuration directory is given,
     /// or the agent's own: Claude Code's transcript of the session in the

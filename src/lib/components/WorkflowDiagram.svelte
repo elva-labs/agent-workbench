@@ -42,7 +42,7 @@
     modelFromKey,
     modelKey,
     modelLabel,
-    modelsOf,
+    offeredModels,
     offeredAgents,
   } from "$lib/models";
 
@@ -314,10 +314,10 @@
         <select value={orchestratorKey} onchange={pick} data-testid="workflow-orchestrator-model">
           {#each agents as agent (agent)}
             <optgroup label={AGENT_LABELS[agent]}>
-              {#each modelsOf(agent) as option (option.model)}
+              {#each offeredModels(agent) as option (option.model)}
                 <option value={modelKey(option)}>{option.label}</option>
               {/each}
-              {#if workflow.orchestrator.agent === agent && !modelsOf(agent).some((option) => option.model === workflow.orchestrator.model)}
+              {#if workflow.orchestrator.agent === agent && !offeredModels(agent).some((option) => option.model === workflow.orchestrator.model)}
                 <option value={orchestratorKey}>{workflow.orchestrator.model}</option>
               {/if}
             </optgroup>

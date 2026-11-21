@@ -1169,7 +1169,9 @@ impl Stream {
                     name: text(&model["displayName"]),
                     description: text(&model["description"]),
                     efforts: strings(&model["supportedEffortLevels"]),
+                    effort_descriptions: Default::default(),
                     resolved: text(&model["resolvedModel"]),
+                    is_default: false,
                 })
             })
             .collect();
@@ -1198,6 +1200,7 @@ impl Stream {
                 self.commands_told = self.commands();
                 self.commands_told.clone()
             },
+            default_model: None,
         });
         if signed_out(&body["account"]) {
             self.signed_out = true;

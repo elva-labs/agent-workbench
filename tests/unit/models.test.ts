@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { AGENT_ORDER, modelLabel, modelsOf, mostCapable, sameModel } from "$lib/models";
+import { beforeEach, describe, expect, it } from "vitest";
+import { AGENT_ORDER, modelLabel, modelsOf, mostCapable, offeredModels, sameModel } from "$lib/models";
+import { heardCatalog, resetCatalogs } from "$lib/modelCatalog.svelte";
 
 describe("the models an agent offers", () => {
   it("offers Claude Code the aliases its command line takes, the most capable first", () => {
@@ -26,5 +27,35 @@ describe("the models an agent offers", () => {
   it("shows a name the list does not hold as it is written", () => {
     expect(modelLabel("claude-code", "opus")).toBe("Opus");
     expect(modelLabel("claude-code", "claude-opus-5-5")).toBe("claude-opus-5-5");
+  });
+});
+
+describe("what a workflow picker offers", () => {
+  beforeEach(() => resetCatalogs());
+
+  it("offers Codex its default first, then the models Codex listed, by their names", () => {
+    heardCatalog("codex", null, "work", [
+      { value: "gpt-6.2-sol", name: "GPT-6.2-Sol" },
+      { value: "gpt-6.1-luna", name: "GPT-6.1-Luna (preview)" },
+    ]);
+    heardCatalog("codex", null, null, [
+      { value: "gpt-6.2-sol", name: "GPT-6.2-Sol" },
+      { value: "gpt-5-mini", name: null },
+    ]);
+    expect(offeredModels("codex")).toEqual([
+      { agent: "codex", model: "default", label: "Codex" },
+      { agent: "codex", model: "gpt-6.2-sol", label: "GPT-6.2-Sol" },
+      { agent: "codex", model: "gpt-6.1-luna", label: "GPT-6.1-Luna" },
+      { agent: "codex", model: "gpt-5-mini", label: "gpt-5-mini" },
+    ]);
+  });
+
+  it("offers Codex its default alone where no list has been heard", () => {
+    expect(offeredModels("codex")).toEqual(modelsOf("codex"));
+  });
+
+  it("offers Claude Code its aliases alone, whatever its list says", () => {
+    heardCatalog("claude-code", null, null, [{ value: "claude-opus-5-5", name: "Opus 5.5" }]);
+    expect(offeredModels("claude-code")).toEqual(modelsOf("claude-code"));
   });
 });

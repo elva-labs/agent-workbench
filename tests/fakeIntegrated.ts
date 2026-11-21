@@ -478,7 +478,7 @@ export function fakeIntegrated(options: FakeIntegratedOptions = {}): FakeIntegra
     { value: "full-access", name: "Full access", description: "Works anywhere without asking" },
   ];
   const CODEX_MODELS = [
-    { value: "gpt-5-codex", name: "gpt-5-codex", description: null, efforts: ["low", "medium", "high"] },
+    { value: "gpt-5-codex", name: "GPT-5-Codex", description: null, efforts: ["low", "medium", "high"] },
   ];
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   // Why the core says a conversation cannot go back.

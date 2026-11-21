@@ -195,6 +195,14 @@ struct IntegratedHistoryParams {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct CodexModelsParams {
+    project: PathBuf,
+    #[serde(default)]
+    config_dir: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct GoingOnParams {
     agent: String,
     project: PathBuf,
@@ -705,6 +713,10 @@ pub fn dispatch(
                 &p.session,
                 p.config_dir.as_deref(),
             )?)
+        }
+        "codex_models" => {
+            let p: CodexModelsParams = parse(params)?;
+            value(core.codex_models(&p.project, p.config_dir.as_deref())?)
         }
         "integrated_rewind_points" => {
             let p: IdParams = parse(params)?;

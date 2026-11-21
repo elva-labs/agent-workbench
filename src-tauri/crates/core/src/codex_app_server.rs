@@ -23,7 +23,7 @@
 //! Everything leaves as the agent-neutral events of the integrated
 //! sessions; nothing Codex-shaped goes past this file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -794,6 +794,9 @@ struct AppServer {
     /// for one takes them.
     changes: Next,
     config_known: bool,
+    /// The model the user's configuration names for the session's folder,
+    /// which a thread started with no model runs on.
+    configured_model: Option<String>,
     /// The sandbox the auto mode runs in, with the writable roots and the
     /// network access the user configured.
     workspace: Option<Value>,
@@ -1427,6 +1430,7 @@ impl AppServer {
             models: Vec::new(),
             changes: Next::default(),
             config_known: false,
+            configured_model: None,
             workspace: None,
             turn: None,
             starting: None,
@@ -1601,6 +1605,16 @@ impl AppServer {
         self.request(Sent::Thread, method, params).0
     }
 
+    /// A model as Codex's list names it, else by its id.
+    fn model_name<'a>(&'a self, model: &'a str) -> &'a str {
+        self.models
+            .iter()
+            .find(|(info, _)| info.value == model)
+            .and_then(|(info, _)| info.name.as_deref())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(model)
+    }
+
     fn efforts_of(&self, model: Option<&str>) -> Vec<String> {
         let Some(model) = model else {
             return vec![];
@@ -1684,6 +1698,7 @@ impl AppServer {
                 .collect(),
             efforts: self.efforts_of(self.model.as_deref()),
             commands: vec![],
+            default_model: self.configured_model.clone(),
         });
         if self.signed_out {
             self.told_signed_out = true;
@@ -1758,34 +1773,7 @@ impl AppServer {
             }
             Sent::Models => {
                 if let Ok(result) = &reply {
-                    self.models = result["data"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|model| model["hidden"] != true)
-                        .filter_map(|model| {
-                            let value = text(&model["model"]).or_else(|| text(&model["id"]))?;
-                            Some((
-                                ModelInfo {
-                                    name: text(&model["displayName"]),
-                                    description: text(&model["description"])
-                                        .filter(|d| !d.is_empty()),
-                                    efforts: model["supportedReasoningEfforts"]
-                                        .as_array()
-                                        .into_iter()
-                                        .flatten()
-                                        .filter_map(|effort| {
-                                            text(&effort["reasoningEffort"])
-                                                .or_else(|| text(effort))
-                                        })
-                                        .collect(),
-                                    resolved: None,
-                                    value,
-                                },
-                                text(&model["defaultReasoningEffort"]),
-                            ))
-                        })
-                        .collect();
+                    self.models = listed_models(result);
                 }
                 self.models_known = true;
                 self.introduce(out);
@@ -1795,6 +1783,7 @@ impl AppServer {
                     if self.workspace.is_none() {
                         self.workspace = configured_workspace(&result["config"]);
                     }
+                    self.configured_model = text(&result["config"]["model"]);
                 }
                 self.config_known = true;
                 self.introduce(out);
@@ -2324,18 +2313,25 @@ impl AppServer {
                     self.workspace = Some(settings["sandboxPolicy"].clone());
                 }
                 let model = text(&settings["model"]).filter(|_| self.changes.model.is_none());
-                let effort = text(&settings["effort"]).filter(|_| self.changes.effort.is_none());
                 let mode = mode_of(&settings["approvalPolicy"], &settings["sandboxPolicy"])
                     .filter(|_| self.changes.mode.is_none());
-                for (now, new) in [
-                    (&mut self.model, model),
-                    (&mut self.effort, effort),
-                    (&mut self.mode, mode),
-                ] {
+                for (now, new) in [(&mut self.model, model), (&mut self.mode, mode)] {
                     if new.is_some() && new != *now {
                         *now = new;
                         changed = true;
                     }
+                }
+                // An effort of null is no effort set, so the thread runs at
+                // its model's default; a missing one leaves it as it was.
+                let effort = match settings.get("effort") {
+                    _ if self.changes.effort.is_some() => None,
+                    Some(Value::Null) => self.default_effort(self.model.as_deref()),
+                    Some(effort) => text(effort),
+                    None => None,
+                };
+                if effort.is_some() && effort != self.effort {
+                    self.effort = effort;
+                    changed = true;
                 }
                 if changed && self.ready {
                     out.events.push(self.configured());
@@ -2411,9 +2407,11 @@ impl AppServer {
             }
             "model/rerouted" => {
                 let message = match (params["fromModel"].as_str(), params["toModel"].as_str()) {
-                    (Some(from), Some(to)) => {
-                        Some(format!("Codex moved this turn from {from} to {to}"))
-                    }
+                    (Some(from), Some(to)) => Some(format!(
+                        "Codex moved this turn from {} to {}",
+                        self.model_name(from),
+                        self.model_name(to)
+                    )),
                     _ => None,
                 };
                 self.notice(NoticeLevel::Warning, message, out);
@@ -3038,6 +3036,49 @@ impl Driver for AppServer {
         }
         out
     }
+}
+
+/// The models a `model/list` answer offers, each with the effort it runs
+/// at by default, in the order Codex lists them. A model Codex hides is
+/// left out.
+pub(crate) fn listed_models(result: &Value) -> Vec<(ModelInfo, Option<String>)> {
+    result["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|model| model["hidden"] != true)
+        .filter_map(|model| {
+            let value = text(&model["model"]).or_else(|| text(&model["id"]))?;
+            let supported = model["supportedReasoningEfforts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|effort| {
+                    let value = text(&effort["reasoningEffort"]).or_else(|| text(effort))?;
+                    Some((value, text(&effort["description"])))
+                });
+            let mut efforts = Vec::new();
+            let mut effort_descriptions = BTreeMap::new();
+            for (effort, description) in supported {
+                if let Some(description) = description.filter(|d| !d.is_empty()) {
+                    effort_descriptions.insert(effort.clone(), description);
+                }
+                efforts.push(effort);
+            }
+            Some((
+                ModelInfo {
+                    name: text(&model["displayName"]),
+                    description: text(&model["description"]).filter(|d| !d.is_empty()),
+                    efforts,
+                    effort_descriptions,
+                    resolved: None,
+                    is_default: model["isDefault"] == true,
+                    value,
+                },
+                text(&model["defaultReasoningEffort"]),
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]

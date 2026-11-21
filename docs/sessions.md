@@ -233,10 +233,24 @@ when the row last changed: `now`, `4m`, `1h`, a weekday within the week, then `3
 the agent has left a line for, or one that started others, takes a second
 line: the agent's line, in the accent while it asks for a permission, or
 for a session that started others what those are doing; at its end is the
-model the session was started on, when the app knows it, or for a session
-that started others how many of them it has not yet heard from, as the
+model the session runs on, or for a session that started others how many
+of them it has not yet heard from, as the
 [orchestrator](orchestrator.md#in-the-panes) describes. The two lines are
-laid out apart, so the model never narrows the name. A running session
+laid out apart, so the model never narrows the name. A model is named as
+the composer names it: Claude's as they are said, `opus-4-1` as Opus 4.1,
+and Codex's by the names Codex's own list gives them for the account,
+`gpt-6.2-sol` as GPT-6.2-Sol, or by its id where no list this window has
+heard names it. The row's tooltip, the rows of the sessions it started,
+the status bar, the settings and the start tool's reply name a model the
+same way; what an agent is told, and the model the start tool is given,
+stay ids. A Claude Code session's model is the one it was started on,
+when the app knows it. A Codex session's is the one Codex says it runs on
+once it is up: the one chosen for it, or where none was, the one Codex's
+own configuration names, so a session on Codex's default names that model
+too while the composer still calls it the default. A row brought back
+after a quit or a reload names that model until the session runs again;
+it is started again on the one chosen for it, or on Codex's default. The
+[usage log](#usage-log) names the same model. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
 name and its time, the time its transcript was last written, unless it

@@ -74,7 +74,7 @@ import {
   isViewed,
   keysStillIn,
   label,
-  modelLabel as sessionModelLabel,
+  sessionModelName,
   onClosed,
   onGiven,
   onDirected,
@@ -2879,8 +2879,8 @@ async function startFitted(
     model === null
       ? ` It runs on ${agentLabel(agent)}'s default model.`
       : below !== null
-        ? ` It runs on ${sessionModelLabel(model)}, one model below yours, since the start named none: name a model to choose another.`
-        : ` It runs on ${sessionModelLabel(model)}.`;
+        ? ` It runs on ${sessionModelName({ agent, model, account, project })}, one model below yours, since the start named none: name a model to choose another.`
+        : ` It runs on ${sessionModelName({ agent, model, account, project })}.`;
   if (fit === null)
     return said(
       `Started session ${idText(id)} in ${where}${underWords(named)}. It has the prompt.${runsOn}${begins}${notCalled} ${KEEP_WAITING}`,

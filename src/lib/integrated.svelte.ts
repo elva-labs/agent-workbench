@@ -11,6 +11,8 @@ import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
 import { heardOffers } from "$lib/lastChosen.svelte";
 import { limitEnded, runOver, setHands, settle as settleAutoResume, turnMoved } from "$lib/autoResume.svelte";
 import { modelLabel } from "$lib/models";
+import { agentProfile } from "$lib/agent.svelte";
+import { heardCatalog } from "$lib/modelCatalog.svelte";
 import { readsAsCommand } from "$lib/slash";
 import { offeredModel, thoughtAnswer } from "$lib/thread";
 import { heardLimits } from "$lib/limits.svelte";
@@ -24,7 +26,7 @@ import {
   type IntegratedState,
   type PermissionChoice,
 } from "$lib/core";
-import { Conversation, type Command, type Message, type Part, type TextPart } from "$lib/conversation.svelte";
+import { Conversation, type Command, type Message, type Part, type Ready, type TextPart } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import { logUsage } from "$lib/usageLog";
 import {
@@ -420,14 +422,22 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         session.agent,
         session.account,
         body.models.map((model) => model.value),
-        body.models.find((model) => model.value === "default")?.resolved ?? null,
+        body.defaultModel ?? body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
+      heardCatalog(session.agent, hostOf(session.project), session.account, body.models);
+      if (agentProfile(session.agent).namesRunningModel) session.runsOn = body.model ?? body.defaultModel ?? null;
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
       else if (session.carried !== null) void fallBackCarried(key, link, session, session.carried);
       break;
     case "configured":
-      session.model = body.model;
+      if (!agentProfile(session.agent).namesRunningModel) session.model = body.model;
+      else {
+        // A new model is the one chosen; an effort or a mode changed on
+        // the agent's default leaves the session on no model chosen.
+        if (body.model !== session.runsOn) session.model = body.model;
+        session.runsOn = body.model;
+      }
       keepRunMode(session, link);
       break;
     case "titled":
@@ -792,6 +802,8 @@ async function restart(key: string, session: Session, link: Link) {
     .integratedStop(handle)
     .catch(() => {});
   link.conversation.restarted(session.model, sameAgent);
+  // The new run says what it runs on once it is up.
+  session.runsOn = null;
   if (sameAgent && mode !== undefined) link.conversation.settings = { ...link.conversation.settings, mode };
   // What was asked while a run started again, other than the mode, is
   // made on the new run once it is up: a model only where no workflow
@@ -862,6 +874,20 @@ function startEffort(session: Session, link: Link, carried: Carried | null): str
   return carried.effort ?? undefined;
 }
 
+/** The model the agent runs a session given none on, among those it
+    offers: the one the user's own configuration names, else the one the
+    agent marks as its default, else its entry for its default, else the
+    first it lists. */
+export function defaultOffered(ready: Ready): Ready["models"][number] {
+  const { models } = ready;
+  return (
+    models.find((model) => ready.defaultModel != null && model.value === ready.defaultModel) ??
+    models.find((model) => model.isDefault === true) ??
+    models.find((model) => model.value === "default") ??
+    models[0]
+  );
+}
+
 /**
  * A new session that did not start on what was last chosen for its agent
  * goes on the nearest it can take, and says so: the agent's default model
@@ -876,7 +902,7 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   const change: Change = {};
   const said: string[] = [];
   if (carried.model !== null && ready.models.length > 0 && offeredModel(link.conversation, carried.model) === null) {
-    const instead = ready.models.find((model) => model.value === "default") ?? ready.models[0];
+    const instead = defaultOffered(ready);
     change.model = instead.value;
     const name = (instead.name ?? instead.value).replace(/\s*\(.*\)\s*$/, "").trim();
     said.push(`${modelLabel(session.agent, carried.model)} is not offered here, so the session runs on ${name}.`);
@@ -894,7 +920,7 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   if (carried.effort !== null && change.model === undefined) {
     const efforts = link.conversation.efforts;
     if (efforts.length > 0 && !efforts.includes(carried.effort) && ready.effort !== carried.effort) {
-      const effort = lowerEffort(carried.effort, efforts);
+      const effort = lowerEffort(carried.effort, efforts, effortScale(ready.models));
       if (effort !== null && effort !== ready.effort) change.effort = effort;
     }
   }
@@ -903,17 +929,45 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   for (const message of said) link.conversation.apply({ type: "notice", level: "info", message });
 }
 
-/** The efforts from the least to the most. */
-const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+/** The efforts from the least to the most, for an effort none of the
+    agent's models lists. */
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
-/** The highest of `efforts` below `effort`, else the lowest of them; null
-    where `effort` is not on the scale. */
-function lowerEffort(effort: string, efforts: string[]): string | null {
-  const at = EFFORT_ORDER.indexOf(effort);
+/** The efforts the agent's models take, from the least to the most as
+    each model lists its own: one a model lists after another comes after
+    it here. */
+export function effortScale(models: { efforts: string[] }[]): string[] {
+  const scale: string[] = [];
+  for (const { efforts } of models) {
+    let after = -1;
+    efforts.forEach((effort, index) => {
+      let at = scale.indexOf(effort);
+      if (at < 0) {
+        // Just before the next the model lists that is already placed,
+        // else just after the last.
+        const next = efforts
+          .slice(index + 1)
+          .map((one) => scale.indexOf(one))
+          .find((one) => one > after);
+        at = next ?? after + 1;
+        scale.splice(at, 0, effort);
+      }
+      after = at;
+    });
+  }
+  return scale;
+}
+
+/** The highest of `efforts` below `effort`, else the lowest of them, on
+    the agent's own scale where it holds `effort`; null where no scale
+    does. */
+export function lowerEffort(effort: string, efforts: string[], scale: string[]): string | null {
+  const order = scale.includes(effort) ? scale : EFFORT_ORDER;
+  const at = order.indexOf(effort);
   if (at < 0) return null;
-  const known = efforts.filter((one) => EFFORT_ORDER.includes(one));
-  const below = known.filter((one) => EFFORT_ORDER.indexOf(one) < at);
-  const sorted = (list: string[]) => [...list].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+  const known = efforts.filter((one) => order.includes(one));
+  const below = known.filter((one) => order.indexOf(one) < at);
+  const sorted = (list: string[]) => [...list].sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return sorted(below).at(-1) ?? sorted(known)[0] ?? null;
 }
 
@@ -1063,7 +1117,12 @@ export function reattach(key: string, handle: string, spoken = true): Promise<Re
       // The same session goes on, not one resumed from its transcript: it
       // keeps the name it had.
       session.resumedFrom = null;
-      if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
+      if (snapshot.ready !== null) {
+        identify(session, snapshot.ready.sessionId);
+        heardCatalog(session.agent, hostOf(session.project), session.account, snapshot.ready.models);
+        if (agentProfile(session.agent).namesRunningModel)
+          session.runsOn = snapshot.settings.model ?? snapshot.ready.defaultModel ?? null;
+      }
       settle(session, snapshot.state, before, link);
       void rejoined(key);
       return "up";

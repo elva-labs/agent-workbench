@@ -528,6 +528,29 @@ async fn account_limits(
     .await
 }
 
+/// The models Codex offers the account whose configuration directory is
+/// given, read on the machine the project is on.
+#[tauri::command]
+async fn codex_models(
+    core: State<'_, Arc<Core>>,
+    remotes: State<'_, Arc<Remotes>>,
+    project: String,
+    config_dir: Option<String>,
+) -> Result<Value, String> {
+    let core = Arc::clone(&core);
+    let remotes = Arc::clone(&remotes);
+    blocking(move || match route(&project) {
+        Route::Local(project) => {
+            value(core.codex_models(Path::new(&project), config_dir.as_deref())?)
+        }
+        Route::Remote { host, rest } => remotes.connection(&host)?.call(
+            "codex_models",
+            json!({ "project": rest, "configDir": config_dir }),
+        ),
+    })
+    .await
+}
+
 /// What a conversation said and did before, read on the machine the
 /// project is on, with the host put back on the paths it names for a
 /// project elsewhere. Null for an agent whose history is not read; an
@@ -2394,6 +2417,7 @@ pub fn run() {
             integrated_configure,
             integrated_snapshot,
             integrated_history,
+            codex_models,
             account_limits,
             integrated_rewind_points,
             integrated_rewind_preview,

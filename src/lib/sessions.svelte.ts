@@ -12,6 +12,7 @@ import {
 import { SvelteSet } from "svelte/reactivity";
 import { accountOf, dirFor, names } from "$lib/accounts.svelte";
 import { CODEX_DEFAULT } from "$lib/models";
+import { catalogName } from "$lib/modelCatalog.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import {
   readWorkflow,
@@ -123,6 +124,11 @@ export interface Session {
       given to the agent on its command line, so it holds from the first
       turn. Null for the agent's own default. */
   model: string | null;
+  /** The model the agent says the session runs on, for an agent whose
+      profile names that one: the model chosen as the agent took it, or
+      the one the agent's configuration names where none was chosen.
+      Null until the run has said, and for any other agent. */
+  runsOn: string | null;
   /** The account the session runs under, by name: the project's unless
       one was chosen for the session, or the session that started it
       handed its own on. Null for the agents' own directories. */
@@ -1158,6 +1164,25 @@ export function moreLabel(count: number, oldest: number, now = Date.now()): stri
   return `${count} more`;
 }
 
+/** What a session's model is called on its row and tooltip, the row of
+    a session another started, the status bar and the start tool's reply:
+    the model the session runs on where the agent has said it, else the
+    one chosen for it, by the name the agent's own list gives it for the
+    session's account on its project's machine where the agent's models go
+    by those names, else as `modelLabel` reads it. Null for a session that
+    names no model. */
+export function sessionModelName(session: {
+  agent: AgentId;
+  model: string | null;
+  runsOn?: string | null;
+  account: string | null;
+  project: string;
+}): string | null {
+  const model = session.runsOn ?? session.model;
+  if (model === null) return null;
+  return catalogName(session.agent, model, session.account, hostOf(session.project)) ?? modelLabel(model);
+}
+
 /** What a model is called on a row. Claude's own names read as they are
     said, `opus-4-1` as Opus 4.1 and `sonnet` as Sonnet; any other model
     is named as it was given. */
@@ -1884,6 +1909,7 @@ function row(
     madeTree: false,
     prompt,
     model,
+    runsOn: null,
     account,
     workflow:
       workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow),

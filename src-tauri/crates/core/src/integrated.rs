@@ -175,6 +175,10 @@ pub enum Event {
         modes: Vec<ModeInfo>,
         efforts: Vec<String>,
         commands: Vec<CommandInfo>,
+        /// The model a session given none runs on, where the user's own
+        /// configuration names one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        default_model: Option<String>,
     },
     /// The model, the mode or the effort changed, or became known. All
     /// are given as they now are, with the efforts the model now on takes.
@@ -472,12 +476,20 @@ pub struct ModelInfo {
     pub value: String,
     pub name: Option<String>,
     pub description: Option<String>,
-    /// The efforts it takes, none for a model that takes no effort.
+    /// The efforts it takes, none for a model that takes no effort, from
+    /// the least to the most where the agent lists them so.
     pub efforts: Vec<String>,
+    /// What each effort does, in the agent's words, for those it words.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub effort_descriptions: BTreeMap<String, String>,
     /// The model it stands for, where the agent says, as Claude Code does
     /// for an alias and for its default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolved: Option<String>,
+    /// The agent marks it as its default in the list, whatever the user's
+    /// configuration names.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_default: bool,
 }
 
 /// A mode the session can run in: how much the agent may do without asking.
@@ -4694,6 +4706,7 @@ mod tests {
                 modes: vec![],
                 efforts: vec![],
                 commands: vec![],
+                default_model: None,
             },
             Event::Configured {
                 model: Some("sonnet".into()),
@@ -4946,6 +4959,7 @@ mod tests {
                     modes: vec![],
                     efforts: vec![],
                     commands: vec![],
+                    default_model: None,
                 }],
                 (Some("commands"), Some(name)) => vec![Event::Commands {
                     commands: vec![CommandInfo {
