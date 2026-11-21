@@ -224,6 +224,22 @@ export function lineageOf(id: string): string[] {
   return chain;
 }
 
+/** Every conversation a row went on from, oldest first, ending with
+    `id`, however long the chain: what belongs to a session for as long as
+    it exists, as media does. */
+export function wholeLineageOf(id: string): string[] {
+  load();
+  const chain = [id];
+  const seen = new Set(chain);
+  let at = going.lineage[id];
+  while (at !== undefined && !seen.has(at)) {
+    chain.unshift(at);
+    seen.add(at);
+    at = going.lineage[at];
+  }
+  return chain;
+}
+
 /** The row's run no longer counts as one that went on. */
 export function forgetWent(key: string) {
   delete going.runs[key];

@@ -217,8 +217,11 @@ divider to drag and a header that folds it away, one row per set of files
 under its caption, to open again after a restart too. A session lasts as
 long as its list: when a conversation goes on from its notes under a new
 conversation id, the session lists what every conversation before it
-presented as well, and what it presents next joins the same list. At most
-fifty are kept for each conversation. The same files
+presented as well, however many times it has gone on, and what it presents
+next joins the same list. What a session's agent presented before the
+session's conversation id was known joins its list too. A session's items
+are never dropped for their number; past a thousand items in all, the oldest
+items of conversations no open session lists go first. The same files
 presented again take their row to the top with the new caption rather than
 adding one, so a document the agent and the user work on over many turns
 is one row, and what the row opens is the files as they are now: the

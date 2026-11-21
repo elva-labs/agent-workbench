@@ -17,7 +17,7 @@
 import { marked } from "marked";
 import { runnable } from "$lib/bang";
 import { core, type Media, type PresentRequest } from "$lib/core";
-import { lineageOf } from "$lib/goingOn.svelte";
+import { wholeLineageOf } from "$lib/goingOn.svelte";
 import { forProject, sessions } from "$lib/sessions.svelte";
 import { held, projectFor, sessionFor } from "$lib/show.svelte";
 import { activate, workspace } from "$lib/workspace.svelte";
@@ -29,6 +29,9 @@ export interface MediaItem {
       `project:<path>` when no session with an id was found. */
   owner: string;
   project: string;
+  /** The token of the session that presented it, when the owner is the
+      project because the session's id was not known yet. */
+  token?: string;
   files: string[];
   caption: string | null;
   /** Seconds since the epoch, of the latest call for these files. */
@@ -36,8 +39,10 @@ export interface MediaItem {
 }
 
 const KEY = "chord.media";
-/** Kept per owner: enough to find a screenshot from earlier, not a store. */
-const KEEP = 50;
+/** The most items kept in all. A session's media is never dropped for
+    its own count; past this, the oldest items of conversations no open
+    session lists go first. */
+const KEEP = 1000;
 
 export const media = $state({
   items: [] as MediaItem[],
@@ -95,18 +100,20 @@ function sameFiles(a: string[], b: string[]): boolean {
 /** The owners whose media a session lists: the conversations it went on
     from and itself, or the project's own alone. */
 function ownersOf(owner: string): Set<string> {
-  return new Set(owner.startsWith("project:") ? [owner] : lineageOf(owner));
+  return new Set(owner.startsWith("project:") ? [owner] : wholeLineageOf(owner));
 }
 
 /** The items for a session, newest first, and the project's own when it
     is asked for. A session lists the media of every conversation it went
-    on from as well as its own; a set of files presented in more than one
+    on from as well as its own, and what it presented before its id was
+    known; a set of files presented in more than one
     of them is listed once, as its latest call has it. */
-export function itemsFor(owner: string): MediaItem[] {
+export function itemsFor(owner: string, token: string | null = null): MediaItem[] {
   const line = ownersOf(owner);
   const listed: MediaItem[] = [];
   for (const item of [...media.items].reverse()) {
-    if (!line.has(item.owner)) continue;
+    const mine = token !== null && item.token === token;
+    if (!line.has(item.owner) && !mine) continue;
     if (!listed.some((seen) => sameFiles(seen.files, item.files))) listed.push(item);
   }
   return listed;
@@ -120,7 +127,7 @@ export function listed(): MediaItem[] {
   const active = forProject(project).find(
     (session) => session.key === sessions.active,
   );
-  if (active !== undefined && active.id !== null) return itemsFor(active.id);
+  if (active !== undefined && active.id !== null) return itemsFor(active.id, active.token);
   return itemsFor(`project:${project}`);
 }
 
@@ -137,10 +144,12 @@ export function presented(request: PresentRequest, now = Date.now()) {
   });
   if (project === null) return;
   const owner = ownerFor(request, project);
-  const line = ownersOf(owner);
+  const token = owner.startsWith("project:") ? sessionFor(request)?.token : undefined;
+  // A row is reused only under the same owner: an earlier conversation's
+  // item stays where it is for the other sessions that went on from it.
   const again = media.items.find(
     (candidate) =>
-      line.has(candidate.owner) && sameFiles(candidate.files, request.files),
+      candidate.owner === owner && sameFiles(candidate.files, request.files),
   );
   const item: MediaItem = {
     id:
@@ -148,6 +157,7 @@ export function presented(request: PresentRequest, now = Date.now()) {
       `${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     owner,
     project,
+    ...(token === undefined ? {} : { token }),
     files: request.files,
     caption: request.caption,
     at: Math.floor(now / 1000),
@@ -157,15 +167,7 @@ export function presented(request: PresentRequest, now = Date.now()) {
   }
   media.items.push(item);
   media.calls[item.id] = (media.calls[item.id] ?? 0) + 1;
-  const mine = media.items.filter(
-    (candidate) => candidate.owner === item.owner,
-  );
-  if (mine.length > KEEP) {
-    const drop = new Set(
-      mine.slice(0, mine.length - KEEP).map((candidate) => candidate.id),
-    );
-    media.items = media.items.filter((candidate) => !drop.has(candidate.id));
-  }
+  trim();
   save();
   const open = () => {
     if (workspace.active !== project) activate(project);
@@ -173,6 +175,25 @@ export function presented(request: PresentRequest, now = Date.now()) {
   };
   if (held(request, open)) return;
   open();
+}
+
+/** Keeps the list under `KEEP`: the oldest items go, those of
+    conversations an open session lists last of all, never one of them. */
+function trim() {
+  let extra = media.items.length - KEEP;
+  if (extra <= 0) return;
+  const open = new Set<string>();
+  for (const session of sessions.all)
+    if (session.id !== null) for (const id of wholeLineageOf(session.id)) open.add(id);
+  const tokens = new Set(sessions.all.map((session) => session.token));
+  const drop = new Set<string>();
+  for (const item of media.items) {
+    if (extra === 0) break;
+    if (open.has(item.owner) || (item.token !== undefined && tokens.has(item.token))) continue;
+    drop.add(item.id);
+    extra -= 1;
+  }
+  media.items = media.items.filter((item) => !drop.has(item.id));
 }
 
 /** A call from the list, opened in the viewer again. */
