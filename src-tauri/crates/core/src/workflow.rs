@@ -19,8 +19,8 @@ use serde_json::Value;
 /// The agents a model can belong to.
 pub const AGENTS: &[&str] = &["claude-code", "codex"];
 
-/// The name Codex's own default model goes by. Codex's models are not
-/// listed, so it is the one a Codex step can name.
+/// The name that means whatever model Codex runs by default. A Codex step
+/// names it, or a model by the id Codex lists it under at run time.
 pub const CODEX_DEFAULT: &str = "default";
 
 /// How many workflows the settings may hold, how many steps one may have,

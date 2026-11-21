@@ -790,6 +790,18 @@ export async function installFakeCore(
           (w.__limitsAsked ??= []).push(asked);
           return w.__accountLimits?.[`${asked.agent} ${asked.configDir ?? ""}`] ?? null;
         },
+        codexModels: async (project: string, configDir?: string) => {
+          // A test puts the models Codex lists in __codexModels, and reads
+          // what was asked in __codexModelsAsked. With none, Codex is not
+          // on the machine.
+          const w = window as unknown as {
+            __codexModels?: { value: string; name: string }[];
+            __codexModelsAsked?: unknown[];
+          };
+          (w.__codexModelsAsked ??= []).push({ project, configDir: configDir ?? null });
+          if (w.__codexModels === undefined) throw new Error("codex: command not found");
+          return { models: w.__codexModels };
+        },
         integratedRewindPoints: async (id: string) => integrated().rewindPoints(id),
         integratedRewindPreview: async (id: string, message: string) =>
           integrated().rewindPreview(id, message),

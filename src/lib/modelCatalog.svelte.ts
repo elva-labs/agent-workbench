@@ -1,5 +1,6 @@
-import type { AgentId } from "$lib/core";
+import { core, type AgentId } from "$lib/core";
 import { agentProfile } from "$lib/agent.svelte";
+import { accountOf, dirFor } from "$lib/accounts.svelte";
 
 /**
  * The models an agent offers each account, as the agent lists them at run
@@ -14,9 +15,10 @@ import { agentProfile } from "$lib/agent.svelte";
  * nothing is kept of its list.
  *
  * A list is heard when a session is ready, when a window catches up with a
- * running session, and from a read of the agent's own for a project where
- * no session has run. The last one heard for each account is kept while
- * the window is open, as the models each account offers are.
+ * running session, and from a read of Codex's own, asked for where the
+ * account's list is wanted before a session of it has run, such as by the
+ * workflow pickers. The last one heard for each account is kept while the
+ * window is open, as the models each account offers are.
  */
 
 export interface CatalogModel {
@@ -25,6 +27,8 @@ export interface CatalogModel {
 }
 
 const catalogs = $state<{ byKey: Record<string, CatalogModel[]> }>({ byKey: {} });
+/** The accounts whose list is being read, or was read, by this window. */
+const asking = new Set<string>();
 
 function keyOf(agent: AgentId, account: string | null): string {
   return `${agent}\n${account ?? ""}`;
@@ -68,7 +72,26 @@ export function catalogName(agent: AgentId, model: string, account: string | nul
   return named(catalogOf(agent, account)) ?? named(catalogsOf(agent)) ?? model;
 }
 
+/** Reads the models Codex offers the account the project runs under, on
+    the project's machine, where no list of them has been heard. Each
+    account's list is read once while the window is open; one that could
+    not be read is read again when it is next asked for. */
+export async function askCodexCatalog(project: string) {
+  const account = accountOf(project);
+  const key = keyOf("codex", account);
+  if (catalogs.byKey[key] !== undefined || asking.has(key)) return;
+  asking.add(key);
+  try {
+    const listed = await core().codexModels(project, dirFor(account, "codex"));
+    heardCatalog("codex", account, listed.models);
+  } catch {
+    // Codex is not on the machine, or would not say; the ids stand.
+    asking.delete(key);
+  }
+}
+
 /** Test seam. */
 export function resetCatalogs() {
   catalogs.byKey = {};
+  asking.clear();
 }

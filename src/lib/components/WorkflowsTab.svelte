@@ -36,6 +36,9 @@
   import WorkflowDiagram, { leastWidth } from "$lib/components/WorkflowDiagram.svelte";
   import StepSettings from "$lib/components/StepSettings.svelte";
   import ConfirmStrip from "$lib/components/ConfirmStrip.svelte";
+  import { installed } from "$lib/agent.svelte";
+  import { offeredAgents } from "$lib/models";
+  import { askCodexCatalog } from "$lib/modelCatalog.svelte";
 
   /** The width of the step's settings beside the diagram, and the gap. */
   const STEP_WIDTH = 248;
@@ -48,6 +51,18 @@
       that one is gone. */
   let picked = $state<string | null>(workflows.default);
   const current = $derived(workflowNamed(picked) ?? workflowNamed(workflows.default) ?? workflows.list[0]);
+
+  /** Where the pickers offer Codex, the models it lists for the account of
+      each open project, read on that project's machine. */
+  $effect(() => {
+    if (current === undefined) return;
+    const used = [
+      current.orchestrator.agent,
+      ...current.steps.flatMap((one) => one.models.map((model) => model.agent)),
+    ];
+    if (!offeredAgents(installed(), used).includes("codex")) return;
+    for (const project of workspace.open) void askCodexCatalog(project.path);
+  });
 
   /** The step picked in the diagram. */
   let step = $state(0);

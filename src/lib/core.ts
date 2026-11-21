@@ -792,6 +792,11 @@ export interface IntegratedHistoryOptions {
   always?: boolean;
 }
 
+/** The models Codex offers an account, in the order it lists them. */
+export interface CodexModels {
+  models: { value: string; name: string; isDefault?: boolean }[];
+}
+
 /** Whose usage limits `accountLimits` asks for: the agent's account whose
     configuration directory is given, or the agent's own, on the machine
     `project` is on. With `read` the machine reads them first where a read
@@ -1657,6 +1662,11 @@ export interface Core {
       history the core does not read. Rejects where the agent could not
       read it, as for a thread Codex does not know. */
   integratedHistory(options: IntegratedHistoryOptions): Promise<IntegratedHistory | null>;
+  /** The models Codex offers the account whose home is `configDir`, read
+      by a Codex of the core's own on the project's machine, which takes a
+      second or two. Rejects where Codex cannot be started or will not list
+      them. */
+  codexModels(project: string, configDir?: string): Promise<CodexModels>;
   /** The usage limits of an account, as its machine holds them or has just
       read them; null where there are none. */
   accountLimits(
@@ -2242,6 +2252,7 @@ const tauriCore: Core = {
   integratedSnapshot: (id) => invoke<IntegratedSnapshot>("integrated_snapshot", { id }),
   integratedHistory: (options) =>
     invoke<IntegratedHistory | null>("integrated_history", { ...options }),
+  codexModels: (project, configDir) => invoke<CodexModels>("codex_models", { project, configDir }),
   accountLimits: (options) =>
     invoke<Extract<IntegratedEventBody, { type: "limits" }> | null>("account_limits", { ...options }),
   integratedRewindPoints: (id) => invoke<IntegratedPoints>("integrated_rewind_points", { id }),
@@ -2638,6 +2649,9 @@ const detachedCore: Core = {
   },
   async integratedHistory() {
     return null;
+  },
+  async codexModels() {
+    throw new Error("not connected to the workbench core");
   },
   async accountLimits() {
     return null;

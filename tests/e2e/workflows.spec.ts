@@ -476,6 +476,35 @@ test.describe("the models offered", () => {
       .toEqual({ agent: "codex", model: "default" });
   });
 
+  test("include the models Codex lists for the project, by their names, after its own default", async ({
+    page,
+  }) => {
+    await page.addInitScript(() => {
+      (window as unknown as Record<string, unknown>).__codexModels = [
+        { value: "gpt-6.2-sol", name: "GPT-6.2-Sol" },
+        { value: "gpt-6.1-luna", name: "GPT-6.1-Luna (preview)" },
+      ];
+    });
+    await open(page, undefined, ["claude-code", "codex"]);
+    const orchestrator = page.getByTestId("workflow-orchestrator-model");
+    await expect(orchestrator.locator('optgroup[label="Codex"] option')).toHaveText([
+      "Codex",
+      "GPT-6.2-Sol",
+      "GPT-6.1-Luna",
+    ]);
+    expect(await page.evaluate(() => (window as unknown as Record<string, unknown>).__codexModelsAsked)).toEqual([
+      { project: PROJECT, configDir: null },
+    ]);
+    await page.locator('[data-testid="step-model"][data-model="gpt-6.2-sol"]').check();
+    await expect
+      .poll(async () => (await file(page)).workflows.list[0].steps[0].models)
+      .toContainEqual({ agent: "codex", model: "gpt-6.2-sol" });
+    await orchestrator.selectOption("codex:gpt-6.1-luna");
+    await expect
+      .poll(async () => (await file(page)).workflows.list[0].orchestrator)
+      .toEqual({ agent: "codex", model: "gpt-6.1-luna" });
+  });
+
   test("keep showing a model of an agent that is not installed, where a workflow uses it", async ({
     page,
   }) => {

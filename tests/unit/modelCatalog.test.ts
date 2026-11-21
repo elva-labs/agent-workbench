@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { catalogName, catalogOf, heardCatalog, resetCatalogs } from "$lib/modelCatalog.svelte";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
+import { askCodexCatalog, catalogName, catalogOf, heardCatalog, resetCatalogs } from "$lib/modelCatalog.svelte";
 import { modelLabel } from "$lib/models";
 import { sessionModelName } from "$lib/sessions.svelte";
 
@@ -55,5 +56,52 @@ describe("what a Claude Code model is called", () => {
       "Opus 4.1",
     );
     expect(sessionModelName({ agent: "claude-code", model: null, account: null })).toBeNull();
+  });
+});
+
+describe("reading Codex's models where no session has listed them", () => {
+  const asked: { project: string; configDir?: string }[] = [];
+  let answer: () => Promise<{ models: { value: string; name: string }[] }>;
+
+  beforeEach(() => {
+    asked.length = 0;
+    answer = async () => ({ models: [SOL] });
+    adoptAccounts({ list: { work: { claude: null, codex: "~/.codex-work" } }, everywhere: null, overrides: { "/w": "work" } });
+    (window as unknown as { __CHORD_CORE__: unknown }).__CHORD_CORE__ = {
+      codexModels: (project: string, configDir?: string) => {
+        asked.push({ project, configDir });
+        return answer();
+      },
+    };
+  });
+
+  afterEach(() => {
+    delete (window as unknown as { __CHORD_CORE__?: unknown }).__CHORD_CORE__;
+    resetAccounts();
+  });
+
+  it("asks under the project's account, in the project, and names the models from it", async () => {
+    await askCodexCatalog("/w");
+    expect(asked).toEqual([{ project: "/w", configDir: "~/.codex-work" }]);
+    expect(catalogName("codex", "gpt-6.2-sol", "work")).toBe("GPT-6.2-Sol");
+  });
+
+  it("asks once for each account, and not where a session has listed them", async () => {
+    await Promise.all([askCodexCatalog("/w"), askCodexCatalog("/w")]);
+    await askCodexCatalog("/w");
+    expect(asked).toHaveLength(1);
+    heardCatalog("codex", null, [LUNA]);
+    await askCodexCatalog("/elsewhere");
+    expect(asked).toHaveLength(1);
+  });
+
+  it("asks again where Codex could not say", async () => {
+    answer = () => Promise.reject(new Error("codex: not found"));
+    await askCodexCatalog("/w");
+    expect(catalogOf("codex", "work")).toBeNull();
+    answer = async () => ({ models: [SOL] });
+    await askCodexCatalog("/w");
+    expect(asked).toHaveLength(2);
+    expect(catalogOf("codex", "work")).not.toBeNull();
   });
 });

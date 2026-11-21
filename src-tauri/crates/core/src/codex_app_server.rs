@@ -1763,45 +1763,7 @@ impl AppServer {
             }
             Sent::Models => {
                 if let Ok(result) = &reply {
-                    self.models = result["data"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|model| model["hidden"] != true)
-                        .filter_map(|model| {
-                            let value = text(&model["model"]).or_else(|| text(&model["id"]))?;
-                            let supported = model["supportedReasoningEfforts"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .filter_map(|effort| {
-                                    let value = text(&effort["reasoningEffort"])
-                                        .or_else(|| text(effort))?;
-                                    Some((value, text(&effort["description"])))
-                                });
-                            let mut efforts = Vec::new();
-                            let mut effort_descriptions = BTreeMap::new();
-                            for (effort, description) in supported {
-                                if let Some(description) = description.filter(|d| !d.is_empty()) {
-                                    effort_descriptions.insert(effort.clone(), description);
-                                }
-                                efforts.push(effort);
-                            }
-                            Some((
-                                ModelInfo {
-                                    name: text(&model["displayName"]),
-                                    description: text(&model["description"])
-                                        .filter(|d| !d.is_empty()),
-                                    efforts,
-                                    effort_descriptions,
-                                    resolved: None,
-                                    is_default: model["isDefault"] == true,
-                                    value,
-                                },
-                                text(&model["defaultReasoningEffort"]),
-                            ))
-                        })
-                        .collect();
+                    self.models = listed_models(result);
                 }
                 self.models_known = true;
                 self.introduce(out);
@@ -3062,6 +3024,49 @@ impl Driver for AppServer {
         }
         out
     }
+}
+
+/// The models a `model/list` answer offers, each with the effort it runs
+/// at by default, in the order Codex lists them. A model Codex hides is
+/// left out.
+pub(crate) fn listed_models(result: &Value) -> Vec<(ModelInfo, Option<String>)> {
+    result["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|model| model["hidden"] != true)
+        .filter_map(|model| {
+            let value = text(&model["model"]).or_else(|| text(&model["id"]))?;
+            let supported = model["supportedReasoningEfforts"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|effort| {
+                    let value = text(&effort["reasoningEffort"]).or_else(|| text(effort))?;
+                    Some((value, text(&effort["description"])))
+                });
+            let mut efforts = Vec::new();
+            let mut effort_descriptions = BTreeMap::new();
+            for (effort, description) in supported {
+                if let Some(description) = description.filter(|d| !d.is_empty()) {
+                    effort_descriptions.insert(effort.clone(), description);
+                }
+                efforts.push(effort);
+            }
+            Some((
+                ModelInfo {
+                    name: text(&model["displayName"]),
+                    description: text(&model["description"]).filter(|d| !d.is_empty()),
+                    efforts,
+                    effort_descriptions,
+                    resolved: None,
+                    is_default: model["isDefault"] == true,
+                    value,
+                },
+                text(&model["defaultReasoningEffort"]),
+            ))
+        })
+        .collect()
 }
 
 #[cfg(test)]
