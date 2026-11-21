@@ -1349,9 +1349,20 @@ mod tests {
         assert!(!with.is_empty(), "codex debug prompt-input answered");
         assert!(!without.is_empty(), "codex debug prompt-input answered");
         for tool in tools {
-            assert!(with.contains(tool), "{tool} is there without the settings");
-            assert!(!without.contains(tool), "{tool} is gone with them");
+            assert!(names(&with, tool), "{tool} is there without the settings");
+            assert!(!names(&without, tool), "{tool} is gone with them");
         }
+    }
+
+    /// Whether `text` names the tool `name` whole, not as the start or end
+    /// of a longer name such as `send_message_to_user_async`.
+    fn names(text: &str, name: &str) -> bool {
+        let part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        text.match_indices(name).any(|(at, _)| {
+            let before = text[..at].chars().next_back();
+            let after = text[at + name.len()..].chars().next();
+            !before.is_some_and(part) && !after.is_some_and(part)
+        })
     }
 
     /// Codex's configuration as its app-server reads it in `cwd`, under the
