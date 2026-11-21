@@ -1202,7 +1202,7 @@ describe("SessionsPane", () => {
       "session",
     ]);
     expect(labels().slice(0, 2)).toEqual(shown);
-    expect(new Set(labels())).toEqual(new Set(["t-1", "t-2", "t-3", "t-4", "t-5"]));
+    expect(new Set(labels())).toEqual(new Set(["work 1", "work 2", "work 3", "work 4", "work 5"]));
     await fireEvent.keyDown(nav, { key: "ArrowDown" });
     expect(rows[3]).toHaveClass("cursor");
 
