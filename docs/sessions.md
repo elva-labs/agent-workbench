@@ -517,6 +517,15 @@ agent's name is no title. Codex keeps names in its own index, which is
 polled. A name is kept by session id, so the past-session list shows the
 name you knew a session by, and resuming it starts the row under that name.
 
+A conversation that [goes on from its notes](#going-on-from-the-notes) is
+a new one with an id of its own, and the row's name is kept under that id
+as well, the user's own name staying the user's. A row that comes back
+under such an id with no name kept for it takes the name of the nearest
+conversation it went on from. Where none of them has one, it takes the
+title the first of them is listed under, since a conversation that went
+on begins with its briefing and its own title is no name. A row nothing
+names is `session N`, never its id.
+
 A name the user gives a session through the agent's own rename command is
 the row's name at once and from then on. An integrated session hears it
 from the agent; for a Claude Code terminal session the transcript records

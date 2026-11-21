@@ -45,6 +45,8 @@ import {
   briefingFor,
   identified as wentOnAs,
   leftBy,
+  lineage,
+  lineageOf,
   spoke,
   superseded as wentOnFromIt,
   takeUp as takeUpAgain,
@@ -711,6 +713,7 @@ export function loadRemembered() {
   } catch {
     // No name is the user's own, then.
   }
+  inheritNames();
   loadWaiting();
   try {
     const raw = localStorage.getItem(TOKENS_KEY);
@@ -1062,6 +1065,30 @@ function rememberName(id: string, name: string) {
   }
 }
 
+/** The name kept for a conversation, or else for the nearest one it went
+    on from, and whether it is the user's own. Null where none in the line
+    has one. */
+function keptName(id: string): { name: string; own: boolean } | null {
+  for (const at of lineageOf(id).reverse()) {
+    const name = sessions.names[at];
+    if (name !== undefined && name.trim() !== "" && !reservedName(name))
+      return { name, own: sessions.own[at] === true };
+  }
+  return null;
+}
+
+/** A conversation that went on from another goes by the name the one
+    before it had, where none of its own is kept. */
+function inheritNames() {
+  for (const id of Object.keys(lineage())) {
+    if (sessions.names[id] !== undefined) continue;
+    const kept = keptName(id);
+    if (kept === null) continue;
+    rememberName(id, kept.name);
+    if (kept.own) rememberOwn(id);
+  }
+}
+
 function rememberOwn(id: string) {
   if (sessions.own[id]) return;
   sessions.own[id] = true;
@@ -1264,17 +1291,34 @@ export function liveCount(project: string): number {
   return forProject(project).filter(isLive).length;
 }
 
-/** A short label for the row: its name, the resumed id, or its number in
-    the project. A name is the agent's or a caller's text, so what it holds
-    that cannot be seen is written out; and a name that reads as "You" or
+/** A short label for the row: its name, or its number in the project. A
+    name is the agent's or a caller's text, so what it holds that cannot be
+    seen is written out. */
+export function label(session: Session): string {
+  const name = knownName(session);
+  return name === null ? `session ${session.ordinal}` : shown(name);
+}
+
+/** What a row is known by: its title, the name it was given, or for a
+    resumed row the name kept for its conversation or the one it went on
+    from, else the title the first conversation in that line is listed
+    under. Null where nothing names it. A name that reads as "You" or
     "Workbench", which are the user's and the workbench's alone, is not
     taken. */
-export function label(session: Session): string {
-  if (session.title !== null && !reservedName(session.title)) return shown(session.title);
+export function knownName(session: Session): string | null {
+  if (session.title !== null && !reservedName(session.title)) return session.title;
   const given = givenBy(session);
-  if (given !== null && !reservedName(given)) return shown(given);
-  if (session.resumedFrom !== null) return session.resumedFrom.slice(0, 8);
-  return `session ${session.ordinal}`;
+  if (given !== null && !reservedName(given)) return given;
+  const from = session.resumedFrom;
+  if (from === null) return null;
+  const kept = keptName(from);
+  if (kept !== null) return kept.name;
+  // A conversation that went on from another began with its briefing, so
+  // only the first one's listed title is a name.
+  const first = lineageOf(from)[0];
+  const listed = (sessions.history[session.project] ?? []).find((entry) => entry.id === first);
+  const title = listed?.title?.trim() ?? "";
+  return title === "" || reservedName(title) ? null : title;
 }
 
 let givenBy: (session: Session) => string | null = () => null;
@@ -1358,26 +1402,16 @@ export function identified(
   if (title !== null) named(session.key, title);
 }
 
-/** The name a row that goes on from its notes keeps: the one it has, or
-    the title its old conversation is listed under. None where it has
-    neither, and its first message names it then, as any row's does. */
-export function nameGoingOn(session: Session): string | null {
-  const own = session.title ?? givenName(session);
-  if (own !== null) return own;
-  const from = session.resumedFrom;
-  const listed = (sessions.history[session.project] ?? []).find((entry) => entry.id === from);
-  const title = listed?.title?.trim() ?? "";
-  return title === "" || reservedName(title) ? null : title;
-}
-
 /** Keeps the name a session's row goes by under its id, for when the row
-    has gone: the title it has, or the name its caller gave it, and never
-    its number, nor a name the user's or the workbench's own would read
-    as. */
+    has gone and for a restart: the title it has, or the name its caller
+    gave it, as the user's own where the title is, and never its number,
+    nor a name the user's or the workbench's own would read as. */
 export function keepName(session: Session) {
   if (session.id === null) return;
   const name = session.title ?? givenName(session);
-  if (name !== null && name.trim() !== "" && !reservedName(name)) rememberName(session.id, name);
+  if (name === null || name.trim() === "" || reservedName(name)) return;
+  rememberName(session.id, name);
+  if (session.ownTitle && session.title === name) rememberOwn(session.id);
 }
 
 /** The agent's index calls the session this. Taken as it is, unlike a
@@ -1889,6 +1923,7 @@ function row(
   running: string | null = null,
 ): Session {
   ordinals[project] = (ordinals[project] ?? 0) + 1;
+  const kept = resumedFrom === null ? null : keptName(resumedFrom);
   return {
     key: `s${++counter}`,
     token: running ?? tokenFor(resumedFrom, project),
@@ -1902,8 +1937,8 @@ function row(
     resumedFrom,
     ordinal: ordinals[project],
     // A resumed session keeps the name it had until the agent says otherwise.
-    title: resumedFrom === null ? null : (sessions.names[resumedFrom] ?? null),
-    ownTitle: resumedFrom !== null && sessions.own[resumedFrom] === true,
+    title: kept?.name ?? null,
+    ownTitle: kept?.own === true || (resumedFrom !== null && sessions.own[resumedFrom] === true),
     cwd: null,
     startIn,
     madeTree: false,
@@ -2123,7 +2158,7 @@ export async function launch(
     const briefing =
       resume === null && session.resumedFrom !== null ? briefingFor(key, session.prompt !== null) : null;
     // The row keeps the name it showed, which its old conversation gave.
-    if (briefing !== null) session.title ??= nameGoingOn(session);
+    if (briefing !== null) session.title ??= knownName(session);
     const prompt =
       briefing === null
         ? (session.prompt ?? undefined)
@@ -2195,6 +2230,8 @@ export function started(
     identifiedZoom(key, sessionId);
     adopt(session.project, sessionId);
     wentOnAs(key, sessionId);
+    // A conversation that went on from another goes by the row's name.
+    keepName(session);
     rememberWorkflow(session);
     replayActivity(sessionId);
   }
@@ -2506,9 +2543,8 @@ function swap(row: Session, to: SessionKind, bySetting: boolean) {
   // resume from, and starts afresh the other way.
   const spoken = row.kind === "integrated" ? saidIn(row) : saidInTerminal(row);
   if (row.kind === "integrated") stopIntegrated(row);
-  // The row keeps the name it showed, which a row resumed by its id would
-  // otherwise give up for the id's start.
-  if (spoken) row.title ??= label(row);
+  // The row keeps the name it showed.
+  if (spoken) row.title ??= knownName(row);
   row.kind = to;
   row.resumedFrom = spoken ? row.id : null;
   // The prompt a started session began with was given then, and is not

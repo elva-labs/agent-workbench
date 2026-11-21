@@ -204,6 +204,13 @@ export function wentOnFrom(given: string): string | null {
   return at;
 }
 
+/** Each conversation that went on from another, by its id, with that
+    one's id. */
+export function lineage(): Readonly<Record<string, string>> {
+  load();
+  return going.lineage;
+}
+
 /** The conversations a row's messages are read from, oldest first, ending
     with `id`. */
 export function lineageOf(id: string): string[] {

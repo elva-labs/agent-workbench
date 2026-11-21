@@ -222,3 +222,39 @@ test("resumes a past session in the worktree the app made for it as its own", as
   await page.getByTestId("past-session").filter({ hasText: "only ran there" }).click();
   await expect.poll(async () => (await spawned()).at(-1)).toEqual({ session: "visit-1", cwd: tree, madeWorktree: false });
 });
+
+// A row left from the last quit whose conversation went on from its notes
+// comes back under the new conversation's id, and is still called by the
+// name it had; one nothing names is numbered, never shown by its id.
+test("names a row left from the last quit by the conversation it went on from, and numbers one nothing names", async ({ page }) => {
+  const now = Math.floor(Date.now() / 1000);
+  await installFakeCore(page, {
+    open: [PROJECT],
+    transcripts: [
+      { id: "b3bc7443-went-on", modified: now - 60, size: 100, title: "Pick this up from the notes" },
+      { id: "77e2a602-first", modified: now - 3600, size: 100, title: "Cummins portal and AWS account" },
+    ],
+  });
+  await page.addInitScript(
+    ({ project }) => {
+      if (localStorage.getItem("chord.open") !== null) return;
+      const ids = ["b3bc7443-went-on", "9604da0e-nameless"];
+      localStorage.setItem("chord.mine", JSON.stringify({ [project]: ids }));
+      localStorage.setItem("chord.wentOn", JSON.stringify({ "b3bc7443-went-on": "77e2a602-first" }));
+      localStorage.setItem(
+        "chord.open",
+        JSON.stringify({
+          open: ids.map((id) => ({ project, id, agent: "claude-code", startIn: null, model: null })),
+          active: null,
+        }),
+      );
+    },
+    { project: PROJECT },
+  );
+  await page.goto("/");
+  const labels = page.locator("[data-testid='session-row'] .label");
+  await expect(labels).toHaveCount(2);
+  await expect(labels.filter({ hasText: "Cummins portal and AWS account" })).toBeVisible();
+  await expect(labels.filter({ hasText: /^session \d+$/ })).toBeVisible();
+  await expect(page.locator("[data-testid='session-row']").filter({ hasText: /9604da0e|b3bc7443/ })).toHaveCount(0);
+});
