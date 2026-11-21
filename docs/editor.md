@@ -48,8 +48,9 @@ it, Rust, Python, Go, Java, Kotlin, Swift, C, C++, C#, Ruby, Lua, YAML,
 TOML, XML and SVG, SQL, shell, PowerShell and Dockerfiles. A Dockerfile is
 known by its name, as are `Dockerfile.dev`, `prod.dockerfile` and a
 `Containerfile`; shell by `.bashrc`, `.bash_profile`, `.profile`,
-`.zshrc`, `.zprofile` and `.zshenv`; and JSON with comments by `.jsonc`,
-`tsconfig.json` and `jsconfig.json`. Svelte and Vue files are coloured as
+`.zshrc`, `.zprofile` and `.zshenv`, exactly; and JSON with comments by
+`.jsonc` and by `tsconfig.json`, `jsconfig.json` and the likes of
+`tsconfig.base.json`. Svelte and Vue files are coloured as
 HTML, which colours their scripts and styles and leaves their own template
 syntax plain. Any other file, and one with no extension, is plain. Each
 language is loaded the first time a file in it is opened, so the text
@@ -65,7 +66,7 @@ comments the lines out in its language's own syntax.
 The colours are the terminal's: keywords in its magenta, strings in green,
 numbers and other literals in yellow, functions in blue, types in cyan,
 tags in red and comments in the faint ink. In Markdown the marks around
-the prose, such as `#`, `-`, `>` and `*`, are faint too. They follow the appearance, the
+the prose, such as `#`, `-`, `>`, `*` and `~~`, are faint too. They follow the appearance, the
 palette and a [theme](settings.md#colour) of your own, which colours code
 through the terminal colours it sets. Indigo, amber and rose give the
 terminal's cyan their accent, so on them types and Markdown headings keep
