@@ -424,7 +424,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         body.models.map((model) => model.value),
         body.defaultModel ?? body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
-      heardCatalog(session.agent, session.account, body.models);
+      heardCatalog(session.agent, hostOf(session.project), session.account, body.models);
       if (agentProfile(session.agent).namesRunningModel) session.runsOn = body.model ?? body.defaultModel ?? null;
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
@@ -1119,7 +1119,7 @@ export function reattach(key: string, handle: string, spoken = true): Promise<Re
       session.resumedFrom = null;
       if (snapshot.ready !== null) {
         identify(session, snapshot.ready.sessionId);
-        heardCatalog(session.agent, session.account, snapshot.ready.models);
+        heardCatalog(session.agent, hostOf(session.project), session.account, snapshot.ready.models);
         if (agentProfile(session.agent).namesRunningModel)
           session.runsOn = snapshot.settings.model ?? snapshot.ready.defaultModel ?? null;
       }

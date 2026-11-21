@@ -63,10 +63,17 @@ export function mostCapable(): ModelOption {
 }
 
 /** What a model is called where its name is shown: as the list here
-    names it, else as the agent's own list names it for the account, else
-    as it is written. */
-export function modelLabel(agent: AgentId, model: string, account: string | null = null): string {
-  return MODELS[agent]?.find((option) => option.model === model)?.label ?? catalogName(agent, model, account) ?? model;
+    names it, else as the agent's own list names it for the account on the
+    machine `host`, null for this one, else as it is written. */
+export function modelLabel(
+  agent: AgentId,
+  model: string,
+  account: string | null = null,
+  host: string | null = null,
+): string {
+  return (
+    MODELS[agent]?.find((option) => option.model === model)?.label ?? catalogName(agent, model, account, host) ?? model
+  );
 }
 
 export function sameModel(

@@ -1168,17 +1168,19 @@ export function moreLabel(count: number, oldest: number, now = Date.now()): stri
     a session another started, the status bar and the start tool's reply:
     the model the session runs on where the agent has said it, else the
     one chosen for it, by the name the agent's own list gives it for the
-    session's account where the agent's models go by those names, else as
-    `modelLabel` reads it. Null for a session that names no model. */
+    session's account on its project's machine where the agent's models go
+    by those names, else as `modelLabel` reads it. Null for a session that
+    names no model. */
 export function sessionModelName(session: {
   agent: AgentId;
   model: string | null;
   runsOn?: string | null;
   account: string | null;
+  project: string;
 }): string | null {
   const model = session.runsOn ?? session.model;
   if (model === null) return null;
-  return catalogName(session.agent, model, session.account) ?? modelLabel(model);
+  return catalogName(session.agent, model, session.account, hostOf(session.project)) ?? modelLabel(model);
 }
 
 /** What a model is called on a row. Claude's own names read as they are

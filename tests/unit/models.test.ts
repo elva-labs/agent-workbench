@@ -34,11 +34,11 @@ describe("what a workflow picker offers", () => {
   beforeEach(() => resetCatalogs());
 
   it("offers Codex its default first, then the models Codex listed, by their names", () => {
-    heardCatalog("codex", "work", [
+    heardCatalog("codex", null, "work", [
       { value: "gpt-6.2-sol", name: "GPT-6.2-Sol" },
       { value: "gpt-6.1-luna", name: "GPT-6.1-Luna (preview)" },
     ]);
-    heardCatalog("codex", null, [
+    heardCatalog("codex", null, null, [
       { value: "gpt-6.2-sol", name: "GPT-6.2-Sol" },
       { value: "gpt-5-mini", name: null },
     ]);
@@ -55,7 +55,7 @@ describe("what a workflow picker offers", () => {
   });
 
   it("offers Claude Code its aliases alone, whatever its list says", () => {
-    heardCatalog("claude-code", null, [{ value: "claude-opus-5-5", name: "Opus 5.5" }]);
+    heardCatalog("claude-code", null, null, [{ value: "claude-opus-5-5", name: "Opus 5.5" }]);
     expect(offeredModels("claude-code")).toEqual(modelsOf("claude-code"));
   });
 });

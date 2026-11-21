@@ -39,6 +39,7 @@
   import { installed } from "$lib/agent.svelte";
   import { offeredAgents } from "$lib/models";
   import { askCodexCatalog } from "$lib/modelCatalog.svelte";
+  import { hostOf } from "$lib/remote.svelte";
 
   /** The width of the step's settings beside the diagram, and the gap. */
   const STEP_WIDTH = 248;
@@ -61,7 +62,7 @@
       ...current.steps.flatMap((one) => one.models.map((model) => model.agent)),
     ];
     if (!offeredAgents(installed(), used).includes("codex")) return;
-    for (const project of workspace.open) void askCodexCatalog(project.path);
+    for (const project of workspace.open) void askCodexCatalog(project.path, hostOf(project.path));
   });
 
   /** The step picked in the diagram. */

@@ -71,7 +71,7 @@ import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows, unknowWorkflo
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
-import { catalogName, resetCatalogs } from "$lib/modelCatalog.svelte";
+import { catalogName, catalogOf, resetCatalogs } from "$lib/modelCatalog.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
 
 const PROJECT = "/home/ada/dev/demo";
@@ -1431,6 +1431,14 @@ describe("the model a session runs on", () => {
     const session = byKey(row.key)!;
     expect(session.model).toBeNull();
     expect(session.runsOn).toBe("gpt-5-codex");
+  });
+
+  it("keeps the models a Codex session on another machine lists under that machine", async () => {
+    const remote = "ssh://ada@build/home/ada/dev/demo";
+    const session = create(remote, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    expect(catalogOf("codex", "ada@build", null)?.length).toBeGreaterThan(0);
+    expect(catalogOf("codex", null, null)).toBeNull();
   });
 
   it("leaves a Claude Code row naming only the model chosen for it", async () => {
