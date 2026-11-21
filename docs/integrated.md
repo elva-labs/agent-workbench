@@ -198,13 +198,20 @@ A mode kept for a conversation is that conversation's own, and no
 conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept
 the same way. The composer's chips are the model, the effort and the mode,
-in that order; the effort's is there only while the model takes an effort,
-lists the efforts the agent says that model takes, from the least to the
-most and each with the line the agent gives for it, Codex's own words for
-ultra among them, and always names the one the status bar names. In a narrow pane it drops the word effort and keeps
-the level. An effort set with the agent's own command is shown but is not
-the one a new session starts on; only a pick on the chip or the status bar
-is.
+in that order. The model's says Default before the model's name while no
+model is chosen for the session, which then runs on the one the agent's
+own configuration names. In a Codex session given none, picking the model
+Codex already runs on chooses nothing, and the chip still says Default;
+picking it back after another model chooses it, and the chip names it
+alone, though the session runs on the same model as before. So Default
+means that no model was chosen, not that the session runs on the
+configured one. The effort's chip is there only while the model takes an
+effort, lists the efforts the agent says that model takes, from the least
+to the most and each with the line the agent gives for it, Codex's own
+words for ultra among them, and always names the one the status bar
+names. In a narrow pane it drops the word effort and keeps the level. An
+effort set with the agent's own command is shown but is not the one a new
+session starts on; only a pick on the chip or the status bar is.
 
 A mode the agent was asked to start in and did not, such as auto where the
 account or the model has none, is said in a notice, and the session runs in
@@ -257,17 +264,18 @@ the user into every project and account. What one account or project
 cannot take is settled when a session starts, and never changes what is
 kept. A model the agent does not offer the session's account starts it on
 the agent's default model, with a notice: for Codex the model its own
-configuration names where it offers that one, else the one it marks as its
-default, else the first it offers; once a
-session under an account has said which models it offers, a new one under
-that account, while the window is open, is started on the default without
-asking for the model first. A mode the agent does
-not take, such as auto where the account or the project's settings give
-none, is switched to the nearest narrower mode the agent offers, with a
-notice, as for a session another started. An effort the model does not
-take is switched to the nearest lower one it does, lower as the agent
-orders its efforts, so a model without ultra runs at max. The chips then show
-what the session runs on. A resumed session goes on as its conversation
+configuration names where it offers that one, else the one it marks as
+its default, else the first it offers. Once a session under an account
+has said which models it offers, a new one under that account, while the
+window is open, is started on the default without asking for the model
+first. A mode the agent does not take, such as auto where the account or
+the project's settings give none, is switched to the nearest narrower
+mode the agent offers, with a notice, as for a session another started.
+An effort the model does not take is switched to the nearest lower one it
+does, lower as the agent orders its efforts, so a model without ultra
+runs at the deepest effort below it that it takes, max where it has max,
+and a model with none lower at its least. The chips then show what the
+session runs on. A resumed session goes on as its conversation
 did, a session another started begins as its starter says, and a session
 that follows a workflow takes the mode and the effort but runs on the
 model the workflow sets.
