@@ -946,12 +946,9 @@ mod tests {
             .write_all(&b"line\n".repeat(4 * BINARY_PROBE))
             .unwrap();
         large.set_len(MAX_TEXT + 1).unwrap();
-        let mut expected = 11;
         #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink("ends.txt", dir.join("link")).unwrap();
-            expected += 1;
-        }
+        std::os::unix::fs::symlink("ends.txt", dir.join("link")).unwrap();
+        let expected = if cfg!(unix) { 12 } else { 11 };
 
         let files = status(&dir).unwrap();
         let repo = Repository::open(&*dir).unwrap();
