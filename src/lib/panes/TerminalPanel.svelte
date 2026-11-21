@@ -178,7 +178,7 @@
   }
 
   function resizeList(dx: number) {
-    layout.terminalList = Math.max(MIN.terminalList, layout.terminalList - dx);
+    layout.terminalList = Math.max(MIN.terminalList, layout.terminalListDrawn - dx);
     applyLayout(layout.width, layout.height);
   }
 
@@ -242,7 +242,7 @@
   <div class="wrap">
     <!-- The list comes before the shells, drawn on their right: a shell
          keeps Tab, so the panel's own controls are reached first. -->
-    <nav class="list" style:width="{layout.terminalList}px" aria-label="Terminals">
+    <nav class="list" style:width="{layout.terminalListDrawn}px" aria-label="Terminals">
       <div class="top" data-tauri-drag-region>
         <span class="title" class:on={focused} data-tauri-drag-region>Terminal</span>
         <button

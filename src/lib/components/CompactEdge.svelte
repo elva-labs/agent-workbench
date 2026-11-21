@@ -122,7 +122,7 @@
     const box = shown.getBoundingClientRect();
     const slot = shown.parentElement?.getBoundingClientRect();
     const left = slot?.left ?? box.left;
-    return x >= 0 && x < left + layout.sessions && y >= box.top && y < box.bottom;
+    return x >= 0 && x < left + layout.sessionsDrawn && y >= box.top && y < box.bottom;
   }
 
   let inside = false;

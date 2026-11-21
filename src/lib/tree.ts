@@ -19,6 +19,10 @@ export interface TreeNode {
   entry?: FileEntry;
   /** True if this file changed, or if any file beneath this folder did. */
   hasChange: boolean;
+  /** Folders only, when a chain was compressed into this row: the path of
+      every folder in it, outermost first, ending with `path`. A fold kept
+      for any of them holds for the row, whichever shape the tree takes. */
+  chain?: string[];
 }
 
 export interface Row {
@@ -64,6 +68,7 @@ function compress(nodes: TreeNode[]): TreeNode[] {
         name: `${current.name}/${only.name}`,
         path: only.path,
         children: only.children,
+        chain: [...(current.chain ?? [current.path]), only.path],
       };
     }
     return { ...current, children: compress(current.children) };

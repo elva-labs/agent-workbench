@@ -40,6 +40,7 @@ import {
   toggleView,
   views,
 } from "$lib/files.svelte";
+import { buildTree } from "$lib/tree";
 import { workspace, reset as resetWorkspace } from "$lib/workspace.svelte";
 import { browser, resetBrowser } from "$lib/browser.svelte";
 import { enterReview, layout } from "$lib/layout.svelte";
@@ -145,6 +146,7 @@ const changed = (path: string, status = "M", add = 2, del = 1) => ({
 });
 
 beforeEach(() => {
+  localStorage.clear();
   clear();
   files.view = "diff";
   resetWorkspace();
@@ -764,12 +766,123 @@ describe("folder state", () => {
     expect(isOpen(dir("src", true))).toBe(false);
   });
 
-  it("returns to the default when toggled back, storing no override", () => {
+  it("keeps a folder you shut shut when a change lands inside it", () => {
     toggleDir(dir("docs", false));
     toggleDir(dir("docs", false));
     expect(isOpen(dir("docs", false))).toBe(false);
-    expect(files.expanded.has("docs")).toBe(false);
-    expect(files.collapsed.has("docs")).toBe(false);
+    expect(isOpen(dir("docs", true))).toBe(false);
+  });
+
+  it("keeps the folds of each project across a switch and a restart", () => {
+    clear();
+    toggleDir(dir("src", true));
+
+    workspace.active = "/other";
+    clear();
+    expect(isOpen(dir("src", true))).toBe(true);
+
+    workspace.active = ROOT;
+    clear();
+    expect(isOpen(dir("src", true))).toBe(false);
+
+    // A restart starts with nothing in memory and reads what was kept.
+    files.collapsed.clear();
+    clear();
+    expect(isOpen(dir("src", true))).toBe(false);
+  });
+
+  it("reads kept folds leniently, ignoring what it does not know", () => {
+    localStorage.setItem(
+      "chord.folds",
+      JSON.stringify({
+        [ROOT]: { open: ["docs", 4], closed: ["src"], sorted: true },
+        "/broken": 5,
+      }),
+    );
+    clear();
+    expect(isOpen(dir("docs", false))).toBe(true);
+    expect(isOpen(dir("src", true))).toBe(false);
+  });
+
+  it("holds the fold of a compressed row when the tree shows it apart", () => {
+    clear();
+    const entry = (path: string) => ({ path, status: "M" });
+    const [row] = buildTree([entry("a/b/c.ts")]);
+    expect(row.name).toBe("a/b");
+    toggleDir(row);
+
+    const [apart] = buildTree([entry("a/b/c.ts"), entry("a/d.ts")]);
+    expect(apart.path).toBe("a");
+    expect(isOpen(apart)).toBe(false);
+    const [deeper] = buildTree([entry("a/b/c/e.ts")]);
+    expect(isOpen(deeper)).toBe(false);
+  });
+
+  it("shows the way to a selected file without forgetting the fold", async () => {
+    await refresh();
+    toggleDir(dir("src", true));
+    await select("src/cache/mod.rs");
+    expect(isOpen(dir("src", true))).toBe(true);
+
+    deselect();
+    expect(isOpen(dir("src", true))).toBe(false);
+  });
+
+  it("keeps the fold of a folder another branch has, for a while", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const day = 24 * 60 * 60 * 1000;
+      const listing = async () => {
+        clear();
+        await refresh();
+        await setScope("all");
+      };
+      vi.setSystemTime(0);
+      clear();
+      toggleDir(dir("src", true));
+      toggleDir(dir("old", false));
+      await refresh();
+      await setScope("all");
+      expect(files.collapsed.has("src")).toBe(true);
+      expect(files.expanded.has("old")).toBe(true);
+
+      // Back on a branch that has the folder, the clock starts over.
+      vi.setSystemTime(20 * day);
+      fake.fileList = [...fake.fileList, "old/notes.md"];
+      await listing();
+      fake.fileList = fake.fileList.filter((path) => path !== "old/notes.md");
+      vi.setSystemTime(40 * day);
+      await listing();
+      vi.setSystemTime(69 * day);
+      await listing();
+      expect(files.expanded.has("old")).toBe(true);
+      expect(localStorage.getItem("chord.folds")).toContain("old");
+
+      vi.setSystemTime(70 * day);
+      await listing();
+      expect(files.collapsed.has("src")).toBe(true);
+      expect(files.expanded.has("old")).toBe(false);
+      expect(localStorage.getItem("chord.folds")).not.toContain("old");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the latest folds of a project and lets the oldest go", () => {
+    for (let index = 0; index < 510; index += 1) toggleDir(dir(`dir${index}`, true));
+    expect(files.collapsed.size).toBe(500);
+    expect(files.collapsed.has("dir9")).toBe(false);
+    expect(files.collapsed.has("dir10")).toBe(true);
+    expect(files.collapsed.has("dir509")).toBe(true);
+    const kept = JSON.parse(localStorage.getItem("chord.folds") ?? "{}");
+    expect(kept[ROOT].closed).toHaveLength(500);
+
+    // Choosing an old fold again makes it the latest.
+    toggleDir(dir("dir10", false));
+    toggleDir(dir("dir10", true));
+    for (let index = 510; index < 600; index += 1) toggleDir(dir(`dir${index}`, true));
+    expect(files.collapsed.has("dir10")).toBe(true);
+    expect(files.collapsed.has("dir11")).toBe(false);
   });
 
   it("opens every folder on the way to a selected file", async () => {
@@ -792,6 +905,7 @@ describe("clear", () => {
     await select("src/lib.rs");
     toggleDir({ path: "src", hasChange: true });
 
+    workspace.active = "/other";
     clear();
     expect(listed()).toHaveLength(0);
     expect(files.selected).toBeNull();

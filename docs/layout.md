@@ -355,11 +355,15 @@ A pane can be folded or missing for two reasons, and they are kept apart:
 - **forced**: the window cannot hold it. Transient, never persisted.
 
 Without the distinction, one stint in split-screen would permanently forget
-that you like the sessions pane open. The same holds for the tree column and
-the agent while editing: hidden by the window, they come back when it grows,
-and narrowed by it, they widen again to the width chosen, which a squeeze
-never replaces; the agent hidden with its toggle stays hidden until asked
-for.
+that you like the sessions pane open. Widths and heights are kept the same
+way: every pane, the viewer, the tree column, the terminal panel and its list
+have the size you dragged them to and the size the window leaves them. A
+narrow window draws them smaller, and widens them again to the size chosen
+once it grows, which a squeeze never replaces; only the sizes chosen are
+saved, so a restart in a small window does not shrink them for good. The
+same holds for the tree column and the agent while editing: hidden by the
+window, they come back when it grows; the agent hidden with its toggle stays
+hidden until asked for.
 
 ## Hiding is free, resizing is not
 
@@ -574,8 +578,23 @@ nothing but one more folder collapses into a single row.
 
 A folder is open by default when something beneath it changed. Widening the
 scope on a real repository adds hundreds of paths, and this keeps the
-handful the agent touched in view. Opening and closing a folder yourself
-records an override, and only where it differs from the default.
+handful the agent touched in view. A folder you open or close yourself
+stays that way until you change it: a closed folder that gains a change
+stays closed, drawn as bright as any folder holding a change, and the
+choice holds through a reload, a switch to another session or project, and
+a restart. Folds are kept per project, so its worktrees share them, up to
+500 folders opened and 500 closed, the oldest choice going first. A fold
+for a folder the full listing does not have is kept for 30 days, so a
+folder only another branch has keeps its fold through a switch; one seen
+again starts the 30 days over. A chain
+collapsed into one row keeps its fold when the tree later shows its
+folders apart.
+
+Selecting a file opens the folders on the way to it for as long as it is
+selected, whoever selected it: you, the agent's show tool, or a session
+coming back to the file it had open. Once the selection moves on, those
+folders fold back to what you chose. A file or folder you make or move
+opens the folders on its way and keeps them open.
 
 The tree is one tab stop, not one per row. Arrow keys move a cursor within
 it, <kbd>Left</kbd> and <kbd>Right</kbd> close and open folders or step to

@@ -385,6 +385,40 @@ test.describe("responsive collapse", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await sessionsFolded(page);
   });
+
+  // A narrow stint squeezes the width the user dragged to, and whatever is
+  // saved meanwhile keeps the width chosen, so it comes back with the room
+  // and after a restart.
+  test("gives a dragged width back when the window grows, and after a reload", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await columnsAtRest(page);
+    const divider = (await page.locator(".splitter[data-divider='changes']").boundingBox())!;
+    const x = divider.x + divider.width / 2;
+    const y = divider.y + 200;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 200, y, { steps: 5 });
+    await page.mouse.up();
+    await columnsAtRest(page);
+    const chosen = await widthOf(page, CHANGES);
+
+    await page.setViewportSize({ width: 1000, height: 900 });
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeLessThan(chosen - 100);
+    // Something else saves the layout while the width is squeezed.
+    await page.keyboard.press(`${MOD}+b`);
+    await page.keyboard.press(`${MOD}+b`);
+    await columnsAtRest(page);
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeCloseTo(chosen, 0);
+
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await columnsAtRest(page);
+    expect(await widthOf(page, CHANGES)).toBeCloseTo(chosen, 0);
+  });
 });
 
 test.describe("the file tree", () => {
@@ -441,6 +475,41 @@ test.describe("the file tree", () => {
     await page.locator(TREE).focus();
     await page.keyboard.press("ArrowLeft");
     expect(await rowNames(page)).toEqual(["src"]);
+  });
+
+  test("keeps a folder shut when a change lands in it, and after a reload", async ({ page }) => {
+    await chooseAll(page);
+    await row(page, "docs").click();
+    await row(page, "docs").click();
+    await row(page, "src").click();
+    expect(await rowNames(page)).not.toContain("lib.rs");
+
+    await page.evaluate(() => {
+      const state = window as unknown as {
+        __fixture: { fixture: { status: unknown[] } };
+        __gitChanged: () => void;
+      };
+      state.__fixture.fixture.status.push({
+        path: "docs/draft.md",
+        status: "M",
+        add: 2,
+        del: 1,
+        binary: false,
+      });
+      state.__gitChanged();
+    });
+    // Shut, it still shows that something inside it changed.
+    const docs = page.locator(`${TREE} [role='treeitem']`, {
+      has: page.locator(".name", { hasText: /^docs$/ }),
+    });
+    await expect(docs).not.toHaveClass(/\bquiet\b/);
+    await expect(docs).toHaveAttribute("aria-expanded", "false");
+    expect(await rowNames(page)).not.toContain("draft.md");
+
+    // The fixture starts again from what it had, with only src changed.
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect.poll(() => rowNames(page)).toEqual(["src"]);
   });
 
   test("does not scroll the pane sideways on a deep path", async ({ page }) => {
@@ -1360,6 +1429,9 @@ test.describe("the file viewer", () => {
 
     // Room for every one of them: they go back on the line and the "⋯" goes.
     await page.setViewportSize({ width: 1400, height: 900 });
+    // The pane eases back out to the width it was given, so the handle is
+    // measured once it has stopped.
+    await columnsAtRest(page);
     const handle = page.getByRole("separator", { name: "Resize changes" });
     const box = (await handle.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

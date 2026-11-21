@@ -127,10 +127,14 @@
     editTreeVisible,
     enterReview,
     focusPane,
+    giveBackStarted,
     layout,
+    lendStarted,
     resetEditTree,
     resizeEditTree,
     saveLayout,
+    setStartedOpen as chooseStartedOpen,
+    startedShown,
   } from "$lib/layout.svelte";
 
   let reviewing = $derived(layout.mode === "reviewing");
@@ -204,7 +208,7 @@
     }
     if (board !== null) {
       list.push({ id: STARTED_FOLD_ID, kind: "started-head" });
-      if (layout.startedOpen) {
+      if (startedShown()) {
         for (const session of started) list.push({ id: startedRowId(session.key), kind: "started", key: session.key });
         for (const project of allowedHere) list.push({ id: allowedId(project), kind: "started-allowed", project });
         if (boardTrees.length > 0) list.push({ id: STARTED_TREES_ID, kind: "started-trees" });
@@ -353,7 +357,7 @@
         entry.kind === "started-allowed" ||
         entry.kind === "started-trees"
       ) {
-        if (open === layout.startedOpen) return;
+        if (open === startedShown()) return;
         setStartedOpen(open);
         if (!open) sectionCursor = sectionEntries.findIndex((candidate) => candidate.kind === "started-head");
         return;
@@ -395,7 +399,7 @@
   let anyOpen = $derived.by(
     () =>
       (presented.length > 0 && layout.mediaOpen) ||
-      (board !== null && layout.startedOpen) ||
+      (board !== null && startedShown()) ||
       layout.processesOpen ||
       layout.browserOpen ||
       pluginList.some((group) => sectionOpen(group.key)),
@@ -720,7 +724,7 @@
   }
 
   function resizeTree(dx: number) {
-    layout.tree = Math.max(MIN.tree, layout.tree + dx);
+    layout.tree = Math.max(MIN.tree, layout.treeDrawn + dx);
     applyLayout(layout.width);
   }
 
@@ -855,13 +859,12 @@
   const allowedId = (project: string) => `started-allowed-${encodeURIComponent(project)}`;
 
   function toggleStarted() {
-    setStartedOpen(!layout.startedOpen);
+    setStartedOpen(!startedShown());
   }
 
   /** Folded, the section puts away what was open in it. */
   function setStartedOpen(open: boolean) {
-    layout.startedOpen = open;
-    saveLayout();
+    chooseStartedOpen(open);
     if (open) return;
     asked = null;
     closeSend();
@@ -1047,21 +1050,24 @@
     return () => clearInterval(timer);
   });
 
-  // One of them asking opens a folded section by itself, so the row that
-  // asks is in sight: as it asks, or as its starter comes on screen while
-  // it does.
+  // One of them starting to ask while its starter is on screen lends a
+  // folded section open, so the row that asks is in sight; the fold the
+  // user chose stands. The section folds again once none of them asks or
+  // another session shows. Coming on screen while one already asks, as a
+  // switch or a restart does, lends nothing.
   let askingHere = $derived(board === null ? 0 : asking);
-  let askedBefore: { key: string | null; count: number } = { key: null, count: 0 };
+  let askedBefore: { key: string | null; count: number } | null = null;
   $effect(() => {
     const key = board?.key ?? null;
     const count = askingHere;
     untrack(() => {
-      const before = key === askedBefore.key ? askedBefore.count : 0;
+      const before = askedBefore;
       askedBefore = { key, count };
-      if (key !== null && count > before && !layout.startedOpen) {
-        layout.startedOpen = true;
-        saveLayout();
+      if (before === null || key !== before.key || count === 0) {
+        giveBackStarted();
+        return;
       }
+      if (count > before.count) lendStarted();
     });
   });
 </script>
@@ -1116,7 +1122,7 @@
     class:editing
     class:treeless={editing && !editTreeVisible()}
     class:full={fullView}
-    style:--tree-w="{editing ? layout.editTreeDrawn : layout.tree}px"
+    style:--tree-w="{editing ? layout.editTreeDrawn : layout.treeDrawn}px"
     style:width={changesHeld() === 0 ? null : `calc(100% + ${changesHeld()}px)`}
   >
     <!-- The tree's column: the tree, and beneath it what the agent
@@ -1243,7 +1249,7 @@
                session that row shows, and stopping them all or cleaning
                up asks first. -->
           {#if board !== null}
-            <section class="section board-section" class:open={layout.startedOpen} data-testid="board-section">
+            <section class="section board-section" class:open={startedShown()} data-testid="board-section">
               <div class="section-head">
                 <button
                   id={STARTED_FOLD_ID}
@@ -1255,10 +1261,10 @@
                     sectionCursor = sectionEntries.findIndex((entry) => entry.kind === "started-head");
                     toggleStarted();
                   }}
-                  aria-expanded={layout.startedOpen}
+                  aria-expanded={startedShown()}
                   data-testid="board-fold"
                 >
-                  <span class="chevron">{layout.startedOpen ? "▾" : "▸"}</span>
+                  <span class="chevron">{startedShown() ? "▾" : "▸"}</span>
                   Sessions it started ({started.length})
                 </button>
                 {#if started.some(isLive)}
@@ -1274,7 +1280,7 @@
                   </span>
                 {/if}
               </div>
-              {#if layout.startedOpen}
+              {#if startedShown()}
                 {#if asked?.kind === "stop-all"}
                   {@const ask = stopAllQuestion(askedRows)}
                   <div class="board-ask">
