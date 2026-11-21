@@ -1605,6 +1605,16 @@ impl AppServer {
         self.request(Sent::Thread, method, params).0
     }
 
+    /// A model as Codex's list names it, else by its id.
+    fn model_name<'a>(&'a self, model: &'a str) -> &'a str {
+        self.models
+            .iter()
+            .find(|(info, _)| info.value == model)
+            .and_then(|(info, _)| info.name.as_deref())
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or(model)
+    }
+
     fn efforts_of(&self, model: Option<&str>) -> Vec<String> {
         let Some(model) = model else {
             return vec![];
@@ -2397,9 +2407,11 @@ impl AppServer {
             }
             "model/rerouted" => {
                 let message = match (params["fromModel"].as_str(), params["toModel"].as_str()) {
-                    (Some(from), Some(to)) => {
-                        Some(format!("Codex moved this turn from {from} to {to}"))
-                    }
+                    (Some(from), Some(to)) => Some(format!(
+                        "Codex moved this turn from {} to {}",
+                        self.model_name(from),
+                        self.model_name(to)
+                    )),
                     _ => None,
                 };
                 self.notice(NoticeLevel::Warning, message, out);

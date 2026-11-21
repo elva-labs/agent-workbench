@@ -1955,6 +1955,10 @@ fn notices_are_told_apart_from_errors_and_turns() {
                 json!({"fromModel": "gpt-a", "toModel": "gpt-b", "reason": "highRiskCyberActivity"}),
             ),
             notification(
+                "model/rerouted",
+                json!({"fromModel": "gpt-b", "toModel": "gpt-unlisted"}),
+            ),
+            notification(
                 "mcpServer/startupStatus/updated",
                 json!({"name": "docs", "status": "failed", "error": "no such command"}),
             ),
@@ -1981,7 +1985,8 @@ fn notices_are_told_apart_from_errors_and_turns() {
             "Model metadata missing",
             "Full-history hydration is deprecated: use excludeTurns",
             "Unknown key",
-            "Codex moved this turn from gpt-a to gpt-b",
+            "Codex moved this turn from GPT A to GPT B",
+            "Codex moved this turn from GPT B to gpt-unlisted",
             "The docs MCP server could not start: no such command",
         ]
     );
