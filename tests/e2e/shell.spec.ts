@@ -1429,6 +1429,9 @@ test.describe("the file viewer", () => {
 
     // Room for every one of them: they go back on the line and the "⋯" goes.
     await page.setViewportSize({ width: 1400, height: 900 });
+    // The pane eases back out to the width it was given, so the handle is
+    // measured once it has stopped.
+    await columnsAtRest(page);
     const handle = page.getByRole("separator", { name: "Resize changes" });
     const box = (await handle.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
