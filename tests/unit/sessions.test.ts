@@ -523,7 +523,7 @@ describe("labels", () => {
   });
 
   it("numbers a resumed session nothing names, and never shows its id", () => {
-    const session = create(A, "9604da0e-c207-4138-974b-8e1ef8cffd07");
+    const session = create(A, "cccc3333-c207-4138-974b-8e1ef8cffd07");
     expect(label(session)).toBe("session 1");
   });
 
@@ -1246,10 +1246,10 @@ describe("titles", () => {
     }
 
     it("names the row it comes back as by the name the first one had", () => {
-      stored({ "old-id": "Cummins portal" }, [], { "new-id": "old-id" });
-      expect(label(create(A, "new-id"))).toBe("Cummins portal");
+      stored({ "old-id": "Login flow rework" }, [], { "new-id": "old-id" });
+      expect(label(create(A, "new-id"))).toBe("Login flow rework");
       // Kept under its own id, so it no longer leans on the line.
-      expect(sessions.names["new-id"]).toBe("Cummins portal");
+      expect(sessions.names["new-id"]).toBe("Login flow rework");
     });
 
     it("takes the nearest name along a line that went on more than once, and the user's stays theirs", () => {
@@ -1265,9 +1265,9 @@ describe("titles", () => {
       stored({}, [], { "new-id": "old-id" });
       sessions.history[A] = [
         { id: "new-id", title: "Pick this up from the notes", modified: 2000, size: 1, agent: "claude-code", account: null },
-        { id: "old-id", title: "Independent issues #25, #42, #23", modified: 1000, size: 1, agent: "claude-code", account: null },
+        { id: "old-id", title: "Billing page and invoice export", modified: 1000, size: 1, agent: "claude-code", account: null },
       ];
-      expect(label(create(A, "new-id"))).toBe("Independent issues #25, #42, #23");
+      expect(label(create(A, "new-id"))).toBe("Billing page and invoice export");
     });
 
     it("is numbered where nothing in the line names it", () => {

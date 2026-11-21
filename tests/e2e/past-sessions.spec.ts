@@ -231,16 +231,16 @@ test("names a row left from the last quit by the conversation it went on from, a
   await installFakeCore(page, {
     open: [PROJECT],
     transcripts: [
-      { id: "b3bc7443-went-on", modified: now - 60, size: 100, title: "Pick this up from the notes" },
-      { id: "77e2a602-first", modified: now - 3600, size: 100, title: "Cummins portal and AWS account" },
+      { id: "aaaa1111-went-on", modified: now - 60, size: 100, title: "Pick this up from the notes" },
+      { id: "bbbb2222-first", modified: now - 3600, size: 100, title: "Login flow rework" },
     ],
   });
   await page.addInitScript(
     ({ project }) => {
       if (localStorage.getItem("chord.open") !== null) return;
-      const ids = ["b3bc7443-went-on", "9604da0e-nameless"];
+      const ids = ["aaaa1111-went-on", "cccc3333-nameless"];
       localStorage.setItem("chord.mine", JSON.stringify({ [project]: ids }));
-      localStorage.setItem("chord.wentOn", JSON.stringify({ "b3bc7443-went-on": "77e2a602-first" }));
+      localStorage.setItem("chord.wentOn", JSON.stringify({ "aaaa1111-went-on": "bbbb2222-first" }));
       localStorage.setItem(
         "chord.open",
         JSON.stringify({
@@ -254,7 +254,7 @@ test("names a row left from the last quit by the conversation it went on from, a
   await page.goto("/");
   const labels = page.locator("[data-testid='session-row'] .label");
   await expect(labels).toHaveCount(2);
-  await expect(labels.filter({ hasText: "Cummins portal and AWS account" })).toBeVisible();
+  await expect(labels.filter({ hasText: "Login flow rework" })).toBeVisible();
   await expect(labels.filter({ hasText: /^session \d+$/ })).toBeVisible();
-  await expect(page.locator("[data-testid='session-row']").filter({ hasText: /9604da0e|b3bc7443/ })).toHaveCount(0);
+  await expect(page.locator("[data-testid='session-row']").filter({ hasText: /aaaa1111|bbbb2222|cccc3333/ })).toHaveCount(0);
 });
