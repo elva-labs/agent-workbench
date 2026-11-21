@@ -357,10 +357,10 @@ The list is the one a Codex session gave when it was ready, else one read
 for the account of each open project while the tab is open: a Codex of
 Chord's own is started on the project's machine under the account's home
 and asked for its models, once for each account on each machine while the
-window is open, and again later where it could not say or listed none. A
-model a workflow names that no list offers is shown by its id. Only the
-agents found on the machine are offered, with any a workflow already names
-so that its choice can still be shown.
+window is open, and again when the tab is next opened where it could not
+say or listed none. A model a workflow names that no list offers is shown
+by its id. Only the agents found on the machine are offered, with any a
+workflow already names so that its choice can still be shown.
 
 A step has a name, a kind and the models it may use. The models are any, or
 a chosen set across the agents, and the first one chosen is the default, the one

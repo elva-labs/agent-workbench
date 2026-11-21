@@ -53,6 +53,11 @@
   let picked = $state<string | null>(workflows.default);
   const current = $derived(workflowNamed(picked) ?? workflowNamed(workflows.default) ?? workflows.list[0]);
 
+  /** The projects whose Codex models were asked for since the tab opened.
+      Each is asked once while the tab stays open; one Codex could not
+      answer is asked again when the tab is next opened. */
+  const asked = new Set<string>();
+
   /** Where the pickers offer Codex, the models it lists for the account of
       each open project, read on that project's machine. */
   $effect(() => {
@@ -62,7 +67,11 @@
       ...current.steps.flatMap((one) => one.models.map((model) => model.agent)),
     ];
     if (!offeredAgents(installed(), used).includes("codex")) return;
-    for (const project of workspace.open) void askCodexCatalog(project.path, hostOf(project.path));
+    for (const project of workspace.open) {
+      if (asked.has(project.path)) continue;
+      asked.add(project.path);
+      void askCodexCatalog(project.path, hostOf(project.path));
+    }
   });
 
   /** The step picked in the diagram. */
