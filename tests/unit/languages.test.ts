@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
 import { insertNewlineAndIndent, toggleComment } from "@codemirror/commands";
 import { EditorSelection, type EditorState } from "@codemirror/state";
+import { ensureSyntaxTree } from "@codemirror/language";
+import { highlightTree, tagHighlighter, tags } from "@lezer/highlight";
 import { language, plain, stateFor } from "$lib/codeEditor";
 import { colouringOf, languageOf } from "$lib/languages";
 
@@ -37,6 +39,7 @@ describe("the language of a file", () => {
     expect(languageOf(".bashrc")).toBe("Shell");
     expect(languageOf("home/.zshrc")).toBe("Shell");
     expect(languageOf("tsconfig.json")).toBe("JSON");
+    expect(languageOf("tsconfig.base.json")).toBe("JSON");
     expect(languageOf(".vscode/settings.jsonc")).toBe("JSON");
     expect(languageOf("src/App.js")).toBe("JavaScript");
     expect(languageOf("build.gradle.kts")).toBe("Kotlin");
@@ -54,6 +57,9 @@ describe("the language of a file", () => {
     expect(languageOf("notes.txt")).toBe("Plain text");
     expect(languageOf("Untitled 2")).toBe("Plain text");
     expect(languageOf("archive.tar.zz")).toBe("Plain text");
+    expect(languageOf(".zshrc.zwc")).toBe("Plain text");
+    expect(languageOf("home/.bashrc.swp")).toBe("Plain text");
+    expect(languageOf(".profile.bak")).toBe("Plain text");
   });
 });
 
@@ -128,5 +134,47 @@ describe("typing in a coloured file", () => {
     let state = await coloured("src/main.rs", "let a = 1;\n");
     toggleComment({ state, dispatch: (tr) => (state = tr.state) });
     expect(state.doc.toString()).toBe("// let a = 1;\n");
+  });
+});
+
+describe("the words of a coloured file", () => {
+  const kinds = tagHighlighter([
+    { tag: tags.propertyName, class: "key" },
+    { tag: tags.string, class: "string" },
+    { tag: tags.comment, class: "comment" },
+    { tag: tags.contentSeparator, class: "mark" },
+  ]);
+
+  /** Each word drawn in one of the kinds above, with its kind. */
+  async function words(path: string, text: string): Promise<string[]> {
+    const state = await coloured(path, text);
+    const tree = ensureSyntaxTree(state, state.doc.length, 5000)!;
+    const found: string[] = [];
+    highlightTree(tree, kinds, (from, to, kind) => found.push(`${kind} ${state.doc.sliceString(from, to)}`));
+    return found;
+  }
+
+  it("draws the keys of JSON with comments as in any JSON, and its comments as comments", async () => {
+    const warn = vi.spyOn(console, "warn");
+    const text = '{\n  // why\n  "strict": "yes"\n}\n';
+    expect(await words("tsconfig.json", text)).toEqual(["comment // why", 'key "strict"', 'string "yes"']);
+    expect(await words("tsconfig.base.json", text)).toEqual(["comment // why", 'key "strict"', 'string "yes"']);
+    expect(await words("settings.json", '{ "strict": "yes" }')).toEqual(['key "strict"', 'string "yes"']);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("parses JSX in a .js file", async () => {
+    const state = await coloured("src/App.js", "export const App = () => <div className=\"a\">{name}</div>;\n");
+    const tree = ensureSyntaxTree(state, state.doc.length, 5000)!;
+    const errors: number[] = [];
+    tree.iterate({ enter: (node) => void (node.type.isError && errors.push(node.from)) });
+    expect(errors).toEqual([]);
+    expect(tree.toString()).toContain("JSXElement");
+  });
+
+  it("draws the marks around Markdown prose faint", async () => {
+    const marks = (await words("notes.md", "# Title\n\n~~gone~~ and **bold**\n")).filter((word) => word.startsWith("mark"));
+    expect(marks).toEqual(["mark #", "mark ~~", "mark ~~", "mark **", "mark **"]);
   });
 });

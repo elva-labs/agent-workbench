@@ -22,9 +22,13 @@ interface Kind {
   name: string;
   /** The endings a file's name takes, lowercase, after the last dot. */
   extensions: readonly string[];
+  /** Whole names a file takes, as written. */
+  names?: readonly string[];
   /** Whole names a file takes, as written, alone or before a dot and more,
       as in Dockerfile.dev. */
-  names?: readonly string[];
+  stems?: readonly string[];
+  /** A pattern a file's whole name matches. */
+  pattern?: RegExp;
   /** Loads the language, for one that is coloured. */
   parser?: () => Promise<Language>;
 }
@@ -37,14 +41,33 @@ function legacy(mode: () => Promise<StreamParser<unknown>>): () => Promise<Langu
   };
 }
 
+/** JSON with comments, in the older JavaScript mode's JSON, which knows
+    comments. Its keys are property names, as the JSON parser has them, so
+    they are drawn like keys in any other JSON file. */
+async function jsonc(): Promise<Language> {
+  const [{ StreamLanguage }, { json }, { tags }] = await Promise.all([
+    import("@codemirror/language"),
+    import("@codemirror/legacy-modes/mode/javascript"),
+    import("@lezer/highlight"),
+  ]);
+  return StreamLanguage.define({
+    ...json,
+    token: (stream, state) => {
+      const style = json.token(stream, state);
+      return style?.split(" ").includes("property") ? "property" : style;
+    },
+    tokenTable: { property: tags.propertyName },
+  });
+}
+
 const typescript = () => import("@codemirror/lang-javascript").then(({ typescriptLanguage }) => typescriptLanguage);
 const html = () => import("@codemirror/lang-html").then(({ htmlLanguage }) => htmlLanguage);
 const cpp = () => import("@codemirror/lang-cpp").then(({ cppLanguage }) => cppLanguage);
 
 /** Markdown, with a fenced block coloured as the language it names, which
     is loaded when a block first names it. A block whose language fails to
-    load stays plain. The marks around prose, such as `#`, `-`, `>`, `*`
-    and backticks, are separators, which are drawn faint like a rule. */
+    load stays plain. The marks around prose, such as `#`, `-`, `>`, `*`,
+    `~~` and backticks, are separators, which are drawn faint like a rule. */
 async function markdown(): Promise<Language> {
   const [
     { markdown, markdownLanguage },
@@ -69,7 +92,7 @@ async function markdown(): Promise<Language> {
         ],
   );
   const marks = styleTags({
-    "HeaderMark QuoteMark ListMark LinkMark EmphasisMark CodeMark TableDelimiter": tags.contentSeparator,
+    "HeaderMark QuoteMark ListMark LinkMark EmphasisMark CodeMark TableDelimiter StrikethroughMark HardBreak": tags.contentSeparator,
   });
   return markdown({ base: markdownLanguage, codeLanguages, extensions: { props: [marks] } }).language;
 }
@@ -120,12 +143,11 @@ const KINDS: readonly Kind[] = [
     extensions: ["json"],
     parser: () => import("@codemirror/lang-json").then(({ jsonLanguage }) => jsonLanguage),
   },
-  // JSON with comments, in the older mode, which knows comments.
   {
     name: "JSON",
     extensions: ["jsonc"],
-    names: ["tsconfig.json", "jsconfig.json"],
-    parser: legacy(() => import("@codemirror/legacy-modes/mode/javascript").then(({ json }) => json)),
+    pattern: /^[jt]sconfig(\..+)?\.json$/,
+    parser: jsonc,
   },
   {
     name: "TOML",
@@ -159,24 +181,26 @@ const KINDS: readonly Kind[] = [
   {
     name: "Dockerfile",
     extensions: ["dockerfile"],
-    names: ["Dockerfile", "Containerfile"],
+    stems: ["Dockerfile", "Containerfile"],
     parser: legacy(() => import("@codemirror/legacy-modes/mode/dockerfile").then(({ dockerFile }) => dockerFile)),
   },
-  { name: "Makefile", extensions: [], names: ["Makefile"] },
+  { name: "Makefile", extensions: [], stems: ["Makefile"] },
 ];
 
 /** The language a file's name says it is in, if any: by its whole name,
-    then by its ending, then by a whole name it starts with. A name that
-    starts with its only dot has no ending. */
+    then by its ending, then by a stem it starts with. A name that starts
+    with its only dot has no ending. */
 function kindOf(path: string): Kind | null {
   const name = path.slice(path.lastIndexOf("/") + 1);
-  const named = KINDS.find((kind) => kind.names?.includes(name));
+  const named = KINDS.find(
+    (kind) => kind.names?.includes(name) || kind.stems?.includes(name) || kind.pattern?.test(name),
+  );
   if (named !== undefined) return named;
   const dot = name.lastIndexOf(".");
   const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : null;
   const ended = extension === null ? undefined : KINDS.find((kind) => kind.extensions.includes(extension));
   if (ended !== undefined) return ended;
-  return KINDS.find((kind) => kind.names?.some((whole) => name.startsWith(`${whole}.`))) ?? null;
+  return KINDS.find((kind) => kind.stems?.some((stem) => name.startsWith(`${stem}.`))) ?? null;
 }
 
 /** What a file is written in, by its name, for the editor's foot. */
