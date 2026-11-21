@@ -58,6 +58,7 @@ import {
   exact,
   belled,
   wake,
+  sessionModelName,
 } from "$lib/sessions.svelte";
 import { modeOf, resetModes } from "$lib/sessionModes";
 import { adoptLastChosen, anyChosen, chosenFor, lastChosen, resetLastChosen } from "$lib/lastChosen.svelte";
@@ -1389,6 +1390,53 @@ describe("the workflow a session follows, kept for it", () => {
       workflow: { orchestrator: { agent: "codex" } },
       told: orchestratorPrompt(codexFlow),
     });
+  });
+});
+
+describe("the model a session runs on", () => {
+  /** A Codex row started with no model chosen for it, Codex's
+      configuration naming gpt-5-codex. */
+  async function codexOnItsDefault() {
+    const session = create(PROJECT, null, "codex", null, null, null, null, undefined, "integrated");
+    await launch(session.key);
+    return byKey(session.key)!;
+  }
+
+  it("names on a Codex row the model its configuration runs it on, no model being chosen", async () => {
+    const session = await codexOnItsDefault();
+    expect(session.model).toBeNull();
+    expect(session.runsOn).toBe("gpt-5-codex");
+    expect(sessionModelName(session)).toBe("GPT-5-Codex");
+  });
+
+  it("keeps a Codex session on no model chosen through a change of effort, and a new model as the one chosen", async () => {
+    const session = await codexOnItsDefault();
+    await configure(session.key, { effort: "high" });
+    expect(session.model).toBeNull();
+    expect(session.runsOn).toBe("gpt-5-codex");
+    await configure(session.key, { model: "gpt-5.1-codex" });
+    expect(session.model).toBe("gpt-5.1-codex");
+    expect(session.runsOn).toBe("gpt-5.1-codex");
+  });
+
+  it("names the model a Codex session runs on again when the window comes to it after a reload", async () => {
+    await codexOnItsDefault();
+    const handle = handleOf(sessions.all[0].key)!;
+    resetSessions();
+    resetIntegrated();
+    stopListening();
+    stopListening = await listenIntegrated();
+    const row = reopened(PROJECT, "agent-thread-1", "codex", null, null, null, "integrated");
+    expect(await reattach(row.key, handle)).toBe("up");
+    const session = byKey(row.key)!;
+    expect(session.model).toBeNull();
+    expect(session.runsOn).toBe("gpt-5-codex");
+  });
+
+  it("leaves a Claude Code row naming only the model chosen for it", async () => {
+    const { session } = await started();
+    expect(session.runsOn).toBeNull();
+    expect(sessionModelName(session)).toBeNull();
   });
 });
 

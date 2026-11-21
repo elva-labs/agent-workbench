@@ -124,6 +124,11 @@ export interface Session {
       given to the agent on its command line, so it holds from the first
       turn. Null for the agent's own default. */
   model: string | null;
+  /** The model the agent says the session runs on, for an agent whose
+      profile names that one: the model chosen as the agent took it, or
+      the one the agent's configuration names where none was chosen.
+      Null until the run has said, and for any other agent. */
+  runsOn: string | null;
   /** The account the session runs under, by name: the project's unless
       one was chosen for the session, or the session that started it
       handed its own on. Null for the agents' own directories. */
@@ -1161,15 +1166,17 @@ export function moreLabel(count: number, oldest: number, now = Date.now()): stri
 
 /** What a session's model is called on its row and tooltip, the row of
     a session another started, the status bar and the start tool's reply:
-    by the name the agent's own list gives it for the session's account
-    where the agent's models go by those names, else as `modelLabel` reads
-    it. Null for a session that names no model. */
+    the model the session runs on where the agent has said it, else the
+    one chosen for it, by the name the agent's own list gives it for the
+    session's account where the agent's models go by those names, else as
+    `modelLabel` reads it. Null for a session that names no model. */
 export function sessionModelName(session: {
   agent: AgentId;
   model: string | null;
+  runsOn?: string | null;
   account: string | null;
 }): string | null {
-  const { model } = session;
+  const model = session.runsOn ?? session.model;
   if (model === null) return null;
   return catalogName(session.agent, model, session.account) ?? modelLabel(model);
 }
@@ -1900,6 +1907,7 @@ function row(
     madeTree: false,
     prompt,
     model,
+    runsOn: null,
     account,
     workflow:
       workflow === null ? null : (structuredClone($state.snapshot(workflow)) as Workflow),

@@ -49,6 +49,11 @@ describe("the usage log", () => {
     ]);
   });
 
+  it("names the model the agent says the session runs on, where it said one", () => {
+    logUsage(row({ agent: "codex", kind: "integrated", model: null, runsOn: "gpt-6.1-sol" }), "start");
+    expect(logged[0][2]).toMatchObject({ agent: "codex", model: "gpt-6.1-sol" });
+  });
+
   it("gives what the window knows of other events, with the account's five-hour figure", () => {
     heardLimits(null, null, {
       type: "limits",

@@ -1853,7 +1853,7 @@
             >
           {:else if stays !== null && !staysSaid && news.length === 0}
             <span class="meta" title={stays.full} data-testid="session-stays-mark">{stays.short}</span>
-          {:else if news.length === 0 && session.model !== null}
+          {:else if news.length === 0 && (session.runsOn ?? session.model) !== null}
             <span class="meta" data-testid="session-model">{sessionModelName(session)}</span>
           {/if}
         </span>
@@ -2051,7 +2051,7 @@
               {#if kid.project !== parent.project}<span class="where" data-testid="started-where"
                   >{projectLabel(kid.project)}</span
                 >{/if}
-              {#if !isAsking(kid) && role === null && kid.model !== null}
+              {#if !isAsking(kid) && role === null && (kid.runsOn ?? kid.model) !== null}
                 <span class="model" data-testid="started-model">{sessionModelName(kid)}</span>
               {/if}
               {#if news.includes(kid)}

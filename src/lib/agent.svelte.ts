@@ -27,6 +27,11 @@ export interface AgentProfile {
   /** Its models are shown by the names its own list gives them at run
       time, its ids being no names to read. */
   catalogNames: boolean;
+  /** A session's row, its card, the status bar and the usage log name
+      the model the agent says the session runs on: the one its own
+      configuration names where none was chosen. An agent that does not
+      has them name the model chosen for the session. */
+  namesRunningModel: boolean;
   /** What sending waiting messages now does: interrupt the turn, after
       which the agent takes them all at once, or add them to the turn
       that runs without stopping it. */
@@ -42,6 +47,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     commands: true,
     turnModels: true,
     catalogNames: false,
+    namesRunningModel: false,
     sendNow: "interrupts",
   },
   codex: {
@@ -52,6 +58,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     commands: false,
     turnModels: false,
     catalogNames: true,
+    namesRunningModel: true,
     sendNow: "steers",
   },
 };

@@ -11,6 +11,7 @@ import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
 import { heardOffers } from "$lib/lastChosen.svelte";
 import { limitEnded, runOver, setHands, settle as settleAutoResume, turnMoved } from "$lib/autoResume.svelte";
 import { modelLabel } from "$lib/models";
+import { agentProfile } from "$lib/agent.svelte";
 import { heardCatalog } from "$lib/modelCatalog.svelte";
 import { readsAsCommand } from "$lib/slash";
 import { offeredModel, thoughtAnswer } from "$lib/thread";
@@ -424,12 +425,19 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         body.defaultModel ?? body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
       heardCatalog(session.agent, session.account, body.models);
+      if (agentProfile(session.agent).namesRunningModel) session.runsOn = body.model ?? body.defaultModel ?? null;
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
       else if (session.carried !== null) void fallBackCarried(key, link, session, session.carried);
       break;
     case "configured":
-      session.model = body.model;
+      if (!agentProfile(session.agent).namesRunningModel) session.model = body.model;
+      else {
+        // A new model is the one chosen; an effort or a mode changed on
+        // the agent's default leaves the session on no model chosen.
+        if (body.model !== session.runsOn) session.model = body.model;
+        session.runsOn = body.model;
+      }
       keepRunMode(session, link);
       break;
     case "titled":
@@ -794,6 +802,8 @@ async function restart(key: string, session: Session, link: Link) {
     .integratedStop(handle)
     .catch(() => {});
   link.conversation.restarted(session.model, sameAgent);
+  // The new run says what it runs on once it is up.
+  session.runsOn = null;
   if (sameAgent && mode !== undefined) link.conversation.settings = { ...link.conversation.settings, mode };
   // What was asked while a run started again, other than the mode, is
   // made on the new run once it is up: a model only where no workflow
@@ -1110,6 +1120,8 @@ export function reattach(key: string, handle: string, spoken = true): Promise<Re
       if (snapshot.ready !== null) {
         identify(session, snapshot.ready.sessionId);
         heardCatalog(session.agent, session.account, snapshot.ready.models);
+        if (agentProfile(session.agent).namesRunningModel)
+          session.runsOn = snapshot.settings.model ?? snapshot.ready.defaultModel ?? null;
       }
       settle(session, snapshot.state, before, link);
       void rejoined(key);

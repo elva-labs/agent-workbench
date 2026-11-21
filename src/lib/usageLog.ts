@@ -31,7 +31,7 @@ export function logUsage(session: Session, kind: UsageKind, extra: Record<string
     id: session.id,
     agent: session.agent,
     surface: session.kind,
-    model: session.model,
+    model: session.runsOn ?? session.model,
     fiveHour: fiveHour(session),
     ...extra,
   };
