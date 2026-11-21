@@ -1,6 +1,6 @@
 # The editor
 
-Editor mode puts the file tree and a plain text editor in the middle of the
+Editor mode puts the file tree and a text editor in the middle of the
 window and moves the agent to the right pane, where it keeps running. The
 switch at the end of the rightmost header flips between agent mode and
 editor mode, and so does <kbd>Shift</kbd><kbd>Cmd</kbd><kbd>E</kbd> or the
@@ -34,11 +34,38 @@ starts an [untitled file](#untitled-files).
 
 ## The editor
 
-A plain editor: line numbers, the line the cursor is on, undo, and find in
-the file, and nothing that completes or highlights. It is drawn in the
-terminal's [font](settings.md#font) and the look's colours, at a size of its
-own that the zoom chords step while it has the keyboard, kept in the
-window's storage.
+A plain editor: line numbers, the line the cursor is on, undo, find in the
+file, and code in colours by what each word is, and nothing that completes
+or checks. It is drawn in the terminal's [font](settings.md#font) and the
+look's colours, at a size of its own that the zoom chords step while it has
+the keyboard, kept in the window's storage.
+
+A file's name says what it is written in, by its extension or, for a
+Dockerfile, its whole name, and the same reading names the language in the
+foot. The common languages are coloured: TypeScript and JavaScript with
+JSX, JSON, HTML, CSS and SCSS, Markdown with the code blocks in it, Rust,
+Python, Go, Java, Kotlin, Swift, C, C++, C#, Ruby, Lua, YAML, TOML, XML,
+SQL, shell, PowerShell and Dockerfiles. Svelte and Vue files are coloured
+as HTML, which colours their scripts and styles and leaves their own
+template syntax plain. Any other file, and one with no extension, is plain.
+Each language is loaded the first time a file in it is opened, so the text
+shows at once and its colours follow a moment later, without the cursor,
+the scroll or the undo history moving. A file renamed, or an untitled file
+given a name, takes the colours of its new name. Colouring a language also
+brings its indentation, so Enter indents a new line as the code around it
+does, and <kbd>Cmd</kbd><kbd>/</kbd> comments the lines out in its own
+syntax.
+
+The colours are the terminal's: keywords in its magenta, strings in green,
+numbers and other literals in yellow, functions in blue, types in cyan,
+tags in red and comments in the faint ink. They follow the appearance, the
+palette and a [theme](settings.md#colour) of your own, which colours code
+through the terminal colours it sets. Each kind of word has a custom
+property on the root, `--code-keyword`, `--code-string`,
+`--code-literal`, `--code-comment`, `--code-function`, `--code-type`,
+`--code-tag`, `--code-attribute`, `--code-heading`, `--code-link` and
+`--code-invalid`, so a [stylesheet of your own](settings.md#custom-styles)
+can restate any one of them. The viewer shows a file's text plain.
 
 Find opens a bar over the editor: the text, how many matches it has,
 Previous, Next and All, and whether case, whole words or a regular
