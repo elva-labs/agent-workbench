@@ -3,12 +3,14 @@ import { tags as t } from "@lezer/highlight";
 
 /**
  * The colours code is drawn in, by what each word is. Every colour is one
- * of the `--code-*` tokens, which are the terminal's colours, so the
+ * of the `--code-*` tokens, which come from the terminal's colours, so the
  * editor's code reads in the palette the agent's output does and follows
  * the appearance, the palette, a theme and a stylesheet of the user's own.
  * Nothing changes the face's size, so a line is as tall coloured as plain.
  *
- * Loaded with the first language, so the app starts without it.
+ * This style is loaded with the first language. `@codemirror/language`,
+ * which it builds on, is in the app's start bundle, because the editor's
+ * commands already import it.
  */
 const style = HighlightStyle.define([
   {
@@ -34,7 +36,7 @@ const style = HighlightStyle.define([
     tag: [t.number, t.bool, t.null, t.atom, t.unit, t.escape, t.constant(t.name), t.color],
     color: "var(--code-literal)",
   },
-  { tag: t.comment, color: "var(--code-comment)" },
+  { tag: [t.comment, t.contentSeparator], color: "var(--code-comment)" },
   {
     tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName],
     color: "var(--code-function)",
