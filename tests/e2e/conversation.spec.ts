@@ -1214,6 +1214,14 @@ test.describe("the model and the mode", () => {
     expect((await calls(page)).find((call) => call.method === "configure")).toMatchObject({ settings: { mode: "plan" } });
   });
 
+  test("name on a Codex row the model Codex's configuration runs it on, with none chosen", async ({ page }) => {
+    await installFakeCore(page, { open: [PROJECT], agents: ["codex"], integrable: ["codex"], settings: { integrated: ["codex"] } });
+    await page.goto("/");
+    await page.getByTestId("start-agent").click();
+    await expect(page.getByTestId("model-chip")).toHaveText("Default · GPT-5-Codex");
+    await expect(page.getByTestId("session-row")).toHaveAttribute("title", "GPT-5-Codex");
+  });
+
   test("show a mode the agent took from its own configuration in plain words, and say it does not come back", async ({ page }) => {
     await installFakeCore(page, { open: [PROJECT], agents: ["codex"], integrable: ["codex"], settings: { integrated: ["codex"] } });
     await page.addInitScript(() => {
