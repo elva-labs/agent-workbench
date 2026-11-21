@@ -51,6 +51,10 @@ interface Open {
   agent: AgentId;
   startIn: string | null;
   model: string | null;
+  /** The model the agent said it ran on, for naming the row until it runs
+      again; never what it is started on. A record from before, or of an
+      agent that does not say, has none. */
+  runsOn?: string;
   /** The account it ran under, by name; null for the agents' own. A record
       from before there were accounts has none, which reads as null. */
   account?: string | null;
@@ -99,7 +103,7 @@ function onRecord(session: Session): boolean {
 
 function isOpenEntry(entry: unknown): entry is Open {
   if (typeof entry !== "object" || entry === null) return false;
-  const { project, id, agent, startIn, model, account, kind, handle, spoken, token, own, moves, made } =
+  const { project, id, agent, startIn, model, runsOn, account, kind, handle, spoken, token, own, moves, made } =
     entry as Record<string, unknown>;
   return (
     typeof project === "string" &&
@@ -107,6 +111,7 @@ function isOpenEntry(entry: unknown): entry is Open {
     (agent === "claude-code" || agent === "codex") &&
     (startIn === null || typeof startIn === "string") &&
     (model === null || typeof model === "string") &&
+    (runsOn === undefined || typeof runsOn === "string") &&
     (account === undefined || account === null || typeof account === "string") &&
     (kind === undefined || kind === "terminal" || kind === "integrated") &&
     (handle === undefined || handle === null || typeof handle === "string") &&
@@ -208,6 +213,7 @@ export function reopen(
       entry.own === true,
     );
     row.madeTree = entry.made === true;
+    row.runsOn = entry.runsOn ?? null;
     if (entry.moves !== undefined) recordMove(row.key, entry.moves);
     // A window reloaded while the core still runs the session takes it up
     // where it is; after a restart there is nothing to take up, and the
@@ -286,6 +292,7 @@ export function reopen(
             agent: session.agent,
             startIn: session.startIn,
             model: session.model,
+            ...(session.runsOn !== null ? { runsOn: session.runsOn } : {}),
             account: session.account,
             kind: session.kind,
             ...(session.ownWay ? { own: true } : {}),

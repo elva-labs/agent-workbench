@@ -247,7 +247,9 @@ stay ids. A Claude Code session's model is the one it was started on,
 when the app knows it. A Codex session's is the one Codex says it runs on
 once it is up: the one chosen for it, or where none was, the one Codex's
 own configuration names, so a session on Codex's default names that model
-too while the composer still calls it the default. The
+too while the composer still calls it the default. A row brought back
+after a quit or a reload names that model until the session runs again;
+it is started again on the one chosen for it, or on Codex's default. The
 [usage log](#usage-log) names the same model. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
