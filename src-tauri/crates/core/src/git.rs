@@ -938,7 +938,13 @@ mod tests {
         )
         .unwrap();
         write(&dir, "forced.dt", "a\0b\nc\n");
-        write(&dir, "a[1]*?.txt", "glob\ncharacters\n");
+        // Windows allows no `*` or `?` in a file's name.
+        let glob = if cfg!(windows) {
+            "a[1].txt"
+        } else {
+            "a[1]*?.txt"
+        };
+        write(&dir, glob, "glob\ncharacters\n");
         // Text to well past the probe, then sparse to just over the size
         // libgit2 reads.
         let large = std::fs::File::create(dir.join("large.log")).unwrap();
