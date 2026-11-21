@@ -97,6 +97,11 @@ function sameFiles(a: string[], b: string[]): boolean {
   return [...a].sort().every((file, i) => file === sorted[i]);
 }
 
+/** One string for a set of files, the same in any order. */
+function filesKey(files: string[]): string {
+  return JSON.stringify([...files].sort());
+}
+
 /** The owners whose media a session lists: the conversations it went on
     from and itself, or the project's own alone. */
 function ownersOf(owner: string): Set<string> {
@@ -111,10 +116,14 @@ function ownersOf(owner: string): Set<string> {
 export function itemsFor(owner: string, token: string | null = null): MediaItem[] {
   const line = ownersOf(owner);
   const listed: MediaItem[] = [];
+  const seen = new Set<string>();
   for (const item of [...media.items].reverse()) {
     const mine = token !== null && item.token === token;
     if (!line.has(item.owner) && !mine) continue;
-    if (!listed.some((seen) => sameFiles(seen.files, item.files))) listed.push(item);
+    const key = filesKey(item.files);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    listed.push(item);
   }
   return listed;
 }
