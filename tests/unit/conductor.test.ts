@@ -3816,7 +3816,8 @@ describe("what a caller started, between runs", () => {
     expect(lines[0]).toContain(`worktree ${A}/.worktrees/cache-flake`);
     expect(lines[0]).toContain("not running since the workbench was restarted");
     expect(lines[0]).toContain("a line you send it resumes it");
-    expect(lines[1]).toContain('sid-2  "sid-2"  ');
+    // One nothing names is told by its id alone.
+    expect(lines[1]).toContain(`sid-2  ${B}  `);
 
     await handle(call("sessions", { project: B }, { session: "caller-1" }));
     expect(last().content!.split("\n")).toHaveLength(1);

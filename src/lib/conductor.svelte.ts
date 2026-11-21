@@ -2603,11 +2603,9 @@ function describe(session: Session): string {
 
 /** A remembered session that is not open as a row, in the same words. */
 function describeGone(owner: string, entry: Started): string {
-  const parts = [
-    idText(entry.id),
-    quotedName(sessions.names[entry.id] ?? entry.name ?? entry.id.slice(0, 8)),
-    entry.project,
-  ];
+  // A session nothing names is told by its id alone.
+  const name = sessions.names[entry.id] ?? entry.name;
+  const parts = [idText(entry.id), ...(name === null ? [] : [quotedName(name)]), entry.project];
   if (entry.worktree !== null) parts.push(`worktree ${oneLine(entry.worktree)}`);
   parts.push(entry.agent);
   const at = placed(owner, entry.id);

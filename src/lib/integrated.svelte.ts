@@ -48,11 +48,11 @@ import {
   carriedFor,
   failed,
   followsAgain,
-  givenName,
   keepToken,
   renewToken,
   loadHistory,
-  nameGoingOn,
+  knownName,
+  keepName,
   named,
   renamed,
   newTurnLine,
@@ -510,6 +510,8 @@ function identify(session: Session, id: string) {
   keepToken(session);
   adopt(session.project, id);
   identified(session.key, id);
+  // A conversation that went on from another goes by the row's name.
+  keepName(session);
 }
 
 /** The row says what the session's events say it is doing. A session that
@@ -623,7 +625,7 @@ export async function launch(key: string): Promise<void> {
       link.conversation.wentOn = wentOn(key) !== null;
       link.conversation.afterLimit = null;
       // The row keeps the name it showed, which its old conversation gave.
-      if (link.conversation.wentOn) starting.title ??= nameGoingOn(starting);
+      if (link.conversation.wentOn) starting.title ??= knownName(starting);
     }
     await begin(key, link, starting, told);
   } catch (error) {
@@ -1277,7 +1279,7 @@ export function send(
   // Named by its first line, without the workbench's sentence after a
   // started session's prompt. The workbench's own message names nothing,
   // and nor does a slash command: the row waits for a message that is not.
-  if (session.title === null && givenName(session) === null && from !== WORKBENCH) {
+  if (session.title === null && knownName(session) === null && from !== WORKBENCH) {
     const line = unsent(spoken(text, from === null).text, mentions)
       .draft.split("\n")
       .find((candidate) => candidate.trim() !== "")
@@ -1499,7 +1501,7 @@ async function startFresh(
   handle: string,
   afterLimit: number | null,
 ): Promise<boolean> {
-  row.title ??= nameGoingOn({ ...row, resumedFrom: id });
+  row.title ??= knownName({ ...row, resumedFrom: id });
   row.resumedFrom = id;
   link.conversation.wentOn = true;
   link.conversation.afterLimit = afterLimit;

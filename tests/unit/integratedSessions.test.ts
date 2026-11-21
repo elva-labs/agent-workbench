@@ -41,6 +41,7 @@ import {
   markUnread,
   noted,
   onScreenNow,
+  renamed,
   reopened,
   runningByToken,
   reset as resetSessions,
@@ -285,6 +286,32 @@ describe("a row at rest whose conversation went cold and large", () => {
     expect(handleOf(key)).not.toBe(handle);
     expect(await goOnIfCold(key, Date.now(), true)).toBe(false);
     expect(asked).toBe(1);
+  });
+
+  it("keeps the row's name for the conversation that went on, after a restart too", async () => {
+    const judged = judging();
+    const { key, session } = await large();
+    const before = session.id!;
+    renamed(key, "Login fix");
+    const going = goOnIfCold(key, Date.now(), true);
+    judged(COLD);
+    expect(await going).toBe(true);
+    await settled();
+    const after = byKey(key)!.id!;
+    expect(after).not.toBe(before);
+    expect(sessions.names[after]).toBe("Login fix");
+    expect(sessions.own[after]).toBe(true);
+
+    // The window reloads: the row comes back by the new conversation's id.
+    stopListening();
+    resetSessions();
+    resetIntegrated();
+    resetGoingOn();
+    stopListening = await listenIntegrated();
+    loadRemembered();
+    const back = reopened(PROJECT, after, "claude-code", null, null, null, "integrated");
+    expect(label(back)).toBe("Login fix");
+    expect(back.ownTitle).toBe(true);
   });
 
   async function large() {

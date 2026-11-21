@@ -7,6 +7,7 @@ import { attention, resetAttention } from "$lib/attention.svelte";
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { register, resetScreens } from "$lib/screens";
 import { bodyFor } from "$lib/notify.svelte";
+import { resetGoingOn } from "$lib/goingOn.svelte";
 import {
   activeSession,
   adoptPastSessions,
@@ -521,9 +522,9 @@ describe("labels", () => {
     expect(label(create(B))).toBe("session 1");
   });
 
-  it("names a resumed session by its transcript id", () => {
-    const session = create(A, "9604da0e-c207-4138-974b-8e1ef8cffd07");
-    expect(label(session)).toBe("9604da0e");
+  it("numbers a resumed session nothing names, and never shows its id", () => {
+    const session = create(A, "cccc3333-c207-4138-974b-8e1ef8cffd07");
+    expect(label(session)).toBe("session 1");
   });
 
   it("reports liveness for the dot in the tree", () => {
@@ -1231,6 +1232,48 @@ describe("titles", () => {
     expect(label(again)).toBe("My name");
     titled(again.key, "✳ an-automatic-title");
     expect(label(again)).toBe("My name");
+  });
+
+  describe("for a conversation that went on from another", () => {
+    /** What a window left behind: names by conversation, the user's own
+        among them, and which conversation went on from which. */
+    function stored(names: Record<string, string>, own: string[], wentOn: Record<string, string>) {
+      localStorage.setItem("chord.names", JSON.stringify(names));
+      localStorage.setItem("chord.ownNames", JSON.stringify(own));
+      localStorage.setItem("chord.wentOn", JSON.stringify(wentOn));
+      resetGoingOn();
+      loadRemembered();
+    }
+
+    it("names the row it comes back as by the name the first one had", () => {
+      stored({ "old-id": "Login flow rework" }, [], { "new-id": "old-id" });
+      expect(label(create(A, "new-id"))).toBe("Login flow rework");
+      // Kept under its own id, so it no longer leans on the line.
+      expect(sessions.names["new-id"]).toBe("Login flow rework");
+    });
+
+    it("takes the nearest name along a line that went on more than once, and the user's stays theirs", () => {
+      stored({ first: "Login", second: "Login fix" }, ["second"], { second: "first", third: "second" });
+      const again = create(A, "third");
+      expect(label(again)).toBe("Login fix");
+      titled(again.key, "✳ an-automatic-title");
+      expect(label(again)).toBe("Login fix");
+      expect(sessions.own.third).toBe(true);
+    });
+
+    it("goes by the first one's listed title where no name is kept, never the briefing's", () => {
+      stored({}, [], { "new-id": "old-id" });
+      sessions.history[A] = [
+        { id: "new-id", title: "Pick this up from the notes", modified: 2000, size: 1, agent: "claude-code", account: null },
+        { id: "old-id", title: "Billing page and invoice export", modified: 1000, size: 1, agent: "claude-code", account: null },
+      ];
+      expect(label(create(A, "new-id"))).toBe("Billing page and invoice export");
+    });
+
+    it("is numbered where nothing in the line names it", () => {
+      stored({}, [], { "new-id": "old-id" });
+      expect(label(create(A, "new-id"))).toBe("session 1");
+    });
   });
 
   it("does not remember the agent's own name as a session's", () => {
