@@ -282,11 +282,21 @@ test.describe("the board for any session", () => {
     await expect.poll(async () => (await layoutKept(page)).startedOpen).toBe(false);
 
     // The session it started asks for a permission: the section opens so
-    // the row that asks is in sight.
+    // the row that asks is in sight, and the fold chosen is still the one
+    // kept.
     await event(page, "session-2", "prompt");
     await event(page, "session-2", "permission");
     await expect(page.getByTestId("board-fold")).toHaveAttribute("aria-expanded", "true");
     await expect(boardRows(page)).toHaveCount(1);
+    expect((await layoutKept(page)).startedOpen).toBe(false);
+
+    // Away and back while it still asks, the section is folded as chosen.
+    await page.locator(SESSIONS).getByTestId("started-session").filter({ hasText: "Fix the cache" }).click();
+    await expect(section(page)).toBeHidden();
+    await toStarter(page);
+    await expect(page.getByTestId("board-fold")).toHaveAttribute("aria-expanded", "false");
+    await expect(boardRows(page)).toHaveCount(0);
+    expect((await layoutKept(page)).startedOpen).toBe(false);
   });
 
   test("acts on the session each row shows", async ({ page }) => {

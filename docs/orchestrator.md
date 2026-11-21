@@ -1059,8 +1059,12 @@ own starts made and left behind are counted, with Clean up; a worktree another
 session's start made, or one you made, is never counted or taken. Stop all
 and Clean up ask first, the one saying how many of them still run and how
 many of those wait on you or are at work, the other naming each worktree
-that goes with its branch. The section is open until you fold it, the fold is
-remembered, and it opens by itself when one of them asks for a permission.
+that goes with its branch. The section is open until you fold it, and the
+fold is remembered. When one of them starts asking for a permission while
+you look at its starter, a folded section opens for a while so the row that
+asks is in sight, and folds again once none of them asks or you go to
+another session; your fold is what is kept. Coming back to the starter, or
+restarting, while one already asks leaves the section as you left it.
 
 ![A session on screen with the sessions it started on the rail under it, and the board at the foot of the changes pane with a row for each, its step, what it is doing, and the project it may start in.](orchestrator-board.png)
 

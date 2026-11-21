@@ -55,6 +55,10 @@ import {
   sessionsVisible,
   shaping,
   terminalVisible,
+  giveBackStarted,
+  lendStarted,
+  setStartedOpen,
+  startedShown,
   togglePane,
   toggleTerminal,
 } from "$lib/layout.svelte";
@@ -86,6 +90,8 @@ function reset() {
   layout.editTreeForced = false;
   layout.changesDragged = false;
   layout.editAgentDragged = false;
+  layout.startedOpen = true;
+  layout.startedLent = false;
 }
 
 beforeEach(reset);
@@ -534,6 +540,29 @@ describe("persistence", () => {
     layout.startedOpen = true;
     loadLayout();
     expect(layout.startedOpen).toBe(true);
+  });
+
+  it("lends the folded section of the sessions started open, and keeps the fold chosen", () => {
+    setStartedOpen(false);
+    lendStarted();
+    expect(startedShown()).toBe(true);
+    expect(layout.startedOpen).toBe(false);
+    saveLayout();
+    expect(JSON.parse(localStorage.getItem("chord.layout")!).startedOpen).toBe(false);
+
+    giveBackStarted();
+    expect(startedShown()).toBe(false);
+
+    // Folding it while lent folds it, and it stays folded.
+    lendStarted();
+    setStartedOpen(false);
+    expect(startedShown()).toBe(false);
+
+    // Open by choice, nothing is lent, and nothing given back folds it.
+    setStartedOpen(true);
+    lendStarted();
+    giveBackStarted();
+    expect(startedShown()).toBe(true);
   });
 
   it("does not persist focus", () => {

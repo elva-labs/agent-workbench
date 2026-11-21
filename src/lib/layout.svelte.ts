@@ -262,6 +262,10 @@ export const layout = $state({
       to its header: open until folded, since what they are doing is what
       the section is for. */
   startedOpen: true,
+  /** The same section opened for a while by one of them asking, over a
+      fold the user chose: shown open, never saved, and folded again when
+      the asking is over, another session shows, or the user folds it. */
+  startedLent: false,
   /** A plugin's section, by source, plugin and section: open rather than
       folded. Absent is folded, which is how one first appears. */
   sectionsOpen: {} as Record<string, boolean>,
@@ -769,6 +773,32 @@ export function togglePane(pane: "sessions" | "changes") {
   }
   applyLayout(layout.width);
   saveLayout();
+}
+
+/** The section of the sessions the one on screen started stands open,
+    by the user's choice or lent open while one of them asks. */
+export function startedShown() {
+  return layout.startedOpen || layout.startedLent;
+}
+
+/** The user opens or folds that section, which is their choice from then
+    on and is kept. */
+export function setStartedOpen(open: boolean) {
+  layout.startedLent = false;
+  layout.startedOpen = open;
+  saveLayout();
+}
+
+/** One of them asks: a folded section opens for a while, without
+    changing the choice kept. */
+export function lendStarted() {
+  if (!layout.startedOpen) layout.startedLent = true;
+}
+
+/** The asking is over or another session shows: the section folds again
+    if only the asking opened it. */
+export function giveBackStarted() {
+  layout.startedLent = false;
 }
 
 /** Orders the sessions pane's projects one way or the other, and
