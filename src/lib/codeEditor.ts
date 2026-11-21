@@ -1,4 +1,4 @@
-import { EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
   drawSelection,
@@ -26,8 +26,8 @@ import {
 
 /**
  * The editor as CodeMirror builds it: line numbers, the line the cursor is
- * on, undo and redo, and find in the file, with nothing that completes or
- * highlights. No language package is loaded.
+ * on, undo and redo, find in the file, and the file's code in colour once
+ * its language has loaded, with nothing that completes.
  *
  * The keys are CodeMirror's own for moving and editing, Cmd+D for the next
  * occurrence among them, less find, which the app opens here through its
@@ -347,6 +347,13 @@ class FindPanel implements Panel {
   }
 }
 
+/** The file's language and its colours, plain until they have loaded and
+    for a file in no language the editor colours. */
+export const language = new Compartment();
+
+/** What the language holds for a file drawn plain. */
+export const plain: Extension = [];
+
 /** Everything a file's state carries. Shared by every file, so switching
     tabs swaps one state for another and nothing is set up again. */
 export const extensions: Extension[] = [
@@ -365,65 +372,11 @@ export const extensions: Extension[] = [
     indentWithTab,
   ]),
   theme,
+  language.of(plain),
   EditorView.updateListener.of((update) => listener?.(update)),
 ];
 
 /** A file's text as a fresh state: the cursor at the top, no history. */
 export function stateFor(text: string): EditorState {
   return EditorState.create({ doc: text, extensions });
-}
-
-const LANGUAGES: Record<string, string> = {
-  md: "Markdown",
-  markdown: "Markdown",
-  ts: "TypeScript",
-  tsx: "TypeScript",
-  mts: "TypeScript",
-  cts: "TypeScript",
-  js: "JavaScript",
-  jsx: "JavaScript",
-  mjs: "JavaScript",
-  cjs: "JavaScript",
-  svelte: "Svelte",
-  vue: "Vue",
-  rs: "Rust",
-  go: "Go",
-  py: "Python",
-  rb: "Ruby",
-  java: "Java",
-  kt: "Kotlin",
-  swift: "Swift",
-  c: "C",
-  h: "C",
-  cc: "C++",
-  cpp: "C++",
-  hpp: "C++",
-  cs: "C#",
-  json: "JSON",
-  jsonc: "JSON",
-  toml: "TOML",
-  yaml: "YAML",
-  yml: "YAML",
-  xml: "XML",
-  html: "HTML",
-  css: "CSS",
-  scss: "SCSS",
-  sql: "SQL",
-  sh: "Shell",
-  bash: "Shell",
-  zsh: "Shell",
-  ps1: "PowerShell",
-  tf: "Terraform",
-  lua: "Lua",
-  php: "PHP",
-};
-
-/** What a file is written in, by its name, for the editor's foot. */
-export function languageOf(path: string): string {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  if (name === "Dockerfile") return "Dockerfile";
-  if (name === "Makefile") return "Makefile";
-  const dot = name.lastIndexOf(".");
-  if (dot <= 0) return "Plain text";
-  return LANGUAGES[name.slice(dot + 1).toLowerCase()] ?? "Plain text";
 }

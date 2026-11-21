@@ -33,6 +33,8 @@ import {
   viewsOf,
   watchedFiles,
 } from "$lib/editor.svelte";
+import { language, plain } from "$lib/codeEditor";
+import { colouringOf } from "$lib/languages";
 import { commitSaveAs, confirmReplace, newUntitled, resetFileOps, fileOps, savePathFor } from "$lib/fileOps.svelte";
 import { resolveAction } from "$lib/keymap";
 import { ACTIONS, PRESETS, chordFor, describe as describeChord } from "$lib/keys.svelte";
@@ -325,6 +327,20 @@ describe("saving an untitled file", () => {
     expect(editor.buffers[key].dirty).toBe(true);
     await save();
     expect(writes.at(-1)).toEqual({ file: "docs/notes.md", text: "", stamp: stampOf("one two"), overwrite: false });
+  });
+
+  it("is plain until written, and coloured as the language of the name it was written to", async () => {
+    openUntitled(null);
+    type("const a = 1;");
+    expect(language.get(stateOf(editor.active!)!)).toBe(plain);
+    void save();
+    setSaveAsName("src/a.ts");
+    await commitSaveAs();
+    await colouringOf("src/a.ts");
+    await settle();
+    const state = stateOf(keyOf("/one", "src/a.ts"))!;
+    expect(language.get(state)).not.toBe(plain);
+    expect(state.doc.toString()).toBe("const a = 1;");
   });
 
   it("refuses a path that will not do, and says why", async () => {

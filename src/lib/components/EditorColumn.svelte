@@ -20,7 +20,7 @@
   import SaveAs from "$lib/components/SaveAs.svelte";
   import FileViewer from "$lib/components/FileViewer.svelte";
   import { browser } from "$lib/browser.svelte";
-  import { languageOf } from "$lib/codeEditor";
+  import { languageOf } from "$lib/languages";
   import {
     activeBuffer,
     activeTab,

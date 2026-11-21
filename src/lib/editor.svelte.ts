@@ -38,12 +38,13 @@
  */
 
 import { tick, untrack } from "svelte";
-import { Transaction, type EditorState, type Text, type TransactionSpec } from "@codemirror/state";
+import { Transaction, type EditorState, type Extension, type Text, type TransactionSpec } from "@codemirror/state";
 import { isolateHistory } from "@codemirror/commands";
 import type { EditorView, ViewUpdate } from "@codemirror/view";
 import { openSearchPanel, searchPanelOpen } from "@codemirror/search";
 import { browser } from "$lib/browser.svelte";
-import { onEditorUpdate, stateFor } from "$lib/codeEditor";
+import { language, onEditorUpdate, plain, stateFor } from "$lib/codeEditor";
+import { colouringOf } from "$lib/languages";
 import { core } from "$lib/core";
 import {
   canDiff,
@@ -419,6 +420,7 @@ async function load(root: string, path: string) {
     saved.set(key, state.doc);
     buffer.stamp = read.stamp;
     buffer.loading = false;
+    colour(key, path);
   } catch (error) {
     const buffer = editor.buffers[key];
     if (buffer === undefined || !buffer.loading) return;
@@ -800,6 +802,7 @@ function becameFile(from: string, root: string, path: string, doc: Text, stamp: 
   homes.delete(from);
   if (shown === from) shown = to;
   wrote(to, doc, stamp);
+  colour(to, path);
   return to;
 }
 
@@ -1021,6 +1024,27 @@ function change(key: string, spec: TransactionSpec) {
   const state = states.get(key);
   if (state === undefined) return;
   states.set(key, state.update(spec).state);
+}
+
+/** Colours a buffer as the language its path names: plain at once for a
+    path that names none, and once the language has loaded otherwise, if
+    the buffer still has that path. Only the colours change, never the
+    text, the cursor, the scroll or the history. */
+function colour(key: string, path: string) {
+  const colouring = colouringOf(path);
+  if (colouring === null) {
+    setColouring(key, plain);
+    return;
+  }
+  void colouring.then((extension) => {
+    if (extension !== null) setColouring(key, extension);
+  });
+}
+
+function setColouring(key: string, extension: Extension) {
+  const state = states.get(key);
+  if (state === undefined || language.get(state) === extension) return;
+  change(key, { effects: language.reconfigure(extension), annotations: Transaction.addToHistory.of(false) });
 }
 
 /**
@@ -1364,6 +1388,7 @@ export function moved(root: string, from: string, to: string) {
     if (editor.active === before) editor.active = after;
     if (shown === before) shown = after;
     for (const kept of owners.values()) if (kept.active === before) kept.active = after;
+    colour(after, after.slice(after.indexOf("\u0000") + 1));
   }
   void showInViewer();
 }
