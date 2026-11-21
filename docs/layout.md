@@ -582,8 +582,11 @@ handful the agent touched in view. A folder you open or close yourself
 stays that way until you change it: a closed folder that gains a change
 stays closed, drawn as bright as any folder holding a change, and the
 choice holds through a reload, a switch to another session or project, and
-a restart. Folds are kept per project, so its worktrees share them, and the
-ones for folders the full listing no longer has are forgotten. A chain
+a restart. Folds are kept per project, so its worktrees share them, up to
+500 folders opened and 500 closed, the oldest choice going first. A fold
+for a folder the full listing does not have is kept for 30 days, so a
+folder only another branch has keeps its fold through a switch; one seen
+again starts the 30 days over. A chain
 collapsed into one row keeps its fold when the tree later shows its
 folders apart.
 

@@ -150,14 +150,25 @@ export const files = $state({
 const FOLDS_KEY = "chord.folds";
 /** The projects whose folds are kept; the one used longest ago goes first. */
 const KEPT_PROJECTS = 50;
+/** The folders opened and the folders closed kept for each project; the
+    choice made longest ago goes first. */
+const KEPT_FOLDS = 500;
+/** How long a folder can be missing from the full listing before its fold
+    is forgotten. A folder another branch has comes back on a switch. */
+const FORGET_AFTER = 30 * 24 * 60 * 60 * 1000;
 
 interface KeptFolds {
   open: string[];
   closed: string[];
+  /** When each folder with a fold was first missing from the full listing. */
+  missing: Record<string, number>;
 }
 
 /** The project the folds in `files` belong to, or null when none is open. */
 let foldsFor: string | null = null;
+/** When each folder with a fold in `files` was first missing from the full
+    listing; a folder seen again leaves it. */
+const missingSince = new Map<string, number>();
 
 function readFolds(): Record<string, KeptFolds> {
   try {
@@ -168,10 +179,15 @@ function readFolds(): Record<string, KeptFolds> {
     const kept: Record<string, KeptFolds> = {};
     for (const [project, entry] of Object.entries(stored)) {
       if (typeof entry !== "object" || entry === null) continue;
-      const { open, closed } = entry as Record<string, unknown>;
+      const { open, closed, missing } = entry as Record<string, unknown>;
       const paths = (list: unknown) =>
         Array.isArray(list) ? list.filter((path): path is string => typeof path === "string") : [];
-      kept[project] = { open: paths(open), closed: paths(closed) };
+      const since: Record<string, number> = {};
+      if (typeof missing === "object" && missing !== null && !Array.isArray(missing)) {
+        for (const [path, time] of Object.entries(missing))
+          if (typeof time === "number" && Number.isFinite(time)) since[path] = time;
+      }
+      kept[project] = { open: paths(open), closed: paths(closed), missing: since };
     }
     return kept;
   } catch {
@@ -182,10 +198,19 @@ function readFolds(): Record<string, KeptFolds> {
 
 function saveFolds() {
   if (foldsFor === null) return;
+  for (const set of [files.expanded, files.collapsed]) {
+    for (const path of [...set].slice(0, Math.max(0, set.size - KEPT_FOLDS))) set.delete(path);
+  }
+  for (const path of [...missingSince.keys()])
+    if (!files.expanded.has(path) && !files.collapsed.has(path)) missingSince.delete(path);
   const kept = readFolds();
   delete kept[foldsFor];
   if (files.expanded.size > 0 || files.collapsed.size > 0)
-    kept[foldsFor] = { open: [...files.expanded], closed: [...files.collapsed] };
+    kept[foldsFor] = {
+      open: [...files.expanded],
+      closed: [...files.collapsed],
+      missing: Object.fromEntries(missingSince),
+    };
   const projects = Object.keys(kept);
   for (const project of projects.slice(0, Math.max(0, projects.length - KEPT_PROJECTS)))
     delete kept[project];
@@ -202,29 +227,43 @@ function loadFolds() {
   files.expanded.clear();
   files.collapsed.clear();
   files.lent.clear();
+  missingSince.clear();
   if (foldsFor === null) return;
   const kept = readFolds()[foldsFor];
   if (kept === undefined) return;
   for (const path of kept.open) files.expanded.add(path);
   for (const path of kept.closed) files.collapsed.add(path);
+  for (const [path, since] of Object.entries(kept.missing)) missingSince.set(path, since);
 }
 
-/** Forgets the folds kept for folders the full listing no longer has. */
+/** Forgets the folds kept for folders the full listing has not had for
+    `FORGET_AFTER`, and notes when the others went missing. */
 function pruneFolds() {
   const folders = new Set<string>();
   for (const { path } of files.everything) {
     for (let cut = path.indexOf("/"); cut !== -1; cut = path.indexOf("/", cut + 1))
       folders.add(path.slice(0, cut));
   }
-  let gone = false;
+  const now = Date.now();
+  let changed = false;
   for (const set of [files.expanded, files.collapsed]) {
     for (const path of [...set]) {
-      if (folders.has(path)) continue;
-      set.delete(path);
-      gone = true;
+      const since = missingSince.get(path);
+      if (folders.has(path)) {
+        if (since !== undefined) {
+          missingSince.delete(path);
+          changed = true;
+        }
+      } else if (since === undefined) {
+        missingSince.set(path, now);
+        changed = true;
+      } else if (now - since >= FORGET_AFTER) {
+        set.delete(path);
+        changed = true;
+      }
     }
   }
-  if (gone) saveFolds();
+  if (changed) saveFolds();
 }
 
 function fromChanged(file: ChangedFile): FileEntry {
@@ -773,6 +812,7 @@ function lend(path: string) {
 export function reveal(path: string) {
   for (const prefix of ancestors(path)) {
     files.collapsed.delete(prefix);
+    files.expanded.delete(prefix);
     files.expanded.add(prefix);
   }
   saveFolds();
