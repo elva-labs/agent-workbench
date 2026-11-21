@@ -11,7 +11,7 @@ import {
 import { enterReview, exitReview, layout, togglePane } from "$lib/layout.svelte";
 import { lastSegment } from "$lib/paths";
 import { pathOn } from "$lib/remote.svelte";
-import { watchRoot } from "$lib/workspace.svelte";
+import { watchRoot, workspace } from "$lib/workspace.svelte";
 
 /**
  * What the changes pane is showing.
@@ -131,14 +131,101 @@ export const files = $state({
   shownReads: 0,
 
   /**
-   * Folders you opened and folders you closed, as overrides. A folder with no
-   * entry in either falls back to the default: open when something beneath it
-   * changed. That way widening the scope to hundreds of files does not bury
-   * the handful the agent touched.
+   * Folders you opened and folders you closed, kept for the project and saved
+   * with it. A folder with no entry in either falls back to the default: open
+   * when something beneath it changed. That way widening the scope to
+   * hundreds of files does not bury the handful the agent touched, and a
+   * folder you chose stays as you chose it whatever changes inside it.
    */
   expanded: new SvelteSet<string>(),
   collapsed: new SvelteSet<string>(),
+  /** Folders shown open on the way to the selected file, never saved. They
+      fold again as you left them once the selection moves elsewhere. */
+  lent: new SvelteSet<string>(),
 });
+
+/** Where the folders chosen in each project are kept between runs, keyed by
+    the project's path. The folders of a project are the same in each of its
+    worktrees, so a fold holds across its sessions. */
+const FOLDS_KEY = "chord.folds";
+/** The projects whose folds are kept; the one used longest ago goes first. */
+const KEPT_PROJECTS = 50;
+
+interface KeptFolds {
+  open: string[];
+  closed: string[];
+}
+
+/** The project the folds in `files` belong to, or null when none is open. */
+let foldsFor: string | null = null;
+
+function readFolds(): Record<string, KeptFolds> {
+  try {
+    const raw = localStorage.getItem(FOLDS_KEY);
+    if (raw === null) return {};
+    const stored: unknown = JSON.parse(raw);
+    if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return {};
+    const kept: Record<string, KeptFolds> = {};
+    for (const [project, entry] of Object.entries(stored)) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const { open, closed } = entry as Record<string, unknown>;
+      const paths = (list: unknown) =>
+        Array.isArray(list) ? list.filter((path): path is string => typeof path === "string") : [];
+      kept[project] = { open: paths(open), closed: paths(closed) };
+    }
+    return kept;
+  } catch {
+    // Nothing kept reads as every folder at its default.
+    return {};
+  }
+}
+
+function saveFolds() {
+  if (foldsFor === null) return;
+  const kept = readFolds();
+  delete kept[foldsFor];
+  if (files.expanded.size > 0 || files.collapsed.size > 0)
+    kept[foldsFor] = { open: [...files.expanded], closed: [...files.collapsed] };
+  const projects = Object.keys(kept);
+  for (const project of projects.slice(0, Math.max(0, projects.length - KEPT_PROJECTS)))
+    delete kept[project];
+  try {
+    localStorage.setItem(FOLDS_KEY, JSON.stringify(kept));
+  } catch {
+    // Non-fatal: the folds hold for this run and start at the default next.
+  }
+}
+
+/** Takes up the folds kept for the project open now. */
+function loadFolds() {
+  foldsFor = workspace.active;
+  files.expanded.clear();
+  files.collapsed.clear();
+  files.lent.clear();
+  if (foldsFor === null) return;
+  const kept = readFolds()[foldsFor];
+  if (kept === undefined) return;
+  for (const path of kept.open) files.expanded.add(path);
+  for (const path of kept.closed) files.collapsed.add(path);
+}
+
+/** Forgets the folds kept for folders the full listing no longer has. */
+function pruneFolds() {
+  const folders = new Set<string>();
+  for (const { path } of files.everything) {
+    for (let cut = path.indexOf("/"); cut !== -1; cut = path.indexOf("/", cut + 1))
+      folders.add(path.slice(0, cut));
+  }
+  let gone = false;
+  for (const set of [files.expanded, files.collapsed]) {
+    for (const path of [...set]) {
+      if (folders.has(path)) continue;
+      set.delete(path);
+      gone = true;
+    }
+  }
+  if (gone) saveFolds();
+}
 
 function fromChanged(file: ChangedFile): FileEntry {
   return {
@@ -227,6 +314,7 @@ async function loadEverything(read = treeRead) {
     }
     files.everything.sort((a, b) => a.path.localeCompare(b.path));
     files.everythingLoaded = true;
+    pruneFolds();
   } catch (error) {
     if (read === treeRead) files.error = String(error);
   }
@@ -521,7 +609,7 @@ export async function select(path: string) {
   if (files.renderedFor !== null && files.renderedFor !== path)
     files.renderedFor = null;
   files.selected = path;
-  reveal(path);
+  lend(path);
   await loadSelected();
 }
 
@@ -531,6 +619,7 @@ export function deselect() {
   files.picked = null;
   leaveOtherKinds();
   files.renderedFor = null;
+  files.lent.clear();
   if (files.selected === null) return;
   files.selected = null;
   files.diff = null;
@@ -626,45 +715,75 @@ export function toggleScope() {
   return setScope(files.scope === "changed" ? "all" : "changed");
 }
 
-export function isOpen(node: { path: string; hasChange: boolean }): boolean {
+/** A folder row of the tree: its path, and the chain of folders it stands
+    for when the tree compressed several into it. */
+type Folder = { path: string; hasChange: boolean; chain?: string[] };
+
+function members(node: Folder): string[] {
+  return node.chain ?? [node.path];
+}
+
+export function isOpen(node: Folder): boolean {
   // A narrowed tree is all matches: every folder on the way to one is open,
   // or the match would be hidden by a fold.
   if (filtering()) return true;
-  if (files.collapsed.has(node.path)) return false;
-  if (files.expanded.has(node.path)) return true;
+  const paths = members(node);
+  if (paths.some((path) => files.lent.has(path))) return true;
+  if (paths.some((path) => files.collapsed.has(path))) return false;
+  if (paths.some((path) => files.expanded.has(path))) return true;
   return node.hasChange;
 }
 
-export function toggleDir(node: { path: string; hasChange: boolean }) {
+/** Folds or opens a folder as you asked, and keeps that for the project.
+    Every folder of a compressed row takes the choice, so it holds when the
+    tree later shows them apart. */
+export function toggleDir(node: Folder) {
   const next = !isOpen(node);
-  files.expanded.delete(node.path);
-  files.collapsed.delete(node.path);
-  // Only record an override where it differs from the default. The sets then
-  // stay proportional to what you actually changed rather than to what you
-  // clicked, which matters once a repository has a few hundred folders.
-  if (next !== node.hasChange) {
-    if (next) files.expanded.add(node.path);
-    else files.collapsed.add(node.path);
+  for (const path of members(node)) {
+    files.lent.delete(path);
+    files.expanded.delete(path);
+    files.collapsed.delete(path);
+    (next ? files.expanded : files.collapsed).add(path);
   }
+  saveFolds();
 }
 
-/** Opens every folder on the way to a path, so a selection is never hidden. */
-export function reveal(path: string) {
+function ancestors(path: string): string[] {
   const segments = path.split("/");
   segments.pop();
+  const found: string[] = [];
   let prefix = "";
   for (const segment of segments) {
     prefix = prefix === "" ? segment : `${prefix}/${segment}`;
+    found.push(prefix);
+  }
+  return found;
+}
+
+/** Shows every folder on the way to the selected file open, without
+    changing what is kept, so a selection is never hidden and the folds you
+    chose come back once it moves on. */
+function lend(path: string) {
+  files.lent.clear();
+  for (const prefix of ancestors(path)) files.lent.add(prefix);
+}
+
+/** Opens every folder on the way to a path and keeps them open: for a file
+    or folder you just made or moved there. */
+export function reveal(path: string) {
+  for (const prefix of ancestors(path)) {
     files.collapsed.delete(prefix);
     files.expanded.add(prefix);
   }
+  saveFolds();
 }
 
 export function basename(path: string) {
   return lastSegment(path);
 }
 
-/** Called when the project changes: none of the old tree applies. */
+/** Called when the tree to show changes: none of the old one applies, and
+    the folds are the ones kept for the project open now. */
 export function clear() {
   treeRead += 1;
   fileRead += 1;
@@ -686,6 +805,5 @@ export function clear() {
   files.searching = false;
   files.target = null;
   files.pluginView = null;
-  files.expanded.clear();
-  files.collapsed.clear();
+  loadFolds();
 }

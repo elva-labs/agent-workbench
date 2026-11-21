@@ -477,6 +477,41 @@ test.describe("the file tree", () => {
     expect(await rowNames(page)).toEqual(["src"]);
   });
 
+  test("keeps a folder shut when a change lands in it, and after a reload", async ({ page }) => {
+    await chooseAll(page);
+    await row(page, "docs").click();
+    await row(page, "docs").click();
+    await row(page, "src").click();
+    expect(await rowNames(page)).not.toContain("lib.rs");
+
+    await page.evaluate(() => {
+      const state = window as unknown as {
+        __fixture: { fixture: { status: unknown[] } };
+        __gitChanged: () => void;
+      };
+      state.__fixture.fixture.status.push({
+        path: "docs/draft.md",
+        status: "M",
+        add: 2,
+        del: 1,
+        binary: false,
+      });
+      state.__gitChanged();
+    });
+    // Shut, it still shows that something inside it changed.
+    const docs = page.locator(`${TREE} [role='treeitem']`, {
+      has: page.locator(".name", { hasText: /^docs$/ }),
+    });
+    await expect(docs).not.toHaveClass(/\bquiet\b/);
+    await expect(docs).toHaveAttribute("aria-expanded", "false");
+    expect(await rowNames(page)).not.toContain("draft.md");
+
+    // The fixture starts again from what it had, with only src changed.
+    await page.reload();
+    await expect(page.locator(AGENT)).toBeVisible();
+    await expect.poll(() => rowNames(page)).toEqual(["src"]);
+  });
+
   test("does not scroll the pane sideways on a deep path", async ({ page }) => {
     await chooseAll(page);
     const overflow = await page

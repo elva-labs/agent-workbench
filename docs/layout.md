@@ -578,8 +578,20 @@ nothing but one more folder collapses into a single row.
 
 A folder is open by default when something beneath it changed. Widening the
 scope on a real repository adds hundreds of paths, and this keeps the
-handful the agent touched in view. Opening and closing a folder yourself
-records an override, and only where it differs from the default.
+handful the agent touched in view. A folder you open or close yourself
+stays that way until you change it: a closed folder that gains a change
+stays closed, drawn as bright as any folder holding a change, and the
+choice holds through a reload, a switch to another session or project, and
+a restart. Folds are kept per project, so its worktrees share them, and the
+ones for folders the full listing no longer has are forgotten. A chain
+collapsed into one row keeps its fold when the tree later shows its
+folders apart.
+
+Selecting a file opens the folders on the way to it for as long as it is
+selected, whoever selected it: you, the agent's show tool, or a session
+coming back to the file it had open. Once the selection moves on, those
+folders fold back to what you chose. A file or folder you make or move
+opens the folders on its way and keeps them open.
 
 The tree is one tab stop, not one per row. Arrow keys move a cursor within
 it, <kbd>Left</kbd> and <kbd>Right</kbd> close and open folders or step to
