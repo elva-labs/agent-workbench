@@ -19,7 +19,7 @@
   } from "$lib/limits.svelte";
   import { sessionState } from "$lib/orchestrator.svelte";
   import { hostOf } from "$lib/remote.svelte";
-  import { activeSession, modelLabel, unreadCount } from "$lib/sessions.svelte";
+  import { activeSession, sessionModelName, unreadCount } from "$lib/sessions.svelte";
   import {
     choose,
     effortChoices,
@@ -129,7 +129,7 @@
     if (integrated !== null && integrated.workflow !== null && conversation !== null)
       return heldModel(conversation, integrated.workflow);
     const named = conversation === null ? null : modelInUse(conversation);
-    return named ?? (session.model === null ? null : modelLabel(session.model));
+    return named ?? sessionModelName(session);
   });
   let effort = $derived(conversation === null ? null : effortInUse(conversation));
   /** A workflow holds its orchestrator's model, so it is not a choice. */

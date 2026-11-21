@@ -1,4 +1,5 @@
 import type { AgentId } from "$lib/core";
+import { catalogName } from "$lib/modelCatalog.svelte";
 
 /**
  * The models a workflow can name, per agent.
@@ -49,10 +50,11 @@ export function mostCapable(): ModelOption {
   return MODELS["claude-code"][0];
 }
 
-/** What a model is called where its name is shown. A name the list does
-    not hold is shown as it is written. */
-export function modelLabel(agent: AgentId, model: string): string {
-  return MODELS[agent]?.find((option) => option.model === model)?.label ?? model;
+/** What a model is called where its name is shown: as the list here
+    names it, else as the agent's own list names it for the account, else
+    as it is written. */
+export function modelLabel(agent: AgentId, model: string, account: string | null = null): string {
+  return MODELS[agent]?.find((option) => option.model === model)?.label ?? catalogName(agent, model, account) ?? model;
 }
 
 export function sameModel(

@@ -1996,7 +1996,7 @@ test.describe("a resumed conversation", () => {
       // This run's turn goes under the agent's name too, as it will once
       // read back after a reload.
       await expect(page.getByTestId("agent-run").last().locator("header")).toContainText("Codex");
-      await expect(page.getByTestId("agent-run").last().locator("header")).not.toContainText("gpt-5-codex");
+      await expect(page.getByTestId("agent-run").last().locator("header")).not.toContainText("GPT-5-Codex");
       const line = await box(page, "run-began", 0);
       expect(line.y + line.height).toBeLessThanOrEqual((await box(page, "user-message", 2)).y);
 

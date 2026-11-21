@@ -12,6 +12,7 @@ import {
 import { SvelteSet } from "svelte/reactivity";
 import { accountOf, dirFor, names } from "$lib/accounts.svelte";
 import { CODEX_DEFAULT } from "$lib/models";
+import { catalogName } from "$lib/modelCatalog.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import {
   readWorkflow,
@@ -1156,6 +1157,21 @@ export function moreLabel(count: number, oldest: number, now = Date.now()): stri
   if (days < 7) return `${count} more from this week`;
   if (days < 30) return `${count} more from this month`;
   return `${count} more`;
+}
+
+/** What a session's model is called on its row and tooltip, the row of
+    a session another started, the status bar and the start tool's reply:
+    by the name the agent's own list gives it for the session's account
+    where the agent's models go by those names, else as `modelLabel` reads
+    it. Null for a session that names no model. */
+export function sessionModelName(session: {
+  agent: AgentId;
+  model: string | null;
+  account: string | null;
+}): string | null {
+  const { model } = session;
+  if (model === null) return null;
+  return catalogName(session.agent, model, session.account) ?? modelLabel(model);
 }
 
 /** What a model is called on a row. Claude's own names read as they are

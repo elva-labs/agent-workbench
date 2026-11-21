@@ -11,6 +11,7 @@ import { modeName as nameOfMode, nextNarrower } from "$lib/modeFit";
 import { heardOffers } from "$lib/lastChosen.svelte";
 import { limitEnded, runOver, setHands, settle as settleAutoResume, turnMoved } from "$lib/autoResume.svelte";
 import { modelLabel } from "$lib/models";
+import { heardCatalog } from "$lib/modelCatalog.svelte";
 import { readsAsCommand } from "$lib/slash";
 import { offeredModel, thoughtAnswer } from "$lib/thread";
 import { heardLimits } from "$lib/limits.svelte";
@@ -422,6 +423,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         body.models.map((model) => model.value),
         body.defaultModel ?? body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
+      heardCatalog(session.agent, session.account, body.models);
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
       else if (session.carried !== null) void fallBackCarried(key, link, session, session.carried);
@@ -1105,7 +1107,10 @@ export function reattach(key: string, handle: string, spoken = true): Promise<Re
       // The same session goes on, not one resumed from its transcript: it
       // keeps the name it had.
       session.resumedFrom = null;
-      if (snapshot.ready !== null) identify(session, snapshot.ready.sessionId);
+      if (snapshot.ready !== null) {
+        identify(session, snapshot.ready.sessionId);
+        heardCatalog(session.agent, session.account, snapshot.ready.models);
+      }
       settle(session, snapshot.state, before, link);
       void rejoined(key);
       return "up";

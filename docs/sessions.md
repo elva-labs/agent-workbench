@@ -236,7 +236,14 @@ for a session that started others what those are doing; at its end is the
 model the session was started on, when the app knows it, or for a session
 that started others how many of them it has not yet heard from, as the
 [orchestrator](orchestrator.md#in-the-panes) describes. The two lines are
-laid out apart, so the model never narrows the name. A running session
+laid out apart, so the model never narrows the name. A model is named as
+the composer names it: Claude's as they are said, `opus-4-1` as Opus 4.1,
+and Codex's by the names Codex's own list gives them for the account,
+`gpt-6.2-sol` as GPT-6.2-Sol, or by its id where no list this window has
+heard names it. The row's tooltip, the rows of the sessions it started,
+the status bar, the settings and the start tool's reply name a model the
+same way; what an agent is told, and the model the start tool is given,
+stay ids. A running session
 with neither takes one line, and its dot says what it is doing. A row left
 from the last quit with nothing running behind it takes one line too, its
 name and its time, the time its transcript was last written, unless it

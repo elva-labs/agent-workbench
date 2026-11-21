@@ -49,7 +49,7 @@
         <span class="state" class:asking={session.needs === "permission"} data-testid="started-state">
           {at?.round == null ? "" : `${at.round}, `}{session.needs === "permission" ? "asking" : stateWord(session)}
         </span>
-        <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model) : agentLabel(session.agent)} /></span>
+        <span class="model"><Plain text={session.model !== null ? modelLabel(session.agent, session.model, session.account) : agentLabel(session.agent)} /></span>
         <button class="open" tabindex="-1" data-thread-item onclick={() => open(session)} data-testid="open-started">Open</button>
       </div>
     {/each}

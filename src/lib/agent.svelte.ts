@@ -24,6 +24,9 @@ export interface AgentProfile {
   configVar: string;
   commands: boolean;
   turnModels: boolean;
+  /** Its models are shown by the names its own list gives them at run
+      time, its ids being no names to read. */
+  catalogNames: boolean;
   /** What sending waiting messages now does: interrupt the turn, after
       which the agent takes them all at once, or add them to the turn
       that runs without stopping it. */
@@ -38,6 +41,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CLAUDE_CONFIG_DIR",
     commands: true,
     turnModels: true,
+    catalogNames: false,
     sendNow: "interrupts",
   },
   codex: {
@@ -47,6 +51,7 @@ const PROFILES: Record<AgentId, AgentProfile> = {
     configVar: "CODEX_HOME",
     commands: false,
     turnModels: false,
+    catalogNames: true,
     sendNow: "steers",
   },
 };

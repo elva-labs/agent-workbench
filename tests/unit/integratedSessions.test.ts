@@ -70,6 +70,7 @@ import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows, unknowWorkflo
 import { adoptAccounts, reset as resetAccounts } from "$lib/accounts.svelte";
 import { orchestratorPrompt } from "$lib/workflowInstructions";
 import { limitsOf, resetLimits } from "$lib/limits.svelte";
+import { catalogName, resetCatalogs } from "$lib/modelCatalog.svelte";
 import { fakeIntegrated, type FakeIntegrated, type FakeIntegratedOptions } from "../fakeIntegrated";
 
 const PROJECT = "/home/ada/dev/demo";
@@ -202,6 +203,7 @@ beforeEach(async () => {
   resetIntegrated();
   resetAttention();
   resetLimits();
+  resetCatalogs();
   // The window has the workflows, so a resumed row finds out what it
   // follows as it starts.
   resetWorkflows();
@@ -2247,6 +2249,8 @@ describe("a new conversation put under a workflow", () => {
     expect(byKey(key)!.agent).toBe("codex");
     expect(byKey(key)!.model).toBeNull();
     expect(conversationOf(key).ready?.models.map((model) => model.value)).toEqual(["gpt-5-codex"]);
+    // What Codex listed names its models everywhere they are shown.
+    expect(catalogName("codex", "gpt-5-codex", byKey(key)!.account)).toBe("GPT-5-Codex");
   });
 
   /** Holds every change of the settings the core is asked for until the
