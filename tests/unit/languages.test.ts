@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { EditorView } from "@codemirror/view";
+import { insertNewlineAndIndent, toggleComment } from "@codemirror/commands";
+import { EditorSelection, type EditorState } from "@codemirror/state";
 import { language, plain, stateFor } from "$lib/codeEditor";
 import { colouringOf, languageOf } from "$lib/languages";
 
@@ -29,6 +31,21 @@ describe("the language of a file", () => {
     expect(languageOf("src/lib/App.svelte")).toBe("Svelte");
     expect(languageOf("Dockerfile")).toBe("Dockerfile");
     expect(languageOf("deploy/Dockerfile")).toBe("Dockerfile");
+    expect(languageOf("Dockerfile.dev")).toBe("Dockerfile");
+    expect(languageOf("deploy/prod.dockerfile")).toBe("Dockerfile");
+    expect(languageOf("Containerfile")).toBe("Dockerfile");
+    expect(languageOf(".bashrc")).toBe("Shell");
+    expect(languageOf("home/.zshrc")).toBe("Shell");
+    expect(languageOf("tsconfig.json")).toBe("JSON");
+    expect(languageOf(".vscode/settings.jsonc")).toBe("JSON");
+    expect(languageOf("src/App.js")).toBe("JavaScript");
+    expect(languageOf("build.gradle.kts")).toBe("Kotlin");
+    expect(languageOf("stubs/os.pyi")).toBe("Python");
+    expect(languageOf("src/a.cxx")).toBe("C++");
+    expect(languageOf("src/a.hxx")).toBe("C++");
+    expect(languageOf("src/a.hh")).toBe("C++");
+    expect(languageOf("index.htm")).toBe("HTML");
+    expect(languageOf("static/logo.svg")).toBe("XML");
   });
 
   it("is plain text for a name that names none", () => {
@@ -75,5 +92,41 @@ describe("colouring a file", () => {
     expect(colourOf("'done'")).toBe("var(--code-string)");
     expect(colourOf("# finished")).toBe("var(--code-comment)");
     view.destroy();
+  });
+});
+
+/** A file's state, coloured as its name says. */
+async function coloured(path: string, text: string): Promise<EditorState> {
+  const colouring = await colouringOf(path);
+  return stateFor(text).update({ effects: language.reconfigure(colouring!) }).state;
+}
+
+describe("typing in a coloured file", () => {
+  /** What Enter at the bar leaves before the cursor on the new line. */
+  async function enter(path: string, text: string): Promise<string> {
+    const at = text.indexOf("|");
+    let state = (await coloured(path, text.replace("|", ""))).update({ selection: EditorSelection.cursor(at) }).state;
+    insertNewlineAndIndent({ state, dispatch: (tr) => (state = tr.state) });
+    const line = state.doc.lineAt(state.selection.main.head);
+    return line.text.slice(0, state.selection.main.head - line.from);
+  }
+
+  it("keeps the indentation of the line Enter leaves", async () => {
+    expect(await enter("src/main.rs", "fn main() {\n    let a = 1;|\n}\n")).toBe("    ");
+    expect(await enter("src/app.py", "def run():\n    a = 1|\n")).toBe("    ");
+  });
+
+  it("gives a tab-indented file spaces, as plain text does", async () => {
+    const tabbed = "func main() {\n\ta := 1|\n}\n";
+    expect(await enter("cmd/main.go", tabbed)).toBe("    ");
+    let state = stateFor(tabbed.replace("|", "")).update({ selection: EditorSelection.cursor(tabbed.indexOf("|")) }).state;
+    insertNewlineAndIndent({ state, dispatch: (tr) => (state = tr.state) });
+    expect(state.doc.lineAt(state.selection.main.head).text).toBe("    ");
+  });
+
+  it("comments a line out in the language's own syntax", async () => {
+    let state = await coloured("src/main.rs", "let a = 1;\n");
+    toggleComment({ state, dispatch: (tr) => (state = tr.state) });
+    expect(state.doc.toString()).toBe("// let a = 1;\n");
   });
 });

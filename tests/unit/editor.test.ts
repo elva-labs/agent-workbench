@@ -71,6 +71,27 @@ const writeErrors = new Map<string, string>();
 /** A stamp names exact content. */
 const stampOf = (text: string) => `s:${text}`;
 
+/** Go and Java load only once a test lets them, so a file can be closed or
+    renamed while its language is still loading. */
+const held = vi.hoisted(() => {
+  const gate = () => {
+    let open!: () => void;
+    const shut = new Promise<void>((resolve) => (open = resolve));
+    return { shut, open };
+  };
+  return { go: gate(), java: gate() };
+});
+
+vi.mock("@codemirror/lang-go", async (actual) => {
+  await held.go.shut;
+  return actual();
+});
+
+vi.mock("@codemirror/lang-java", async (actual) => {
+  await held.java.shut;
+  return actual();
+});
+
 vi.mock("$lib/core", () => ({
   core: () => ({
     async setWindowTitle() {},
@@ -410,6 +431,31 @@ describe("the colours of a file", () => {
     const python = language.get(stateOf(keyOf("/one", "src/b.py"))!);
     expect(python).not.toBe(plain);
     expect(python).not.toBe(rust);
+  });
+
+  it("do nothing for a file closed while its language loads", async () => {
+    disk.set("src/d.go", "package d\n");
+    await openFile("src/d.go");
+    const key = keyOf("/one", "src/d.go");
+    const loading = colouringOf("src/d.go")!;
+    closeTab(key);
+    expect(stateOf(key)).toBeNull();
+    held.go.open();
+    expect(await loading).not.toBeNull();
+    await settle();
+    expect(stateOf(key)).toBeNull();
+  });
+
+  it("do not reach a file renamed while its language loads", async () => {
+    disk.set("src/e.java", "class E {}\n");
+    await openFile("src/e.java");
+    const loading = colouringOf("src/e.java")!;
+    moved("/one", "src/e.java", "src/e.txt");
+    held.java.open();
+    expect(await loading).not.toBeNull();
+    await settle();
+    expect(stateOf(keyOf("/one", "src/e.java"))).toBeNull();
+    expect(language.get(stateOf(keyOf("/one", "src/e.txt"))!)).toBe(plain);
   });
 });
 
