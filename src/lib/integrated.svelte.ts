@@ -894,7 +894,7 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   if (carried.effort !== null && change.model === undefined) {
     const efforts = link.conversation.efforts;
     if (efforts.length > 0 && !efforts.includes(carried.effort) && ready.effort !== carried.effort) {
-      const effort = lowerEffort(carried.effort, efforts);
+      const effort = lowerEffort(carried.effort, efforts, effortScale(ready.models));
       if (effort !== null && effort !== ready.effort) change.effort = effort;
     }
   }
@@ -903,17 +903,45 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   for (const message of said) link.conversation.apply({ type: "notice", level: "info", message });
 }
 
-/** The efforts from the least to the most. */
-const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+/** The efforts from the least to the most, for an effort none of the
+    agent's models lists. */
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
-/** The highest of `efforts` below `effort`, else the lowest of them; null
-    where `effort` is not on the scale. */
-function lowerEffort(effort: string, efforts: string[]): string | null {
-  const at = EFFORT_ORDER.indexOf(effort);
+/** The efforts the agent's models take, from the least to the most as
+    each model lists its own: one a model lists after another comes after
+    it here. */
+export function effortScale(models: { efforts: string[] }[]): string[] {
+  const scale: string[] = [];
+  for (const { efforts } of models) {
+    let after = -1;
+    efforts.forEach((effort, index) => {
+      let at = scale.indexOf(effort);
+      if (at < 0) {
+        // Just before the next the model lists that is already placed,
+        // else just after the last.
+        const next = efforts
+          .slice(index + 1)
+          .map((one) => scale.indexOf(one))
+          .find((one) => one > after);
+        at = next ?? after + 1;
+        scale.splice(at, 0, effort);
+      }
+      after = at;
+    });
+  }
+  return scale;
+}
+
+/** The highest of `efforts` below `effort`, else the lowest of them, on
+    the agent's own scale where it holds `effort`; null where no scale
+    does. */
+export function lowerEffort(effort: string, efforts: string[], scale: string[]): string | null {
+  const order = scale.includes(effort) ? scale : EFFORT_ORDER;
+  const at = order.indexOf(effort);
   if (at < 0) return null;
-  const known = efforts.filter((one) => EFFORT_ORDER.includes(one));
-  const below = known.filter((one) => EFFORT_ORDER.indexOf(one) < at);
-  const sorted = (list: string[]) => [...list].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+  const known = efforts.filter((one) => order.includes(one));
+  const below = known.filter((one) => order.indexOf(one) < at);
+  const sorted = (list: string[]) => [...list].sort((a, b) => order.indexOf(a) - order.indexOf(b));
   return sorted(below).at(-1) ?? sorted(known)[0] ?? null;
 }
 

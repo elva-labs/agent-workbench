@@ -199,8 +199,9 @@ conversation takes another's.
 Changing the mode on the composer's chip changes it at once and is kept
 the same way. The composer's chips are the model, the effort and the mode,
 in that order; the effort's is there only while the model takes an effort,
-lists the efforts the agent says that model takes, and always names the one
-the status bar names. In a narrow pane it drops the word effort and keeps
+lists the efforts the agent says that model takes, from the least to the
+most and each with the line the agent gives for it, Codex's own words for
+ultra among them, and always names the one the status bar names. In a narrow pane it drops the word effort and keeps
 the level. An effort set with the agent's own command is shown but is not
 the one a new session starts on; only a pick on the chip or the status bar
 is.
@@ -262,7 +263,8 @@ asking for the model first. A mode the agent does
 not take, such as auto where the account or the project's settings give
 none, is switched to the nearest narrower mode the agent offers, with a
 notice, as for a session another started. An effort the model does not
-take is switched to the nearest lower one it does. The chips then show
+take is switched to the nearest lower one it does, lower as the agent
+orders its efforts, so a model without ultra runs at max. The chips then show
 what the session runs on. A resumed session goes on as its conversation
 did, a session another started begins as its starter says, and a session
 that follows a workflow takes the mode and the effort but runs on the
@@ -414,7 +416,8 @@ naming the session and its kind:
 
 - **ready**, once, before anything else: the conversation's id, the model,
   mode and effort, the agent's version, and what it offers: models (each
-  with the efforts it takes), modes, the efforts of the model it runs on,
+  with the efforts it takes, in the agent's order and with its line for
+  each where it has one), modes, the efforts of the model it runs on,
   and its slash commands and skills. A mode can be one the list does not
   hold, when it comes from the user's own configuration.
 - **commands**: the slash commands and skills changed, or the agent said

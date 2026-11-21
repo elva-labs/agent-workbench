@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Conversation } from "$lib/conversation.svelte";
-import { effortInUse, heldModel, modeChoices, modeName, workflowChoices } from "$lib/settingChoices";
+import { effortChoices, effortInUse, heldModel, modeChoices, modeName, workflowChoices } from "$lib/settingChoices";
+import { effortScale, lowerEffort } from "$lib/integrated.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
@@ -44,6 +45,43 @@ describe("the effort the session runs at", () => {
 
   it("is none before the agent names one", () => {
     expect(effortInUse(ready("claude-sonnet-5-5", null, ["low", "medium", "high"]))).toBeNull();
+  });
+});
+
+describe("the efforts a model takes", () => {
+  const CODEX = [
+    {
+      value: "gpt-6.2-sol",
+      name: "GPT-6.2-Sol",
+      description: null,
+      efforts: ["low", "max", "ultra"],
+      effortDescriptions: { ultra: "Maximum reasoning with automatic task delegation" },
+    },
+  ];
+
+  it("are said in the agent's words where it has some, and in the app's where it has none", () => {
+    const choices = effortChoices(ready("gpt-6.2-sol", "max", ["low", "max", "ultra"], CODEX));
+    expect(choices.map(({ value, name, about, on }) => [value, name, about, on])).toEqual([
+      ["low", "Low", "Quick, little thinking", false],
+      ["max", "Max", "Slowest, for the hardest problems", true],
+      ["ultra", "Ultra", "Maximum reasoning with automatic task delegation", false],
+    ]);
+  });
+
+  it("go from the least to the most as the agent's models list them", () => {
+    const scale = effortScale([
+      { efforts: ["low", "high"] },
+      { efforts: ["medium", "high", "max", "ultra"] },
+      { efforts: ["none", "low"] },
+    ]);
+    expect(scale).toEqual(["none", "low", "medium", "high", "max", "ultra"]);
+  });
+
+  it("fall from ultra to the highest below it that the model takes", () => {
+    const scale = effortScale([{ efforts: ["low", "medium", "high", "xhigh", "max", "ultra"] }]);
+    expect(lowerEffort("ultra", ["low", "medium", "high", "xhigh", "max"], scale)).toBe("max");
+    expect(lowerEffort("ultra", ["low", "medium"], [])).toBe("medium");
+    expect(lowerEffort("turbo", ["low"], scale)).toBeNull();
   });
 });
 

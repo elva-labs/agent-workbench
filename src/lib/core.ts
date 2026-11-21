@@ -418,7 +418,11 @@ export type IntegratedEventBody =
         value: string;
         name: string | null;
         description: string | null;
+        /** From the least to the most, where the agent lists them so. */
         efforts: string[];
+        /** What each effort does, in the agent's words, for those it
+            words. */
+        effortDescriptions?: Record<string, string>;
         /** The model it stands for, where the agent says, as Claude
             Code does for an alias and for its default. */
         resolved?: string;

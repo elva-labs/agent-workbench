@@ -472,8 +472,12 @@ pub struct ModelInfo {
     pub value: String,
     pub name: Option<String>,
     pub description: Option<String>,
-    /// The efforts it takes, none for a model that takes no effort.
+    /// The efforts it takes, none for a model that takes no effort, from
+    /// the least to the most where the agent lists them so.
     pub efforts: Vec<String>,
+    /// What each effort does, in the agent's words, for those it words.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub effort_descriptions: BTreeMap<String, String>,
     /// The model it stands for, where the agent says, as Claude Code does
     /// for an alias and for its default.
     #[serde(skip_serializing_if = "Option::is_none")]

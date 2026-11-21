@@ -84,15 +84,17 @@ export function modeChoices(conversation: Conversation): Choice[] {
   ];
 }
 
-/** What an effort is called, and a line on what it does, for the efforts
-    the agents name. Any other is shown as it is written. */
+/** What an effort is called, and a line on what it does where the agent
+    says nothing of it, for the efforts the agents name. Any other is shown
+    as it is written. */
 const EFFORTS: Record<string, { name: string; about: string }> = {
   minimal: { name: "Minimal", about: "Hardly any thinking" },
   low: { name: "Low", about: "Quick, little thinking" },
   medium: { name: "Medium", about: "Balanced" },
   high: { name: "High", about: "Thorough" },
   xhigh: { name: "Extra high", about: "More thorough still" },
-  max: { name: "Max", about: "Deepest and slowest" },
+  max: { name: "Max", about: "Slowest, for the hardest problems" },
+  ultra: { name: "Ultra", about: "Hands parts of the task to subagents" },
 };
 
 /** An effort as it is shown in a menu: `High`. */
@@ -100,13 +102,15 @@ export function effortName(effort: string): string {
   return EFFORTS[effort]?.name ?? effort;
 }
 
-/** The efforts the model the session runs on takes. */
+/** The efforts the model the session runs on takes, each said in the
+    agent's words where it has some for it. */
 export function effortChoices(conversation: Conversation): Choice[] {
   const effort = conversation.settings.effort;
+  const words = offeredModel(conversation, conversation.settings.model)?.effortDescriptions ?? {};
   return conversation.efforts.map((value) => ({
     value,
     name: effortName(value),
-    about: EFFORTS[value]?.about ?? null,
+    about: words[value] ?? EFFORTS[value]?.about ?? null,
     on: value === effort,
   }));
 }

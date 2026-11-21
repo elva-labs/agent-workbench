@@ -23,7 +23,7 @@
 //! Everything leaves as the agent-neutral events of the integrated
 //! sessions; nothing Codex-shaped goes past this file.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -1765,20 +1765,30 @@ impl AppServer {
                         .filter(|model| model["hidden"] != true)
                         .filter_map(|model| {
                             let value = text(&model["model"]).or_else(|| text(&model["id"]))?;
+                            let supported = model["supportedReasoningEfforts"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|effort| {
+                                    let value = text(&effort["reasoningEffort"])
+                                        .or_else(|| text(effort))?;
+                                    Some((value, text(&effort["description"])))
+                                });
+                            let mut efforts = Vec::new();
+                            let mut effort_descriptions = BTreeMap::new();
+                            for (effort, description) in supported {
+                                if let Some(description) = description.filter(|d| !d.is_empty()) {
+                                    effort_descriptions.insert(effort.clone(), description);
+                                }
+                                efforts.push(effort);
+                            }
                             Some((
                                 ModelInfo {
                                     name: text(&model["displayName"]),
                                     description: text(&model["description"])
                                         .filter(|d| !d.is_empty()),
-                                    efforts: model["supportedReasoningEfforts"]
-                                        .as_array()
-                                        .into_iter()
-                                        .flatten()
-                                        .filter_map(|effort| {
-                                            text(&effort["reasoningEffort"])
-                                                .or_else(|| text(effort))
-                                        })
-                                        .collect(),
+                                    efforts,
+                                    effort_descriptions,
                                     resolved: None,
                                     value,
                                 },

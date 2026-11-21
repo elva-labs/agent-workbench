@@ -1169,6 +1169,7 @@ impl Stream {
                     name: text(&model["displayName"]),
                     description: text(&model["description"]),
                     efforts: strings(&model["supportedEffortLevels"]),
+                    effort_descriptions: Default::default(),
                     resolved: text(&model["resolvedModel"]),
                 })
             })

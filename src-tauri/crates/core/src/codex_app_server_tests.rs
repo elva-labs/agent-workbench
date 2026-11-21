@@ -60,9 +60,9 @@ fn models() -> Value {
         {"id": "gpt-a", "model": "gpt-a", "displayName": "GPT A", "description": "The big one",
          "hidden": false, "isDefault": true, "defaultReasoningEffort": "medium",
          "supportedReasoningEfforts": [
-            {"reasoningEffort": "low", "description": ""},
+            {"reasoningEffort": "low", "description": "Fast responses with lighter reasoning"},
             {"reasoningEffort": "medium", "description": ""},
-            {"reasoningEffort": "high", "description": ""}]},
+            {"reasoningEffort": "high", "description": "Greater reasoning depth for complex problems"}]},
         {"id": "gpt-b", "model": "gpt-b", "displayName": "GPT B", "hidden": false,
          "defaultReasoningEffort": "minimal",
          "supportedReasoningEfforts": [{"reasoningEffort": "minimal", "description": ""}]},
@@ -310,6 +310,19 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
     let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
     assert_eq!(values, ["gpt-a", "gpt-b"], "hidden ones left out");
     assert_eq!(models[0].name.as_deref(), Some("GPT A"));
+    // Each effort in Codex's words where it has some, in its order.
+    assert_eq!(models[0].efforts, ["low", "medium", "high"]);
+    assert_eq!(
+        models[0].effort_descriptions,
+        BTreeMap::from([
+            ("low".into(), "Fast responses with lighter reasoning".into()),
+            (
+                "high".into(),
+                "Greater reasoning depth for complex problems".into()
+            ),
+        ])
+    );
+    assert!(models[1].effort_descriptions.is_empty());
     assert_eq!(efforts, &["low", "medium", "high"]);
     let modes: Vec<&str> = modes.iter().map(|m| m.value.as_str()).collect();
     assert_eq!(modes, ["read-only", "auto", "full-access"]);
