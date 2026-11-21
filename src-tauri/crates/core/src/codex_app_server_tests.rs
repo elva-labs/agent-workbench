@@ -88,7 +88,7 @@ fn thread_started() -> Value {
 /// What `config/read` answers: the user's own workspace sandbox settings
 /// among the rest.
 fn config() -> Value {
-    json!({"config": {"model": "gpt-a", "sandbox_mode": null,
+    json!({"config": {"model": "gpt-b", "sandbox_mode": null,
         "sandbox_workspace_write": {"writable_roots": ["/work/shared"], "network_access": true,
                                     "exclude_tmpdir_env_var": false, "exclude_slash_tmp": false}},
         "origins": {}})
@@ -298,11 +298,17 @@ fn the_handshake_starts_a_thread_with_the_workbench_s_settings() {
         modes,
         efforts,
         commands,
+        default_model,
     } = &out[0]
     else {
         panic!("{out:?}");
     };
     assert_eq!(session_id, THREAD);
+    // The model the configuration names, and the one the list marks as
+    // its default, are told apart.
+    assert_eq!(default_model.as_deref(), Some("gpt-b"));
+    assert!(models[0].is_default);
+    assert!(!models[1].is_default);
     assert_eq!(model.as_deref(), Some("gpt-a"));
     assert_eq!(effort.as_deref(), Some("medium"));
     assert_eq!(mode.as_deref(), Some("auto"));
@@ -2132,14 +2138,21 @@ const USES: &[(&str, &str, &[&str])] = &[
     ("response model/list", "data.[].displayName", &[]),
     ("response model/list", "data.[].description", &[]),
     ("response model/list", "data.[].hidden", &[]),
+    ("response model/list", "data.[].isDefault", &[]),
     ("response model/list", "data.[].defaultReasoningEffort", &[]),
     (
         "response model/list",
         "data.[].supportedReasoningEfforts.[].reasoningEffort",
         &[],
     ),
+    (
+        "response model/list",
+        "data.[].supportedReasoningEfforts.[].description",
+        &[],
+    ),
     ("request config/read", "cwd", &[]),
     ("request config/read", "includeLayers", &[]),
+    ("response config/read", "config.model", &[]),
     (
         "response config/read",
         "config.sandbox_workspace_write.writable_roots",

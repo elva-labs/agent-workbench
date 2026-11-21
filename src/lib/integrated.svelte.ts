@@ -24,7 +24,7 @@ import {
   type IntegratedState,
   type PermissionChoice,
 } from "$lib/core";
-import { Conversation, type Command, type Message, type Part, type TextPart } from "$lib/conversation.svelte";
+import { Conversation, type Command, type Message, type Part, type Ready, type TextPart } from "$lib/conversation.svelte";
 import { earlierAtStart, layEarlier, runFrom } from "$lib/earlier";
 import { logUsage } from "$lib/usageLog";
 import {
@@ -420,7 +420,7 @@ function deliver(key: string, link: Link, body: IntegratedEventBody) {
         session.agent,
         session.account,
         body.models.map((model) => model.value),
-        body.models.find((model) => model.value === "default")?.resolved ?? null,
+        body.defaultModel ?? body.models.find((model) => model.value === "default")?.resolved ?? null,
       );
       if (session.modeGiven !== null && session.modeNamed === session.modeGiven && body.mode !== session.modeGiven)
         void fallBack(key, link, session.agent, session.modeGiven, body.mode);
@@ -862,6 +862,20 @@ function startEffort(session: Session, link: Link, carried: Carried | null): str
   return carried.effort ?? undefined;
 }
 
+/** The model the agent runs a session given none on, among those it
+    offers: the one the user's own configuration names, else the one the
+    agent marks as its default, else its entry for its default, else the
+    first it lists. */
+export function defaultOffered(ready: Ready): Ready["models"][number] {
+  const { models } = ready;
+  return (
+    models.find((model) => ready.defaultModel != null && model.value === ready.defaultModel) ??
+    models.find((model) => model.isDefault === true) ??
+    models.find((model) => model.value === "default") ??
+    models[0]
+  );
+}
+
 /**
  * A new session that did not start on what was last chosen for its agent
  * goes on the nearest it can take, and says so: the agent's default model
@@ -876,7 +890,7 @@ async function fallBackCarried(key: string, link: Link, session: Session, carrie
   const change: Change = {};
   const said: string[] = [];
   if (carried.model !== null && ready.models.length > 0 && offeredModel(link.conversation, carried.model) === null) {
-    const instead = ready.models.find((model) => model.value === "default") ?? ready.models[0];
+    const instead = defaultOffered(ready);
     change.model = instead.value;
     const name = (instead.name ?? instead.value).replace(/\s*\(.*\)\s*$/, "").trim();
     said.push(`${modelLabel(session.agent, carried.model)} is not offered here, so the session runs on ${name}.`);

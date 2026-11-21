@@ -256,7 +256,9 @@ They are kept per agent, not per account or per project, so they follow
 the user into every project and account. What one account or project
 cannot take is settled when a session starts, and never changes what is
 kept. A model the agent does not offer the session's account starts it on
-the agent's default model, or the first it offers, with a notice; once a
+the agent's default model, with a notice: for Codex the model its own
+configuration names where it offers that one, else the one it marks as its
+default, else the first it offers; once a
 session under an account has said which models it offers, a new one under
 that account, while the window is open, is started on the default without
 asking for the model first. A mode the agent does

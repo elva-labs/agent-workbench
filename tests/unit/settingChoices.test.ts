@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Conversation } from "$lib/conversation.svelte";
 import { effortChoices, effortInUse, heldModel, modeChoices, modeName, workflowChoices } from "$lib/settingChoices";
-import { effortScale, lowerEffort } from "$lib/integrated.svelte";
+import { defaultOffered, effortScale, lowerEffort } from "$lib/integrated.svelte";
 import { applyDetect, resetAgent } from "$lib/agent.svelte";
 import { adoptWorkflows, defaultWorkflow, reset as resetWorkflows } from "$lib/workflows.svelte";
 
@@ -82,6 +82,31 @@ describe("the efforts a model takes", () => {
     expect(lowerEffort("ultra", ["low", "medium", "high", "xhigh", "max"], scale)).toBe("max");
     expect(lowerEffort("ultra", ["low", "medium"], [])).toBe("medium");
     expect(lowerEffort("turbo", ["low"], scale)).toBeNull();
+  });
+});
+
+describe("the model a session given none runs on", () => {
+  const model = (value: string, isDefault = false) => ({
+    value,
+    name: value,
+    description: null,
+    efforts: [] as string[],
+    ...(isDefault ? { isDefault } : {}),
+  });
+  const on = (models: ReturnType<typeof model>[], defaultModel?: string | null) =>
+    defaultOffered({ ...ready(null, null, [], models).ready!, defaultModel }).value;
+
+  it("is the one the user's configuration names, where the agent offers it", () => {
+    const models = [model("gpt-a"), model("gpt-b", true), model("gpt-c")];
+    expect(on(models, "gpt-c")).toBe("gpt-c");
+    // Not offered: the agent's own mark decides.
+    expect(on(models, "gpt-gone")).toBe("gpt-b");
+  });
+
+  it("is the one the agent marks, else its default entry, else the first it lists", () => {
+    expect(on([model("gpt-a"), model("gpt-b", true)])).toBe("gpt-b");
+    expect(on([model("sonnet"), model("default")])).toBe("default");
+    expect(on([model("gpt-a"), model("gpt-b")])).toBe("gpt-a");
   });
 });
 

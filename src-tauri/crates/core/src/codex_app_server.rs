@@ -794,6 +794,9 @@ struct AppServer {
     /// for one takes them.
     changes: Next,
     config_known: bool,
+    /// The model the user's configuration names for the session's folder,
+    /// which a thread started with no model runs on.
+    configured_model: Option<String>,
     /// The sandbox the auto mode runs in, with the writable roots and the
     /// network access the user configured.
     workspace: Option<Value>,
@@ -1427,6 +1430,7 @@ impl AppServer {
             models: Vec::new(),
             changes: Next::default(),
             config_known: false,
+            configured_model: None,
             workspace: None,
             turn: None,
             starting: None,
@@ -1684,6 +1688,7 @@ impl AppServer {
                 .collect(),
             efforts: self.efforts_of(self.model.as_deref()),
             commands: vec![],
+            default_model: self.configured_model.clone(),
         });
         if self.signed_out {
             self.told_signed_out = true;
@@ -1790,6 +1795,7 @@ impl AppServer {
                                     efforts,
                                     effort_descriptions,
                                     resolved: None,
+                                    is_default: model["isDefault"] == true,
                                     value,
                                 },
                                 text(&model["defaultReasoningEffort"]),
@@ -1805,6 +1811,7 @@ impl AppServer {
                     if self.workspace.is_none() {
                         self.workspace = configured_workspace(&result["config"]);
                     }
+                    self.configured_model = text(&result["config"]["model"]);
                 }
                 self.config_known = true;
                 self.introduce(out);

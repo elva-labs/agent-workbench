@@ -426,10 +426,16 @@ export type IntegratedEventBody =
         /** The model it stands for, where the agent says, as Claude
             Code does for an alias and for its default. */
         resolved?: string;
+        /** The agent marks it as its default in the list, whatever the
+            user's configuration names. */
+        isDefault?: boolean;
       }[];
       modes: { value: string; name: string; description: string | null }[];
       efforts: string[];
       commands: IntegratedCommand[];
+      /** The model a session given none runs on, where the user's own
+          configuration names one. */
+      defaultModel?: string | null;
     }
   /** The slash commands and skills changed, or the agent said more of
       which is which; all of them as they now are. */

@@ -252,7 +252,7 @@ export type Entry =
   | { kind: "rewound"; key: string; at: number; undo: boolean };
 
 type Asked = Extract<IntegratedEventBody, { type: "permissionAsked" | "questionAsked" }>;
-type Ready = Extract<IntegratedEventBody, { type: "ready" }>;
+export type Ready = Extract<IntegratedEventBody, { type: "ready" }>;
 
 export interface Request {
   request: string;
